@@ -2,7 +2,7 @@
 
 A contemplative walking-meditation app. Native Kotlin + Jetpack Compose.
 
-**Status:** In development. This is the Android port of [Pilgrim for iOS](../pilgrim-ios). MVP scope — walk tracking, voice recording, journal. More surfaces land phase by phase.
+**Status:** In development. This is the Android port of [Pilgrim for iOS](https://github.com/walktalkmeditate/pilgrim-ios). MVP scope — walk tracking, voice recording, journal. More surfaces land phase by phase.
 
 ## What Pilgrim is
 
