@@ -1,0 +1,53 @@
+# Gradle
+.gradle/
+build/
+/app/build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.cxx/
+captures/
+local.properties
+
+# Android builds
+*.apk
+*.aab
+*.ap_
+*.dex
+/app/release/
+/app/debug/
+bin/
+gen/
+out/
+release/
+
+# Native
+.externalNativeBuild/
+
+# Secrets / signing
+*.keystore
+*.jks
+keystore.properties
+/app/signing/
+
+# Kotlin
+.kotlin/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Mapbox / other tokens (also pulled from local.properties)
+mapbox.token
+
+# Environment
+.env
+.env.*
+
+# Claude Code runtime state
+.claude/

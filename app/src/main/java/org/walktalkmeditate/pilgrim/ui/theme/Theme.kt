@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package org.walktalkmeditate.pilgrim.ui.theme
+
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+
+@Composable
+fun PilgrimTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
+    val colors = if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
+    val type = pilgrimTypography()
+
+    val m3 = if (darkTheme) {
+        darkColorScheme(
+            primary = colors.stone,
+            onPrimary = colors.parchment,
+            background = colors.parchment,
+            onBackground = colors.ink,
+            surface = colors.parchmentSecondary,
+            onSurface = colors.ink,
+            surfaceVariant = colors.parchmentTertiary,
+            error = colors.rust,
+        )
+    } else {
+        lightColorScheme(
+            primary = colors.stone,
+            onPrimary = colors.parchment,
+            background = colors.parchment,
+            onBackground = colors.ink,
+            surface = colors.parchmentSecondary,
+            onSurface = colors.ink,
+            surfaceVariant = colors.parchmentTertiary,
+            error = colors.rust,
+        )
+    }
+
+    val m3Typography = MaterialTheme.typography.copy(
+        displayLarge = type.displayLarge,
+        displayMedium = type.displayMedium,
+        titleLarge = type.heading,
+        bodyLarge = type.body,
+        bodyMedium = type.body,
+        labelLarge = type.button,
+        labelMedium = type.caption,
+        labelSmall = type.micro,
+    )
+
+    CompositionLocalProvider(
+        LocalPilgrimColors provides colors,
+        LocalPilgrimTypography provides type,
+    ) {
+        MaterialTheme(
+            colorScheme = m3,
+            typography = m3Typography,
+            content = content,
+        )
+    }
+}
