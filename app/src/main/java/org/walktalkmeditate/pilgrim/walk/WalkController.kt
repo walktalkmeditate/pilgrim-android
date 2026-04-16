@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.walk
 import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -167,8 +168,11 @@ class WalkController @Inject constructor(
                 // is acceptable; killing a 90-minute walk is not. The
                 // in-memory accumulator already has the point folded into
                 // distanceMeters, so the drift is visible only in the
-                // persisted route replay.
-                runCatching {
+                // persisted route replay. Narrow catch: CancellationException
+                // must propagate so structured concurrency still works, and
+                // Errors (OutOfMemoryError, StackOverflowError) should not
+                // be swallowed — let the process die loud.
+                try {
                     repository.recordLocation(
                         RouteDataSample(
                             walkId = effect.walkId,
@@ -179,8 +183,10 @@ class WalkController @Inject constructor(
                             speedMetersPerSecond = effect.point.speedMetersPerSecond,
                         ),
                     )
-                }.onFailure { t ->
-                    Log.w(TAG, "dropped location sample for walk ${effect.walkId}: ${t.message}")
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (e: Exception) {
+                    Log.w(TAG, "dropped location sample for walk ${effect.walkId}: ${e.message}")
                 }
             }
 
