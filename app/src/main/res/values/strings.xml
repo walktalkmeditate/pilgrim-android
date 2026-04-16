@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pilgrim</string>
+    <string name="welcome_epigraph">The road is made by walking.</string>
+</resources>

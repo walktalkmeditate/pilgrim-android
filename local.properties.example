@@ -1,0 +1,18 @@
+# Copy to local.properties and fill in your values.
+# local.properties is gitignored.
+
+# Android SDK location — usually auto-populated by Android Studio:
+# sdk.dir=/Users/you/Library/Android/sdk
+
+# Mapbox public access token (pk.xxx). Maps will not render without it.
+# Create one at https://account.mapbox.com/access-tokens/.
+#
+# IMPORTANT: debug and release builds use DIFFERENT application IDs
+# (`org.walktalkmeditate.pilgrim.debug` vs `org.walktalkmeditate.pilgrim`).
+# When scoping your token by application ID in the Mapbox dashboard, add BOTH
+# IDs, or create separate tokens per build type.
+MAPBOX_ACCESS_TOKEN=
+
+# Mapbox downloads token (sk.xxx) with DOWNLOADS:READ scope.
+# Only needed once the Mapbox Maven repo is added in Phase 1.
+# MAPBOX_DOWNLOADS_TOKEN=
