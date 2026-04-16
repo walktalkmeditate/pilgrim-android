@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package org.walktalkmeditate.pilgrim.di
+
+import android.content.Context
+import androidx.room.Room
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
+import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
+import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
+
+@Module
+@InstallIn(SingletonComponent::class)
+object DatabaseModule {
+    @Provides
+    @Singleton
+    fun providePilgrimDatabase(
+        @ApplicationContext context: Context,
+    ): PilgrimDatabase = Room.databaseBuilder(
+        context,
+        PilgrimDatabase::class.java,
+        PilgrimDatabase.DATABASE_NAME,
+    ).build()
+
+    @Provides
+    fun provideWalkDao(db: PilgrimDatabase): WalkDao = db.walkDao()
+
+    @Provides
+    fun provideRouteDataSampleDao(db: PilgrimDatabase): RouteDataSampleDao = db.routeDataSampleDao()
+
+    @Provides
+    fun provideAltitudeSampleDao(db: PilgrimDatabase): AltitudeSampleDao = db.altitudeSampleDao()
+
+    @Provides
+    fun provideWalkEventDao(db: PilgrimDatabase): WalkEventDao = db.walkEventDao()
+
+    @Provides
+    fun provideActivityIntervalDao(db: PilgrimDatabase): ActivityIntervalDao = db.activityIntervalDao()
+
+    @Provides
+    fun provideWaypointDao(db: PilgrimDatabase): WaypointDao = db.waypointDao()
+}
