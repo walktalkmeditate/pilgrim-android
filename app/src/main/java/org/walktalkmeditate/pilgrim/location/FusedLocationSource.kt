@@ -12,9 +12,10 @@ import com.google.android.gms.location.Priority
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
@@ -56,7 +57,7 @@ class FusedLocationSource @Inject constructor(
         awaitClose {
             client.removeLocationUpdates(callback)
         }
-    }
+    }.buffer(Channel.UNLIMITED)
 
     private companion object {
         const val UPDATE_INTERVAL_MS = 2_000L

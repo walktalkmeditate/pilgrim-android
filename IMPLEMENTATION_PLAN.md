@@ -23,7 +23,7 @@ green on `./gradlew assembleDebug testDebugUnitTest`.
 
 **Success criteria**: `./gradlew assembleDebug lintDebug testDebugUnitTest` green; schema JSON generated; Robolectric test passes.
 
-**Status**: In Progress
+**Status**: Complete
 
 ## Stage 1-B: WalkBuilder state machine
 
@@ -38,7 +38,7 @@ green on `./gradlew assembleDebug testDebugUnitTest`.
 - Live-stats derivations (duration, distance, pace, elevation).
 - Unit tests: all transitions, idempotent re-entries, invalid transitions.
 
-**Status**: Not Started
+**Status**: Complete
 
 ## Stage 1-C: Location tracking + foreground service
 
@@ -57,7 +57,7 @@ surfaces live stats in its notification.
 - Service binding interface for UI state.
 - Unit test: service lifecycle mocked.
 
-**Status**: Not Started
+**Status**: Complete (device verification deferred to Stage 1-G)
 
 ## Stage 1-D: Permissions + battery-exemption UX
 

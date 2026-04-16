@@ -17,17 +17,32 @@ object WalkReducer {
             is WalkState.Active -> reduceActive(state, action)
             is WalkState.Paused -> reducePaused(state, action)
             is WalkState.Meditating -> reduceMeditating(state, action)
-            is WalkState.Finished -> state to WalkEffect.None
+            is WalkState.Finished -> reduceFinished(state, action)
         }
 
     private fun reduceIdle(action: WalkAction): Pair<WalkState, WalkEffect> =
         when (action) {
-            is WalkAction.Start ->
-                WalkState.Active(
-                    WalkAccumulator(walkId = action.walkId, startedAt = action.at),
-                ) to WalkEffect.None
+            is WalkAction.Start -> startFresh(action) to WalkEffect.None
             else -> WalkState.Idle to WalkEffect.None
         }
+
+    /**
+     * Finished is a resettable terminal: a fresh Start action transitions
+     * directly to a new Active walk. Everything else is a no-op so stale
+     * location samples or pause events from the previous walk cannot bleed
+     * into the new one.
+     */
+    private fun reduceFinished(
+        state: WalkState.Finished,
+        action: WalkAction,
+    ): Pair<WalkState, WalkEffect> =
+        when (action) {
+            is WalkAction.Start -> startFresh(action) to WalkEffect.None
+            else -> state to WalkEffect.None
+        }
+
+    private fun startFresh(action: WalkAction.Start): WalkState.Active =
+        WalkState.Active(WalkAccumulator(walkId = action.walkId, startedAt = action.at))
 
     private fun reduceActive(
         state: WalkState.Active,

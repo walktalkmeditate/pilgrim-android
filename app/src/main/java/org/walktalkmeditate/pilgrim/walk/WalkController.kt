@@ -38,11 +38,28 @@ class WalkController @Inject constructor(
 
     private val dispatchMutex = Mutex()
 
-    suspend fun startWalk(intention: String? = null): Walk {
+    /**
+     * Starts a new walk. Atomic under the dispatch mutex: the Room insert,
+     * reducer transition, and state commit happen together, so duplicate
+     * calls (double-tap, reentrant service start) cannot create orphan
+     * Walk rows. Legal from [WalkState.Idle] (first walk) and
+     * [WalkState.Finished] (subsequent walks after reviewing the summary);
+     * throws otherwise.
+     */
+    suspend fun startWalk(intention: String? = null): Walk = dispatchMutex.withLock {
+        val current = _state.value
+        check(current is WalkState.Idle || current is WalkState.Finished) {
+            "startWalk requires Idle or Finished state but controller is currently $current"
+        }
         val startedAt = clock.now()
         val walk = repository.startWalk(startTimestamp = startedAt, intention = intention)
-        dispatch(WalkAction.Start(walkId = walk.id, at = startedAt))
-        return walk
+        val (next, effect) = WalkReducer.reduce(
+            current,
+            WalkAction.Start(walkId = walk.id, at = startedAt),
+        )
+        applyEffect(effect)
+        _state.value = next
+        walk
     }
 
     suspend fun pauseWalk() = dispatch(WalkAction.Pause(at = clock.now()))
@@ -90,7 +107,11 @@ class WalkController @Inject constructor(
             )
 
             is WalkEffect.FinalizeWalk -> {
-                val walk = repository.getWalk(effect.walkId) ?: return
+                val walk = repository.getWalk(effect.walkId)
+                    ?: error(
+                        "Finalize requested for walk ${effect.walkId}, but no row exists in " +
+                            "the database. The in-memory state and persisted walk have diverged.",
+                    )
                 repository.finishWalk(walk, endTimestamp = effect.endTimestamp)
             }
         }

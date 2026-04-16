@@ -169,7 +169,7 @@ class WalkReducerTest {
     }
 
     @Test
-    fun `finished state is terminal`() {
+    fun `finished state ignores non-Start actions`() {
         val finished = WalkState.Finished(
             walk = WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_000.0),
             endedAt = 1_000L,
@@ -182,6 +182,22 @@ class WalkReducerTest {
 
         assertSame(finished, next)
         assertSame(WalkEffect.None, effect)
+    }
+
+    @Test
+    fun `start from finished transitions to a fresh active walk`() {
+        val finished = WalkState.Finished(
+            walk = WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_200.0),
+            endedAt = 1_000L,
+        )
+
+        val (next, _) = WalkReducer.reduce(finished, WalkAction.Start(walkId = 2L, at = 2_000L))
+
+        val active = next as WalkState.Active
+        assertEquals(2L, active.walk.walkId)
+        assertEquals(2_000L, active.walk.startedAt)
+        // Distance from the previous walk must not leak into the new one.
+        assertEquals(0.0, active.walk.distanceMeters, 0.0)
     }
 
     @Test
