@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data
 
+import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -19,6 +20,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 
 @Singleton
 class WalkRepository @Inject constructor(
+    private val database: PilgrimDatabase,
     private val walkDao: WalkDao,
     private val routeDao: RouteDataSampleDao,
     private val altitudeDao: AltitudeSampleDao,
@@ -41,6 +43,20 @@ class WalkRepository @Inject constructor(
     suspend fun finishWalk(walk: Walk, endTimestamp: Long) {
         walkDao.update(walk.copy(endTimestamp = endTimestamp))
     }
+
+    /**
+     * Finalize by id under a single Room transaction: reads the current
+     * row and writes back the end_timestamp atomically. Returns `false`
+     * if the walk row is gone by the time finalize runs (e.g., user
+     * deleted the walk from another surface mid-finish). Prefer this over
+     * the read+update two-call pattern from [getWalk] + [finishWalk].
+     */
+    suspend fun finishWalkAtomic(walkId: Long, endTimestamp: Long): Boolean =
+        database.withTransaction {
+            val walk = walkDao.getById(walkId) ?: return@withTransaction false
+            walkDao.update(walk.copy(endTimestamp = endTimestamp))
+            true
+        }
 
     suspend fun updateWalk(walk: Walk) {
         walkDao.update(walk)

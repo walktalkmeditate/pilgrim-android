@@ -10,6 +10,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+// PilgrimDatabase is provided below and then consumed by DAO providers and
+// also injected into WalkRepository directly for transactional operations.
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao

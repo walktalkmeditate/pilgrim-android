@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.walk
 
+import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,10 +15,13 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkAction
 import org.walktalkmeditate.pilgrim.domain.WalkEffect
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkReducer
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.haversineMeters
 
 /**
  * Single source of truth for the in-memory walk state and the bridge
@@ -74,6 +78,77 @@ class WalkController @Inject constructor(
 
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))
 
+    /**
+     * After a process kill mid-walk, the Walk row is still in Room with
+     * `end_timestamp IS NULL` but the in-memory state is [WalkState.Idle].
+     * This rebuilds a [WalkAccumulator] from persisted facts — start
+     * timestamp, route samples (for distance and last location), and
+     * walk events (replayed to recompute cumulative pause + meditation
+     * totals and current state). Returns the restored [Walk] or null if
+     * there was no unfinished walk to resume.
+     *
+     * No-op when the controller already has a non-Idle in-memory state
+     * (assumes caller is about to restart the process, not duplicate
+     * state from a running session).
+     */
+    suspend fun restoreActiveWalk(): Walk? = dispatchMutex.withLock {
+        if (_state.value !is WalkState.Idle) return@withLock null
+        val walk = repository.getActiveWalk() ?: return@withLock null
+
+        val samples = repository.locationSamplesFor(walk.id)
+        val events = repository.eventsFor(walk.id)
+
+        var distance = 0.0
+        var lastPoint: LocationPoint? = null
+        for (sample in samples) {
+            val point = LocationPoint(
+                timestamp = sample.timestamp,
+                latitude = sample.latitude,
+                longitude = sample.longitude,
+                horizontalAccuracyMeters = sample.horizontalAccuracyMeters,
+                speedMetersPerSecond = sample.speedMetersPerSecond,
+            )
+            if (lastPoint != null) distance += haversineMeters(lastPoint, point)
+            lastPoint = point
+        }
+
+        var totalPaused = 0L
+        var totalMeditated = 0L
+        var pendingPauseAt: Long? = null
+        var pendingMeditationAt: Long? = null
+        for (event in events) {
+            when (event.eventType) {
+                WalkEventType.PAUSED -> pendingPauseAt = event.timestamp
+                WalkEventType.RESUMED -> pendingPauseAt?.let {
+                    totalPaused += (event.timestamp - it).coerceAtLeast(0)
+                    pendingPauseAt = null
+                }
+                WalkEventType.MEDITATION_START -> pendingMeditationAt = event.timestamp
+                WalkEventType.MEDITATION_END -> pendingMeditationAt?.let {
+                    totalMeditated += (event.timestamp - it).coerceAtLeast(0)
+                    pendingMeditationAt = null
+                }
+                WalkEventType.WAYPOINT_MARKED -> Unit
+            }
+        }
+
+        val accumulator = WalkAccumulator(
+            walkId = walk.id,
+            startedAt = walk.startTimestamp,
+            lastLocation = lastPoint,
+            distanceMeters = distance,
+            totalPausedMillis = totalPaused,
+            totalMeditatedMillis = totalMeditated,
+        )
+        _state.value = when {
+            pendingPauseAt != null -> WalkState.Paused(accumulator, pausedAt = pendingPauseAt!!)
+            pendingMeditationAt != null ->
+                WalkState.Meditating(accumulator, meditationStartedAt = pendingMeditationAt!!)
+            else -> WalkState.Active(accumulator)
+        }
+        walk
+    }
+
     private suspend fun dispatch(action: WalkAction) {
         dispatchMutex.withLock {
             val current = _state.value
@@ -87,16 +162,27 @@ class WalkController @Inject constructor(
         when (effect) {
             WalkEffect.None -> Unit
 
-            is WalkEffect.PersistLocation -> repository.recordLocation(
-                RouteDataSample(
-                    walkId = effect.walkId,
-                    timestamp = effect.point.timestamp,
-                    latitude = effect.point.latitude,
-                    longitude = effect.point.longitude,
-                    horizontalAccuracyMeters = effect.point.horizontalAccuracyMeters,
-                    speedMetersPerSecond = effect.point.speedMetersPerSecond,
-                ),
-            )
+            is WalkEffect.PersistLocation -> {
+                // Best effort. Losing one location sample on a disk stall
+                // is acceptable; killing a 90-minute walk is not. The
+                // in-memory accumulator already has the point folded into
+                // distanceMeters, so the drift is visible only in the
+                // persisted route replay.
+                runCatching {
+                    repository.recordLocation(
+                        RouteDataSample(
+                            walkId = effect.walkId,
+                            timestamp = effect.point.timestamp,
+                            latitude = effect.point.latitude,
+                            longitude = effect.point.longitude,
+                            horizontalAccuracyMeters = effect.point.horizontalAccuracyMeters,
+                            speedMetersPerSecond = effect.point.speedMetersPerSecond,
+                        ),
+                    )
+                }.onFailure { t ->
+                    Log.w(TAG, "dropped location sample for walk ${effect.walkId}: ${t.message}")
+                }
+            }
 
             is WalkEffect.PersistEvent -> repository.recordEvent(
                 WalkEvent(
@@ -107,13 +193,19 @@ class WalkController @Inject constructor(
             )
 
             is WalkEffect.FinalizeWalk -> {
-                val walk = repository.getWalk(effect.walkId)
-                    ?: error(
-                        "Finalize requested for walk ${effect.walkId}, but no row exists in " +
-                            "the database. The in-memory state and persisted walk have diverged.",
-                    )
-                repository.finishWalk(walk, endTimestamp = effect.endTimestamp)
+                val finalized = repository.finishWalkAtomic(
+                    walkId = effect.walkId,
+                    endTimestamp = effect.endTimestamp,
+                )
+                check(finalized) {
+                    "Finalize requested for walk ${effect.walkId}, but no row exists in " +
+                        "the database. The in-memory state and persisted walk have diverged."
+                }
             }
         }
+    }
+
+    private companion object {
+        const val TAG = "WalkController"
     }
 }

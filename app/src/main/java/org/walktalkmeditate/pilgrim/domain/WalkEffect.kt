@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.domain
 
-import org.walktalkmeditate.pilgrim.data.entity.WalkEventType
-
 sealed class WalkEffect {
     data object None : WalkEffect()
 

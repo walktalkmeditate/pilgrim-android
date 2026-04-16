@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,10 +9,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -29,8 +33,12 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
 /**
  * Foreground service that binds the physical location stream to the
  * [WalkController] and surfaces the walk as an ongoing notification.
- * Starts via [startIntent], stops via [stopIntent] or when the controller
- * reaches [WalkState.Finished].
+ *
+ * Starts via [startIntent]. Stopping is state-driven only: the service
+ * observes [WalkController.state] and calls `stopSelf()` once the
+ * controller reaches [WalkState.Finished]. There is no external stop
+ * intent — UI wanting to end a walk must call [WalkController.finishWalk]
+ * so that in-memory state and the persisted Walk row stay consistent.
  */
 @AndroidEntryPoint
 class WalkTrackingService : Service() {
@@ -51,7 +59,6 @@ class WalkTrackingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startTracking()
-            ACTION_STOP -> stopTracking()
         }
         // START_NOT_STICKY: if the OS kills the service mid-walk, the walk
         // row in Room remains unfinished. The app surfaces it on next open
@@ -74,11 +81,29 @@ class WalkTrackingService : Service() {
         // duplicate route samples in the window between.
         if (locationJob?.isActive == true) return
 
+        // API 34+ rejects startForeground(type=location) with SecurityException
+        // if FINE location isn't granted at that moment; API 33+ silently
+        // suppresses the notification without POST_NOTIFICATIONS. Bail loud
+        // rather than limp along — UI must gate this intent on permissions.
+        if (!hasRequiredPermissions()) {
+            Log.w(TAG, "startTracking aborted: required permissions not granted")
+            stopSelf()
+            return
+        }
+
         promoteToForeground(buildNotification(getString(R.string.walk_notification_starting)))
 
         locationJob = scope.launch {
-            locationSource.locationFlow().collect { point ->
-                controller.recordLocation(point)
+            try {
+                locationSource.locationFlow().collect { point ->
+                    controller.recordLocation(point)
+                }
+            } catch (e: SecurityException) {
+                // Permission revoked mid-walk via Settings. Finish the walk
+                // through the controller so in-memory state and DB row stay
+                // consistent, then let the Finished observer stop us.
+                Log.w(TAG, "location permission revoked mid-walk", e)
+                runCatching { controller.finishWalk() }
             }
         }
 
@@ -90,11 +115,21 @@ class WalkTrackingService : Service() {
         }
     }
 
-    private fun stopTracking() {
-        locationJob?.cancel()
-        notificationJob?.cancel()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+    private fun hasRequiredPermissions(): Boolean {
+        val ctx = applicationContext
+        val fineGranted = ContextCompat.checkSelfPermission(
+            ctx,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val notifyGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                ctx,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        return fineGranted && notifyGranted
     }
 
     private fun promoteToForeground(notification: Notification) {
@@ -160,15 +195,12 @@ class WalkTrackingService : Service() {
 
     companion object {
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
-        const val ACTION_STOP = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.STOP"
 
+        private const val TAG = "WalkTrackingService"
         private const val CHANNEL_ID = "walk_tracking"
         private const val NOTIFICATION_ID = 1
 
         fun startIntent(context: Context): Intent =
             Intent(context, WalkTrackingService::class.java).apply { action = ACTION_START }
-
-        fun stopIntent(context: Context): Intent =
-            Intent(context, WalkTrackingService::class.java).apply { action = ACTION_STOP }
     }
 }

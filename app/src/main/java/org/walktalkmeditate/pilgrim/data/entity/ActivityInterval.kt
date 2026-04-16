@@ -6,12 +6,8 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-
-enum class ActivityType {
-    WALKING,
-    TALKING,
-    MEDITATING,
-}
+import java.util.UUID
+import org.walktalkmeditate.pilgrim.domain.ActivityType
 
 @Entity(
     tableName = "activity_intervals",
@@ -23,11 +19,12 @@ enum class ActivityType {
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("walk_id"), Index("walk_id", "start_timestamp")],
+    indices = [Index("walk_id"), Index("walk_id", "start_timestamp"), Index("uuid", unique = true)],
 )
 data class ActivityInterval(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val uuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "walk_id")
     val walkId: Long,
     @ColumnInfo(name = "start_timestamp")
