@@ -6,14 +6,8 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-
-enum class WalkEventType {
-    PAUSED,
-    RESUMED,
-    MEDITATION_START,
-    MEDITATION_END,
-    WAYPOINT_MARKED,
-}
+import java.util.UUID
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 @Entity(
     tableName = "walk_events",
@@ -25,11 +19,12 @@ enum class WalkEventType {
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("walk_id"), Index("walk_id", "timestamp")],
+    indices = [Index("walk_id"), Index("walk_id", "timestamp"), Index("uuid", unique = true)],
 )
 data class WalkEvent(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val uuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "walk_id")
     val walkId: Long,
     val timestamp: Long,

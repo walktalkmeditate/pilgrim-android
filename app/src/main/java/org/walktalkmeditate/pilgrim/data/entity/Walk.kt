@@ -5,14 +5,20 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 @Entity(
     tableName = "walks",
-    indices = [Index("start_timestamp"), Index("end_timestamp")],
+    indices = [
+        Index("start_timestamp"),
+        Index("end_timestamp"),
+        Index("uuid", unique = true),
+    ],
 )
 data class Walk(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val uuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "start_timestamp")
     val startTimestamp: Long,
     @ColumnInfo(name = "end_timestamp")

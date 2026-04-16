@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -17,8 +18,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
-import org.walktalkmeditate.pilgrim.data.entity.WalkEventType
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
@@ -38,6 +41,7 @@ class WalkControllerTest {
             .allowMainThreadQueries()
             .build()
         repository = WalkRepository(
+            database = db,
             walkDao = db.walkDao(),
             routeDao = db.routeDataSampleDao(),
             altitudeDao = db.altitudeSampleDao(),
@@ -155,6 +159,78 @@ class WalkControllerTest {
 
         val active = controller.state.value as WalkState.Active
         assertEquals(1_500L, active.walk.totalMeditatedMillis)
+    }
+
+    @Test
+    fun `restoreActiveWalk returns null when no walk is in progress`() = runTest {
+        val restored = controller.restoreActiveWalk()
+
+        assertNull(restored)
+        assertTrue(controller.state.value is WalkState.Idle)
+    }
+
+    @Test
+    fun `restoreActiveWalk rebuilds Active state with distance and lastLocation`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L, intention = "silence")
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 1_100L, latitude = 0.0, longitude = 0.0),
+        )
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 1_200L, latitude = 0.0, longitude = 0.001),
+        )
+        val fresh = WalkController(repository, clock)
+
+        val restored = fresh.restoreActiveWalk()
+
+        assertEquals(walk.id, restored?.id)
+        val state = fresh.state.value as WalkState.Active
+        assertEquals(walk.id, state.walk.walkId)
+        assertEquals(1_000L, state.walk.startedAt)
+        // 0.001 degree at equator ≈ 111.32 meters.
+        assertEquals(111.32, state.walk.distanceMeters, 0.5)
+        assertEquals(1_200L, state.walk.lastLocation?.timestamp)
+    }
+
+    @Test
+    fun `restoreActiveWalk rebuilds Paused state when last event is PAUSED without RESUMED`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = 1_200L, eventType = WalkEventType.PAUSED),
+        )
+        val fresh = WalkController(repository, clock)
+
+        fresh.restoreActiveWalk()
+
+        val state = fresh.state.value as WalkState.Paused
+        assertEquals(1_200L, state.pausedAt)
+    }
+
+    @Test
+    fun `restoreActiveWalk folds completed pause durations into totals`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = 1_200L, eventType = WalkEventType.PAUSED),
+        )
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = 1_500L, eventType = WalkEventType.RESUMED),
+        )
+        val fresh = WalkController(repository, clock)
+
+        fresh.restoreActiveWalk()
+
+        val state = fresh.state.value as WalkState.Active
+        assertEquals(300L, state.walk.totalPausedMillis)
+    }
+
+    @Test
+    fun `restoreActiveWalk is a no-op when controller already has non-Idle state`() = runTest {
+        controller.startWalk()
+        val activeIdBefore = (controller.state.value as WalkState.Active).walk.walkId
+
+        val restored = controller.restoreActiveWalk()
+
+        assertNull(restored)
+        assertEquals(activeIdBefore, (controller.state.value as WalkState.Active).walk.walkId)
     }
 }
 

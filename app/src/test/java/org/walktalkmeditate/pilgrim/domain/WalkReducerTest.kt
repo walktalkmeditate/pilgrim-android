@@ -6,7 +6,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.walktalkmeditate.pilgrim.data.entity.WalkEventType
 
 class WalkReducerTest {
 
@@ -165,6 +164,20 @@ class WalkReducerTest {
         val (next, effect) = WalkReducer.reduce(paused, WalkAction.LocationSampled(point))
 
         assertSame(paused, next)
+        assertSame(WalkEffect.None, effect)
+    }
+
+    @Test
+    fun `location sample ignored when meditating`() {
+        val meditating = WalkState.Meditating(
+            walk = WalkAccumulator(walkId = 1L, startedAt = 0L),
+            meditationStartedAt = 100L,
+        )
+        val point = LocationPoint(timestamp = 150L, latitude = 0.0, longitude = 0.0)
+
+        val (next, effect) = WalkReducer.reduce(meditating, WalkAction.LocationSampled(point))
+
+        assertSame(meditating, next)
         assertSame(WalkEffect.None, effect)
     }
 

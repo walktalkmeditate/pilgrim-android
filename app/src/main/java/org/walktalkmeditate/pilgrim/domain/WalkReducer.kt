@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.domain
 
-import org.walktalkmeditate.pilgrim.data.entity.WalkEventType
-
 /**
  * Pure state machine for a single walk. Given (state, action), returns the
  * next state plus a single side-effect the caller should execute
