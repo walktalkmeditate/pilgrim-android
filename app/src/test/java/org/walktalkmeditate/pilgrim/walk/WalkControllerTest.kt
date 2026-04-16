@@ -114,6 +114,33 @@ class WalkControllerTest {
     }
 
     @Test
+    fun `startWalk after finishing creates a fresh walk with a new id`() = runTest {
+        val first = controller.startWalk(intention = "silence")
+        clock.advanceTo(2_000L)
+        controller.finishWalk()
+
+        clock.advanceTo(5_000L)
+        val second = controller.startWalk(intention = "grief")
+
+        assertTrue("second walk should have a different id", second.id != first.id)
+        val state = controller.state.value as WalkState.Active
+        assertEquals(second.id, state.walk.walkId)
+        assertEquals(0.0, state.walk.distanceMeters, 0.0)
+        assertEquals(5_000L, state.walk.startedAt)
+    }
+
+    @Test
+    fun `startWalk while already active throws`() = runTest {
+        controller.startWalk()
+        try {
+            controller.startWalk()
+            throw AssertionError("expected IllegalStateException")
+        } catch (expected: IllegalStateException) {
+            // Expected.
+        }
+    }
+
+    @Test
     fun `meditation start and end persist events and accumulate meditation time`() = runTest {
         controller.startWalk()
         clock.advanceTo(2_000L)

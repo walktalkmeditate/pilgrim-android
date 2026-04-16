@@ -53,7 +53,11 @@ class WalkTrackingService : Service() {
             ACTION_START -> startTracking()
             ACTION_STOP -> stopTracking()
         }
-        return START_STICKY
+        // START_NOT_STICKY: if the OS kills the service mid-walk, the walk
+        // row in Room remains unfinished. The app surfaces it on next open
+        // and the user resumes explicitly, rather than the service silently
+        // re-promoting itself with a null intent (and no tracking pipeline).
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -64,16 +68,20 @@ class WalkTrackingService : Service() {
     }
 
     private fun startTracking() {
+        // Re-entrant START intents are a no-op: if the pipeline is already
+        // live, cancelling and relaunching would race the old subscription's
+        // awaitClose cleanup against the new one's subscribe and produce
+        // duplicate route samples in the window between.
+        if (locationJob?.isActive == true) return
+
         promoteToForeground(buildNotification(getString(R.string.walk_notification_starting)))
 
-        locationJob?.cancel()
         locationJob = scope.launch {
             locationSource.locationFlow().collect { point ->
                 controller.recordLocation(point)
             }
         }
 
-        notificationJob?.cancel()
         notificationJob = scope.launch {
             controller.state.collect { state ->
                 updateNotification(state)
