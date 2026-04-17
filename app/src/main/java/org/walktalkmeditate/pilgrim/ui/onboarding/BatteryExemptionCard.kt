@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package org.walktalkmeditate.pilgrim.ui.onboarding
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.permissions.BatteryExemption
+import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+
+/**
+ * Home-screen surface asking the user to whitelist Pilgrim from battery
+ * optimization. Disappears once the user has either granted the
+ * exemption or dismissed the card. We track only "have we asked" in
+ * DataStore — granted state is read live from PowerManager each time.
+ */
+@Composable
+fun BatteryExemptionCard(
+    viewModel: PermissionsViewModel = hiltViewModel(),
+) {
+    val context = LocalContext.current
+    var exemptNow by remember { mutableStateOf(BatteryExemption.isIgnoringBatteryOptimizations(context)) }
+    var dismissed by remember { mutableStateOf(false) }
+
+    if (exemptNow || dismissed) return
+
+    val oem = remember { BatteryExemption.detectOem() }
+    val bodyText = when (oem) {
+        BatteryExemption.Oem.SAMSUNG -> stringResource(R.string.battery_exemption_body_samsung)
+        BatteryExemption.Oem.XIAOMI -> stringResource(R.string.battery_exemption_body_xiaomi)
+        else -> stringResource(R.string.battery_exemption_body)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = pilgrimColors.parchmentSecondary,
+            contentColor = pilgrimColors.ink,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(PilgrimSpacing.normal)) {
+            Text(
+                text = stringResource(R.string.battery_exemption_title),
+                style = pilgrimType.heading,
+            )
+            Spacer(Modifier.height(PilgrimSpacing.small))
+            Text(text = bodyText, style = pilgrimType.body, color = pilgrimColors.fog)
+            Spacer(Modifier.height(PilgrimSpacing.small))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = {
+                    viewModel.markBatteryExemptionAsked()
+                    dismissed = true
+                }) {
+                    Text(stringResource(R.string.battery_exemption_later))
+                }
+                TextButton(onClick = {
+                    viewModel.markBatteryExemptionAsked()
+                    val intent = BatteryExemption.requestIgnoreBatteryOptimizationsIntent(context.packageName)
+                    runCatching { context.startActivity(intent) }
+                        .onFailure {
+                            context.startActivity(BatteryExemption.batteryOptimizationsSettingsIntent())
+                        }
+                    exemptNow = BatteryExemption.isIgnoringBatteryOptimizations(context)
+                }) {
+                    Text(stringResource(R.string.battery_exemption_action))
+                }
+            }
+        }
+    }
+}

@@ -11,4 +11,32 @@
     <string name="walk_notification_paused">Walk paused.</string>
     <string name="walk_notification_meditating">Meditating.</string>
     <string name="walk_notification_finished">Walk complete.</string>
+
+    <string name="onboarding_title">A few doors to open</string>
+    <string name="onboarding_subtitle">Pilgrim needs a small set of permissions before you walk. Nothing you grant leaves this device.</string>
+
+    <string name="permission_location_title">Your place in the world</string>
+    <string name="permission_location_rationale">To draw the path your feet trace, Pilgrim reads the device\'s precise location while a walk is in progress. Your coordinates stay on this device — no account, no cloud.</string>
+
+    <string name="permission_notification_title">A quiet notification</string>
+    <string name="permission_notification_rationale">Android needs to see an ongoing notification to keep the walk recording reliably when the screen is off. It shows your time and distance.</string>
+
+    <string name="permission_activity_title">Footsteps</string>
+    <string name="permission_activity_rationale">If you\'d like Pilgrim to count your steps, it reads the device\'s motion sensor. This is optional — skip it and the walk still works.</string>
+
+    <string name="permissions_grant">Open</string>
+    <string name="permissions_skip">Skip</string>
+    <string name="permissions_continue">Continue</string>
+    <string name="permissions_granted_label">Granted</string>
+    <string name="permissions_denied_open_settings">Open settings</string>
+
+    <string name="battery_exemption_title">A word about sleep</string>
+    <string name="battery_exemption_body">Android may pause recording when the screen is off. Ask your phone to let Pilgrim keep listening to location on long walks.</string>
+    <string name="battery_exemption_body_samsung">Samsung phones can be especially strict. After this prompt, find Pilgrim in Settings → Battery → Background usage limits → Sleeping apps, and remove it.</string>
+    <string name="battery_exemption_body_xiaomi">Xiaomi\'s MIUI can kill background services aggressively. After this prompt, also enable AutoStart for Pilgrim in Security → Permissions → Autostart.</string>
+    <string name="battery_exemption_action">Ask my phone</string>
+    <string name="battery_exemption_later">Later</string>
+
+    <string name="home_placeholder_title">The road is made by walking.</string>
+    <string name="home_placeholder_subtitle">Stage 1-E will bring the Active Walk screen here.</string>
 </resources>
