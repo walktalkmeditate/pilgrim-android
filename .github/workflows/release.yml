@@ -56,16 +56,22 @@ jobs:
       - name: Write local.properties
         env:
           MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: |
           {
             echo "sdk.dir=$ANDROID_HOME"
             echo "MAPBOX_ACCESS_TOKEN=$MAPBOX_ACCESS_TOKEN"
+            echo "MAPBOX_DOWNLOADS_TOKEN=$MAPBOX_DOWNLOADS_TOKEN"
           } > local.properties
 
       - name: Build signed AAB
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew bundleRelease
 
       - name: Build signed APK
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew assembleRelease
 
       - name: Upload release artifacts to tag

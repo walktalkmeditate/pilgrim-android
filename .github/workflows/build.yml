@@ -41,12 +41,23 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Assemble debug
+        env:
+          # Mapbox SDK artifacts live behind an authenticated Maven repo.
+          # Add MAPBOX_DOWNLOADS_TOKEN to repo Settings → Secrets (scope:
+          # downloads:read) so CI can resolve com.mapbox.* dependencies.
+          # Absent token → 401 from Mapbox → assemble fails loudly, which
+          # is the intended failure mode for a misconfigured repo.
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew assembleDebug
 
       - name: Lint
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew lintDebug
 
       - name: Unit tests
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew testDebugUnitTest
 
       - name: Upload lint report

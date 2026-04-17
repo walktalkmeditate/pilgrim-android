@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,6 +16,7 @@ import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.annotation.annotations
+import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
@@ -42,58 +44,88 @@ fun PilgrimMap(
     // Pilgrim stone palette, light-mode + dark-mode — see ui/theme/Color.kt.
     val lineColor = if (darkMode) 0xFFB8976E.toInt() else 0xFF8B7355.toInt()
 
+    var mapView by remember { mutableStateOf<MapView?>(null) }
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
+    var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var didFitBounds by remember { mutableStateOf(false) }
+
+    // Reload the style when the system theme toggles between light and
+    // dark. Without this, a map that was rendered in light mode stays
+    // light after the user toggles dark mode (or vice versa).
+    LaunchedEffect(styleUri) {
+        val view = mapView ?: return@LaunchedEffect
+        view.mapboxMap.loadStyle(styleUri) {
+            // Style reload drops existing annotations — rebuild the
+            // manager and clear our cached polyline reference so the
+            // next update recreates it against the fresh manager.
+            polylineManager = view.annotations.createPolylineAnnotationManager()
+            polyline = null
+        }
+    }
 
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            val mapView = MapView(context)
-            mapView.mapboxMap.loadStyle(styleUri) {
-                polylineManager = mapView.annotations.createPolylineAnnotationManager()
+            MapView(context).also { view ->
+                mapView = view
+                view.mapboxMap.loadStyle(styleUri) {
+                    polylineManager = view.annotations.createPolylineAnnotationManager()
+                }
             }
-            mapView
         },
-        update = { mapView ->
+        update = { view ->
             val manager = polylineManager ?: return@AndroidView
-            manager.deleteAll()
             if (points.size >= 2) {
                 val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
-                manager.create(
-                    PolylineAnnotationOptions()
-                        .withPoints(mapboxPoints)
-                        .withLineColor(lineColor)
-                        .withLineWidth(POLYLINE_WIDTH_DP),
-                )
+                val existing = polyline
+                if (existing == null) {
+                    polyline = manager.create(
+                        PolylineAnnotationOptions()
+                            .withPoints(mapboxPoints)
+                            .withLineColor(lineColor)
+                            .withLineWidth(POLYLINE_WIDTH_DP),
+                    )
+                } else {
+                    // Mutate in place — cheaper than delete + create for
+                    // walks with thousands of samples.
+                    existing.points = mapboxPoints
+                    existing.lineColorInt = lineColor
+                    manager.update(existing)
+                }
 
                 if (followLatest) {
-                    val latest = mapboxPoints.last()
-                    mapView.mapboxMap.setCamera(
+                    view.mapboxMap.setCamera(
                         CameraOptions.Builder()
-                            .center(latest)
+                            .center(mapboxPoints.last())
                             .zoom(FOLLOW_ZOOM)
                             .build(),
                     )
                 } else if (!didFitBounds) {
-                    val camera = mapView.mapboxMap.cameraForCoordinates(
+                    val camera = view.mapboxMap.cameraForCoordinates(
                         mapboxPoints,
                         CameraOptions.Builder().build(),
                         EdgeInsets(PADDING_PX, PADDING_PX, PADDING_PX, PADDING_PX),
                         null,
                         null,
                     )
-                    mapView.mapboxMap.setCamera(camera)
+                    view.mapboxMap.setCamera(camera)
                     didFitBounds = true
                 }
             } else if (points.size == 1 && followLatest) {
                 val only = points.first()
-                mapView.mapboxMap.setCamera(
+                view.mapboxMap.setCamera(
                     CameraOptions.Builder()
                         .center(Point.fromLngLat(only.longitude, only.latitude))
                         .zoom(FOLLOW_ZOOM)
                         .build(),
                 )
             }
+        },
+        onRelease = { view ->
+            mapView = null
+            polylineManager = null
+            polyline = null
+            view.onDestroy()
         },
     )
 }
