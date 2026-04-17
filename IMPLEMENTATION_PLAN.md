@@ -71,7 +71,7 @@ the device-under-test.
 - Battery optimization exemption prompt gated on a user-facing "why".
 - First-run state persisted in DataStore.
 
-**Status**: Not Started
+**Status**: Complete (device verification deferred to Stage 1-G; ACCESS_BACKGROUND_LOCATION removed upstream in Phase 1 review — foreground-service-with-type=location covers our case)
 
 ## Stage 1-E: Active Walk + Walk Summary screens (no map yet)
 
