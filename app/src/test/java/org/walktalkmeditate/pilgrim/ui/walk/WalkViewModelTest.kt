@@ -146,22 +146,17 @@ class WalkViewModelTest {
     }
 
     @Test
-    fun `routePoints is empty when idle and populates while a walk is active`() = runTest(dispatcher) {
+    fun `routePoints is empty when idle and maps samples to LocationPoint when active`() = runTest(dispatcher) {
         // Drive the controller directly: viewModel.startWalk triggers a
         // foreground-service start that Robolectric can't satisfy, and the
-        // rollback path there would immediately transition the state back
-        // to Finished. The routePoints flow is driven off controller.state,
+        // rollback path there would immediately transition back to
+        // Finished. The routePoints flow is driven off controller.state,
         // so testing with a direct controller start is an honest shape.
         viewModel.routePoints.test {
             assertTrue(awaitItem().isEmpty())
 
             controller.startWalk(intention = null)
-            val walkId = controller.state.value.let { state ->
-                when (state) {
-                    is WalkState.Active -> state.walk.walkId
-                    else -> error("expected Active after startWalk, got $state")
-                }
-            }
+            val walkId = requireActiveWalkId()
             repository.recordLocations(
                 listOf(
                     RouteDataSample(
@@ -191,6 +186,70 @@ class WalkViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    @Test
+    fun `routePoints keeps the same subscription across Active-Paused-Active`() = runTest(dispatcher) {
+        // Active → Paused must not cancel the DAO subscription (same walkId
+        // after distinctUntilChanged collapses the state-level emissions).
+        // If it did, every pause would drop the live polyline from the map.
+        viewModel.routePoints.test {
+            assertTrue(awaitItem().isEmpty())
+
+            controller.startWalk(intention = null)
+            val walkId = requireActiveWalkId()
+
+            repository.recordLocation(
+                RouteDataSample(walkId = walkId, timestamp = 1_100L, latitude = 0.0, longitude = 0.0),
+            )
+            assertEquals(1, awaitItem().size)
+
+            clock.advanceTo(2_000L)
+            controller.pauseWalk()
+            expectNoEvents()
+
+            repository.recordLocation(
+                RouteDataSample(walkId = walkId, timestamp = 2_100L, latitude = 0.001, longitude = 0.0),
+            )
+            assertEquals(2, awaitItem().size)
+
+            clock.advanceTo(2_500L)
+            controller.resumeWalk()
+            expectNoEvents()
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `routePoints returns to empty when the walk finishes and no new walk starts`() = runTest(dispatcher) {
+        viewModel.routePoints.test {
+            assertTrue(awaitItem().isEmpty())
+
+            controller.startWalk(intention = null)
+            val walkId = requireActiveWalkId()
+            repository.recordLocation(
+                RouteDataSample(walkId = walkId, timestamp = 1_100L, latitude = 0.0, longitude = 0.0),
+            )
+            assertEquals(1, awaitItem().size)
+
+            clock.advanceTo(3_000L)
+            controller.finishWalk()
+            // Finished retains walkId in state (so WalkSummary can read
+            // the walk), so the flow keeps the same subscription and the
+            // point list survives.
+            expectNoEvents()
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    private fun requireActiveWalkId(): Long =
+        controller.state.value.let { state ->
+            when (state) {
+                is WalkState.Active -> state.walk.walkId
+                else -> error("expected Active state, got $state")
+            }
+        }
 }
 
 private class FakeClock(initial: Long) : Clock {
