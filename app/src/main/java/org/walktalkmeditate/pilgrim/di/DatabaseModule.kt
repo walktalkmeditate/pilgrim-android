@@ -15,6 +15,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
 import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
@@ -49,4 +50,7 @@ object DatabaseModule {
 
     @Provides
     fun provideWaypointDao(db: PilgrimDatabase): WaypointDao = db.waypointDao()
+
+    @Provides
+    fun provideVoiceRecordingDao(db: PilgrimDatabase): VoiceRecordingDao = db.voiceRecordingDao()
 }

@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.Flow
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
 import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
@@ -27,6 +29,7 @@ class WalkRepository @Inject constructor(
     private val walkEventDao: WalkEventDao,
     private val activityIntervalDao: ActivityIntervalDao,
     private val waypointDao: WaypointDao,
+    private val voiceRecordingDao: VoiceRecordingDao,
 ) {
     fun observeAllWalks(): Flow<List<Walk>> = walkDao.observeAll()
 
@@ -90,4 +93,28 @@ class WalkRepository @Inject constructor(
     suspend fun addWaypoint(waypoint: Waypoint): Long = waypointDao.insert(waypoint)
 
     suspend fun waypointsFor(walkId: Long): List<Waypoint> = waypointDao.getForWalk(walkId)
+
+    suspend fun recordVoice(recording: VoiceRecording): Long =
+        voiceRecordingDao.insert(recording)
+
+    suspend fun updateVoiceRecording(recording: VoiceRecording) =
+        voiceRecordingDao.update(recording)
+
+    suspend fun deleteVoiceRecording(recording: VoiceRecording) =
+        voiceRecordingDao.delete(recording)
+
+    suspend fun getVoiceRecording(id: Long): VoiceRecording? =
+        voiceRecordingDao.getById(id)
+
+    suspend fun voiceRecordingsFor(walkId: Long): List<VoiceRecording> =
+        voiceRecordingDao.getForWalk(walkId)
+
+    fun observeVoiceRecordings(walkId: Long): Flow<List<VoiceRecording>> =
+        voiceRecordingDao.observeForWalk(walkId)
+
+    fun observeAllVoiceRecordings(): Flow<List<VoiceRecording>> =
+        voiceRecordingDao.observeAll()
+
+    suspend fun countVoiceRecordingsFor(walkId: Long): Int =
+        voiceRecordingDao.countForWalk(walkId)
 }

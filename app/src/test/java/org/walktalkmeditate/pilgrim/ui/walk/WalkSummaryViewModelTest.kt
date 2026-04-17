@@ -51,6 +51,7 @@ class WalkSummaryViewModelTest {
             walkEventDao = db.walkEventDao(),
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
         )
     }
 

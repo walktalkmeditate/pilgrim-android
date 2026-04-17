@@ -60,6 +60,7 @@ class WalkViewModelTest {
             walkEventDao = db.walkEventDao(),
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
         )
         clock = FakeClock(initial = 1_000L)
         controller = WalkController(repository, clock)
