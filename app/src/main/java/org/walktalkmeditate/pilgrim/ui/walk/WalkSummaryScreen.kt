@@ -54,8 +54,11 @@ fun WalkSummaryScreen(
 
         val s = summary
         if (s == null) {
+            // Null indicates either still loading (eager stateIn hasn't
+            // emitted yet — rare) or the walk row is gone (deleted or
+            // never existed). Done still works to navigate home.
             Text(
-                text = "…",
+                text = stringResource(R.string.summary_unavailable),
                 style = pilgrimType.body,
                 color = pilgrimColors.fog,
             )

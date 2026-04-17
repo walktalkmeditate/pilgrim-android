@@ -20,7 +20,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.onboarding.BatteryExemptionCard
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -42,12 +44,23 @@ fun HomeScreen(
     onResumeWalk: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
+    // On first composition only, restore a walk left unfinished in Room
+    // by a process kill. The state-class observer below handles the
+    // actual navigation; this just flips the controller state.
     var didCheckResume by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (didCheckResume) return@LaunchedEffect
         didCheckResume = true
-        val restored = walkViewModel.restoreActiveWalk()
-        if (restored != null) onResumeWalk()
+        walkViewModel.restoreActiveWalk()
+    }
+
+    // Whenever the controller reports a walk in progress (restored from
+    // Room, or navigated-back-to-Home by accident via system back), route
+    // the user to ActiveWalk. This is the safety net that prevents a
+    // tracking walk from being orphaned without a UI entry point.
+    val uiState by walkViewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(uiState.walkState::class) {
+        if (uiState.walkState.isInProgress) onResumeWalk()
     }
 
     Column(
