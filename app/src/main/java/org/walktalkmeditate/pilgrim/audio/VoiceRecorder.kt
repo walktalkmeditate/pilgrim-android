@@ -49,6 +49,13 @@ class VoiceRecorder @Inject constructor(
     val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
 
     fun start(walkId: Long, walkUuid: String): Result<Path> {
+        // Defensive path-component check: the caller is always a trusted
+        // internal surface passing Walk.uuid (random UUID) today, but
+        // concatenating an unvalidated string into a file path invites
+        // future bugs where a "../" sneaks in and escapes filesDir.
+        require(walkUuid.matches(UUID_STRING_REGEX)) {
+            "walkUuid must match UUID string format, got: $walkUuid"
+        }
         if (!PermissionChecks.isMicrophoneGranted(context)) {
             return Result.failure(VoiceRecorderError.PermissionMissing)
         }
@@ -82,10 +89,7 @@ class VoiceRecorder @Inject constructor(
             val startedAt = clock.now()
             val s = ActiveSession(
                 walkId = walkId,
-                walkUuid = walkUuid,
-                recordingUuid = recordingUuid,
                 relativePath = relativePath,
-                absolutePath = absolute,
                 writer = writer,
                 startedAt = startedAt,
                 stopRequested = AtomicBoolean(false),
@@ -152,10 +156,7 @@ class VoiceRecorder @Inject constructor(
 
     private data class ActiveSession(
         val walkId: Long,
-        val walkUuid: String,
-        val recordingUuid: String,
         val relativePath: String,
-        val absolutePath: Path,
         val writer: WavWriter,
         val startedAt: Long,
         val stopRequested: AtomicBoolean,
@@ -168,5 +169,10 @@ class VoiceRecorder @Inject constructor(
         // 100 ms @ 16 kHz mono = 1600 samples. Balances latency against
         // syscall overhead; short enough to make stopRequested responsive.
         const val BUFFER_SAMPLES = 1_600
+        // Matches the canonical 8-4-4-4-12 hex UUID form with lowercase or
+        // uppercase hex. UUID.randomUUID().toString() always matches.
+        val UUID_STRING_REGEX = Regex(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        )
     }
 }
