@@ -10,6 +10,10 @@
          background state. Declaring it would trigger Play Store's
          enhanced review process for no gain. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Runtime mic permission for voice recording during walks.
+         Requested just-in-time at record-button tap (see Stage 2-C),
+         not front-loaded into onboarding. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
