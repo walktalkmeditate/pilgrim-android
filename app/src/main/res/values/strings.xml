@@ -39,5 +39,25 @@
     <string name="battery_exemption_later">Later</string>
 
     <string name="home_placeholder_title">The road is made by walking.</string>
-    <string name="home_placeholder_subtitle">Stage 1-E will bring the Active Walk screen here.</string>
+    <string name="home_placeholder_subtitle">Ready when you are.</string>
+    <string name="home_action_start_walk">Start a walk</string>
+    <string name="home_action_resume_walk">Resume your walk</string>
+
+    <string name="walk_stat_distance">Distance</string>
+    <string name="walk_stat_pace">Pace</string>
+    <string name="walk_stat_duration">Duration</string>
+    <string name="walk_stat_active_walking">Active walking</string>
+    <string name="walk_stat_paused_time">Paused</string>
+    <string name="walk_stat_meditation_time">Meditation</string>
+    <string name="walk_map_placeholder">Map coming in Phase 1-F</string>
+    <string name="walk_action_pause">Pause</string>
+    <string name="walk_action_resume">Resume</string>
+    <string name="walk_action_meditate">Begin meditation</string>
+    <string name="walk_action_end_meditation">End meditation</string>
+    <string name="walk_action_finish">Finish walk</string>
+
+    <string name="summary_title">Walk complete.</string>
+    <string name="summary_action_done">Done</string>
+    <string name="summary_waypoints_count">%1$d waypoint(s)</string>
+    <string name="walk_stat_waypoints">Waypoints</string>
 </resources>
