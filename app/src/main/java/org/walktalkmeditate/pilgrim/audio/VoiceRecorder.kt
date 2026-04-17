@@ -11,6 +11,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -90,6 +91,7 @@ class VoiceRecorder @Inject constructor(
             val s = ActiveSession(
                 walkId = walkId,
                 relativePath = relativePath,
+                absolutePath = absolute,
                 writer = writer,
                 startedAt = startedAt,
                 stopRequested = AtomicBoolean(false),
@@ -111,6 +113,19 @@ class VoiceRecorder @Inject constructor(
         s.doneLatch.await()
         audioFocus.abandon()
         _audioLevel.value = 0f
+
+        // Guard against silent 0-byte recordings: AudioRecord can fail
+        // quietly (permission revoked mid-capture, Android 14+ FGS-type
+        // mismatch on backgrounded recording, tap-record-then-stop-too-
+        // fast), leaving us with a header-only WAV that would confuse a
+        // user as a "0-second recording". Surface the empty case as a
+        // typed error and delete the file so disk stays clean.
+        val bytesCaptured = s.bytesWritten.get()
+        if (bytesCaptured == 0L) {
+            runCatching { Files.deleteIfExists(s.absolutePath) }
+            return Result.failure(VoiceRecorderError.EmptyRecording)
+        }
+
         val endedAt = clock.now()
         val duration = endedAt - s.startedAt
         return Result.success(
@@ -143,6 +158,7 @@ class VoiceRecorder @Inject constructor(
         } finally {
             runCatching { audioCapture.stop() }
             runCatching { s.writer.closeAndPatchHeader() }
+                .getOrNull()?.let { s.bytesWritten.set(it) }
             _audioLevel.value = 0f
             s.doneLatch.countDown()
         }
@@ -162,10 +178,12 @@ class VoiceRecorder @Inject constructor(
     private data class ActiveSession(
         val walkId: Long,
         val relativePath: String,
+        val absolutePath: Path,
         val writer: WavWriter,
         val startedAt: Long,
         val stopRequested: AtomicBoolean,
         val doneLatch: CountDownLatch = CountDownLatch(1),
+        val bytesWritten: AtomicLong = AtomicLong(0),
     )
 
     private companion object {

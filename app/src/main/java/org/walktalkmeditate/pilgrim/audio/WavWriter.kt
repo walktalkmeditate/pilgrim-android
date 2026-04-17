@@ -90,9 +90,6 @@ class WavWriter(
         return b.array()
     }
 
-    private fun leInt(value: Int): ByteArray =
-        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
-
     /**
      * Write a 32-bit unsigned little-endian int, accepting any Long in
      * [0, 2^32 − 1]. The underlying byte pattern is what the RIFF spec
