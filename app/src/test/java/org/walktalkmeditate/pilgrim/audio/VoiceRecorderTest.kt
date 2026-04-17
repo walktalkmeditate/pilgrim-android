@@ -12,8 +12,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import java.util.UUID
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -26,7 +27,6 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.Clock
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class VoiceRecorderTest {
@@ -61,15 +61,34 @@ class VoiceRecorderTest {
         if (Files.exists(recDir)) recDir.toFile().deleteRecursively()
     }
 
+    /**
+     * Waits (suspending, not sleeping) until the capture loop has
+     * emitted at least one non-zero audio level — i.e., AudioCapture
+     * has returned at least one buffer's worth of PCM and WavWriter
+     * has appended it. Deterministic alternative to `Thread.sleep`,
+     * with a loud timeout to avoid hanging CI if the capture thread
+     * stalls.
+     *
+     * Must be called inside `runBlocking` (real time), not `runTest`
+     * (virtual time) — the capture loop runs on a real Executor
+     * thread, and the virtual-time scheduler has no way to know when
+     * the real thread emits.
+     */
+    private suspend fun waitForCaptureProgress() {
+        withTimeout(CAPTURE_WAIT_TIMEOUT_MS) {
+            recorder.audioLevel.first { it > 0f }
+        }
+    }
+
     @Test
-    fun `start then stop produces a valid VoiceRecording with file on disk`() = runTest {
+    fun `start then stop produces a valid VoiceRecording with file on disk`() = runBlocking<Unit> {
         val started = recorder.start(walkId = 42L, walkUuid = walkUuidA)
         assertTrue("start should succeed", started.isSuccess)
         val path = started.getOrThrow()
 
         // Allow the single-thread capture loop to consume the burst and
         // hit EOF on the FakeAudioCapture's second read.
-        Thread.sleep(100)
+        waitForCaptureProgress()
         clock.advanceTo(3_500L)
         val stopped = recorder.stop()
         assertTrue("stop should succeed: ${stopped.exceptionOrNull()}", stopped.isSuccess)
@@ -92,7 +111,7 @@ class VoiceRecorderTest {
     }
 
     @Test
-    fun `second start returns ConcurrentRecording without touching first`() = runTest {
+    fun `second start returns ConcurrentRecording without touching first`() = runBlocking<Unit> {
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
 
         val second = recorder.start(walkId = 1L, walkUuid = walkUuidA)
@@ -121,7 +140,7 @@ class VoiceRecorderTest {
     }
 
     @Test
-    fun `AudioCapture start failure maps to AudioCaptureInitFailed and cleans up file`() = runTest {
+    fun `AudioCapture start failure maps to AudioCaptureInitFailed and cleans up file`() = runBlocking<Unit> {
         audioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         recorder = VoiceRecorder(context, audioCapture, focus, clock)
 
@@ -143,7 +162,7 @@ class VoiceRecorderTest {
     }
 
     @Test
-    fun `audioLevel emits non-zero during recording and returns to zero after stop`() = runTest {
+    fun `audioLevel emits non-zero during recording and returns to zero after stop`() = runBlocking<Unit> {
         recorder.audioLevel.test {
             assertEquals(0f, awaitItem())
 
@@ -166,9 +185,9 @@ class VoiceRecorderTest {
     }
 
     @Test
-    fun `directory is created on first record and reused for second`() = runTest {
+    fun `directory is created on first record and reused for second`() = runBlocking<Unit> {
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
-        Thread.sleep(50)
+        waitForCaptureProgress()
         clock.advanceTo(2_000L)
         recorder.stop().getOrThrow()
 
@@ -177,7 +196,7 @@ class VoiceRecorderTest {
         recorder = VoiceRecorder(context, audioCapture, focus, clock)
         clock.advanceTo(3_000L)
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
-        Thread.sleep(50)
+        waitForCaptureProgress()
         clock.advanceTo(4_000L)
         recorder.stop().getOrThrow()
 
@@ -187,9 +206,9 @@ class VoiceRecorderTest {
     }
 
     @Test
-    fun `stop closes WAV and data_size field matches actual PCM bytes`() = runTest {
+    fun `stop closes WAV and data_size field matches actual PCM bytes`() = runBlocking<Unit> {
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
-        Thread.sleep(100)
+        waitForCaptureProgress()
         clock.advanceTo(2_000L)
         val rec = recorder.stop().getOrThrow()
 
@@ -210,9 +229,9 @@ class VoiceRecorderTest {
     }
 
     @Test
-    fun `concurrent start after clean stop succeeds on a fresh session`() = runTest {
+    fun `concurrent start after clean stop succeeds on a fresh session`() = runBlocking<Unit> {
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
-        Thread.sleep(50)
+        waitForCaptureProgress()
         clock.advanceTo(2_000L)
         recorder.stop().getOrThrow()
 
@@ -223,15 +242,15 @@ class VoiceRecorderTest {
         val second = recorder.start(walkId = 2L, walkUuid = walkUuidB)
         assertTrue("second start after clean stop should succeed: ${second.exceptionOrNull()}",
             second.isSuccess)
-        Thread.sleep(50)
+        waitForCaptureProgress()
         clock.advanceTo(4_000L)
         recorder.stop().getOrThrow()
     }
 
     @Test
-    fun `uuid in fileRelativePath is parseable as a UUID`() = runTest {
+    fun `uuid in fileRelativePath is parseable as a UUID`() = runBlocking<Unit> {
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
-        Thread.sleep(50)
+        waitForCaptureProgress()
         clock.advanceTo(2_000L)
         val rec = recorder.stop().getOrThrow()
 
@@ -241,6 +260,14 @@ class VoiceRecorderTest {
         } catch (e: IllegalArgumentException) {
             fail("expected UUID in file name, got '$fileName': ${e.message}")
         }
+    }
+
+    private companion object {
+        // 5 seconds is generous — FakeAudioCapture returns its first
+        // burst on the initial read() call, so the capture loop should
+        // emit a level within a handful of ms under any realistic CI
+        // load. The timeout exists only to fail loudly rather than hang.
+        const val CAPTURE_WAIT_TIMEOUT_MS = 5_000L
     }
 }
 

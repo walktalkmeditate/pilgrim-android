@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Production [AudioCapture] — 16 kHz mono 16-bit PCM from
@@ -14,7 +15,12 @@ import javax.inject.Inject
  *
  * Sample rate is Whisper-native so downstream transcription (Stage
  * 2-D) can read the WAV file without a resample pipeline.
+ *
+ * Scoped @Singleton so Stage 2-D / 2-E consumers share one recorder
+ * instance — two AudioRecordCapture objects with overlapping
+ * lifetimes would both try to hold the microphone.
  */
+@Singleton
 @SuppressLint("MissingPermission")
 class AudioRecordCapture @Inject constructor() : AudioCapture {
 
