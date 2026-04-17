@@ -4,29 +4,52 @@ package org.walktalkmeditate.pilgrim.ui.home
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.hilt.navigation.compose.hiltViewModel
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.onboarding.BatteryExemptionCard
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 
 /**
- * Stage-1-D placeholder. Stage 1-E replaces this with the journal
- * scroll + active-walk entry point.
+ * Stage 1-E home surface. Calls [WalkViewModel.restoreActiveWalk] on
+ * first composition — if an unfinished walk row lives in Room from a
+ * previous process (kill mid-walk), navigate straight to ActiveWalk
+ * so the user doesn't have to tap "Start" again to find their walk.
+ * Otherwise show the Start button.
  */
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
+    onStartWalk: () -> Unit,
+    onResumeWalk: () -> Unit,
+    walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
+    var didCheckResume by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (didCheckResume) return@LaunchedEffect
+        didCheckResume = true
+        val restored = walkViewModel.restoreActiveWalk()
+        if (restored != null) onResumeWalk()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -44,6 +67,18 @@ fun HomeScreen(
             style = pilgrimType.body,
             color = pilgrimColors.fog,
         )
+        Spacer(Modifier.height(PilgrimSpacing.big))
+
+        Button(
+            onClick = {
+                walkViewModel.startWalk()
+                onStartWalk()
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.home_action_start_walk))
+        }
+
         Spacer(Modifier.height(PilgrimSpacing.big))
         BatteryExemptionCard(viewModel = permissionsViewModel)
     }
