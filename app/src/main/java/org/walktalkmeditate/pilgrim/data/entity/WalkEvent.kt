@@ -7,6 +7,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
+import org.walktalkmeditate.pilgrim.domain.WalkEventLike
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 @Entity(
@@ -27,7 +28,9 @@ data class WalkEvent(
     val uuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "walk_id")
     val walkId: Long,
-    val timestamp: Long,
+    override val timestamp: Long,
     @ColumnInfo(name = "event_type")
     val eventType: WalkEventType,
-)
+) : WalkEventLike {
+    override val type: WalkEventType get() = eventType
+}

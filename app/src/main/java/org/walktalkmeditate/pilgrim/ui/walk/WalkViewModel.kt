@@ -61,7 +61,23 @@ class WalkViewModel @Inject constructor(
 
     fun startWalk(intention: String? = null) {
         viewModelScope.launch {
-            controller.startWalk(intention)
+            // Two separate try blocks with different semantics. Catching
+            // both in one block would let an IllegalStateException from
+            // the controller trigger the service-start rollback, which
+            // would finish a walk that's ALREADY running — effectively
+            // cancelling a legitimate earlier startWalk call.
+            try {
+                controller.startWalk(intention)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (e: IllegalStateException) {
+                // Controller rejects start from non-Idle/non-Finished
+                // state — usually a double-tap race where the first
+                // startWalk already succeeded. Treat as a no-op and let
+                // the first call's state transition drive the UI.
+                Log.d(TAG, "startWalk ignored — controller is not idle: ${e.message}")
+                return@launch
+            }
             try {
                 ContextCompat.startForegroundService(
                     context,

@@ -13,14 +13,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
@@ -31,36 +28,37 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 
 /**
- * Stage 1-E home surface. Calls [WalkViewModel.restoreActiveWalk] on
- * first composition — if an unfinished walk row lives in Room from a
- * previous process (kill mid-walk), navigate straight to ActiveWalk
- * so the user doesn't have to tap "Start" again to find their walk.
+ * Stage 1-E home surface. On first composition, runs a one-shot resume
+ * check: if the controller is already tracking (notification-return, or
+ * unfinished walk row restored from Room), route straight to ActiveWalk.
  * Otherwise show the Start button.
+ *
+ * Using a one-shot LaunchedEffect(Unit) rather than a state-observer
+ * LaunchedEffect avoids a back-stack race where HomeScreen stays in
+ * STARTED lifecycle while the user is on ActiveWalkScreen, and state
+ * transitions from Active → Paused → Meditating would re-fire a
+ * navigate call on the observer, stacking duplicate ACTIVE_WALK
+ * entries.
  */
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
-    onStartWalk: () -> Unit,
-    onResumeWalk: () -> Unit,
+    onEnterActiveWalk: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
-    // On first composition only, restore a walk left unfinished in Room
-    // by a process kill. The state-class observer below handles the
-    // actual navigation; this just flips the controller state.
-    var didCheckResume by remember { mutableStateOf(false) }
+    val didResumeCheck = remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (didCheckResume) return@LaunchedEffect
-        didCheckResume = true
-        walkViewModel.restoreActiveWalk()
-    }
-
-    // Whenever the controller reports a walk in progress (restored from
-    // Room, or navigated-back-to-Home by accident via system back), route
-    // the user to ActiveWalk. This is the safety net that prevents a
-    // tracking walk from being orphaned without a UI entry point.
-    val uiState by walkViewModel.uiState.collectAsStateWithLifecycle()
-    LaunchedEffect(uiState.walkState::class) {
-        if (uiState.walkState.isInProgress) onResumeWalk()
+        if (didResumeCheck.value) return@LaunchedEffect
+        didResumeCheck.value = true
+        // Already walking (notification-return, recomposition after
+        // backgrounding)? Go straight to the active screen.
+        val current = walkViewModel.uiState.value.walkState
+        if (current.isInProgress) {
+            onEnterActiveWalk()
+            return@LaunchedEffect
+        }
+        // Walk row in Room from a previous process — rehydrate and go.
+        walkViewModel.restoreActiveWalk()?.also { onEnterActiveWalk() }
     }
 
     Column(
@@ -85,7 +83,7 @@ fun HomeScreen(
         Button(
             onClick = {
                 walkViewModel.startWalk()
-                onStartWalk()
+                onEnterActiveWalk()
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
