@@ -85,7 +85,7 @@ placeholder where the map goes.
 - Navigation Compose graph.
 - Compose UI tests for start/pause/finish flow.
 
-**Status**: Not Started
+**Status**: Complete (Compose UI tests deferred; VM + format unit tests cover the state transitions)
 
 ## Stage 1-F: Mapbox SDK integration
 
