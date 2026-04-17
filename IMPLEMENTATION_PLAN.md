@@ -100,7 +100,7 @@ placeholder where the map goes.
 - Route polyline update on live location.
 - Walk Summary static map snapshot.
 
-**Status**: Blocked on MAPBOX_DOWNLOADS_TOKEN in local.properties.
+**Status**: Complete (device verification deferred to Stage 1-G).
 
 ## Stage 1-G: Long-walk device test
 
