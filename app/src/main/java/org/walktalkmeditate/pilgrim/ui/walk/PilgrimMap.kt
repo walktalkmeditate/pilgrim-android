@@ -9,6 +9,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
@@ -31,10 +33,10 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
  * (which uses Mapbox's stock `.light` and `.dark` styles). Line color
  * is Pilgrim's `stone` token in the appropriate palette.
  *
- * When [followLatest] is true (Active Walk), the camera recenters on
- * the newest sample on every recomposition so the map tracks the
- * walker. When false (Summary), the camera fits the full route's
- * bounds once on first render.
+ * When [followLatest] is true (Active Walk), the camera eases to the
+ * newest sample on every recomposition so the map tracks the walker.
+ * When false (Summary), the camera fits the full route's bounds once
+ * on first render.
  */
 @Composable
 fun PilgrimMap(
@@ -46,27 +48,44 @@ fun PilgrimMap(
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
     // Pilgrim stone palette, light-mode + dark-mode — see ui/theme/Color.kt.
     val lineColor = if (darkMode) 0xFFB8976E.toInt() else 0xFF8B7355.toInt()
+    // EdgeInsets values are physical pixels; convert from a dp constant so
+    // the padding looks consistent across screen densities.
+    val paddingPx = with(LocalDensity.current) { FIT_PADDING_DP.dp.toPx().toDouble() }
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var didFitBounds by remember { mutableStateOf(false) }
 
-    // Reload the style when the system theme toggles between light and
-    // dark. Without this, a map that was rendered in light mode stays
-    // light after the user toggles dark mode (or vice versa).
-    LaunchedEffect(styleUri) {
+    // Own the style load from one place so init and theme toggles cannot
+    // race each other. Keyed on (mapView, styleUri): first pass with
+    // mapView == null bails, next pass (once the factory has assigned it)
+    // does the initial load, and subsequent theme changes trigger a clean
+    // reload. Any prior annotation manager is detached before a new one
+    // is created to avoid orphaning it on the stale style.
+    LaunchedEffect(mapView, styleUri) {
         val view = mapView ?: return@LaunchedEffect
-        // Null synchronously *before* loadStyle kicks off. loadStyle is
-        // async — if we waited to clear these inside the callback, the
-        // AndroidView update block could run in the interim and call
-        // manager.update() on a manager whose annotations the new style
-        // has already invalidated. Clearing first makes that window a
-        // no-op (update bails on null manager).
+        polylineManager?.let { view.annotations.removeAnnotationManager(it) }
         polylineManager = null
         polyline = null
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
+            // Opt out of Mapbox's anonymous event collection. Pilgrim's
+            // privacy posture is no-telemetry-by-default; this covers the
+            // plugin's own usage pings (map interaction events, style
+            // loads, etc.). Done inside the loadStyle callback so the
+            // telemetry subsystem is initialized before we flip the flag.
+            // Default attribution UI still shows and still lets users opt
+            // back in from there if they want.
+            try {
+                view.attribution.getMapAttributionDelegate()
+                    .telemetry()
+                    .setUserTelemetryRequestState(false)
+            } catch (_: Exception) {
+                // Tolerate Mapbox shaving or renaming the telemetry accessor
+                // in a point release — a failed opt-out must not crash the
+                // map. Errors (OOM, etc.) still propagate.
+            }
         }
     }
 
@@ -75,17 +94,6 @@ fun PilgrimMap(
         factory = { context ->
             MapView(context).also { view ->
                 mapView = view
-                // Opt out of Mapbox's anonymous event collection. Pilgrim's
-                // privacy posture is no-telemetry-by-default; this covers
-                // the Mapbox plugin's own usage pings (map interaction
-                // events, style loads, etc.). Default attribution UI still
-                // shows and still lets users opt back in if they want.
-                view.attribution.getMapAttributionDelegate()
-                    .telemetry()
-                    .setUserTelemetryRequestState(false)
-                view.mapboxMap.loadStyle(styleUri) {
-                    polylineManager = view.annotations.createPolylineAnnotationManager()
-                }
             }
         },
         update = { view ->
@@ -109,12 +117,21 @@ fun PilgrimMap(
                 }
 
                 if (followLatest) {
-                    // Animate rather than snap — each new GPS sample nudges
-                    // the camera smoothly instead of jittering it.
+                    // Ease rather than snap — each new GPS sample nudges
+                    // the camera smoothly instead of jittering it. Keep
+                    // the duration below the typical GPS interval so the
+                    // ease completes before the next cancel/restart. Only
+                    // center + zoom are written; bearing, pitch, padding
+                    // come from the live camera so user-set rotation /
+                    // tilt survives each sample.
+                    val current = view.mapboxMap.cameraState
                     view.mapboxMap.easeTo(
                         CameraOptions.Builder()
                             .center(mapboxPoints.last())
                             .zoom(FOLLOW_ZOOM)
+                            .bearing(current.bearing)
+                            .pitch(current.pitch)
+                            .padding(current.padding)
                             .build(),
                         MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                     )
@@ -122,40 +139,44 @@ fun PilgrimMap(
                     val camera = view.mapboxMap.cameraForCoordinates(
                         mapboxPoints,
                         CameraOptions.Builder().build(),
-                        EdgeInsets(PADDING_PX, PADDING_PX, PADDING_PX, PADDING_PX),
+                        EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
                         null,
                         null,
                     )
                     // Clamp max zoom for fit-bounds — a walk contained to a
                     // single city block otherwise resolves to street-level
-                    // zoom, which looks like the map is broken.
-                    val clamped = CameraOptions.Builder()
-                        .center(camera.center)
+                    // zoom, which reads as "the map is broken".
+                    val clamped = camera.toBuilder()
                         .zoom(camera.zoom?.coerceAtMost(MAX_FIT_ZOOM))
-                        .padding(camera.padding)
-                        .bearing(camera.bearing)
-                        .pitch(camera.pitch)
-                        .anchor(camera.anchor)
                         .build()
                     view.mapboxMap.setCamera(clamped)
                     didFitBounds = true
                 }
             } else if (points.size == 1 && followLatest) {
                 val only = points.first()
+                val current = view.mapboxMap.cameraState
                 view.mapboxMap.easeTo(
                     CameraOptions.Builder()
                         .center(Point.fromLngLat(only.longitude, only.latitude))
                         .zoom(FOLLOW_ZOOM)
+                        .bearing(current.bearing)
+                        .pitch(current.pitch)
+                        .padding(current.padding)
                         .build(),
                     MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                 )
             }
         },
-        onRelease = {
-            // MapView auto-wires its own lifecycle observer in v10+. The
-            // Compose AndroidView release already detaches the view; calling
-            // onDestroy() here would double-dispose and risk a NPE when the
-            // internal observer fires later.
+        onRelease = { view ->
+            // Mapbox v11's lifecycle plugin drives onStart/onStop via the
+            // view's attach/detach transitions, but the native GL surface
+            // + renderer teardown only happens on an explicit onDestroy().
+            // Under AndroidView interop, onRelease is the composable-exit
+            // hook — without this call, each navigation to/from the map
+            // leaks ~12 MB of native memory (mapbox-maps-android#2079).
+            // Destroy first so any recompose scheduled by the state writes
+            // below cannot observe a partially-torn-down MapView.
+            view.onDestroy()
             mapView = null
             polylineManager = null
             polyline = null
@@ -166,5 +187,5 @@ fun PilgrimMap(
 private const val POLYLINE_WIDTH_DP = 4.0
 private const val FOLLOW_ZOOM = 16.0
 private const val MAX_FIT_ZOOM = 17.0
-private const val FOLLOW_EASE_MS = 1500L
-private const val PADDING_PX = 64.0
+private const val FOLLOW_EASE_MS = 800L
+private const val FIT_PADDING_DP = 32

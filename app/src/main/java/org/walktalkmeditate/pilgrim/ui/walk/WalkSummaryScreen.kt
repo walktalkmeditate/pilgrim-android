@@ -97,7 +97,6 @@ private fun LoadingRow() {
             strokeWidth = 2.dp,
             color = pilgrimColors.stone,
         )
-        Spacer(Modifier.height(PilgrimSpacing.small))
     }
 }
 
