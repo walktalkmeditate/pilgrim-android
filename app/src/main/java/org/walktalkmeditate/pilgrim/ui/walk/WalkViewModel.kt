@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -71,10 +72,16 @@ class WalkViewModel @Inject constructor(
      * Live polyline for the Active Walk map. Observes Room's route
      * sample table for the current walk's id and maps to domain
      * [LocationPoint]s. Emits an empty list while no walk is in progress.
+     *
+     * Maps state → walkId first and applies distinctUntilChanged: Active
+     * → Active emissions (triggered by every LocationSampled updating the
+     * accumulator) would otherwise cancel and re-subscribe the DAO flow
+     * on every GPS fix, which is wasteful on long walks.
      */
     val routePoints: StateFlow<List<LocationPoint>> = controller.state
-        .flatMapLatest { state ->
-            val walkId = walkIdOrNull(state)
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
             if (walkId == null) {
                 flowOf(emptyList())
             } else {
