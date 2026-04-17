@@ -53,7 +53,7 @@ fun PilgrimNavHost(
             )
         }
         composable(Routes.HOME) {
-            HomeScreen()
+            HomeScreen(permissionsViewModel = permissionsViewModel)
         }
     }
 

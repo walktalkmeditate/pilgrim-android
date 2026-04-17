@@ -2,6 +2,8 @@
 package org.walktalkmeditate.pilgrim.ui.onboarding
 
 import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,17 +32,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+
+/**
+ * Location grant state. Progresses from [NotRequested] through the two
+ * degraded paths ([CoarseOnly] / [NeedsSettings]) that Android's
+ * permission dialog surfaces, to [Granted]. The degraded paths are the
+ * common ways a user gets stuck without us noticing: picking
+ * "Approximate" on the precision toggle (API 31+) or denying twice so
+ * the system silently no-ops future prompts.
+ */
+private enum class LocationStatus { NotRequested, Granted, CoarseOnly, NeedsSettings }
 
 @Composable
 fun PermissionsScreen(
@@ -49,9 +62,12 @@ fun PermissionsScreen(
 ) {
     val context = LocalContext.current
 
-    // Refresh live-check state whenever the screen resumes (user may
-    // return from system Settings with permissions flipped).
-    var locationGranted by remember { mutableStateOf(PermissionChecks.isFineLocationGranted(context)) }
+    var locationStatus by remember {
+        mutableStateOf(
+            if (PermissionChecks.isFineLocationGranted(context)) LocationStatus.Granted
+            else LocationStatus.NotRequested,
+        )
+    }
     var notificationGranted by remember { mutableStateOf(PermissionChecks.isNotificationGranted(context)) }
     var activityGranted by remember { mutableStateOf(PermissionChecks.isActivityRecognitionGranted(context)) }
 
@@ -59,7 +75,13 @@ fun PermissionsScreen(
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                locationGranted = PermissionChecks.isFineLocationGranted(context)
+                // A Settings trip or second-try prompt may have flipped any
+                // of these. Recompute before the user sees stale state.
+                locationStatus = when {
+                    PermissionChecks.isFineLocationGranted(context) -> LocationStatus.Granted
+                    locationStatus == LocationStatus.NotRequested -> LocationStatus.NotRequested
+                    else -> locationStatus
+                }
                 notificationGranted = PermissionChecks.isNotificationGranted(context)
                 activityGranted = PermissionChecks.isActivityRecognitionGranted(context)
             }
@@ -71,7 +93,25 @@ fun PermissionsScreen(
     val locationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
-        locationGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val fine = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val coarse = result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        locationStatus = when {
+            fine -> LocationStatus.Granted
+            coarse -> LocationStatus.CoarseOnly
+            else -> {
+                // System auto-denied (permanent): launcher resolved instantly
+                // and rationale is no longer available. Only a Settings trip
+                // gets us out.
+                val activity = context as? Activity
+                val canPromptAgain = activity?.let {
+                    ActivityCompat.shouldShowRequestPermissionRationale(
+                        it,
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                    )
+                } ?: true
+                if (canPromptAgain) LocationStatus.NotRequested else LocationStatus.NeedsSettings
+            }
+        }
     }
 
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -82,7 +122,7 @@ fun PermissionsScreen(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted -> activityGranted = granted }
 
-    val canContinue = locationGranted && notificationGranted
+    val canContinue = locationStatus == LocationStatus.Granted && notificationGranted
 
     Column(
         modifier = Modifier
@@ -103,11 +143,9 @@ fun PermissionsScreen(
         )
         Spacer(Modifier.height(PilgrimSpacing.big))
 
-        PermissionCard(
-            title = stringResource(R.string.permission_location_title),
-            rationale = stringResource(R.string.permission_location_rationale),
-            granted = locationGranted,
-            onRequest = {
+        LocationPermissionCard(
+            status = locationStatus,
+            onRequestPrompt = {
                 locationLauncher.launch(
                     arrayOf(
                         Manifest.permission.ACCESS_FINE_LOCATION,
@@ -115,6 +153,7 @@ fun PermissionsScreen(
                     ),
                 )
             },
+            onOpenSettings = { context.startActivity(AppSettings.openDetailsIntent(context)) },
         )
         Spacer(Modifier.height(PilgrimSpacing.normal))
 
@@ -153,6 +192,55 @@ fun PermissionsScreen(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.permissions_continue))
+        }
+    }
+}
+
+@Composable
+private fun LocationPermissionCard(
+    status: LocationStatus,
+    onRequestPrompt: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val rationale = when (status) {
+        LocationStatus.CoarseOnly -> stringResource(R.string.permission_location_coarse_only)
+        LocationStatus.NeedsSettings -> stringResource(R.string.permission_location_needs_settings)
+        else -> stringResource(R.string.permission_location_rationale)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = pilgrimColors.parchmentSecondary,
+            contentColor = pilgrimColors.ink,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(PilgrimSpacing.normal)) {
+            Text(
+                text = stringResource(R.string.permission_location_title),
+                style = pilgrimType.heading,
+            )
+            Spacer(Modifier.height(PilgrimSpacing.small))
+            Text(text = rationale, style = pilgrimType.body, color = pilgrimColors.fog)
+            Spacer(Modifier.height(PilgrimSpacing.normal))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+            ) {
+                when (status) {
+                    LocationStatus.Granted -> Text(
+                        text = stringResource(R.string.permissions_granted_label),
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.moss,
+                    )
+                    LocationStatus.CoarseOnly, LocationStatus.NeedsSettings -> Button(onClick = onOpenSettings) {
+                        Text(stringResource(R.string.permissions_open_settings))
+                    }
+                    LocationStatus.NotRequested -> Button(onClick = onRequestPrompt) {
+                        Text(stringResource(R.string.permissions_grant))
+                    }
+                }
+            }
         }
     }
 }
