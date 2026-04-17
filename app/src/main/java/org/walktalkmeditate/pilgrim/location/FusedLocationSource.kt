@@ -48,6 +48,10 @@ class FusedLocationSource @Inject constructor(
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
+                // `dtSinceFixMs` compares wall clock (currentTimeMillis) to
+                // Location.time (UTC ms; typically GPS-derived). Small clock
+                // skew between device wall time and GPS can produce a few
+                // hundred ms of noise — fine for diagnostic use.
                 val now = System.currentTimeMillis()
                 Log.i(
                     TAG,
