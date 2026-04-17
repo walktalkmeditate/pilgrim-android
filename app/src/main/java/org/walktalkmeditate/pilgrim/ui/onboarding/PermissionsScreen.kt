@@ -79,6 +79,11 @@ fun PermissionsScreen(
                 // of these. Recompute before the user sees stale state.
                 locationStatus = when {
                     PermissionChecks.isFineLocationGranted(context) -> LocationStatus.Granted
+                    // Downgrade-from-Granted: user just revoked or lowered to
+                    // coarse-only in system Settings. Drop back to
+                    // NotRequested so the Grant button reappears rather than
+                    // lying that we still have precise location.
+                    locationStatus == LocationStatus.Granted -> LocationStatus.NotRequested
                     locationStatus == LocationStatus.NotRequested -> LocationStatus.NotRequested
                     else -> locationStatus
                 }
