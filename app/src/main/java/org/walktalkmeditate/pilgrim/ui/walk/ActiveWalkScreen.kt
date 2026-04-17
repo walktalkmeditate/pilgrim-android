@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -44,6 +45,7 @@ fun ActiveWalkScreen(
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
+    val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
 
     // Back press during a walk would otherwise pop us to Home with the
     // controller still in Active (service still tracking, timer still
@@ -68,7 +70,7 @@ fun ActiveWalkScreen(
             .verticalScroll(rememberScrollState())
             .padding(PilgrimSpacing.big),
     ) {
-        MapPlaceholder()
+        WalkMap(points = routePoints)
         Spacer(Modifier.height(PilgrimSpacing.big))
         Timer(ui.totalElapsedMillis)
         Spacer(Modifier.height(PilgrimSpacing.normal))
@@ -91,23 +93,20 @@ fun ActiveWalkScreen(
 }
 
 @Composable
-private fun MapPlaceholder() {
-    // Stage 1-F replaces this card with the Mapbox Compose wrapper.
+private fun WalkMap(points: List<LocationPoint>) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(220.dp),
         colors = CardDefaults.cardColors(
             containerColor = pilgrimColors.parchmentSecondary,
-            contentColor = pilgrimColors.fog,
         ),
     ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = stringResource(R.string.walk_map_placeholder),
-                style = pilgrimType.caption,
-            )
-        }
+        PilgrimMap(
+            points = points,
+            followLatest = true,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

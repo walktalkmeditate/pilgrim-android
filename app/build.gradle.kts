@@ -138,6 +138,8 @@ dependencies {
 
     implementation(libs.play.services.location)
 
+    implementation(libs.mapbox.maps.android)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)

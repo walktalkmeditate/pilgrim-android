@@ -50,17 +50,26 @@ fun WalkSummaryScreen(
         )
         Spacer(Modifier.height(PilgrimSpacing.big))
 
-        SummaryMapPlaceholder()
-        Spacer(Modifier.height(PilgrimSpacing.big))
-
         when (val s = state) {
-            is WalkSummaryUiState.Loading -> LoadingRow()
-            is WalkSummaryUiState.NotFound -> Text(
-                text = stringResource(R.string.summary_unavailable),
-                style = pilgrimType.body,
-                color = pilgrimColors.fog,
-            )
-            is WalkSummaryUiState.Loaded -> SummaryStats(summary = s.summary)
+            is WalkSummaryUiState.Loading -> {
+                SummaryMapPlaceholder()
+                Spacer(Modifier.height(PilgrimSpacing.big))
+                LoadingRow()
+            }
+            is WalkSummaryUiState.NotFound -> {
+                SummaryMapPlaceholder()
+                Spacer(Modifier.height(PilgrimSpacing.big))
+                Text(
+                    text = stringResource(R.string.summary_unavailable),
+                    style = pilgrimType.body,
+                    color = pilgrimColors.fog,
+                )
+            }
+            is WalkSummaryUiState.Loaded -> {
+                SummaryMap(points = s.summary.routePoints)
+                Spacer(Modifier.height(PilgrimSpacing.big))
+                SummaryStats(summary = s.summary)
+            }
         }
 
         Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
@@ -90,7 +99,38 @@ private fun LoadingRow() {
 }
 
 @Composable
+private fun SummaryMap(points: List<org.walktalkmeditate.pilgrim.domain.LocationPoint>) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = pilgrimColors.parchmentSecondary,
+        ),
+    ) {
+        if (points.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = stringResource(R.string.walk_map_no_route),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                )
+            }
+        } else {
+            PilgrimMap(
+                points = points,
+                followLatest = false,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SummaryMapPlaceholder() {
+    // Shown during loading / not-found states to reserve the same visual
+    // area a rendered map occupies — avoids a layout jump once the
+    // summary resolves.
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -99,14 +139,7 @@ private fun SummaryMapPlaceholder() {
             containerColor = pilgrimColors.parchmentSecondary,
             contentColor = pilgrimColors.fog,
         ),
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = stringResource(R.string.walk_map_placeholder),
-                style = pilgrimType.caption,
-            )
-        }
-    }
+    ) {}
 }
 
 @Composable

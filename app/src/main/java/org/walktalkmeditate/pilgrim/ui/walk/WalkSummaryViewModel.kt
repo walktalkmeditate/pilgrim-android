@@ -38,6 +38,7 @@ data class WalkSummary(
     val distanceMeters: Double,
     val paceSecondsPerKm: Double?,
     val waypointCount: Int,
+    val routePoints: List<LocationPoint>,
 )
 
 @HiltViewModel
@@ -64,15 +65,14 @@ class WalkSummaryViewModel @Inject constructor(
         val events = repository.eventsFor(walkId)
         val waypoints = repository.waypointsFor(walkId)
 
-        val distance = walkDistanceMeters(
-            samples.map {
-                LocationPoint(
-                    timestamp = it.timestamp,
-                    latitude = it.latitude,
-                    longitude = it.longitude,
-                )
-            },
-        )
+        val points = samples.map {
+            LocationPoint(
+                timestamp = it.timestamp,
+                latitude = it.latitude,
+                longitude = it.longitude,
+            )
+        }
+        val distance = walkDistanceMeters(points)
         // Close dangling PAUSED/MEDITATION_START intervals at the walk's
         // end timestamp — the reducer folds them into the in-memory
         // accumulator on Finish but does not persist synthetic close
@@ -100,6 +100,7 @@ class WalkSummaryViewModel @Inject constructor(
                 distanceMeters = distance,
                 paceSecondsPerKm = pace,
                 waypointCount = waypoints.size,
+                routePoints = points,
             ),
         )
     }
