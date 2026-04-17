@@ -3,10 +3,10 @@ package org.walktalkmeditate.pilgrim.permissions
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.net.toUri
 
 /**
  * Android's foreground-service-type=location contract is *supposed* to
@@ -32,7 +32,7 @@ object BatteryExemption {
     @Suppress("BatteryLife") // foreground service justifies the direct exemption request
     fun requestIgnoreBatteryOptimizationsIntent(packageName: String): Intent =
         Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:$packageName")
+            data = "package:$packageName".toUri()
         }
 
     /**

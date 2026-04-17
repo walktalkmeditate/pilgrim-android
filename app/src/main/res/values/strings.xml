@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Pilgrim</string>
-    <string name="welcome_epigraph">The road is made by walking.</string>
 
     <string name="walk_notification_channel_name">Walk tracking</string>
     <string name="walk_notification_channel_description">Ongoing notification while a walk is being recorded.</string>
@@ -25,10 +24,8 @@
     <string name="permission_activity_rationale">If you\'d like Pilgrim to count your steps, it reads the device\'s motion sensor. This is optional — skip it and the walk still works.</string>
 
     <string name="permissions_grant">Open</string>
-    <string name="permissions_skip">Skip</string>
     <string name="permissions_continue">Continue</string>
     <string name="permissions_granted_label">Granted</string>
-    <string name="permissions_denied_open_settings">Open settings</string>
 
     <string name="battery_exemption_title">A word about sleep</string>
     <string name="battery_exemption_body">Android may pause recording when the screen is off. Ask your phone to let Pilgrim keep listening to location on long walks.</string>

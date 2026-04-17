@@ -31,10 +31,16 @@ object PermissionChecks {
         }
 
     fun isActivityRecognitionGranted(context: Context): Boolean =
-        ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACTIVITY_RECOGNITION,
-        ) == PackageManager.PERMISSION_GRANTED
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACTIVITY_RECOGNITION,
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            // ACTIVITY_RECOGNITION became a runtime permission in API 29.
+            // Before that, the capability is available without a prompt.
+            true
+        }
 
     /** True when the minimum set of required permissions for walk tracking is granted. */
     fun isMinimumGranted(context: Context): Boolean =

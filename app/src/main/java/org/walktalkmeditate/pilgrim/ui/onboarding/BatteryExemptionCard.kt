@@ -13,6 +13,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +23,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.permissions.BatteryExemption
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
@@ -42,6 +46,20 @@ fun BatteryExemptionCard(
     val context = LocalContext.current
     var exemptNow by remember { mutableStateOf(BatteryExemption.isIgnoringBatteryOptimizations(context)) }
     var dismissed by remember { mutableStateOf(false) }
+
+    // Re-read the exemption state when the user returns from the system
+    // prompt. `startActivity` fires and then immediately returns, so the
+    // synchronous check right after was always reading stale state.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                exemptNow = BatteryExemption.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
 
     if (exemptNow || dismissed) return
 
@@ -84,7 +102,8 @@ fun BatteryExemptionCard(
                         .onFailure {
                             context.startActivity(BatteryExemption.batteryOptimizationsSettingsIntent())
                         }
-                    exemptNow = BatteryExemption.isIgnoringBatteryOptimizations(context)
+                    // exemptNow is refreshed by the ON_RESUME observer
+                    // once the user returns from the system prompt.
                 }) {
                     Text(stringResource(R.string.battery_exemption_action))
                 }

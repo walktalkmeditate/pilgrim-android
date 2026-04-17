@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Required to launch the battery-optimization exemption prompt directly
+         via ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. Justified by our
+         foreground-service-with-ongoing-notification location tracking. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".PilgrimApp"
