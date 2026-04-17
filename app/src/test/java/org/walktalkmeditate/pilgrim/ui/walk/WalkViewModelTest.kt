@@ -23,6 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -142,6 +143,53 @@ class WalkViewModelTest {
         val restored = viewModel.restoreActiveWalk()
 
         assertEquals(walk.id, restored?.id)
+    }
+
+    @Test
+    fun `routePoints is empty when idle and populates while a walk is active`() = runTest(dispatcher) {
+        // Drive the controller directly: viewModel.startWalk triggers a
+        // foreground-service start that Robolectric can't satisfy, and the
+        // rollback path there would immediately transition the state back
+        // to Finished. The routePoints flow is driven off controller.state,
+        // so testing with a direct controller start is an honest shape.
+        viewModel.routePoints.test {
+            assertTrue(awaitItem().isEmpty())
+
+            controller.startWalk(intention = null)
+            val walkId = controller.state.value.let { state ->
+                when (state) {
+                    is WalkState.Active -> state.walk.walkId
+                    else -> error("expected Active after startWalk, got $state")
+                }
+            }
+            repository.recordLocations(
+                listOf(
+                    RouteDataSample(
+                        walkId = walkId,
+                        timestamp = 1_100L,
+                        latitude = 35.0,
+                        longitude = 139.0,
+                        horizontalAccuracyMeters = 5.0f,
+                        speedMetersPerSecond = 1.2f,
+                    ),
+                    RouteDataSample(
+                        walkId = walkId,
+                        timestamp = 1_200L,
+                        latitude = 35.001,
+                        longitude = 139.001,
+                    ),
+                ),
+            )
+
+            val mapped = awaitItem()
+            assertEquals(2, mapped.size)
+            assertEquals(35.0, mapped[0].latitude, 1e-9)
+            assertEquals(139.001, mapped[1].longitude, 1e-9)
+            assertEquals(5.0f, mapped[0].horizontalAccuracyMeters)
+            assertEquals(1.2f, mapped[0].speedMetersPerSecond)
+
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }
 

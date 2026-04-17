@@ -15,6 +15,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
+import com.mapbox.maps.MapInitOptions
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.animation.MapAnimationOptions
@@ -92,7 +93,13 @@ fun PilgrimMap(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            MapView(context).also { view ->
+            // Pass the initial styleUri to the constructor so the SDK starts
+            // parsing the style on the first render frame rather than after
+            // LaunchedEffect fires. Avoids the brief blank-canvas flash on
+            // screens that navigate to the map (and makes cold starts feel
+            // less "loading-y"). LaunchedEffect still coalesces any redundant
+            // load for the same URI.
+            MapView(context, MapInitOptions(context = context, styleUri = styleUri)).also { view ->
                 mapView = view
             }
         },

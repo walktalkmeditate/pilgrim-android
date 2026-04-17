@@ -46,6 +46,15 @@ jobs:
           # Add MAPBOX_DOWNLOADS_TOKEN (scope: downloads:read) as a repo
           # secret so CI can resolve com.mapbox.* dependencies. Absent
           # token → 401 from Mapbox → assemble fails loudly.
+          #
+          # GitHub does NOT pass repo secrets to workflows triggered by
+          # pull_request from forks — so any fork PR will hit the 401 and
+          # fail at dependency resolution with a confusing Maven auth
+          # error. This is accepted: the app isn't currently soliciting
+          # external contributions, and switching to pull_request_target
+          # to work around it opens a well-known code-execution vector.
+          # When we open up contributions, document the expected failure
+          # in CONTRIBUTING.md rather than relaxing the CI posture.
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
           # Public access token (pk.xxx) baked into BuildConfig at build
           # time. Debug APKs from CI without this can't render map tiles;
