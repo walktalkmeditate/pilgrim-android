@@ -21,7 +21,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +56,7 @@ fun PermissionsScreen(
     var activityGranted by remember { mutableStateOf(PermissionChecks.isActivityRecognitionGranted(context)) }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(lifecycle) {
+    DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 locationGranted = PermissionChecks.isFineLocationGranted(context)
@@ -65,6 +65,7 @@ fun PermissionsScreen(
             }
         }
         lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
     }
 
     val locationLauncher = rememberLauncherForActivityResult(
@@ -129,15 +130,18 @@ fun PermissionsScreen(
             Spacer(Modifier.height(PilgrimSpacing.normal))
         }
 
-        PermissionCard(
-            title = stringResource(R.string.permission_activity_title),
-            rationale = stringResource(R.string.permission_activity_rationale),
-            granted = activityGranted,
-            optional = true,
-            onRequest = {
-                activityLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
-            },
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            PermissionCard(
+                title = stringResource(R.string.permission_activity_title),
+                rationale = stringResource(R.string.permission_activity_rationale),
+                granted = activityGranted,
+                optional = true,
+                onRequest = {
+                    @Suppress("InlinedApi")
+                    activityLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+                },
+            )
+        }
         Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
 
         Button(

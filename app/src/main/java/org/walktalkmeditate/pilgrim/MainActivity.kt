@@ -20,16 +20,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             PilgrimTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
-                    PilgrimNavHost(
-                        // Apply the inner padding through the NavHost so
-                        // each destination decides how to consume it.
-                        // Placeholder: each screen does its own padding
-                        // for now; we'll revisit with per-route scaffolds.
-                    )
-                    // Unused padding parameter intentionally ignored —
-                    // edge-to-edge destinations handle insets themselves.
-                    inner.calculateTopPadding()
+                // Edge-to-edge: applying Scaffold's innerPadding to the
+                // NavHost keeps content out from under system bars. Each
+                // destination adds its own visual padding on top of this.
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    PilgrimNavHost(modifier = Modifier.padding(innerPadding))
                 }
             }
         }
