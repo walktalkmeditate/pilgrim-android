@@ -12,8 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.onboarding.BatteryExemptionCard
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -24,7 +24,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * scroll + active-walk entry point.
  */
 @Composable
-fun HomeScreen() {
+fun HomeScreen(
+    permissionsViewModel: PermissionsViewModel,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -43,6 +45,6 @@ fun HomeScreen() {
             color = pilgrimColors.fog,
         )
         Spacer(Modifier.height(PilgrimSpacing.big))
-        BatteryExemptionCard()
+        BatteryExemptionCard(viewModel = permissionsViewModel)
     }
 }

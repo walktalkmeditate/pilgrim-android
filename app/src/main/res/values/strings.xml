@@ -26,6 +26,10 @@
     <string name="permissions_grant">Open</string>
     <string name="permissions_continue">Continue</string>
     <string name="permissions_granted_label">Granted</string>
+    <string name="permissions_open_settings">Open settings</string>
+
+    <string name="permission_location_coarse_only">Pilgrim needs precise location to draw your path — approximate location won\'t be enough. Open settings to switch to Precise.</string>
+    <string name="permission_location_needs_settings">Location is blocked. Open settings and enable precise location for Pilgrim to continue.</string>
 
     <string name="battery_exemption_title">A word about sleep</string>
     <string name="battery_exemption_body">Android may pause recording when the screen is off. Ask your phone to let Pilgrim keep listening to location on long walks.</string>

@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,8 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -35,21 +34,27 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
  * Home-screen surface asking the user to whitelist Pilgrim from battery
- * optimization. Disappears once the user has either granted the
- * exemption or dismissed the card. We track only "have we asked" in
- * DataStore — granted state is read live from PowerManager each time.
+ * optimization. Hidden once the user has either granted the exemption
+ * (live PowerManager check) or has previously dismissed/answered the
+ * prompt (persisted via [PermissionsViewModel.batteryExemptionAsked]).
+ *
+ * The DataStore-backed flag is the visibility gate rather than an
+ * ephemeral local state so a process kill after "Later" doesn't bring
+ * the card back, overriding the user's explicit dismiss.
+ *
+ * Accepts the ViewModel as a required parameter — not a default
+ * `hiltViewModel()` — so that all onboarding surfaces share the same
+ * activity-scoped instance that [org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost]
+ * hoists from its entry point.
  */
 @Composable
 fun BatteryExemptionCard(
-    viewModel: PermissionsViewModel = hiltViewModel(),
+    viewModel: PermissionsViewModel,
 ) {
     val context = LocalContext.current
+    val asked by viewModel.batteryExemptionAsked.collectAsState()
     var exemptNow by remember { mutableStateOf(BatteryExemption.isIgnoringBatteryOptimizations(context)) }
-    var dismissed by remember { mutableStateOf(false) }
 
-    // Re-read the exemption state when the user returns from the system
-    // prompt. `startActivity` fires and then immediately returns, so the
-    // synchronous check right after was always reading stale state.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
@@ -61,7 +66,7 @@ fun BatteryExemptionCard(
         onDispose { lifecycle.removeObserver(observer) }
     }
 
-    if (exemptNow || dismissed) return
+    if (exemptNow || asked) return
 
     val oem = remember { BatteryExemption.detectOem() }
     val bodyText = when (oem) {
@@ -89,10 +94,7 @@ fun BatteryExemptionCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = {
-                    viewModel.markBatteryExemptionAsked()
-                    dismissed = true
-                }) {
+                TextButton(onClick = { viewModel.markBatteryExemptionAsked() }) {
                     Text(stringResource(R.string.battery_exemption_later))
                 }
                 TextButton(onClick = {
