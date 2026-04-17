@@ -11,6 +11,7 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
+import java.util.UUID
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -36,6 +37,12 @@ class VoiceRecorderTest {
     private lateinit var focus: AudioFocusCoordinator
     private lateinit var recorder: VoiceRecorder
 
+    // Stable-per-test-run UUIDs — VoiceRecorder.start validates that
+    // walkUuid matches UUID string format (defensive against path
+    // traversal via unvalidated concat).
+    private val walkUuidA: String = UUID.randomUUID().toString()
+    private val walkUuidB: String = UUID.randomUUID().toString()
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -56,7 +63,7 @@ class VoiceRecorderTest {
 
     @Test
     fun `start then stop produces a valid VoiceRecording with file on disk`() = runTest {
-        val started = recorder.start(walkId = 42L, walkUuid = "walk-uuid-1")
+        val started = recorder.start(walkId = 42L, walkUuid = walkUuidA)
         assertTrue("start should succeed", started.isSuccess)
         val path = started.getOrThrow()
 
@@ -74,7 +81,7 @@ class VoiceRecorderTest {
         assertEquals(2_500L, recording.durationMillis)
         assertTrue(
             "fileRelativePath shape: ${recording.fileRelativePath}",
-            recording.fileRelativePath.startsWith("recordings/walk-uuid-1/") &&
+            recording.fileRelativePath.startsWith("recordings/$walkUuidA/") &&
                 recording.fileRelativePath.endsWith(".wav"),
         )
         assertTrue("file should exist at the returned path", Files.exists(path))
@@ -86,9 +93,9 @@ class VoiceRecorderTest {
 
     @Test
     fun `second start returns ConcurrentRecording without touching first`() = runTest {
-        recorder.start(walkId = 1L, walkUuid = "walk-1").getOrThrow()
+        recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
 
-        val second = recorder.start(walkId = 1L, walkUuid = "walk-1")
+        val second = recorder.start(walkId = 1L, walkUuid = walkUuidA)
 
         assertTrue(second.isFailure)
         assertEquals(VoiceRecorderError.ConcurrentRecording, second.exceptionOrNull())
@@ -107,7 +114,7 @@ class VoiceRecorderTest {
     fun `start without RECORD_AUDIO permission returns PermissionMissing`() {
         shadowOf(context as Application).denyPermissions(Manifest.permission.RECORD_AUDIO)
 
-        val result = recorder.start(walkId = 1L, walkUuid = "walk-1")
+        val result = recorder.start(walkId = 1L, walkUuid = walkUuidA)
 
         assertTrue(result.isFailure)
         assertEquals(VoiceRecorderError.PermissionMissing, result.exceptionOrNull())
@@ -118,7 +125,7 @@ class VoiceRecorderTest {
         audioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         recorder = VoiceRecorder(context, audioCapture, focus, clock)
 
-        val result = recorder.start(walkId = 1L, walkUuid = "walk-err")
+        val result = recorder.start(walkId = 1L, walkUuid = walkUuidA)
 
         assertTrue(result.isFailure)
         val err = result.exceptionOrNull()
@@ -126,7 +133,7 @@ class VoiceRecorderTest {
             "expected AudioCaptureInitFailed, got $err",
             err is VoiceRecorderError.AudioCaptureInitFailed,
         )
-        val leftoverDir = context.filesDir.toPath().resolve("recordings/walk-err")
+        val leftoverDir = context.filesDir.toPath().resolve("recordings/$walkUuidA")
         val leftovers = if (Files.exists(leftoverDir)) {
             Files.list(leftoverDir).use { it.toList() }
         } else {
@@ -140,7 +147,7 @@ class VoiceRecorderTest {
         recorder.audioLevel.test {
             assertEquals(0f, awaitItem())
 
-            recorder.start(walkId = 1L, walkUuid = "walk-level").getOrThrow()
+            recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
             // Wait for the capture loop to emit at least one non-zero level.
             var nonZero = 0f
             while (nonZero == 0f) {
@@ -160,7 +167,7 @@ class VoiceRecorderTest {
 
     @Test
     fun `directory is created on first record and reused for second`() = runTest {
-        recorder.start(walkId = 1L, walkUuid = "walk-reuse").getOrThrow()
+        recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
         Thread.sleep(50)
         clock.advanceTo(2_000L)
         recorder.stop().getOrThrow()
@@ -169,19 +176,19 @@ class VoiceRecorderTest {
         audioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         recorder = VoiceRecorder(context, audioCapture, focus, clock)
         clock.advanceTo(3_000L)
-        recorder.start(walkId = 1L, walkUuid = "walk-reuse").getOrThrow()
+        recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
         Thread.sleep(50)
         clock.advanceTo(4_000L)
         recorder.stop().getOrThrow()
 
-        val dir = context.filesDir.toPath().resolve("recordings/walk-reuse")
+        val dir = context.filesDir.toPath().resolve("recordings/$walkUuidA")
         val files = Files.list(dir).use { it.toList() }
         assertEquals(2, files.size)
     }
 
     @Test
     fun `stop closes WAV and data_size field matches actual PCM bytes`() = runTest {
-        recorder.start(walkId = 1L, walkUuid = "walk-header").getOrThrow()
+        recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
         Thread.sleep(100)
         clock.advanceTo(2_000L)
         val rec = recorder.stop().getOrThrow()
@@ -204,7 +211,7 @@ class VoiceRecorderTest {
 
     @Test
     fun `concurrent start after clean stop succeeds on a fresh session`() = runTest {
-        recorder.start(walkId = 1L, walkUuid = "walk-a").getOrThrow()
+        recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
         Thread.sleep(50)
         clock.advanceTo(2_000L)
         recorder.stop().getOrThrow()
@@ -213,7 +220,7 @@ class VoiceRecorderTest {
         audioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         recorder = VoiceRecorder(context, audioCapture, focus, clock)
         clock.advanceTo(3_000L)
-        val second = recorder.start(walkId = 2L, walkUuid = "walk-b")
+        val second = recorder.start(walkId = 2L, walkUuid = walkUuidB)
         assertTrue("second start after clean stop should succeed: ${second.exceptionOrNull()}",
             second.isSuccess)
         Thread.sleep(50)
@@ -223,7 +230,7 @@ class VoiceRecorderTest {
 
     @Test
     fun `uuid in fileRelativePath is parseable as a UUID`() = runTest {
-        recorder.start(walkId = 1L, walkUuid = "walk-parse").getOrThrow()
+        recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
         Thread.sleep(50)
         clock.advanceTo(2_000L)
         val rec = recorder.stop().getOrThrow()
