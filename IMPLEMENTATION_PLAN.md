@@ -107,4 +107,23 @@ placeholder where the map goes.
 **Goal**: Record a 30+ minute walk on a real device with the screen off;
 all samples preserved; app survives backgrounding.
 
-**Status**: Not Started — requires Stage 1-A through 1-F complete.
+**Status**: Complete — verified 2026-04-17 on OnePlus CPH2655 running
+Android 16 (API 36). Walk recorded 994 GPS samples over 30 min 58 s
+with the screen locked and the phone on a desk. Zero sample gaps
+over 10 s (max gap 6.57 s, avg 1.86 s). Foreground service survived,
+finalize wrote `end_timestamp` cleanly, Summary screen rendered
+duration + route + Mapbox attribution correctly.
+
+First attempt failed at 3 minutes because `setMinUpdateDistanceMeters(2f)`
+combined with degraded indoor-GPS accuracy caused FusedLocationProvider
+to stop forwarding samples. Fix committed in `2186896` removed the
+distance filter and added diagnostic logging across WalkController,
+FusedLocationSource, and HomeScreen. Verification log archived at
+`~/Downloads/pilgrim-1g-verification-2026-04-17.log`.
+
+## Phase 1 Complete
+
+Phase 1 (Walk-tracking MVP) ships: Data layer, WalkController, foreground
+service, permissions, Active Walk + Summary screens, Mapbox integration,
+real-device reliability verification. Next: Phase 2 — voice recording +
+transcription.
