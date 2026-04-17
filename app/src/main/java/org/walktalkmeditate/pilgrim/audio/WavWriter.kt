@@ -43,15 +43,24 @@ class WavWriter(
     /**
      * Patches data-size and chunk-size fields, closes the file, and
      * returns the total number of PCM data bytes written.
+     *
+     * Throws IllegalStateException if the recording exceeds the 4 GB
+     * unsigned-32-bit limit of the RIFF size fields. At 16 kHz mono
+     * 16-bit that's ~37 hours in a single file — far beyond any
+     * realistic voice-note duration, but a hard ceiling worth naming.
      */
     fun closeAndPatchHeader(): Long {
         val f = checkNotNull(file) { "WavWriter not open" }
         file = null
+        val chunkSize = HEADER_BYTES + dataBytesWritten - 8L
+        check(dataBytesWritten <= MAX_U32 && chunkSize <= MAX_U32) {
+            "WAV data exceeds RIFF 4 GB limit: dataBytes=$dataBytesWritten"
+        }
         try {
             f.seek(CHUNK_SIZE_OFFSET.toLong())
-            f.write(leInt((HEADER_BYTES + dataBytesWritten - 8).toInt()))
+            f.write(leU32(chunkSize))
             f.seek(DATA_SIZE_OFFSET.toLong())
-            f.write(leInt(dataBytesWritten.toInt()))
+            f.write(leU32(dataBytesWritten))
         } finally {
             f.close()
         }
@@ -84,9 +93,25 @@ class WavWriter(
     private fun leInt(value: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
 
+    /**
+     * Write a 32-bit unsigned little-endian int, accepting any Long in
+     * [0, 2^32 − 1]. The underlying byte pattern is what the RIFF spec
+     * requires; Kotlin's signed Int semantics don't matter once the
+     * value's on disk.
+     */
+    private fun leU32(value: Long): ByteArray {
+        val bytes = ByteArray(4)
+        bytes[0] = (value and 0xFF).toByte()
+        bytes[1] = (value ushr 8 and 0xFF).toByte()
+        bytes[2] = (value ushr 16 and 0xFF).toByte()
+        bytes[3] = (value ushr 24 and 0xFF).toByte()
+        return bytes
+    }
+
     companion object {
         const val HEADER_BYTES = 44
         const val CHUNK_SIZE_OFFSET = 4
         const val DATA_SIZE_OFFSET = 40
+        const val MAX_U32 = 0xFFFF_FFFFL
     }
 }
