@@ -42,4 +42,25 @@ data class VoiceRecording(
     val wordsPerMinute: Double? = null,
     @ColumnInfo(name = "is_enhanced")
     val isEnhanced: Boolean = false,
-)
+) {
+    init {
+        // Reject end < start first so a wall-clock regression (NTP resync,
+        // DST edge, user-set clock) during a recording surfaces as a
+        // construction error instead of a negative durationMillis that
+        // would silently undercount SUM aggregates. Stage 2-B finalize
+        // should clamp or refuse to commit in that case.
+        require(endTimestamp >= startTimestamp) {
+            "endTimestamp ($endTimestamp) must be >= startTimestamp ($startTimestamp) " +
+                "for walk $walkId, recording $uuid (wall-clock regression?)"
+        }
+        // durationMillis is stored redundantly (end - start) for fast
+        // SUM aggregates, which means construction paths in Stage 2-B
+        // (AudioRecord → file finalize) and Stage 2-D (transcription
+        // update) must keep the three fields consistent. Catch any
+        // drift at write time rather than in a future analytics query.
+        require(durationMillis == endTimestamp - startTimestamp) {
+            "durationMillis ($durationMillis) must equal endTimestamp - startTimestamp " +
+                "(${endTimestamp - startTimestamp}) for walk $walkId, recording $uuid"
+        }
+    }
+}

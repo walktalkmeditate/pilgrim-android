@@ -134,14 +134,35 @@ class VoiceRecordingDataLayerTest {
         val walk = makeWalk()
         val first = makeRecording(walk.id, start = 1_000L)
         repository.recordVoice(first)
-        val duplicate = first.copy(id = 0, startTimestamp = 2_000L)
+        // Shift start + end together so the duration invariant holds; the
+        // uuid carries over via .copy() and that's what we want to collide.
+        val duplicate = first.copy(
+            id = 0,
+            startTimestamp = 2_000L,
+            endTimestamp = 2_000L + first.durationMillis,
+        )
 
-        try {
+        // Room 2.x throws android.database.sqlite.SQLiteConstraintException
+        // on unique-index violation. Room 3.x (androidx.sqlite rewrite) is
+        // expected to throw a different type — assert on the message so
+        // the test survives the re-throw type changing without silently
+        // passing when the constraint was actually not enforced.
+        val thrown = try {
             repository.recordVoice(duplicate)
-            fail("expected SQLiteConstraintException for duplicate uuid")
-        } catch (_: SQLiteConstraintException) {
-            // expected
+            null
+        } catch (e: Exception) {
+            e
         }
+        assertNotNull("expected an exception for duplicate uuid", thrown)
+        assertTrue(
+            "expected a unique-constraint message, got: ${thrown?.message}",
+            thrown?.message?.contains("UNIQUE", ignoreCase = true) == true,
+        )
+        assertTrue(
+            "expected exception is SQLiteConstraintException in Room 2.x; " +
+                "got ${thrown?.javaClass?.name}",
+            thrown is SQLiteConstraintException,
+        )
     }
 
     @Test
@@ -187,5 +208,71 @@ class VoiceRecordingDataLayerTest {
 
         assertNull(repository.getVoiceRecording(id))
         assertEquals(0, repository.countVoiceRecordingsFor(walk.id))
+    }
+
+    @Test
+    fun `constructor rejects a recording whose duration disagrees with end minus start`() {
+        try {
+            VoiceRecording(
+                walkId = 1L,
+                startTimestamp = 1_000L,
+                endTimestamp = 6_000L,
+                durationMillis = 10_000L,
+                fileRelativePath = "recordings/1/1000.wav",
+            )
+            fail("expected IllegalArgumentException for durationMillis ≠ end - start")
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `constructor rejects a recording whose end is before its start`() {
+        // Simulates wall-clock regression mid-recording (NTP / DST / user
+        // clock change). Duration matches end - start mathematically, but
+        // a negative durationMillis would corrupt SUM aggregates.
+        try {
+            VoiceRecording(
+                walkId = 1L,
+                startTimestamp = 5_000L,
+                endTimestamp = 4_000L,
+                durationMillis = -1_000L,
+                fileRelativePath = "recordings/1/5000.wav",
+            )
+            fail("expected IllegalArgumentException for endTimestamp < startTimestamp")
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `constructor allows a zero-length recording where start equals end`() {
+        // Edge case: instant-cancel right after start. Duration is 0.
+        // The invariant should NOT reject this — it's a legal state.
+        val zero = VoiceRecording(
+            walkId = 1L,
+            startTimestamp = 5_000L,
+            endTimestamp = 5_000L,
+            durationMillis = 0L,
+            fileRelativePath = "recordings/1/5000.wav",
+        )
+        assertEquals(0L, zero.durationMillis)
+    }
+
+    @Test
+    fun `observeAllVoiceRecordings returns all walks in descending start order`() = runTest {
+        val walkA = makeWalk(start = 1_000L)
+        val walkB = makeWalk(start = 10_000L)
+        repository.recordVoice(makeRecording(walkA.id, start = 2_000L))
+        repository.recordVoice(makeRecording(walkB.id, start = 11_000L))
+        repository.recordVoice(makeRecording(walkA.id, start = 3_000L))
+
+        repository.observeAllVoiceRecordings().test {
+            val all = awaitItem()
+            assertEquals(3, all.size)
+            // DESC ordering by start_timestamp regardless of walk_id.
+            assertEquals(listOf(11_000L, 3_000L, 2_000L), all.map { it.startTimestamp })
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }
