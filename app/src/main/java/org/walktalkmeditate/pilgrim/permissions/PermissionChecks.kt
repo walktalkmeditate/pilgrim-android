@@ -42,6 +42,12 @@ object PermissionChecks {
             true
         }
 
+    fun isMicrophoneGranted(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+
     /** True when the minimum set of required permissions for walk tracking is granted. */
     fun isMinimumGranted(context: Context): Boolean =
         isFineLocationGranted(context) && isNotificationGranted(context)
