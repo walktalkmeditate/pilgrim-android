@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,7 +35,7 @@ fun WalkSummaryScreen(
     onDone: () -> Unit,
     viewModel: WalkSummaryViewModel = hiltViewModel(),
 ) {
-    val summary by viewModel.summary.collectAsStateWithLifecycle()
+    val state by viewModel.state.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -52,18 +53,14 @@ fun WalkSummaryScreen(
         SummaryMapPlaceholder()
         Spacer(Modifier.height(PilgrimSpacing.big))
 
-        val s = summary
-        if (s == null) {
-            // Null indicates either still loading (eager stateIn hasn't
-            // emitted yet — rare) or the walk row is gone (deleted or
-            // never existed). Done still works to navigate home.
-            Text(
+        when (val s = state) {
+            is WalkSummaryUiState.Loading -> LoadingRow()
+            is WalkSummaryUiState.NotFound -> Text(
                 text = stringResource(R.string.summary_unavailable),
                 style = pilgrimType.body,
                 color = pilgrimColors.fog,
             )
-        } else {
-            SummaryStats(summary = s)
+            is WalkSummaryUiState.Loaded -> SummaryStats(summary = s.summary)
         }
 
         Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
@@ -74,6 +71,21 @@ fun WalkSummaryScreen(
         ) {
             Text(stringResource(R.string.summary_action_done))
         }
+    }
+}
+
+@Composable
+private fun LoadingRow() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.height(16.dp),
+            strokeWidth = 2.dp,
+            color = pilgrimColors.stone,
+        )
+        Spacer(Modifier.height(PilgrimSpacing.small))
     }
 }
 

@@ -12,10 +12,22 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
-import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.haversineMeters
+import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
+
+/**
+ * Three-state load for the summary screen: the VM's [summary] flow
+ * starts at [Loading], resolves to [Loaded] when the walk row + samples
+ * + events land, or [NotFound] if the walk row is missing (deleted or
+ * never existed for this id). Replaces the previous nullable pattern
+ * where "loading" and "gone" were indistinguishable.
+ */
+sealed class WalkSummaryUiState {
+    data object Loading : WalkSummaryUiState()
+    data class Loaded(val summary: WalkSummary) : WalkSummaryUiState()
+    data object NotFound : WalkSummaryUiState()
+}
 
 data class WalkSummary(
     val walk: Walk,
@@ -38,24 +50,30 @@ class WalkSummaryViewModel @Inject constructor(
         "walkId argument missing from nav savedStateHandle"
     }
 
-    val summary: StateFlow<WalkSummary?> = flow {
-        emit(buildSummary())
+    val state: StateFlow<WalkSummaryUiState> = flow {
+        emit(buildState())
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
-        initialValue = null,
+        initialValue = WalkSummaryUiState.Loading,
     )
 
-    private suspend fun buildSummary(): WalkSummary? {
-        val walk = repository.getWalk(walkId) ?: return null
+    private suspend fun buildState(): WalkSummaryUiState {
+        val walk = repository.getWalk(walkId) ?: return WalkSummaryUiState.NotFound
         val samples = repository.locationSamplesFor(walkId)
         val events = repository.eventsFor(walkId)
         val waypoints = repository.waypointsFor(walkId)
 
         val distance = walkDistanceFromSamples(samples)
-        val (pausedMs, meditatedMs) = pauseAndMeditateTotalsFromEvents(events)
+        // Close dangling PAUSED/MEDITATION_START intervals at the walk's
+        // end timestamp — the reducer folds them into the in-memory
+        // accumulator on Finish but does not persist synthetic close
+        // events, so the replay would otherwise undercount pause and
+        // meditation time (and overcount active walking).
+        val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
         val totalElapsed = (walk.endTimestamp ?: walk.startTimestamp) - walk.startTimestamp
-        val activeWalking = (totalElapsed - pausedMs - meditatedMs).coerceAtLeast(0)
+        val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
+            .coerceAtLeast(0)
 
         val distanceKm = distance / 1_000.0
         val pace = if (distanceKm >= 0.01 && activeWalking >= 1_000L) {
@@ -64,15 +82,17 @@ class WalkSummaryViewModel @Inject constructor(
             null
         }
 
-        return WalkSummary(
-            walk = walk,
-            totalElapsedMillis = totalElapsed,
-            activeWalkingMillis = activeWalking,
-            totalPausedMillis = pausedMs,
-            totalMeditatedMillis = meditatedMs,
-            distanceMeters = distance,
-            paceSecondsPerKm = pace,
-            waypointCount = waypoints.size,
+        return WalkSummaryUiState.Loaded(
+            WalkSummary(
+                walk = walk,
+                totalElapsedMillis = totalElapsed,
+                activeWalkingMillis = activeWalking,
+                totalPausedMillis = totals.totalPausedMillis,
+                totalMeditatedMillis = totals.totalMeditatedMillis,
+                distanceMeters = distance,
+                paceSecondsPerKm = pace,
+                waypointCount = waypoints.size,
+            ),
         )
     }
 
@@ -91,29 +111,6 @@ class WalkSummaryViewModel @Inject constructor(
             last = point
         }
         return distance
-    }
-
-    private fun pauseAndMeditateTotalsFromEvents(events: List<WalkEvent>): Pair<Long, Long> {
-        var paused = 0L
-        var meditated = 0L
-        var pendingPauseAt: Long? = null
-        var pendingMeditationAt: Long? = null
-        for (e in events) {
-            when (e.eventType) {
-                WalkEventType.PAUSED -> pendingPauseAt = e.timestamp
-                WalkEventType.RESUMED -> pendingPauseAt?.let {
-                    paused += (e.timestamp - it).coerceAtLeast(0)
-                    pendingPauseAt = null
-                }
-                WalkEventType.MEDITATION_START -> pendingMeditationAt = e.timestamp
-                WalkEventType.MEDITATION_END -> pendingMeditationAt?.let {
-                    meditated += (e.timestamp - it).coerceAtLeast(0)
-                    pendingMeditationAt = null
-                }
-                WalkEventType.WAYPOINT_MARKED -> Unit
-            }
-        }
-        return paused to meditated
     }
 
     companion object {
