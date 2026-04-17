@@ -25,6 +25,8 @@ import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
+import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
+import com.mapbox.maps.plugin.locationcomponent.location
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
@@ -74,6 +76,18 @@ fun PilgrimMap(
         polyline = null
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
+            // Show Mapbox's built-in "you are here" puck on the Active
+            // Walk map only. The summary map is a post-hoc review; a live
+            // puck there would be out of place. The default 2D puck uses
+            // Mapbox's stock assets (no custom drawables needed) and
+            // orients to device bearing when available.
+            if (followLatest) {
+                view.location.updateSettings {
+                    enabled = true
+                    pulsingEnabled = true
+                    locationPuck = createDefault2DPuck(withBearing = true)
+                }
+            }
             // Opt out of Mapbox's anonymous event collection once per
             // MapView instance. Pilgrim's privacy posture is
             // no-telemetry-by-default; this covers the plugin's own usage

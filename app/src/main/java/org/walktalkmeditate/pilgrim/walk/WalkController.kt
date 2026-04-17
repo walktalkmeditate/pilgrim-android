@@ -64,18 +64,34 @@ class WalkController @Inject constructor(
         )
         applyEffect(effect)
         _state.value = next
+        Log.i(TAG, "startWalk id=${walk.id} intention=${intention ?: "<none>"} at=$startedAt")
         walk
     }
 
-    suspend fun pauseWalk() = dispatch(WalkAction.Pause(at = clock.now()))
+    suspend fun pauseWalk() {
+        Log.i(TAG, "pauseWalk invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.Pause(at = clock.now()))
+    }
 
-    suspend fun resumeWalk() = dispatch(WalkAction.Resume(at = clock.now()))
+    suspend fun resumeWalk() {
+        Log.i(TAG, "resumeWalk invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.Resume(at = clock.now()))
+    }
 
-    suspend fun startMeditation() = dispatch(WalkAction.MeditateStart(at = clock.now()))
+    suspend fun startMeditation() {
+        Log.i(TAG, "startMeditation invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.MeditateStart(at = clock.now()))
+    }
 
-    suspend fun endMeditation() = dispatch(WalkAction.MeditateEnd(at = clock.now()))
+    suspend fun endMeditation() {
+        Log.i(TAG, "endMeditation invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.MeditateEnd(at = clock.now()))
+    }
 
-    suspend fun finishWalk() = dispatch(WalkAction.Finish(at = clock.now()))
+    suspend fun finishWalk() {
+        Log.i(TAG, "finishWalk invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.Finish(at = clock.now()))
+    }
 
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))
 
@@ -93,8 +109,15 @@ class WalkController @Inject constructor(
      * state from a running session).
      */
     suspend fun restoreActiveWalk(): Walk? = dispatchMutex.withLock {
-        if (_state.value !is WalkState.Idle) return@withLock null
-        val walk = repository.getActiveWalk() ?: return@withLock null
+        if (_state.value !is WalkState.Idle) {
+            Log.i(TAG, "restoreActiveWalk skipped: state=${_state.value::class.simpleName}")
+            return@withLock null
+        }
+        val walk = repository.getActiveWalk()
+        if (walk == null) {
+            Log.i(TAG, "restoreActiveWalk found no unfinished walk")
+            return@withLock null
+        }
 
         val samples = repository.locationSamplesFor(walk.id)
         val events = repository.eventsFor(walk.id)
@@ -122,12 +145,18 @@ class WalkController @Inject constructor(
         )
         val pendingPause = totals.pendingPauseAt
         val pendingMeditation = totals.pendingMeditationAt
-        _state.value = when {
+        val restored = when {
             pendingPause != null -> WalkState.Paused(accumulator, pausedAt = pendingPause)
             pendingMeditation != null ->
                 WalkState.Meditating(accumulator, meditationStartedAt = pendingMeditation)
             else -> WalkState.Active(accumulator)
         }
+        _state.value = restored
+        Log.i(
+            TAG,
+            "restoreActiveWalk id=${walk.id} samples=${samples.size} events=${events.size} " +
+                "distanceM=${distance.toInt()} state=${restored::class.simpleName}",
+        )
         walk
     }
 
@@ -137,6 +166,19 @@ class WalkController @Inject constructor(
             val (next, effect) = WalkReducer.reduce(current, action)
             applyEffect(effect)
             _state.value = next
+            // LocationSampled arrives ~once per second and would flood the
+            // log; emit every 10th sample at DEBUG and leave the rest
+            // silent. Other actions are rare enough to log every time.
+            val actionName = action::class.simpleName
+            val fromName = current::class.simpleName
+            val toName = next::class.simpleName
+            if (action is WalkAction.LocationSampled) {
+                if (fromName != toName) {
+                    Log.i(TAG, "dispatch $actionName: $fromName → $toName (state changed)")
+                }
+            } else {
+                Log.i(TAG, "dispatch $actionName: $fromName → $toName effect=${effect::class.simpleName}")
+            }
         }
     }
 
