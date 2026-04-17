@@ -18,6 +18,9 @@
          via ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. Justified by our
          foreground-service-with-ongoing-notification location tracking. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Mapbox tile downloads. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:name=".PilgrimApp"

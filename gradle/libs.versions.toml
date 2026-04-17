@@ -20,6 +20,8 @@ room = "2.8.4"
 
 playServicesLocation = "21.3.0"
 
+mapbox = "11.11.0"
+
 junit = "4.13.2"
 turbine = "1.2.0"
 robolectric = "4.14.1"
@@ -60,6 +62,8 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
 
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+
+mapbox-maps-android = { group = "com.mapbox.maps", name = "android", version.ref = "mapbox" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }

@@ -72,6 +72,9 @@ class WalkRepository @Inject constructor(
 
     suspend fun locationSamplesFor(walkId: Long): List<RouteDataSample> = routeDao.getForWalk(walkId)
 
+    fun observeLocationSamples(walkId: Long): Flow<List<RouteDataSample>> =
+        routeDao.observeForWalk(walkId)
+
     suspend fun recordAltitude(sample: AltitudeSample): Long = altitudeDao.insert(sample)
 
     suspend fun altitudeSamplesFor(walkId: Long): List<AltitudeSample> = altitudeDao.getForWalk(walkId)

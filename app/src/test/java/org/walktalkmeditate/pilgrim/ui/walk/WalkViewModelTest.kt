@@ -62,7 +62,7 @@ class WalkViewModelTest {
         )
         clock = FakeClock(initial = 1_000L)
         controller = WalkController(repository, clock)
-        viewModel = WalkViewModel(context, controller, clock)
+        viewModel = WalkViewModel(context, controller, repository, clock)
     }
 
     @After

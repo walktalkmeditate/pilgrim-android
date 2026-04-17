@@ -50,6 +50,7 @@
     <string name="walk_stat_paused_time">Paused</string>
     <string name="walk_stat_meditation_time">Meditation</string>
     <string name="walk_map_placeholder">Map coming in Phase 1-F</string>
+    <string name="walk_map_no_route">No route recorded for this walk.</string>
     <string name="walk_action_pause">Pause</string>
     <string name="walk_action_resume">Resume</string>
     <string name="walk_action_meditate">Begin meditation</string>

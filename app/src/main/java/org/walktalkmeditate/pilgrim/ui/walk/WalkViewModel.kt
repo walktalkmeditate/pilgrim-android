@@ -10,16 +10,22 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
@@ -41,10 +47,12 @@ data class WalkUiState(
     val paceSecondsPerKm: Double? get() = WalkStats.averagePaceSecondsPerKm(walkState, nowMillis)
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class WalkViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val controller: WalkController,
+    private val repository: WalkRepository,
     private val clock: Clock,
 ) : ViewModel() {
 
@@ -58,6 +66,43 @@ class WalkViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
         initialValue = WalkUiState(WalkState.Idle, clock.now()),
     )
+
+    /**
+     * Live polyline for the Active Walk map. Observes Room's route
+     * sample table for the current walk's id and maps to domain
+     * [LocationPoint]s. Emits an empty list while no walk is in progress.
+     */
+    val routePoints: StateFlow<List<LocationPoint>> = controller.state
+        .flatMapLatest { state ->
+            val walkId = walkIdOrNull(state)
+            if (walkId == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeLocationSamples(walkId).map { samples ->
+                    samples.map { sample ->
+                        LocationPoint(
+                            timestamp = sample.timestamp,
+                            latitude = sample.latitude,
+                            longitude = sample.longitude,
+                            horizontalAccuracyMeters = sample.horizontalAccuracyMeters,
+                            speedMetersPerSecond = sample.speedMetersPerSecond,
+                        )
+                    }
+                }
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
+
+    private fun walkIdOrNull(state: WalkState): Long? = when (state) {
+        WalkState.Idle -> null
+        is WalkState.Active -> state.walk.walkId
+        is WalkState.Paused -> state.walk.walkId
+        is WalkState.Meditating -> state.walk.walkId
+        is WalkState.Finished -> state.walk.walkId
+    }
 
     fun startWalk(intention: String? = null) {
         viewModelScope.launch {
