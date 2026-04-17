@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,12 +26,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -41,9 +45,19 @@ fun ActiveWalkScreen(
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // State-driven navigation: when the controller reaches Finished we
-    // leave this screen for the summary. Avoids UI-layer state inference.
-    LaunchedEffect(ui.walkState) {
+    // Back press during a walk would otherwise pop us to Home with the
+    // controller still in Active (service still tracking, timer still
+    // ticking, no UI to finish it). Treat back like Home: move the task
+    // to background. The walk continues, notification stays visible, user
+    // can return from the launcher or the notification tap.
+    val context = LocalContext.current
+    BackHandler(enabled = ui.walkState.isInProgress) {
+        (context as? Activity)?.moveTaskToBack(true)
+    }
+
+    // Key on state *class* so navigation fires on transitions only,
+    // not on every location-sample-driven Active → Active recomposition.
+    LaunchedEffect(ui.walkState::class) {
         val state = ui.walkState
         if (state is WalkState.Finished) onFinished(state.walk.walkId)
     }

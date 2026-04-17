@@ -12,3 +12,14 @@ sealed class WalkState {
 
     data class Finished(val walk: WalkAccumulator, val endedAt: Long) : WalkState()
 }
+
+/**
+ * True when a walk is being tracked right now (Active, Paused, or
+ * Meditating). Used by UI surfaces to decide whether to route to
+ * ActiveWalkScreen even when the user arrived at another route via
+ * back navigation or a restored session.
+ */
+val WalkState.isInProgress: Boolean
+    get() = this is WalkState.Active ||
+        this is WalkState.Paused ||
+        this is WalkState.Meditating

@@ -2,12 +2,14 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.content.Context
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -60,10 +62,23 @@ class WalkViewModel @Inject constructor(
     fun startWalk(intention: String? = null) {
         viewModelScope.launch {
             controller.startWalk(intention)
-            ContextCompat.startForegroundService(
-                context,
-                WalkTrackingService.startIntent(context),
-            )
+            try {
+                ContextCompat.startForegroundService(
+                    context,
+                    WalkTrackingService.startIntent(context),
+                )
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (e: Exception) {
+                // Service refused to start — most commonly
+                // ForegroundServiceStartNotAllowedException (API 31+ when
+                // triggered from a background state) or SecurityException
+                // (FINE_LOCATION revoked between our gate and this call).
+                // Roll back the in-memory walk so state and "actually
+                // tracking" stay consistent.
+                Log.w(TAG, "could not start walk tracking service", e)
+                controller.finishWalk()
+            }
         }
     }
 
@@ -104,5 +119,6 @@ class WalkViewModel @Inject constructor(
     private companion object {
         const val TICK_INTERVAL_MS = 1_000L
         const val SUBSCRIBER_GRACE_MS = 5_000L
+        const val TAG = "WalkViewModel"
     }
 }
