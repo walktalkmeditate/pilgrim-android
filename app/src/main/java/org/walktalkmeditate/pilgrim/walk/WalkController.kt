@@ -64,7 +64,10 @@ class WalkController @Inject constructor(
         )
         applyEffect(effect)
         _state.value = next
-        Log.i(TAG, "startWalk id=${walk.id} intention=${intention ?: "<none>"} at=$startedAt")
+        // Log presence, not content — intentions can carry privacy-sensitive
+        // text ("mourning Y", "anxiety about Z") that we don't want landing
+        // in logcat where other debug tooling might capture it.
+        Log.i(TAG, "startWalk id=${walk.id} intentionSet=${intention != null} at=$startedAt")
         walk
     }
 
