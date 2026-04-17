@@ -13,8 +13,8 @@ import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.haversineMeters
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
+import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 
 /**
  * Three-state load for the summary screen: the VM's [summary] flow
@@ -64,7 +64,15 @@ class WalkSummaryViewModel @Inject constructor(
         val events = repository.eventsFor(walkId)
         val waypoints = repository.waypointsFor(walkId)
 
-        val distance = walkDistanceFromSamples(samples)
+        val distance = walkDistanceMeters(
+            samples.map {
+                LocationPoint(
+                    timestamp = it.timestamp,
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                )
+            },
+        )
         // Close dangling PAUSED/MEDITATION_START intervals at the walk's
         // end timestamp — the reducer folds them into the in-memory
         // accumulator on Finish but does not persist synthetic close
@@ -94,23 +102,6 @@ class WalkSummaryViewModel @Inject constructor(
                 waypointCount = waypoints.size,
             ),
         )
-    }
-
-    private fun walkDistanceFromSamples(
-        samples: List<org.walktalkmeditate.pilgrim.data.entity.RouteDataSample>,
-    ): Double {
-        var distance = 0.0
-        var last: LocationPoint? = null
-        for (s in samples) {
-            val point = LocationPoint(
-                timestamp = s.timestamp,
-                latitude = s.latitude,
-                longitude = s.longitude,
-            )
-            if (last != null) distance += haversineMeters(last, point)
-            last = point
-        }
-        return distance
     }
 
     companion object {

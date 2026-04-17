@@ -19,10 +19,10 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkAction
 import org.walktalkmeditate.pilgrim.domain.WalkEffect
-import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkReducer
 import org.walktalkmeditate.pilgrim.domain.WalkState
-import org.walktalkmeditate.pilgrim.domain.haversineMeters
+import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
+import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 
 /**
  * Single source of truth for the in-memory walk state and the bridge
@@ -99,52 +99,33 @@ class WalkController @Inject constructor(
         val samples = repository.locationSamplesFor(walk.id)
         val events = repository.eventsFor(walk.id)
 
-        var distance = 0.0
-        var lastPoint: LocationPoint? = null
-        for (sample in samples) {
-            val point = LocationPoint(
+        val points = samples.map { sample ->
+            LocationPoint(
                 timestamp = sample.timestamp,
                 latitude = sample.latitude,
                 longitude = sample.longitude,
                 horizontalAccuracyMeters = sample.horizontalAccuracyMeters,
                 speedMetersPerSecond = sample.speedMetersPerSecond,
             )
-            if (lastPoint != null) distance += haversineMeters(lastPoint, point)
-            lastPoint = point
         }
-
-        var totalPaused = 0L
-        var totalMeditated = 0L
-        var pendingPauseAt: Long? = null
-        var pendingMeditationAt: Long? = null
-        for (event in events) {
-            when (event.eventType) {
-                WalkEventType.PAUSED -> pendingPauseAt = event.timestamp
-                WalkEventType.RESUMED -> pendingPauseAt?.let {
-                    totalPaused += (event.timestamp - it).coerceAtLeast(0)
-                    pendingPauseAt = null
-                }
-                WalkEventType.MEDITATION_START -> pendingMeditationAt = event.timestamp
-                WalkEventType.MEDITATION_END -> pendingMeditationAt?.let {
-                    totalMeditated += (event.timestamp - it).coerceAtLeast(0)
-                    pendingMeditationAt = null
-                }
-                WalkEventType.WAYPOINT_MARKED -> Unit
-            }
-        }
+        val distance = walkDistanceMeters(points)
+        val lastPoint = points.lastOrNull()
+        val totals = replayWalkEventTotals(events = events, closeAt = null)
 
         val accumulator = WalkAccumulator(
             walkId = walk.id,
             startedAt = walk.startTimestamp,
             lastLocation = lastPoint,
             distanceMeters = distance,
-            totalPausedMillis = totalPaused,
-            totalMeditatedMillis = totalMeditated,
+            totalPausedMillis = totals.totalPausedMillis,
+            totalMeditatedMillis = totals.totalMeditatedMillis,
         )
+        val pendingPause = totals.pendingPauseAt
+        val pendingMeditation = totals.pendingMeditationAt
         _state.value = when {
-            pendingPauseAt != null -> WalkState.Paused(accumulator, pausedAt = pendingPauseAt!!)
-            pendingMeditationAt != null ->
-                WalkState.Meditating(accumulator, meditationStartedAt = pendingMeditationAt!!)
+            pendingPause != null -> WalkState.Paused(accumulator, pausedAt = pendingPause)
+            pendingMeditation != null ->
+                WalkState.Meditating(accumulator, meditationStartedAt = pendingMeditation)
             else -> WalkState.Active(accumulator)
         }
         walk
