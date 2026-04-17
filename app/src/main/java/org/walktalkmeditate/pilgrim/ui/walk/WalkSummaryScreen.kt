@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -89,8 +90,10 @@ private fun LoadingRow() {
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // CircularProgressIndicator needs equal width + height — height()
+        // alone collapses to zero width and renders invisibly.
         CircularProgressIndicator(
-            modifier = Modifier.height(16.dp),
+            modifier = Modifier.size(16.dp),
             strokeWidth = 2.dp,
             color = pilgrimColors.stone,
         )

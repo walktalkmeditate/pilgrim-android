@@ -43,21 +43,26 @@ jobs:
       - name: Assemble debug
         env:
           # Mapbox SDK artifacts live behind an authenticated Maven repo.
-          # Add MAPBOX_DOWNLOADS_TOKEN to repo Settings → Secrets (scope:
-          # downloads:read) so CI can resolve com.mapbox.* dependencies.
-          # Absent token → 401 from Mapbox → assemble fails loudly, which
-          # is the intended failure mode for a misconfigured repo.
+          # Add MAPBOX_DOWNLOADS_TOKEN (scope: downloads:read) as a repo
+          # secret so CI can resolve com.mapbox.* dependencies. Absent
+          # token → 401 from Mapbox → assemble fails loudly.
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          # Public access token (pk.xxx) baked into BuildConfig at build
+          # time. Debug APKs from CI without this can't render map tiles;
+          # useful for emulator/instrumented testing downstream.
+          MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
         run: ./gradlew assembleDebug
 
       - name: Lint
         env:
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
         run: ./gradlew lintDebug
 
       - name: Unit tests
         env:
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
         run: ./gradlew testDebugUnitTest
 
       - name: Upload lint report

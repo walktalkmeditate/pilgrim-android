@@ -15,11 +15,14 @@ import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
+import com.mapbox.maps.plugin.animation.MapAnimationOptions
+import com.mapbox.maps.plugin.animation.easeTo
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
+import com.mapbox.maps.plugin.attribution.attribution
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
@@ -54,12 +57,16 @@ fun PilgrimMap(
     // light after the user toggles dark mode (or vice versa).
     LaunchedEffect(styleUri) {
         val view = mapView ?: return@LaunchedEffect
+        // Null synchronously *before* loadStyle kicks off. loadStyle is
+        // async — if we waited to clear these inside the callback, the
+        // AndroidView update block could run in the interim and call
+        // manager.update() on a manager whose annotations the new style
+        // has already invalidated. Clearing first makes that window a
+        // no-op (update bails on null manager).
+        polylineManager = null
+        polyline = null
         view.mapboxMap.loadStyle(styleUri) {
-            // Style reload drops existing annotations — rebuild the
-            // manager and clear our cached polyline reference so the
-            // next update recreates it against the fresh manager.
             polylineManager = view.annotations.createPolylineAnnotationManager()
-            polyline = null
         }
     }
 
@@ -68,6 +75,14 @@ fun PilgrimMap(
         factory = { context ->
             MapView(context).also { view ->
                 mapView = view
+                // Opt out of Mapbox's anonymous event collection. Pilgrim's
+                // privacy posture is no-telemetry-by-default; this covers
+                // the Mapbox plugin's own usage pings (map interaction
+                // events, style loads, etc.). Default attribution UI still
+                // shows and still lets users opt back in if they want.
+                view.attribution.getMapAttributionDelegate()
+                    .telemetry()
+                    .setUserTelemetryRequestState(false)
                 view.mapboxMap.loadStyle(styleUri) {
                     polylineManager = view.annotations.createPolylineAnnotationManager()
                 }
@@ -94,11 +109,14 @@ fun PilgrimMap(
                 }
 
                 if (followLatest) {
-                    view.mapboxMap.setCamera(
+                    // Animate rather than snap — each new GPS sample nudges
+                    // the camera smoothly instead of jittering it.
+                    view.mapboxMap.easeTo(
                         CameraOptions.Builder()
                             .center(mapboxPoints.last())
                             .zoom(FOLLOW_ZOOM)
                             .build(),
+                        MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                     )
                 } else if (!didFitBounds) {
                     val camera = view.mapboxMap.cameraForCoordinates(
@@ -108,28 +126,45 @@ fun PilgrimMap(
                         null,
                         null,
                     )
-                    view.mapboxMap.setCamera(camera)
+                    // Clamp max zoom for fit-bounds — a walk contained to a
+                    // single city block otherwise resolves to street-level
+                    // zoom, which looks like the map is broken.
+                    val clamped = CameraOptions.Builder()
+                        .center(camera.center)
+                        .zoom(camera.zoom?.coerceAtMost(MAX_FIT_ZOOM))
+                        .padding(camera.padding)
+                        .bearing(camera.bearing)
+                        .pitch(camera.pitch)
+                        .anchor(camera.anchor)
+                        .build()
+                    view.mapboxMap.setCamera(clamped)
                     didFitBounds = true
                 }
             } else if (points.size == 1 && followLatest) {
                 val only = points.first()
-                view.mapboxMap.setCamera(
+                view.mapboxMap.easeTo(
                     CameraOptions.Builder()
                         .center(Point.fromLngLat(only.longitude, only.latitude))
                         .zoom(FOLLOW_ZOOM)
                         .build(),
+                    MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                 )
             }
         },
-        onRelease = { view ->
+        onRelease = {
+            // MapView auto-wires its own lifecycle observer in v10+. The
+            // Compose AndroidView release already detaches the view; calling
+            // onDestroy() here would double-dispose and risk a NPE when the
+            // internal observer fires later.
             mapView = null
             polylineManager = null
             polyline = null
-            view.onDestroy()
         },
     )
 }
 
 private const val POLYLINE_WIDTH_DP = 4.0
 private const val FOLLOW_ZOOM = 16.0
+private const val MAX_FIT_ZOOM = 17.0
+private const val FOLLOW_EASE_MS = 1500L
 private const val PADDING_PX = 64.0
