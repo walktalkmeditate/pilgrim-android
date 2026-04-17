@@ -14,7 +14,9 @@ val localProperties = Properties().apply {
         load(localPropertiesFile.inputStream())
     }
 }
-val mapboxAccessToken: String = localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")
+val mapboxAccessToken: String = localProperties.getProperty("MAPBOX_ACCESS_TOKEN")
+    ?: System.getenv("MAPBOX_ACCESS_TOKEN")
+    ?: ""
 
 fun String.toJavaStringLiteral(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
