@@ -129,7 +129,12 @@ class VoiceRecorder @Inject constructor(
             val buffer = ShortArray(BUFFER_SAMPLES)
             while (!s.stopRequested.get()) {
                 val n = audioCapture.read(buffer)
-                if (n <= 0) break
+                // Negative = EOF or AudioRecord error code; bail. 0 is a
+                // valid "no data yet, try again" per the AudioCapture
+                // contract (rare in AudioRecord blocking mode but the
+                // interface permits it for future stream-over-IPC impls).
+                if (n < 0) break
+                if (n == 0) continue
                 s.writer.append(buffer, n)
                 _audioLevel.value = rmsNormalized(buffer, n)
             }

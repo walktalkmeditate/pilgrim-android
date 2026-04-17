@@ -18,6 +18,7 @@ import org.walktalkmeditate.pilgrim.audio.AudioRecordCapture
 abstract class AudioModule {
 
     @Binds
+    @Singleton
     abstract fun bindAudioCapture(impl: AudioRecordCapture): AudioCapture
 
     companion object {

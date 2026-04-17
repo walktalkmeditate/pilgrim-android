@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.audio
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,12 +14,17 @@ import javax.inject.Singleton
  * receive the SAME instance passed to `requestAudioFocus`, so letting
  * VoiceRecorder's state machine hold it would open the door to leaks
  * when an error path skips the abandon.
+ *
+ * Thread-safe: the active-request reference is held in an
+ * [AtomicReference] so future audio consumers (Stage 2-D transcription
+ * previews, Stage 2-E playback) can share this @Singleton without
+ * external synchronization.
  */
 @Singleton
 class AudioFocusCoordinator @Inject constructor(
     private val audioManager: AudioManager,
 ) {
-    private var activeRequest: AudioFocusRequest? = null
+    private val activeRequest = AtomicReference<AudioFocusRequest?>(null)
 
     /** Returns true if focus was granted. */
     fun requestTransient(): Boolean {
@@ -33,15 +39,18 @@ class AudioFocusCoordinator @Inject constructor(
             .setAcceptsDelayedFocusGain(false)
             .build()
         val result = audioManager.requestAudioFocus(request)
-        activeRequest = request
+        activeRequest.set(request)
         return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     }
 
     fun abandon() = abandonIfHeld()
 
     private fun abandonIfHeld() {
-        val req = activeRequest ?: return
-        activeRequest = null
+        // getAndSet(null) is the CAS we want: whichever caller wins the
+        // swap is the one that calls abandon; losers no-op. Prevents
+        // two concurrent abandons from both passing the same request to
+        // abandonAudioFocusRequest.
+        val req = activeRequest.getAndSet(null) ?: return
         audioManager.abandonAudioFocusRequest(req)
     }
 }
