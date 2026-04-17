@@ -15,7 +15,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
-import com.mapbox.maps.MapInitOptions
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.animation.MapAnimationOptions
@@ -57,6 +56,10 @@ fun PilgrimMap(
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var didFitBounds by remember { mutableStateOf(false) }
+    // Tracked per-composition: when onRelease clears mapView the composable
+    // is exiting so remember resets naturally, giving a new MapView instance
+    // a fresh opt-out on next entry.
+    var telemetryOptedOut by remember { mutableStateOf(false) }
 
     // Own the style load from one place so init and theme toggles cannot
     // race each other. Keyed on (mapView, styleUri): first pass with
@@ -71,21 +74,27 @@ fun PilgrimMap(
         polyline = null
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
-            // Opt out of Mapbox's anonymous event collection. Pilgrim's
-            // privacy posture is no-telemetry-by-default; this covers the
-            // plugin's own usage pings (map interaction events, style
-            // loads, etc.). Done inside the loadStyle callback so the
-            // telemetry subsystem is initialized before we flip the flag.
-            // Default attribution UI still shows and still lets users opt
-            // back in from there if they want.
-            try {
-                view.attribution.getMapAttributionDelegate()
-                    .telemetry()
-                    .setUserTelemetryRequestState(false)
-            } catch (_: Exception) {
-                // Tolerate Mapbox shaving or renaming the telemetry accessor
-                // in a point release — a failed opt-out must not crash the
-                // map. Errors (OOM, etc.) still propagate.
+            // Opt out of Mapbox's anonymous event collection once per
+            // MapView instance. Pilgrim's privacy posture is
+            // no-telemetry-by-default; this covers the plugin's own usage
+            // pings (map interaction events, style loads, etc.). Done
+            // inside the loadStyle callback so the telemetry subsystem is
+            // initialized before we flip the flag. The default attribution
+            // UI still shows and still lets users opt back in from there.
+            // Guarded by telemetryOptedOut so theme toggles don't re-flip
+            // the bit (redundant, and future SDKs might interpret repeated
+            // writes as preference cycling).
+            if (!telemetryOptedOut) {
+                try {
+                    view.attribution.getMapAttributionDelegate()
+                        .telemetry()
+                        .setUserTelemetryRequestState(false)
+                    telemetryOptedOut = true
+                } catch (_: Exception) {
+                    // Tolerate Mapbox shaving or renaming the telemetry
+                    // accessor in a point release — a failed opt-out must
+                    // not crash the map. Errors (OOM, etc.) still propagate.
+                }
             }
         }
     }
@@ -93,13 +102,14 @@ fun PilgrimMap(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            // Pass the initial styleUri to the constructor so the SDK starts
-            // parsing the style on the first render frame rather than after
-            // LaunchedEffect fires. Avoids the brief blank-canvas flash on
-            // screens that navigate to the map (and makes cold starts feel
-            // less "loading-y"). LaunchedEffect still coalesces any redundant
-            // load for the same URI.
-            MapView(context, MapInitOptions(context = context, styleUri = styleUri)).also { view ->
+            // No MapInitOptions(styleUri): earlier attempts to pre-load the
+            // style from the constructor raced against LaunchedEffect's
+            // loadStyle, with no documented coalescing in the Mapbox SDK —
+            // two callbacks could fire and create a second annotation
+            // manager that orphaned the first one's polyline. The cost of
+            // avoiding that is a ~100ms blank canvas on first render, which
+            // is acceptable for a contemplative walking app.
+            MapView(context).also { view ->
                 mapView = view
             }
         },
@@ -152,9 +162,14 @@ fun PilgrimMap(
                     )
                     // Clamp max zoom for fit-bounds — a walk contained to a
                     // single city block otherwise resolves to street-level
-                    // zoom, which reads as "the map is broken".
+                    // zoom, which reads as "the map is broken". Fall back
+                    // to MAX_FIT_ZOOM if cameraForCoordinates returns a
+                    // null zoom (degenerate bounding box); leaving it null
+                    // means setCamera preserves the prior zoom, which on a
+                    // fresh map is 0 — the whole globe.
+                    val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
                     val clamped = camera.toBuilder()
-                        .zoom(camera.zoom?.coerceAtMost(MAX_FIT_ZOOM))
+                        .zoom(clampedZoom)
                         .build()
                     view.mapboxMap.setCamera(clamped)
                     didFitBounds = true
@@ -181,12 +196,17 @@ fun PilgrimMap(
             // Under AndroidView interop, onRelease is the composable-exit
             // hook — without this call, each navigation to/from the map
             // leaks ~12 MB of native memory (mapbox-maps-android#2079).
-            // Destroy first so any recompose scheduled by the state writes
-            // below cannot observe a partially-torn-down MapView.
-            view.onDestroy()
-            mapView = null
-            polylineManager = null
-            polyline = null
+            // try/finally so that even if onDestroy throws (e.g., the
+            // system already released the GL surface under low-memory
+            // trim), we still null our references — otherwise a remount
+            // would resurrect a dead MapView.
+            try {
+                view.onDestroy()
+            } finally {
+                mapView = null
+                polylineManager = null
+                polyline = null
+            }
         },
     )
 }
