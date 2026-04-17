@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.home
 
+import android.util.Log
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
+
+private const val TAG = "HomeScreen"
 
 /**
  * Stage 1-E home surface. On first composition, runs a one-shot resume
@@ -53,12 +56,20 @@ fun HomeScreen(
         // Already walking (notification-return, recomposition after
         // backgrounding)? Go straight to the active screen.
         val current = walkViewModel.uiState.value.walkState
+        Log.i(TAG, "resume-check entry state=${current::class.simpleName}")
         if (current.isInProgress) {
+            Log.i(TAG, "resume-check: already in progress, navigating to ActiveWalk")
             onEnterActiveWalk()
             return@LaunchedEffect
         }
         // Walk row in Room from a previous process — rehydrate and go.
-        walkViewModel.restoreActiveWalk()?.also { onEnterActiveWalk() }
+        val restored = walkViewModel.restoreActiveWalk()
+        if (restored != null) {
+            Log.i(TAG, "resume-check: restored walk id=${restored.id}, navigating to ActiveWalk")
+            onEnterActiveWalk()
+        } else {
+            Log.i(TAG, "resume-check: nothing to restore, staying on Home")
+        }
     }
 
     Column(
