@@ -39,8 +39,13 @@ class AudioFocusCoordinator @Inject constructor(
             .setAcceptsDelayedFocusGain(false)
             .build()
         val result = audioManager.requestAudioFocus(request)
-        activeRequest.set(request)
-        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        val granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        // Only record the request if focus was actually granted —
+        // otherwise a future abandon() would submit a never-held request
+        // to AudioManager, and the coordinator's "is focus held" state
+        // would be subtly wrong.
+        if (granted) activeRequest.set(request)
+        return granted
     }
 
     fun abandon() = abandonIfHeld()

@@ -248,6 +248,23 @@ class VoiceRecorderTest {
     }
 
     @Test
+    fun `stop when no samples were captured returns EmptyRecording and deletes file`() = runBlocking<Unit> {
+        // FakeAudioCapture with no bursts → read() always returns -1 →
+        // capture loop exits immediately without appending any PCM.
+        audioCapture = FakeAudioCapture(bursts = emptyList())
+        recorder = VoiceRecorder(context, audioCapture, focus, clock)
+
+        val started = recorder.start(walkId = 1L, walkUuid = walkUuidA)
+        assertTrue("start should succeed", started.isSuccess)
+        val path = started.getOrThrow()
+        val stopped = recorder.stop()
+
+        assertTrue(stopped.isFailure)
+        assertEquals(VoiceRecorderError.EmptyRecording, stopped.exceptionOrNull())
+        assertTrue("empty .wav should be deleted, still exists at $path", !Files.exists(path))
+    }
+
+    @Test
     fun `uuid in fileRelativePath is parseable as a UUID`() = runBlocking<Unit> {
         recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()
         waitForCaptureProgress()

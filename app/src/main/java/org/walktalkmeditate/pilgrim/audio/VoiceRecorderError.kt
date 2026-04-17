@@ -30,4 +30,17 @@ sealed class VoiceRecorderError : Exception() {
     data class FileSystemError(override val cause: Throwable) : VoiceRecorderError() {
         override val message: String = "failed to create recording file: ${cause.message}"
     }
+
+    /**
+     * Capture loop terminated without writing any PCM. Happens when the
+     * user taps record + stop faster than AudioRecord's first buffer
+     * fills, or when Android 14+ silently kills AudioRecord for a
+     * backgrounded app (FGS type=location doesn't cover mic access; see
+     * the Stage 2-B spec's forward-carry note). Empty .wav is deleted
+     * from disk before this error is returned.
+     */
+    data object EmptyRecording : VoiceRecorderError() {
+        private fun readResolve(): Any = EmptyRecording
+        override val message: String = "recording ended with no audio captured"
+    }
 }
