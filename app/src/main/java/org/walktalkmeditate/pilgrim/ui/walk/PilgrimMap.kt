@@ -81,6 +81,16 @@ fun PilgrimMap(
             // puck there would be out of place. The default 2D puck uses
             // Mapbox's stock assets (no custom drawables needed) and
             // orients to device bearing when available.
+            //
+            // Tech debt: Mapbox's DefaultLocationProvider creates its own
+            // FusedLocationProviderClient subscription, separate from our
+            // WalkTrackingService's FusedLocationSource. Both request
+            // AccuracyLevel.HIGH / PRIORITY_HIGH_ACCURACY so the platform-
+            // merged work item stays at full GPS fidelity — no harm to
+            // sample quality — but it's two callback chains for the same
+            // GNSS stream. Future cleanup: implement a LocationProvider
+            // backed by FusedLocationSource (turning it into a SharedFlow)
+            // so the map + service share one subscription.
             if (followLatest) {
                 view.location.updateSettings {
                     enabled = true
