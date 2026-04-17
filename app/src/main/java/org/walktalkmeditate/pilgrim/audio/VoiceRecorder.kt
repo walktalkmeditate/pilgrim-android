@@ -102,6 +102,16 @@ class VoiceRecorder @Inject constructor(
         }
     }
 
+    /**
+     * Stops the in-flight recording and returns its persisted entity.
+     *
+     * **Caller contract:** this method blocks on `doneLatch.await()` for
+     * up to one `AudioCapture.read()` cycle (~100 ms on nominal
+     * hardware; longer on MediaTek devices under battery saver). **Do
+     * NOT call from a UI thread** — Stage 2-C must dispatch to
+     * `Dispatchers.IO` or the foreground service's coroutine scope.
+     * Calling on the main looper will ANR.
+     */
     fun stop(): Result<VoiceRecording> {
         val s = synchronized(stateLock) {
             session.getAndSet(null)
