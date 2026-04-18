@@ -113,6 +113,19 @@ object SeasonalColorEngine {
         )
     }
 
+    /**
+     * Maps a calendar day to the day-of-year the palette algorithm
+     * should treat it as. Northern = identity. Southern shifts by
+     * 182 days (≈6 months) so a southern user's palette feels season-
+     * appropriate.
+     *
+     * Leap-year note: on Dec 31 of a leap year `doy = 366`, which
+     * maps to `((366 + 182) % 365) + 1 = 184` in the southern frame.
+     * Day 184 is close to the summer peak (196) — which is the
+     * *correct* palette because Dec 31 IS summer for a southern-
+     * hemisphere user. The formula matches iOS verbatim and works
+     * correctly across the leap boundary.
+     */
     internal fun adjustedDayOfYear(date: LocalDate, hemisphere: Hemisphere): Int {
         val doy = date.dayOfYear
         return when (hemisphere) {
