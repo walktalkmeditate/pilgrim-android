@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -63,6 +64,7 @@ class WalkViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val clock: Clock,
     private val voiceRecorder: VoiceRecorder,
+    private val transcriptionScheduler: TranscriptionScheduler,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -350,7 +352,15 @@ class WalkViewModel @Inject constructor(
     }
 
     fun finishWalk() {
-        viewModelScope.launch { controller.finishWalk() }
+        viewModelScope.launch {
+            controller.finishWalk()
+            // After Finished is reached the controller still exposes the
+            // walk's id; enqueue Stage 2-D's transcription pass for any
+            // VoiceRecording rows whose transcription is still null.
+            walkIdOrNull(controller.state.value)?.let { walkId ->
+                transcriptionScheduler.scheduleForWalk(walkId)
+            }
+        }
     }
 
     /**

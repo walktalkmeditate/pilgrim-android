@@ -53,5 +53,22 @@
             android:exported="false"
             android:foregroundServiceType="location"
             android:stopWithTask="false" />
+
+        <!-- WorkManager is initialized via Configuration.Provider in
+             PilgrimApp so its WorkerFactory can access Hilt-bound
+             dependencies. The androidx.startup InitializationProvider
+             would otherwise invoke WorkManagerInitializer with the
+             default Configuration. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
     </application>
 </manifest>
