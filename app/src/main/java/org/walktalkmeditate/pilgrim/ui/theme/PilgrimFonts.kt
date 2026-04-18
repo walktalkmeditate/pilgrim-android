@@ -50,11 +50,12 @@ object PilgrimFonts {
     val cormorantGaramond: FontFamily = FontFamily(
         // variationSettings is required for a variable-weight TTF —
         // without it, all three Font entries default to the font's
-        // built-in default instance (~400), so FontWeight.Light and
-        // FontWeight.SemiBold callers would render identically. The
-        // weight parameter tells Compose "this entry serves weight X
-        // requests"; variationSettings tells the typeface system to
-        // instantiate the variable font at wght=X.
+        // built-in default instance (~300 for Cormorant Garamond),
+        // so FontWeight.Light and FontWeight.SemiBold callers would
+        // render identically. The weight parameter tells Compose
+        // "this entry serves weight X requests"; variationSettings
+        // tells the typeface system to instantiate the variable font
+        // at wght=X.
         Font(
             resId = R.font.cormorant_garamond_variable,
             weight = FontWeight.Light,
