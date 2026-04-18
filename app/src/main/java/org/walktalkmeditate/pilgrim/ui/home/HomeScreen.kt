@@ -2,23 +2,31 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import android.util.Log
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
@@ -31,30 +39,31 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 private const val TAG = "HomeScreen"
 
 /**
- * Stage 1-E home surface. On first composition, runs a one-shot resume
- * check: if the controller is already tracking (notification-return, or
- * unfinished walk row restored from Room), route straight to ActiveWalk.
- * Otherwise show the Start button.
+ * Stage 3-A: Home surface with walk list. Stage 1-E introduced the
+ * scaffolding (Start button, BatteryExemptionCard, resume-check
+ * LaunchedEffect); 3-A replaces the placeholder title+subtitle with
+ * a [HomeViewModel]-driven list of finished walks.
  *
- * Using a one-shot LaunchedEffect(Unit) rather than a state-observer
- * LaunchedEffect avoids a back-stack race where HomeScreen stays in
- * STARTED lifecycle while the user is on ActiveWalkScreen, and state
- * transitions from Active → Paused → Meditating would re-fire a
- * navigate call on the observer, stacking duplicate ACTIVE_WALK
- * entries.
+ * The resume-check is preserved verbatim: on first composition, route
+ * straight to ActiveWalk if the controller is already tracking or
+ * there's an unfinished walk row in Room. Using a one-shot
+ * `LaunchedEffect(Unit)` rather than a state-observer avoids a back-
+ * stack race where HomeScreen stays STARTED while the user is on
+ * ActiveWalkScreen, and state transitions Active → Paused →
+ * Meditating would stack duplicate ACTIVE_WALK entries.
  */
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
     onEnterActiveWalk: () -> Unit,
+    onEnterWalkSummary: (Long) -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
+    homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
     val didResumeCheck = remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (didResumeCheck.value) return@LaunchedEffect
         didResumeCheck.value = true
-        // Already walking (notification-return, recomposition after
-        // backgrounding)? Go straight to the active screen.
         val current = walkViewModel.uiState.value.walkState
         Log.i(TAG, "resume-check entry state=${current::class.simpleName}")
         if (current.isInProgress) {
@@ -62,7 +71,6 @@ fun HomeScreen(
             onEnterActiveWalk()
             return@LaunchedEffect
         }
-        // Walk row in Room from a previous process — rehydrate and go.
         val restored = walkViewModel.restoreActiveWalk()
         if (restored != null) {
             Log.i(TAG, "resume-check: restored walk id=${restored.id}, navigating to ActiveWalk")
@@ -72,6 +80,8 @@ fun HomeScreen(
         }
     }
 
+    val uiState by homeViewModel.uiState.collectAsStateWithLifecycle()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -79,16 +89,17 @@ fun HomeScreen(
             .padding(PilgrimSpacing.big),
     ) {
         Text(
-            text = stringResource(R.string.home_placeholder_title),
+            text = stringResource(R.string.home_title),
             style = pilgrimType.displayMedium,
             color = pilgrimColors.ink,
         )
-        Spacer(Modifier.height(PilgrimSpacing.small))
-        Text(
-            text = stringResource(R.string.home_placeholder_subtitle),
-            style = pilgrimType.body,
-            color = pilgrimColors.fog,
+        Spacer(Modifier.height(PilgrimSpacing.big))
+
+        HomeListContent(
+            uiState = uiState,
+            onRowClick = onEnterWalkSummary,
         )
+
         Spacer(Modifier.height(PilgrimSpacing.big))
 
         Button(
@@ -103,5 +114,49 @@ fun HomeScreen(
 
         Spacer(Modifier.height(PilgrimSpacing.big))
         BatteryExemptionCard(viewModel = permissionsViewModel)
+    }
+}
+
+@Composable
+private fun HomeListContent(
+    uiState: HomeUiState,
+    onRowClick: (Long) -> Unit,
+) {
+    when (uiState) {
+        is HomeUiState.Loading -> {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = pilgrimColors.stone,
+                )
+            }
+        }
+        is HomeUiState.Empty -> {
+            Text(
+                text = stringResource(R.string.home_empty_message),
+                style = pilgrimType.body,
+                color = pilgrimColors.fog,
+            )
+        }
+        is HomeUiState.Loaded -> {
+            // Plain Column.forEach rather than LazyColumn — the
+            // enclosing verticalScroll + LazyColumn would crash with a
+            // nested-scroll exception. Low volume of walks (tens,
+            // maybe low hundreds) is comfortable for non-lazy render.
+            // When Stage 3-E introduces the calligraphy journal
+            // thread, revisit to LazyColumn with a custom decoration.
+            Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal)) {
+                uiState.rows.forEach { row ->
+                    HomeWalkRowCard(
+                        row = row,
+                        onClick = { onRowClick(row.walkId) },
+                    )
+                }
+            }
+        }
     }
 }
