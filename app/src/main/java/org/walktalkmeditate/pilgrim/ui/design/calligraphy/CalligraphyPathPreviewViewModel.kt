@@ -22,8 +22,11 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
  * Debug-only VM for the Stage 3-C preview screen. Observes all walks
  * from Room and emits a list of [PreviewStroke] pairing a
  * [CalligraphyStrokeSpec] (minus its final color) with the
- * [SeasonalInkFlavor] the preview Composable resolves into a real
- * [Color] via [SeasonalInkFlavor.toColor].
+ * [SeasonalInkFlavor] the preview Composable resolves into a
+ * seasonally-shifted [Color] via
+ * [SeasonalInkFlavor.toSeasonalColor] (Stage 3-D) — the VM leaves
+ * `ink` as a placeholder because the color resolution needs a
+ * `@Composable` context for theme reads.
  *
  * Observes via a Flow rather than a one-shot `allWalks()` fetch so
  * that navigating away, finishing a new walk, and navigating back
@@ -33,6 +36,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
  *
  * If the device has no finished walks yet, falls back to eight
  * synthetic strokes spanning the year for visual verification.
+ *
+ * Also exposes [hemisphere] so the preview screen can re-tint colors
+ * when the cached hemisphere updates.
  */
 @HiltViewModel
 class CalligraphyPathPreviewViewModel @Inject constructor(
@@ -61,8 +67,10 @@ class CalligraphyPathPreviewViewModel @Inject constructor(
                 finished.map { walk ->
                     val samples = repository.locationSamplesFor(walk.id)
                     // `ink` is a placeholder — the preview Composable
-                    // resolves the real color via SeasonalInkFlavor.toColor()
-                    // which needs a @Composable context.
+                    // resolves the real color via
+                    // SeasonalInkFlavor.toSeasonalColor() + the
+                    // SeasonalColorEngine, both of which need a
+                    // @Composable context for theme reads.
                     val spec = walk.toStrokeSpec(samples = samples, ink = Color.Transparent)
                     PreviewStroke(
                         spec = spec,
