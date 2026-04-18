@@ -28,4 +28,7 @@ interface WalkDao {
 
     @Query("SELECT * FROM walks ORDER BY start_timestamp DESC")
     fun observeAll(): Flow<List<Walk>>
+
+    @Query("SELECT * FROM walks ORDER BY start_timestamp DESC")
+    suspend fun getAll(): List<Walk>
 }
