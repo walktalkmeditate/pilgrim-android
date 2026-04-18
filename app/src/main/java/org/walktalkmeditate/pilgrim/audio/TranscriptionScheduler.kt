@@ -22,11 +22,18 @@ class WorkManagerTranscriptionScheduler @Inject constructor(
 ) : TranscriptionScheduler {
 
     override fun scheduleForWalk(walkId: Long) {
+        // WorkRequest.Builder.build() throws IllegalArgumentException if
+        // an expedited work request carries any constraint other than
+        // network or storage. Pairing `setExpedited` with
+        // `setRequiresBatteryNotLow(true)` crashes at finishWalk time.
+        // Keep expedited for post-walk UX (transcript should appear
+        // within seconds on the summary screen); keep the
+        // storage-not-low constraint (transcription writes to Room);
+        // drop the battery constraint.
         val request = OneTimeWorkRequestBuilder<TranscriptionWorker>()
             .setInputData(workDataOf(TranscriptionWorker.KEY_WALK_ID to walkId))
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiresBatteryNotLow(true)
                     .setRequiresStorageNotLow(true)
                     .build(),
             )

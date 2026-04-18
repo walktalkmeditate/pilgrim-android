@@ -379,7 +379,18 @@ class WalkViewModel @Inject constructor(
                 Log.w(TAG, "voice recorder did not settle within ${FINISH_STOP_TIMEOUT_MS}ms; scheduling anyway")
             }
             walkIdOrNull(controller.state.value)?.let { walkId ->
-                transcriptionScheduler.scheduleForWalk(walkId)
+                try {
+                    transcriptionScheduler.scheduleForWalk(walkId)
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    // A scheduler misconfiguration (e.g., illegal
+                    // WorkManager constraint combo) must not crash the
+                    // user out of finishWalk. The walk row is already
+                    // persisted; the sweeper's case (d) picks up
+                    // un-transcribed rows on next summary-screen open.
+                    Log.w(TAG, "scheduleForWalk($walkId) failed", t)
+                }
             }
         }
     }
