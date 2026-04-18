@@ -80,6 +80,18 @@ object PilgrimFonts {
         // trigger Compose's synthesized italic (an algorithmic slant
         // of upright glyphs) — noticeably worse than a true italic
         // cut on a high-contrast oldstyle serif.
+        //
+        // CAVEAT: this entry is only declared at FontWeight.Normal
+        // (wght=400). If a caller combines `fontStyle = FontStyle.Italic`
+        // with FontWeight.Light or FontWeight.SemiBold (e.g. an italic
+        // variant of [PilgrimTypography.heading], which is SemiBold),
+        // Compose's FontMatcher will fall back to this wght=400 entry
+        // and the requested weight is silently lost. No current
+        // call-site hits this — all italic usage is on Normal-weight
+        // body styles — but if a designer wants bold italic or light
+        // italic display text later, add matching italic entries at
+        // weight = FontWeight.Light / .SemiBold with
+        // `variationSettings = FontVariation.Settings(FontVariation.weight(N))`.
         Font(
             resId = R.font.cormorant_garamond_italic_variable,
             weight = FontWeight.Normal,
