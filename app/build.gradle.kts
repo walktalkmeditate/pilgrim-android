@@ -37,9 +37,9 @@ android {
 
         buildConfigField("String", "MAPBOX_ACCESS_TOKEN", mapboxAccessToken.toJavaStringLiteral())
 
-        ndk {
-            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
+        // NB: ABI filters are set per build-type (debug/release) rather
+        // than here. AGP merges defaultConfig + buildType filters, so a
+        // defaultConfig entry can't be cleared from a buildType block.
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++17"
@@ -78,6 +78,13 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             isMinifyEnabled = false
+            // Debug builds target the dev devices only (OnePlus 13 + any
+            // arm64 emulator). Skipping armeabi-v7a + x86_64 cuts the
+            // debug APK's native-lib footprint and halves device-install
+            // time on device-test loops.
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
         }
         getByName("release") {
             isMinifyEnabled = true
@@ -88,6 +95,12 @@ android {
             )
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
+            }
+            // Release builds include all supported ABIs — Play Store's
+            // bundle + per-device-ABI split will deliver only the one
+            // each installing device needs.
+            ndk {
+                abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64")
             }
         }
     }

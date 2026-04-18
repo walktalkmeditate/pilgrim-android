@@ -54,6 +54,7 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 - Prefer Coroutines + Flow over RxJava.
 - Prefer Compose over XML views (new screens).
 - Tests: JUnit 4 + Turbine for Flow assertions + Robolectric where a real Android runtime matters. (Switch to JUnit 5 later if the harness investment pays off.)
+- **Platform-object builder tests**: any PR that constructs `WorkRequest`, `AudioFocusRequest`, `Intent`, `NotificationChannel`, `MediaItem`, or other platform objects with runtime-validated builders MUST include at least one Robolectric test that calls `.build()` on the production class. Faking the surrounding scheduler/coordinator is still correct for testing callers, but the builder path itself needs real-world exercise — otherwise runtime rejection only manifests on-device. Precedent: `WorkManagerTranscriptionSchedulerTest` (caught the `Expedited + BatteryNotLow` crash that shipped through 6 review cycles + Stages 2-D and 2-E because every unit test used `FakeTranscriptionScheduler`).
 - Commit style: same as iOS (`feat:`, `fix:`, `chore:`, `docs:` scope prefixes).
 
 ## Long-session reliability

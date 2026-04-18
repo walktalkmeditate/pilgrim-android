@@ -28,6 +28,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
 import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -82,7 +83,7 @@ class WalkViewModelTest {
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         transcriptionScheduler = FakeTranscriptionScheduler()
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource())
     }
 
     @After
@@ -317,7 +318,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource())
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -346,7 +347,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource())
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
