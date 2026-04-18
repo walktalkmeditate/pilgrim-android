@@ -158,17 +158,43 @@ class WalkViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             try {
-                _initialCameraCenter.value = locationSource.lastKnownLocation()
+                _initialCameraCenter.value = seedLocation()
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {
-                // Cached-fix lookup is best-effort; a failure just means
-                // we fall through to Mapbox's default camera. Logging
-                // here keeps the initialization path observable without
+                // Seed lookup is best-effort; a failure just means we
+                // fall through to Mapbox's default camera. Logging here
+                // keeps the initialization path observable without
                 // spamming the UI.
-                Log.w(TAG, "lastKnownLocation lookup failed", t)
+                Log.w(TAG, "initial camera seed lookup failed", t)
             }
         }
+    }
+
+    /**
+     * Cascading fallback for the Active Walk map's initial camera, in
+     * order of freshness:
+     *
+     *  1. [LocationSource.lastKnownLocation] — typically the most recent
+     *     system-cached GPS fix (FusedLocationProvider).
+     *  2. Most recent walk's LAST route sample — where the user was when
+     *     they finished their previous walk. Likely close to where they
+     *     are now if they're walking again from the same starting
+     *     point.
+     *  3. Most recent walk's FIRST route sample — falls through from (2)
+     *     if the walk had no samples recorded for some reason.
+     *  4. null — caller (PilgrimMap) leaves Mapbox's default camera.
+     */
+    private suspend fun seedLocation(): LocationPoint? {
+        locationSource.lastKnownLocation()?.let { return it }
+        val mostRecent = repository.allWalks().firstOrNull() ?: return null
+        val samples = repository.locationSamplesFor(mostRecent.id)
+        val sample = samples.lastOrNull() ?: samples.firstOrNull() ?: return null
+        return LocationPoint(
+            timestamp = sample.timestamp,
+            latitude = sample.latitude,
+            longitude = sample.longitude,
+        )
     }
 
     /**
