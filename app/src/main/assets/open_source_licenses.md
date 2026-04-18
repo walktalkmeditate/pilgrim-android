@@ -9,16 +9,18 @@ Third-party assets and code bundled with Pilgrim for Android.
 - **Copyright:** © 2015 Catharsis Fonts (Christian Thalmann)
 - **License:** SIL Open Font License, Version 1.1
 - **Source:** https://github.com/google/fonts/tree/main/ofl/cormorantgaramond
-- **Usage:** Bundled unmodified in `res/font/cormorant_garamond_variable.ttf`
-  (variable-weight TTF; wght axis 300-700).
+- **Usage:** Bundled unmodified in `res/font/` as
+  `cormorant_garamond_variable.ttf` (upright, variable wght axis)
+  and `cormorant_garamond_italic_variable.ttf` (italic, variable
+  wght axis).
 
 ### Lato
 
 - **Copyright:** © 2010-2014 Łukasz Dziedzic (tyPoland)
 - **License:** SIL Open Font License, Version 1.1
 - **Source:** https://github.com/google/fonts/tree/main/ofl/lato
-- **Usage:** Bundled unmodified in `res/font/` as `lato_regular.ttf` (400)
-  and `lato_bold.ttf` (700).
+- **Usage:** Bundled unmodified in `res/font/` as `lato_regular.ttf`
+  (400), `lato_bold.ttf` (700), and `lato_italic.ttf` (400 italic).
 
 Both font families vendored at google/fonts commit
 `47831f08ec6d6d7ad6b465f23dc9f9a890a2a04b`. See the KDoc block in

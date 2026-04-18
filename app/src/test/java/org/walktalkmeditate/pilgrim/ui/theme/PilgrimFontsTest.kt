@@ -55,4 +55,14 @@ class PilgrimFontsTest {
     fun `lato bold TTF resource resolves`() {
         assertNotNull(context.resources.getResourceName(R.font.lato_bold))
     }
+
+    @Test
+    fun `cormorant italic variable TTF resource resolves`() {
+        assertNotNull(context.resources.getResourceName(R.font.cormorant_garamond_italic_variable))
+    }
+
+    @Test
+    fun `lato italic TTF resource resolves`() {
+        assertNotNull(context.resources.getResourceName(R.font.lato_italic))
+    }
 }
