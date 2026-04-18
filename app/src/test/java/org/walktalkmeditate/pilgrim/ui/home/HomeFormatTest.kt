@@ -35,10 +35,10 @@ class HomeFormatTest {
     }
 
     @Test
-    fun `exactly 1 minute reports minutes ago`() {
+    fun `exactly 1 minute reports singular minute ago`() {
         val now = 10_000_000L
         val walk = now - 60_000L
-        assertEquals("1 minutes ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("1 minute ago", HomeFormat.relativeDate(context, walk, now, zone))
     }
 
     @Test
@@ -49,10 +49,17 @@ class HomeFormatTest {
     }
 
     @Test
-    fun `60 minutes ago reports hours ago`() {
+    fun `60 minutes ago reports singular hour ago`() {
         val now = 10_000_000L
         val walk = now - 60L * 60_000L
-        assertEquals("1 hours ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("1 hour ago", HomeFormat.relativeDate(context, walk, now, zone))
+    }
+
+    @Test
+    fun `2 hours ago reports plural hours ago`() {
+        val now = 10_000_000L
+        val walk = now - 2L * 60L * 60_000L
+        assertEquals("2 hours ago", HomeFormat.relativeDate(context, walk, now, zone))
     }
 
     @Test
