@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -31,35 +32,35 @@ class HomeFormatTest {
     fun `just now under 1 minute`() {
         val now = 10_000_000L
         val walk = now - 30_000L // 30 seconds ago
-        assertEquals("Just now", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("Just now", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
     fun `exactly 1 minute reports singular minute ago`() {
         val now = 10_000_000L
         val walk = now - 60_000L
-        assertEquals("1 minute ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("1 minute ago", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
     fun `59 minutes ago reports minutes ago`() {
         val now = 10_000_000L
         val walk = now - 59L * 60_000L
-        assertEquals("59 minutes ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("59 minutes ago", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
     fun `60 minutes ago reports singular hour ago`() {
         val now = 10_000_000L
         val walk = now - 60L * 60_000L
-        assertEquals("1 hour ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("1 hour ago", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
     fun `2 hours ago reports plural hours ago`() {
         val now = 10_000_000L
         val walk = now - 2L * 60L * 60_000L
-        assertEquals("2 hours ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("2 hours ago", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
@@ -67,7 +68,7 @@ class HomeFormatTest {
         val now = LocalDateTime.of(2026, 4, 18, 12, 0)
             .atZone(zone).toInstant().toEpochMilli()
         val walk = now - 23L * 60L * 60_000L
-        assertEquals("23 hours ago", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("23 hours ago", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
@@ -77,7 +78,7 @@ class HomeFormatTest {
             .atZone(zone).toInstant().toEpochMilli()
         val walk = LocalDateTime.of(2026, 4, 17, 12, 0)
             .atZone(zone).toInstant().toEpochMilli()
-        assertEquals("Friday", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("Friday", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
@@ -87,7 +88,7 @@ class HomeFormatTest {
             .atZone(zone).toInstant().toEpochMilli()
         val walk = LocalDateTime.of(2026, 4, 12, 12, 0)
             .atZone(zone).toInstant().toEpochMilli()
-        assertEquals("Sunday", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("Sunday", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
@@ -96,7 +97,7 @@ class HomeFormatTest {
             .atZone(zone).toInstant().toEpochMilli()
         val walk = LocalDateTime.of(2026, 4, 11, 12, 0)
             .atZone(zone).toInstant().toEpochMilli()
-        assertEquals("Apr 11", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("Apr 11", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
@@ -105,7 +106,7 @@ class HomeFormatTest {
             .atZone(zone).toInstant().toEpochMilli()
         val walk = LocalDateTime.of(2026, 1, 3, 12, 0)
             .atZone(zone).toInstant().toEpochMilli()
-        assertEquals("Jan 3", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("Jan 3", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Test
@@ -129,7 +130,7 @@ class HomeFormatTest {
         // minutes ago". Clamp to "Just now".
         val now = 10_000_000L
         val walk = now + 5_000L
-        assertEquals("Just now", HomeFormat.relativeDate(context, walk, now, zone))
+        assertEquals("Just now", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
     @Suppress("unused")

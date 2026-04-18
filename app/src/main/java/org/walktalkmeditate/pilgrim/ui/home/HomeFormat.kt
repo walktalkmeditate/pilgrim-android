@@ -12,11 +12,6 @@ import org.walktalkmeditate.pilgrim.R
 /** Formatters for home-surface row labels. Pure functions, test-only dependency is [Context]. */
 object HomeFormat {
 
-    private val dayOfWeekFormatter: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("EEEE", Locale.US)
-    private val shortDateFormatter: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("MMM d", Locale.US)
-
     /**
      * Relative-date label for the home list. Defaults to absolute
      * (`"MMM d"`) for anything 7+ days old so the list doesn't fill
@@ -35,7 +30,14 @@ object HomeFormat {
         timestampMs: Long,
         nowMs: Long,
         zone: ZoneId = ZoneId.systemDefault(),
+        // Day names ("Tuesday") and month abbreviations ("Apr") are
+        // locale-sensitive; default to device locale so a French user
+        // sees "mardi" / "15 avr." Tests override to Locale.US for
+        // stable assertions.
+        locale: Locale = Locale.getDefault(),
     ): String {
+        val dayOfWeekFormatter = DateTimeFormatter.ofPattern("EEEE", locale)
+        val shortDateFormatter = DateTimeFormatter.ofPattern("MMM d", locale)
         val deltaMs = (nowMs - timestampMs).coerceAtLeast(0L)
         val minutes = deltaMs / 60_000L
         if (minutes < 1L) return context.getString(R.string.home_relative_just_now)
