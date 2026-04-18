@@ -104,7 +104,18 @@ class WalkSummaryViewModel @Inject constructor(
      * the sweep raced against test-scope coroutine tracking.
      */
     fun runStartupSweep() {
-        viewModelScope.launch { sweeper.sweep(walkId) }
+        viewModelScope.launch {
+            try {
+                sweeper.sweep(walkId)
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                // Sweep is best-effort cleanup; surfacing the error to
+                // the UI would obscure the walk summary content. Log
+                // and continue.
+                android.util.Log.w(TAG, "runStartupSweep failed for walk $walkId", t)
+            }
+        }
     }
 
     fun playRecording(recording: VoiceRecording) = playback.play(recording)
@@ -165,6 +176,7 @@ class WalkSummaryViewModel @Inject constructor(
     companion object {
         const val ARG_WALK_ID = "walkId"
         private const val SUBSCRIBER_GRACE_MS = 5_000L
+        private const val TAG = "WalkSummaryViewModel"
     }
 }
 
@@ -178,7 +190,7 @@ data class PlaybackUiState(
     }
 }
 
-private fun PlaybackState.toUi(): PlaybackUiState = when (this) {
+internal fun PlaybackState.toUi(): PlaybackUiState = when (this) {
     is PlaybackState.Idle -> PlaybackUiState.IDLE
     is PlaybackState.Playing -> PlaybackUiState(recordingId, isPlaying = true, errorMessage = null)
     is PlaybackState.Paused -> PlaybackUiState(recordingId, isPlaying = false, errorMessage = null)
