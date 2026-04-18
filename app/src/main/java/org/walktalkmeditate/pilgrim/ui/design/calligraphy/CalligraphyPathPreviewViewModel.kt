@@ -49,8 +49,9 @@ class CalligraphyPathPreviewViewModel @Inject constructor(
 
     /**
      * Current hemisphere, proxied from [HemisphereRepository] so the
-     * preview screen can observe it alongside [state]. Seeded on first
-     * `collect` via the repository's Eager `stateIn`.
+     * preview screen can observe it alongside [state]. The repository
+     * exposes a `stateIn(WhileSubscribed)` StateFlow; subscribing from
+     * the preview screen is what drives the underlying DataStore read.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 
