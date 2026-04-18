@@ -6,14 +6,11 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// Font families are placeholders for now. Phase 1/3 swaps these for bundled
-// Cormorant Garamond and Lato loaded via res/font/.
-private val Display = FontFamily.Serif
-private val Text = FontFamily.SansSerif
+private val Display = PilgrimFonts.cormorantGaramond
+private val Text = PilgrimFonts.lato
 
 @Stable
 data class PilgrimTypography(
