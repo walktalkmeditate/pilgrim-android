@@ -115,6 +115,20 @@ class WalkViewModel @Inject constructor(
     private val _voiceRecorderState = MutableStateFlow<VoiceRecorderUiState>(VoiceRecorderUiState.Idle)
     val voiceRecorderState: StateFlow<VoiceRecorderUiState> = _voiceRecorderState.asStateFlow()
 
+    /**
+     * Monotonic counter so that two equal-by-content errors (same
+     * message + kind) emitted back-to-back still produce !=
+     * VoiceRecorderUiState.Error instances. The Compose
+     * `LaunchedEffect(error)` keys on the full state — without
+     * different ids the auto-dismiss timer wouldn't reset for repeat
+     * errors landing inside the dismiss window.
+     */
+    private var errorIdCounter: Long = 0
+    private fun nextErrorId(): Long = ++errorIdCounter
+
+    private fun errorState(message: String, kind: VoiceRecorderUiState.Kind) =
+        VoiceRecorderUiState.Error(message, kind, nextErrorId())
+
     /** Per-buffer RMS level published by VoiceRecorder. Normalized 0f..1f. */
     val audioLevel: StateFlow<Float> = voiceRecorder.audioLevel
 
@@ -154,9 +168,9 @@ class WalkViewModel @Inject constructor(
 
     /** Called by Compose when the mic-permission launcher returns denied. */
     fun emitPermissionDenied() {
-        _voiceRecorderState.value = VoiceRecorderUiState.Error(
-            message = "microphone permission required to record",
-            kind = VoiceRecorderUiState.Kind.PermissionDenied,
+        _voiceRecorderState.value = errorState(
+            "microphone permission required to record",
+            VoiceRecorderUiState.Kind.PermissionDenied,
         )
     }
 
@@ -188,9 +202,9 @@ class WalkViewModel @Inject constructor(
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (_: Exception) {
-                    _voiceRecorderState.value = VoiceRecorderUiState.Error(
-                        message = "couldn't save the recording",
-                        kind = VoiceRecorderUiState.Kind.Other,
+                    _voiceRecorderState.value = errorState(
+                        "couldn't save the recording",
+                        VoiceRecorderUiState.Kind.Other,
                     )
                 }
             },
@@ -198,16 +212,21 @@ class WalkViewModel @Inject constructor(
         )
     }
 
+    // NOTE: the design spec's error table maps ConcurrentRecording and
+    // NoActiveRecording to Other-kind banners, but the implementation
+    // silences them as harmless double-tap races (the first action
+    // succeeded; the second is a UI race). Kept in sync with that
+    // behavior here; spec table is the older intent.
     private fun mapStartFailure(err: Throwable): VoiceRecorderUiState = when (err) {
-        is VoiceRecorderError.PermissionMissing -> VoiceRecorderUiState.Error(
+        is VoiceRecorderError.PermissionMissing -> errorState(
             "microphone permission required to record",
             VoiceRecorderUiState.Kind.PermissionDenied,
         )
-        is VoiceRecorderError.AudioCaptureInitFailed -> VoiceRecorderUiState.Error(
+        is VoiceRecorderError.AudioCaptureInitFailed -> errorState(
             "couldn't start the microphone",
             VoiceRecorderUiState.Kind.CaptureInitFailed,
         )
-        is VoiceRecorderError.FileSystemError -> VoiceRecorderUiState.Error(
+        is VoiceRecorderError.FileSystemError -> errorState(
             "couldn't save the recording",
             VoiceRecorderUiState.Kind.Other,
         )
@@ -216,7 +235,7 @@ class WalkViewModel @Inject constructor(
         // surfacing a banner for the second tap is noise. Stay in
         // Recording (which the first start is about to set anyway).
         is VoiceRecorderError.ConcurrentRecording -> VoiceRecorderUiState.Recording
-        else -> VoiceRecorderUiState.Error(
+        else -> errorState(
             err.message ?: "recording failed",
             VoiceRecorderUiState.Kind.Other,
         )
@@ -230,9 +249,9 @@ class WalkViewModel @Inject constructor(
         // the first stop's completion. The first stop succeeded;
         // ignoring the second is the correct UX.
         is VoiceRecorderError.NoActiveRecording -> VoiceRecorderUiState.Idle
-        else -> VoiceRecorderUiState.Error(
-            message = err.message ?: "stop failed",
-            kind = VoiceRecorderUiState.Kind.Other,
+        else -> errorState(
+            err.message ?: "stop failed",
+            VoiceRecorderUiState.Kind.Other,
         )
     }
 

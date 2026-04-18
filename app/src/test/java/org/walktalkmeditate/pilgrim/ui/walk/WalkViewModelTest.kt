@@ -380,6 +380,22 @@ class WalkViewModelTest {
         assertEquals(VoiceRecorderUiState.Idle, viewModel.voiceRecorderState.value)
     }
 
+    @Test
+    fun `consecutive identical errors get distinct ids so LaunchedEffect re-keys`() {
+        viewModel.emitPermissionDenied()
+        val first = viewModel.voiceRecorderState.value as VoiceRecorderUiState.Error
+        viewModel.emitPermissionDenied()
+        val second = viewModel.voiceRecorderState.value as VoiceRecorderUiState.Error
+
+        // Same message + same kind, but different ids → not equal.
+        // Compose `LaunchedEffect(error)` will re-fire and reset the
+        // 4s auto-dismiss timer for the second emission.
+        assertEquals(first.message, second.message)
+        assertEquals(first.kind, second.kind)
+        assertTrue("expected distinct ids, got ${first.id} == ${second.id}", first.id != second.id)
+        assertTrue("Errors must not be structurally equal", first != second)
+    }
+
     private fun requireActiveWalkId(): Long =
         controller.state.value.let { state ->
             when (state) {
