@@ -108,7 +108,14 @@ class OrphanRecordingSweeper @Inject constructor(
 
     suspend fun sweepAll(): SweepResult {
         val walks = try {
-            repository.allWalks()
+            // Filter out the active walk: its endTimestamp is null, and
+            // a recording in flight may have written its WAV file but
+            // not yet inserted the row — case (a) would treat that file
+            // as an orphan and delete the user's just-recorded audio.
+            // The on-init sweep for the user's CURRENT walk only fires
+            // when they open the summary screen, by which point the walk
+            // is finalized.
+            repository.allWalks().filter { it.endTimestamp != null }
         } catch (t: Throwable) {
             Log.w(TAG, "sweepAll: allWalks() failed", t)
             return SweepResult()

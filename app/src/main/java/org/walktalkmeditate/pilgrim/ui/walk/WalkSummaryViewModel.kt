@@ -104,7 +104,14 @@ class WalkSummaryViewModel @Inject constructor(
      * the sweep raced against test-scope coroutine tracking.
      */
     fun runStartupSweep() {
-        viewModelScope.launch {
+        // Dispatchers.IO: the sweeper does Files.list, Files.delete,
+        // and Files.newByteChannel reads. On budget hardware under
+        // battery saver these can block for tens of ms — running on
+        // viewModelScope's default Main dispatcher would ANR.
+        // CoroutineWorker's doWork already runs on Dispatchers.IO so
+        // the daily-worker path is fine; only this on-init path needed
+        // the explicit hop.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 sweeper.sweep(walkId)
             } catch (cancel: kotlinx.coroutines.CancellationException) {
