@@ -33,11 +33,12 @@ fun CalligraphyPath(
     baseWidth: Dp = 1.5.dp,
     maxWidth: Dp = 4.5.dp,
 ) {
-    // An empty list collapses to zero height so the preview screen's
-    // header doesn't have a stranded 130dp of blank parchment beneath
-    // it. ≥1 stroke reserves enough headroom for the renderer + a
-    // below-thread gutter.
-    val totalHeight = if (strokes.isEmpty()) 0.dp else topInset + verticalSpacing * (strokes.size + 1)
+    // Fewer than 2 strokes = no segments to connect = nothing to draw.
+    // Collapse to 0.dp so a fresh-install device with 0 or 1 finished
+    // walks doesn't reserve 130–220dp of blank parchment below the
+    // preview header. Stage 3-E will likely want to render a single
+    // dot in this case; for now the renderer is a connector.
+    val totalHeight = if (strokes.size < 2) 0.dp else topInset + verticalSpacing * (strokes.size + 1)
     Canvas(
         modifier = modifier
             .fillMaxWidth()
