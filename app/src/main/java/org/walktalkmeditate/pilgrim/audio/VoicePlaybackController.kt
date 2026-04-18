@@ -23,9 +23,14 @@ interface VoicePlaybackController {
 
     /**
      * Release native resources. Idempotent. After [release], the next
-     * [play] call rebuilds the underlying player. Called from the
-     * surface that owns the controller's lifetime (e.g.,
-     * `WalkSummaryViewModel.onCleared`).
+     * [play] call rebuilds the underlying player.
+     *
+     * NOTE: in the current Stage 2-E binding the controller is
+     * `@Singleton`, so [release] is only intended for process-tear-down
+     * paths (e.g., low-memory triggers in a future stage). The
+     * `WalkSummaryViewModel.onCleared` path uses [stop] — calling
+     * [release] from a per-screen lifecycle would race against a
+     * subsequent screen's [play].
      */
     fun release()
 }
