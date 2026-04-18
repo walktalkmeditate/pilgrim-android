@@ -17,7 +17,9 @@ import kotlinx.coroutines.withContext
  * notes never pays the ~75 MB RAM cost.
  *
  * Singleton-scoped so the loaded model survives across multiple
- * transcriptions; the native handle is released on process tear-down.
+ * transcriptions; the native heap is reclaimed by the OS when the
+ * process exits — there is intentionally no explicit teardown path
+ * (see whisper-jni.cpp note).
  */
 @Singleton
 class WhisperCppEngine @Inject constructor(
@@ -49,9 +51,15 @@ class WhisperCppEngine @Inject constructor(
     override suspend fun transcribe(wavPath: Path): Result<TranscriptionResult> =
         withContext(Dispatchers.Default) {
             try {
-                val handle = ensureLoaded()
-                val text = nativeTranscribe(handle, wavPath.absolutePathString())
-                    ?: return@withContext Result.failure(WhisperError.InferenceFailed(-1))
+                // whisper.h is explicit: a single whisper_context must
+                // not be used by multiple threads concurrently. Hold the
+                // monitor across both ensureLoaded (reentrant) and
+                // nativeTranscribe so two simultaneous workers can't
+                // race on the same native ctx.
+                val text = synchronized(nativeLock) {
+                    val handle = ensureLoaded()
+                    nativeTranscribe(handle, wavPath.absolutePathString())
+                } ?: return@withContext Result.failure(WhisperError.InferenceFailed(-1))
                 Result.success(TranscriptionResult(text = text.trim(), wordsPerMinute = null))
             } catch (e: WhisperError) {
                 Result.failure(e)
@@ -63,7 +71,6 @@ class WhisperCppEngine @Inject constructor(
 
     private external fun nativeInit(modelPath: String): Long
     private external fun nativeTranscribe(ctx: Long, wavPath: String): String?
-    private external fun nativeRelease(ctx: Long)
 
     private companion object {
         const val TAG = "WhisperCppEngine"

@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.audio
 
 import java.nio.file.Path
+import java.util.Collections
 import kotlinx.coroutines.delay
 
 /**
@@ -18,7 +19,7 @@ class FakeWhisperEngine(
     var delayMs: Long = 0L,
 ) : WhisperEngine {
 
-    val transcribeCalls: MutableList<Path> = mutableListOf()
+    val transcribeCalls: MutableList<Path> = Collections.synchronizedList(mutableListOf())
 
     override suspend fun transcribe(wavPath: Path): Result<TranscriptionResult> {
         transcribeCalls.add(wavPath)
