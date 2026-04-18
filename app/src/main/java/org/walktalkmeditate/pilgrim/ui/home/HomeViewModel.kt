@@ -9,8 +9,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -49,6 +51,19 @@ class HomeViewModel @Inject constructor(
      * explicitly and invalidates the strokes list on either change.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
+
+    init {
+        // Defensive pre-read: `hemisphere` is a
+        // SharingStarted.WhileSubscribed flow, so nothing collects
+        // DataStore until a subscriber attaches. Forcing a read in
+        // `init` warms the cache so the first frame of HomeScreen
+        // reads the cached hemisphere value rather than the initial
+        // Northern default (which would otherwise briefly tint the
+        // thread wrong right after a first-walk-ever finish).
+        viewModelScope.launch {
+            hemisphereRepository.hemisphere.first()
+        }
+    }
 
     val uiState: StateFlow<HomeUiState> = repository.observeAllWalks()
         .map { walks ->

@@ -35,10 +35,18 @@ fun CalligraphyPath(
 ) {
     // Fewer than 2 strokes = no segments to connect = nothing to draw.
     // Collapse to 0.dp so a fresh-install device with 0 or 1 finished
-    // walks doesn't reserve 130–220dp of blank parchment below the
-    // preview header. Stage 3-E will likely want to render a single
-    // dot in this case; for now the renderer is a connector.
-    val totalHeight = if (strokes.size < 2) 0.dp else topInset + verticalSpacing * (strokes.size + 1)
+    // walks doesn't reserve blank parchment below the header. Stage
+    // 3-E may want to render a single dot in this case; for now the
+    // renderer is a connector.
+    //
+    // N strokes → N dots at y = topInset + (i + 0.5) * verticalSpacing,
+    // so the minimum bounding height is topInset + N * verticalSpacing
+    // (half a stride of breathing room above the first dot + below
+    // the last). An earlier version reserved an extra full stride
+    // below the last dot; Stage 3-E's Box-layered HomeScreen exposed
+    // that as a visible gap beneath the final card. (Initial-review
+    // catch.)
+    val totalHeight = if (strokes.size < 2) 0.dp else topInset + verticalSpacing * strokes.size
     Canvas(
         modifier = modifier
             .fillMaxWidth()
