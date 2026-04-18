@@ -34,6 +34,7 @@ import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -67,6 +68,7 @@ class WalkViewModel @Inject constructor(
     private val clock: Clock,
     private val voiceRecorder: VoiceRecorder,
     private val transcriptionScheduler: TranscriptionScheduler,
+    private val locationSource: LocationSource,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -141,6 +143,33 @@ class WalkViewModel @Inject constructor(
 
     /** Per-buffer RMS level published by VoiceRecorder. Normalized 0f..1f. */
     val audioLevel: StateFlow<Float> = voiceRecorder.audioLevel
+
+    /**
+     * One-shot last-known GPS fix to seed the Active Walk map's initial
+     * camera so the first paint lands near the user rather than at
+     * Mapbox Android's global default (which historically renders over
+     * the US east coast). Populates asynchronously on VM init via
+     * [LocationSource.lastKnownLocation]. Null until either the call
+     * completes or the device has no cached fix.
+     */
+    private val _initialCameraCenter = MutableStateFlow<LocationPoint?>(null)
+    val initialCameraCenter: StateFlow<LocationPoint?> = _initialCameraCenter.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            try {
+                _initialCameraCenter.value = locationSource.lastKnownLocation()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                // Cached-fix lookup is best-effort; a failure just means
+                // we fall through to Mapbox's default camera. Logging
+                // here keeps the initialization path observable without
+                // spamming the UI.
+                Log.w(TAG, "lastKnownLocation lookup failed", t)
+            }
+        }
+    }
 
     /**
      * Live count of VoiceRecording rows for the current walk. Swapped

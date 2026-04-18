@@ -45,6 +45,7 @@ fun PilgrimMap(
     points: List<LocationPoint>,
     modifier: Modifier = Modifier,
     followLatest: Boolean = false,
+    initialCenter: LocationPoint? = null,
 ) {
     val darkMode = isSystemInDarkTheme()
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -58,6 +59,10 @@ fun PilgrimMap(
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var didFitBounds by remember { mutableStateOf(false) }
+    // One-shot: set the camera to [initialCenter] exactly once, on
+    // whichever composition first has a non-null center AND points is
+    // still empty. Later GPS fixes then drive the follow-latest branch.
+    var didSetInitialCenter by remember { mutableStateOf(false) }
     // Tracked per-composition: when onRelease clears mapView the composable
     // is exiting so remember resets naturally, giving a new MapView instance
     // a fresh opt-out on next entry.
@@ -211,6 +216,23 @@ fun PilgrimMap(
                         .build(),
                     MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                 )
+            } else if (points.isEmpty() && followLatest && !didSetInitialCenter) {
+                // No GPS samples yet. If the caller handed us a cached
+                // last-known location, snap the camera there so the
+                // first paint lands near the user instead of at
+                // Mapbox's global default (historically over the US
+                // east coast). Setting via setCamera (not easeTo) so
+                // the world doesn't visibly fly from zoom 0 to here.
+                val center = initialCenter
+                if (center != null) {
+                    view.mapboxMap.setCamera(
+                        CameraOptions.Builder()
+                            .center(Point.fromLngLat(center.longitude, center.latitude))
+                            .zoom(FOLLOW_ZOOM)
+                            .build(),
+                    )
+                    didSetInitialCenter = true
+                }
             }
         },
         onRelease = { view ->
