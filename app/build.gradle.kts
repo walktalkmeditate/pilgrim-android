@@ -112,6 +112,14 @@ android {
         }
     }
 
+    androidResources {
+        // The whisper.cpp ggml model is already incompressible binary;
+        // packaging it as STORE rather than DEFLATE skips runtime
+        // decompression and lets openFd() expose a real length so the
+        // installer can verify on-disk size against bundled size.
+        noCompress += "bin"
+    }
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }

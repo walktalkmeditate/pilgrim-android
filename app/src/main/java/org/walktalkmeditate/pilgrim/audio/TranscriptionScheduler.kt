@@ -35,7 +35,12 @@ class WorkManagerTranscriptionScheduler @Inject constructor(
 
         WorkManager.getInstance(context).enqueueUniqueWork(
             "transcribe-walk-$walkId",
-            ExistingWorkPolicy.REPLACE,
+            // KEEP, not REPLACE: TranscriptionRunner re-reads pending
+            // rows from Room on each run, so a second schedule call for
+            // the same walk (e.g., user double-tapping Finish) should
+            // be a no-op rather than cancelling and restarting an
+            // already-running batch.
+            ExistingWorkPolicy.KEEP,
             request,
         )
     }

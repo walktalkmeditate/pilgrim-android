@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <thread>
 #include "whisper/include/whisper.h"
 
 #define LOG_TAG "PilgrimWhisper"
@@ -60,7 +61,10 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
     wparams.print_special = false;
     wparams.translate = false;
     wparams.language = "en";
-    wparams.n_threads = 4;
+    // Cap threads at 4 (diminishing returns above) and at the device's
+    // hardware concurrency so 2-core budget devices don't oversubscribe.
+    unsigned hw = std::thread::hardware_concurrency();
+    wparams.n_threads = std::max(1u, std::min(4u, hw == 0 ? 2u : hw));
     if (whisper_full(ctx, wparams, samples.data(), samples.size()) != 0) {
         LOGW("whisper_full failed");
         return nullptr;
@@ -73,11 +77,9 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
     return env->NewStringUTF(out.c_str());
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeRelease(
-    JNIEnv* /*env*/, jobject /*this*/, jlong ctxHandle) {
-    if (ctxHandle == 0) return;
-    auto ctx = reinterpret_cast<whisper_context*>(ctxHandle);
-    whisper_free(ctx);
-    LOGI("whisper context released");
-}
+// Note: a `nativeRelease` symbol is intentionally not exported. The
+// engine is @Singleton and the loaded whisper context lives for the
+// process lifetime; native heap is reclaimed by the OS on exit. If a
+// future stage needs lifecycle teardown (memory pressure handler, app
+// background unload), wire whisper_free(ctx) through a new JNI symbol
+// then.

@@ -2,9 +2,11 @@
 package org.walktalkmeditate.pilgrim.audio
 
 import android.content.Context
+import android.content.res.AssetManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -12,19 +14,53 @@ import javax.inject.Singleton
  * Copies the bundled whisper model from APK assets into filesDir on first
  * call. whisper.cpp's whisper_init_from_file needs a real filesystem
  * path — APK asset entries can't be read directly.
+ *
+ * The "is install needed" probe compares the bundled asset's uncompressed
+ * length against the on-disk size: a mid-copy process kill would leave a
+ * shorter file, and we'd re-install on next launch instead of letting
+ * whisper.cpp choke on a corrupt model. The copy itself writes to a temp
+ * file and atomically renames so a partial file is never visible.
  */
 @Singleton
 class WhisperModelInstaller @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    fun installIfNeeded(): Path {
+    private val installLock = Any()
+
+    fun installIfNeeded(): Path = synchronized(installLock) {
         val target = context.filesDir.toPath().resolve("$DIR/$FILE")
-        if (Files.exists(target) && Files.size(target) > 0) return target
+        val expectedSize = expectedAssetSize()
+        if (Files.exists(target) && Files.size(target) == expectedSize) return target
         Files.createDirectories(target.parent)
-        context.assets.open("$ASSET_DIR/$FILE").use { input ->
-            Files.newOutputStream(target).use { output -> input.copyTo(output) }
+        val temp = Files.createTempFile(target.parent, "ggml-tiny.en", ".bin.part")
+        try {
+            context.assets.open("$ASSET_DIR/$FILE").use { input ->
+                Files.newOutputStream(temp).use { output -> input.copyTo(output) }
+            }
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (t: Throwable) {
+            runCatching { Files.deleteIfExists(temp) }
+            throw t
         }
-        return target
+        target
+    }
+
+    private fun expectedAssetSize(): Long {
+        // openFd only works for uncompressed assets; .bin is exempted
+        // from compression via aaptOptions.noCompress in app/build.gradle.kts,
+        // so this returns a real length. Falls back to streaming-count
+        // if compression rules ever change.
+        return runCatching {
+            context.assets.openFd("$ASSET_DIR/$FILE").use { it.length }
+        }.getOrNull()?.takeIf { it > 0 }
+            ?: context.assets.open("$ASSET_DIR/$FILE", AssetManager.ACCESS_STREAMING).use { input ->
+                var total = 0L
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf); if (n < 0) break; total += n
+                }
+                total
+            }
     }
 
     private companion object {
