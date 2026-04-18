@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.theme
 
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import org.walktalkmeditate.pilgrim.R
 
@@ -34,11 +36,31 @@ import org.walktalkmeditate.pilgrim.R
  * Source fonts are SIL OFL 1.1; attribution + full license text lives
  * in `app/src/main/assets/open_source_licenses.md`.
  */
+@OptIn(ExperimentalTextApi::class)
 object PilgrimFonts {
     val cormorantGaramond: FontFamily = FontFamily(
-        Font(R.font.cormorant_garamond_variable, weight = FontWeight.Light),
-        Font(R.font.cormorant_garamond_variable, weight = FontWeight.Normal),
-        Font(R.font.cormorant_garamond_variable, weight = FontWeight.SemiBold),
+        // variationSettings is required for a variable-weight TTF —
+        // without it, all three Font entries default to the font's
+        // built-in default instance (~400), so FontWeight.Light and
+        // FontWeight.SemiBold callers would render identically. The
+        // weight parameter tells Compose "this entry serves weight X
+        // requests"; variationSettings tells the typeface system to
+        // instantiate the variable font at wght=X.
+        Font(
+            resId = R.font.cormorant_garamond_variable,
+            weight = FontWeight.Light,
+            variationSettings = FontVariation.Settings(FontVariation.weight(300)),
+        ),
+        Font(
+            resId = R.font.cormorant_garamond_variable,
+            weight = FontWeight.Normal,
+            variationSettings = FontVariation.Settings(FontVariation.weight(400)),
+        ),
+        Font(
+            resId = R.font.cormorant_garamond_variable,
+            weight = FontWeight.SemiBold,
+            variationSettings = FontVariation.Settings(FontVariation.weight(600)),
+        ),
     )
 
     val lato: FontFamily = FontFamily(
