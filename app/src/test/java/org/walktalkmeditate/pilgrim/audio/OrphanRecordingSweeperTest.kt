@@ -204,9 +204,14 @@ class OrphanRecordingSweeperTest {
     }
 
     @Test
-    fun `sweepAll iterates every walk`() = runBlocking {
+    fun `sweepAll iterates finished walks`() = runBlocking {
         val walk1 = repository.startWalk(startTimestamp = 0L)
         val walk2 = repository.startWalk(startTimestamp = 100_000L)
+        // sweepAll skips active walks (endTimestamp == null) so an
+        // in-flight recording isn't mistaken for an orphan. Finalize
+        // both before invoking.
+        repository.finishWalk(walk1, endTimestamp = 60_000L)
+        repository.finishWalk(walk2, endTimestamp = 160_000L)
         // walk1 has an orphan file; walk2 has an orphan row.
         writeWav(walk1.uuid, "stray.wav", dataBytes = 10)
         insertRecording(walk2.id, fileRelativePath = "recordings/${walk2.uuid}/missing.wav")
@@ -215,6 +220,20 @@ class OrphanRecordingSweeperTest {
 
         assertEquals(1, result.orphanFilesDeleted)
         assertEquals(1, result.orphanRowsDeleted)
+    }
+
+    @Test
+    fun `sweepAll skips active walk so its in-flight WAV is preserved`() = runBlocking {
+        val activeWalk = repository.startWalk(startTimestamp = 0L)
+        // Simulate an in-flight recording: WAV written but Room row
+        // not yet inserted. Without the active-walk filter, sweepAll's
+        // case (a) would delete this file.
+        val inFlight = writeWav(activeWalk.uuid, "in-flight.wav", dataBytes = 100)
+
+        val result = sweeper.sweepAll()
+
+        assertEquals(0, result.orphanFilesDeleted)
+        assertTrue("in-flight WAV must be preserved", java.nio.file.Files.exists(inFlight))
     }
 
     private val timestampCounter = AtomicLong(1_000_000L)
