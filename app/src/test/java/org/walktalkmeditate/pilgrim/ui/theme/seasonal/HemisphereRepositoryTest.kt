@@ -70,6 +70,19 @@ class HemisphereRepositoryTest {
         assertEquals(Hemisphere.Northern, repo.hemisphere.value)
     }
 
+    @Test fun `refresh swallows SecurityException from lastKnownLocation`() = runTest {
+        val throwingSource = object : org.walktalkmeditate.pilgrim.location.LocationSource {
+            override fun locationFlow() = kotlinx.coroutines.flow.emptyFlow<LocationPoint>()
+            override suspend fun lastKnownLocation(): LocationPoint? {
+                throw SecurityException("ACCESS_COARSE_LOCATION not granted")
+            }
+        }
+        val repo = HemisphereRepository(dataStore, throwingSource, scope)
+        // Must not throw; must not update cached value.
+        repo.refreshFromLocationIfNeeded()
+        assertEquals(Hemisphere.Northern, repo.hemisphere.value)
+    }
+
     @Test fun `infers southern from negative latitude`() = runTest {
         locationSource.lastKnown = LocationPoint(
             timestamp = 0L, latitude = -33.8688, longitude = 151.2093,
