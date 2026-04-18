@@ -33,7 +33,11 @@ fun CalligraphyPath(
     baseWidth: Dp = 1.5.dp,
     maxWidth: Dp = 4.5.dp,
 ) {
-    val totalHeight = topInset + verticalSpacing * (strokes.size + 1)
+    // An empty list collapses to zero height so the preview screen's
+    // header doesn't have a stranded 130dp of blank parchment beneath
+    // it. ≥1 stroke reserves enough headroom for the renderer + a
+    // below-thread gutter.
+    val totalHeight = if (strokes.isEmpty()) 0.dp else topInset + verticalSpacing * (strokes.size + 1)
     Canvas(
         modifier = modifier
             .fillMaxWidth()

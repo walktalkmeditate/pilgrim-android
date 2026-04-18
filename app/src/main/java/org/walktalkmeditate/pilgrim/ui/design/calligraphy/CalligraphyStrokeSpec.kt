@@ -51,13 +51,17 @@ internal fun fnv1aHash(spec: CalligraphyStrokeSpec): Long {
     return (h and 0x7FFFFFFFFFFFFFFFUL).toLong()
 }
 
-/** Meander seed in [-1, 1], deterministic for a given spec. */
+/** Meander seed in [-1.0, 0.999], deterministic for a given spec. */
 internal fun meanderSeed(spec: CalligraphyStrokeSpec): Float {
     val h = fnv1aHash(spec)
     return ((h % 2000L).toFloat() / 1000f) - 1f
 }
 
-/** Horizontal X offset (in pixels) from the canvas centerX. */
+/**
+ * Horizontal X offset (in pixels) from the canvas centerX. Deterministic.
+ * Normalized offset spans [-0.5, 0.499], which the caller scales by
+ * `maxMeanderPx * 1.6f`.
+ */
 internal fun xOffsetPx(
     spec: CalligraphyStrokeSpec,
     centerXPx: Float,
@@ -95,13 +99,17 @@ internal fun segmentOpacity(index: Int, total: Int): Float {
 /**
  * Build a [CalligraphyStrokeSpec] from a finished [Walk] + its GPS samples.
  *
- * Pre-condition: [Walk.endTimestamp] is non-null. Caller should filter.
+ * Requires [Walk.endTimestamp] to be non-null — a walk without a finish
+ * timestamp has no well-defined pace and would render as a degenerate
+ * base-width stroke. Fail fast instead so the caller notices.
  */
 fun Walk.toStrokeSpec(samples: List<RouteDataSample>, ink: Color): CalligraphyStrokeSpec {
+    val endMs = requireNotNull(endTimestamp) {
+        "toStrokeSpec called on an unfinished walk (uuid=$uuid); filter before calling."
+    }
     val distance = walkDistanceMeters(
         samples.map { LocationPoint(timestamp = it.timestamp, latitude = it.latitude, longitude = it.longitude) },
     )
-    val endMs = endTimestamp ?: startTimestamp
     val durationSec = (endMs - startTimestamp) / 1000.0
     val pace = if (distance > 0.0 && durationSec > 0.0) durationSec / (distance / 1000.0) else 0.0
     return CalligraphyStrokeSpec(

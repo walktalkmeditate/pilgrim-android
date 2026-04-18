@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,7 +27,25 @@ fun CalligraphyPathPreviewScreen(
     viewModel: CalligraphyPathPreviewViewModel = hiltViewModel(),
 ) {
     val previews by viewModel.state.collectAsStateWithLifecycle()
-    val strokes = previews.map { it.spec.copy(ink = it.flavor.toColor()) }
+    // Resolve the four base seasonal colors from the current theme
+    // once, then assemble the stroke list via `remember(previews)` so
+    // unrelated theme recompositions don't churn allocations. Matches
+    // the Stage 3-B learning on staticCompositionLocalOf hygiene.
+    val inkColor = SeasonalInkFlavor.Ink.toColor()
+    val mossColor = SeasonalInkFlavor.Moss.toColor()
+    val rustColor = SeasonalInkFlavor.Rust.toColor()
+    val dawnColor = SeasonalInkFlavor.Dawn.toColor()
+    val strokes = remember(previews, inkColor, mossColor, rustColor, dawnColor) {
+        previews.map { preview ->
+            val tint = when (preview.flavor) {
+                SeasonalInkFlavor.Ink -> inkColor
+                SeasonalInkFlavor.Moss -> mossColor
+                SeasonalInkFlavor.Rust -> rustColor
+                SeasonalInkFlavor.Dawn -> dawnColor
+            }
+            preview.spec.copy(ink = tint)
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()

@@ -15,6 +15,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPathPreviewScreen
@@ -80,8 +81,15 @@ fun PilgrimNavHost(
                 },
             )
         }
-        composable(Routes.CALLIGRAPHY_PREVIEW) {
-            CalligraphyPathPreviewScreen()
+        // Register the preview destination AND its Hilt-graph bindings
+        // only for debug builds. The HomeScreen entry button is also
+        // BuildConfig-gated, but keeping the route registration here
+        // means a release build can't accidentally resolve the preview
+        // route (e.g., via a rogue deep link) and instantiate its VM.
+        if (BuildConfig.DEBUG) {
+            composable(Routes.CALLIGRAPHY_PREVIEW) {
+                CalligraphyPathPreviewScreen()
+            }
         }
         composable(Routes.ACTIVE_WALK) {
             ActiveWalkScreen(
