@@ -61,7 +61,15 @@ fun PilgrimNavHost(
                 permissionsViewModel = permissionsViewModel,
                 onEnterActiveWalk = { navController.navigate(Routes.ACTIVE_WALK) },
                 onEnterWalkSummary = { walkId ->
-                    navController.navigate(Routes.walkSummary(walkId))
+                    // launchSingleTop: if the user double-taps a row
+                    // faster than the first nav visually commits, the
+                    // same walkId-routed entry is reused instead of
+                    // stacking. A different walkId still pushes a new
+                    // entry, so Home → Summary(1) → Home → Summary(2)
+                    // behaves normally.
+                    navController.navigate(Routes.walkSummary(walkId)) {
+                        launchSingleTop = true
+                    }
                 },
             )
         }
