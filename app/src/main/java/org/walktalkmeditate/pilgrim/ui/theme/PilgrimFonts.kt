@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.theme
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import org.walktalkmeditate.pilgrim.R
@@ -31,13 +32,16 @@ import org.walktalkmeditate.pilgrim.R
  * [lato] uses static-weight TTFs. Google Fonts still ships static
  * Lato; static Cormorant is no longer distributed.
  *
- * **Vendoring.** All three TTFs vendored from
+ * **Vendoring.** All five TTFs vendored from
  * `github.com/google/fonts` at commit
  * `47831f08ec6d6d7ad6b465f23dc9f9a890a2a04b`. Paths within that tree:
  *  - `ofl/cormorantgaramond/CormorantGaramond[wght].ttf` →
  *    `res/font/cormorant_garamond_variable.ttf`
+ *  - `ofl/cormorantgaramond/CormorantGaramond-Italic[wght].ttf` →
+ *    `res/font/cormorant_garamond_italic_variable.ttf`
  *  - `ofl/lato/Lato-Regular.ttf` → `res/font/lato_regular.ttf`
  *  - `ofl/lato/Lato-Bold.ttf` → `res/font/lato_bold.ttf`
+ *  - `ofl/lato/Lato-Italic.ttf` → `res/font/lato_italic.ttf`
  *
  * To re-vendor: bump the commit hash, curl the raw files, drop into
  * `res/font/`, bump this doc and `app/src/main/assets/open_source_licenses.md`.
@@ -71,10 +75,24 @@ object PilgrimFonts {
             weight = FontWeight.SemiBold,
             variationSettings = FontVariation.Settings(FontVariation.weight(600)),
         ),
+        // Italic variant. Without this, callers using
+        // `fontStyle = FontStyle.Italic` on a body TextStyle would
+        // trigger Compose's synthesized italic (an algorithmic slant
+        // of upright glyphs) — noticeably worse than a true italic
+        // cut on a high-contrast oldstyle serif.
+        Font(
+            resId = R.font.cormorant_garamond_italic_variable,
+            weight = FontWeight.Normal,
+            style = FontStyle.Italic,
+            variationSettings = FontVariation.Settings(FontVariation.weight(400)),
+        ),
     )
 
     val lato: FontFamily = FontFamily(
         Font(R.font.lato_regular, weight = FontWeight.Normal),
         Font(R.font.lato_bold, weight = FontWeight.Bold),
+        // Italic variant for the Home row caption and any other Lato
+        // italic usage; avoids the synthesized-slant fallback.
+        Font(R.font.lato_italic, weight = FontWeight.Normal, style = FontStyle.Italic),
     )
 }
