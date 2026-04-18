@@ -9,8 +9,14 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
+import org.walktalkmeditate.pilgrim.audio.PlaybackState
+import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -44,6 +50,8 @@ data class WalkSummary(
 @HiltViewModel
 class WalkSummaryViewModel @Inject constructor(
     private val repository: WalkRepository,
+    private val playback: VoicePlaybackController,
+    private val sweeper: OrphanRecordingSweeper,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -58,6 +66,55 @@ class WalkSummaryViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = WalkSummaryUiState.Loading,
     )
+
+    /**
+     * Live list of voice recordings for this walk. Backed by a Room
+     * Flow so transcription updates from Stage 2-D's worker land in
+     * the UI without a manual refresh.
+     */
+    val recordings: StateFlow<List<VoiceRecording>> =
+        repository.observeVoiceRecordings(walkId).stateIn(
+            scope = viewModelScope,
+            // WhileSubscribed (not Eagerly) so unit tests that don't
+            // subscribe don't leave a never-completing collector running
+            // in viewModelScope — runTest waits on it forever otherwise.
+            // The UI's collectAsStateWithLifecycle is a real subscriber,
+            // so production behavior is unchanged.
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
+
+    val playbackUiState: StateFlow<PlaybackUiState> = playback.state
+        .map { it.toUi() }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = PlaybackUiState.IDLE,
+        )
+
+    /**
+     * Best-effort cleanup for the displayed walk: handles orphan WAVs,
+     * dangling rows, zombie rows from mid-capture kills, and late-
+     * arriving auto-stop rows that need transcription rescheduling.
+     * Triggered from [WalkSummaryScreen]'s LaunchedEffect on first
+     * composition. Per-case errors are logged inside the sweeper.
+     *
+     * Public (rather than init-block) so unit tests don't unconditionally
+     * fire the sweep — Room observation under runTest was hanging when
+     * the sweep raced against test-scope coroutine tracking.
+     */
+    fun runStartupSweep() {
+        viewModelScope.launch { sweeper.sweep(walkId) }
+    }
+
+    fun playRecording(recording: VoiceRecording) = playback.play(recording)
+    fun pausePlayback() = playback.pause()
+    fun stopPlayback() = playback.stop()
+
+    override fun onCleared() {
+        playback.release()
+        super.onCleared()
+    }
 
     private suspend fun buildState(): WalkSummaryUiState {
         val walk = repository.getWalk(walkId) ?: return WalkSummaryUiState.NotFound
@@ -107,5 +164,23 @@ class WalkSummaryViewModel @Inject constructor(
 
     companion object {
         const val ARG_WALK_ID = "walkId"
+        private const val SUBSCRIBER_GRACE_MS = 5_000L
     }
+}
+
+data class PlaybackUiState(
+    val playingRecordingId: Long?,
+    val isPlaying: Boolean,
+    val errorMessage: String?,
+) {
+    companion object {
+        val IDLE = PlaybackUiState(playingRecordingId = null, isPlaying = false, errorMessage = null)
+    }
+}
+
+private fun PlaybackState.toUi(): PlaybackUiState = when (this) {
+    is PlaybackState.Idle -> PlaybackUiState.IDLE
+    is PlaybackState.Playing -> PlaybackUiState(recordingId, isPlaying = true, errorMessage = null)
+    is PlaybackState.Paused -> PlaybackUiState(recordingId, isPlaying = false, errorMessage = null)
+    is PlaybackState.Error -> PlaybackUiState(recordingId, isPlaying = false, errorMessage = message)
 }
