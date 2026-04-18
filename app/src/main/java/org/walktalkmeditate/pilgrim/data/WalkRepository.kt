@@ -35,6 +35,8 @@ class WalkRepository @Inject constructor(
 
     suspend fun allWalks(): List<Walk> = walkDao.getAll()
 
+    suspend fun mostRecentFinishedWalk(): Walk? = walkDao.getMostRecentFinished()
+
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
     suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)
@@ -76,6 +78,8 @@ class WalkRepository @Inject constructor(
     suspend fun recordLocations(samples: List<RouteDataSample>) = routeDao.insertAll(samples)
 
     suspend fun locationSamplesFor(walkId: Long): List<RouteDataSample> = routeDao.getForWalk(walkId)
+
+    suspend fun lastLocationSampleFor(walkId: Long): RouteDataSample? = routeDao.getLastForWalk(walkId)
 
     fun observeLocationSamples(walkId: Long): Flow<List<RouteDataSample>> =
         routeDao.observeForWalk(walkId)

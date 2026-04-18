@@ -187,9 +187,11 @@ class WalkViewModel @Inject constructor(
      */
     private suspend fun seedLocation(): LocationPoint? {
         locationSource.lastKnownLocation()?.let { return it }
-        val mostRecent = repository.allWalks().firstOrNull() ?: return null
-        val samples = repository.locationSamplesFor(mostRecent.id)
-        val sample = samples.lastOrNull() ?: samples.firstOrNull() ?: return null
+        // LIMIT 1 SELECTs so a long history (thousands of walks, tens
+        // of thousands of samples) doesn't slurp the whole dataset on
+        // every cold app start for a one-point seed.
+        val mostRecent = repository.mostRecentFinishedWalk() ?: return null
+        val sample = repository.lastLocationSampleFor(mostRecent.id) ?: return null
         return LocationPoint(
             timestamp = sample.timestamp,
             latitude = sample.latitude,

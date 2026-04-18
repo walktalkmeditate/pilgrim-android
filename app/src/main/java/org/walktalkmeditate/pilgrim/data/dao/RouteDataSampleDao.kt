@@ -24,4 +24,10 @@ interface RouteDataSampleDao {
 
     @Query("SELECT COUNT(*) FROM route_data_samples WHERE walk_id = :walkId")
     suspend fun countForWalk(walkId: Long): Int
+
+    @Query(
+        "SELECT * FROM route_data_samples WHERE walk_id = :walkId " +
+            "ORDER BY timestamp DESC LIMIT 1",
+    )
+    suspend fun getLastForWalk(walkId: Long): RouteDataSample?
 }
