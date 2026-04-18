@@ -198,7 +198,7 @@ class WalkViewModel @Inject constructor(
         )
     }
 
-    private fun mapStartFailure(err: Throwable): VoiceRecorderUiState.Error = when (err) {
+    private fun mapStartFailure(err: Throwable): VoiceRecorderUiState = when (err) {
         is VoiceRecorderError.PermissionMissing -> VoiceRecorderUiState.Error(
             "microphone permission required to record",
             VoiceRecorderUiState.Kind.PermissionDenied,
@@ -211,10 +211,11 @@ class WalkViewModel @Inject constructor(
             "couldn't save the recording",
             VoiceRecorderUiState.Kind.Other,
         )
-        is VoiceRecorderError.ConcurrentRecording -> VoiceRecorderUiState.Error(
-            "a recording is already in progress",
-            VoiceRecorderUiState.Kind.Other,
-        )
+        // ConcurrentRecording on start = a UI double-tap raced ahead of
+        // the first start's state propagation. The first start succeeded;
+        // surfacing a banner for the second tap is noise. Stay in
+        // Recording (which the first start is about to set anyway).
+        is VoiceRecorderError.ConcurrentRecording -> VoiceRecorderUiState.Recording
         else -> VoiceRecorderUiState.Error(
             err.message ?: "recording failed",
             VoiceRecorderUiState.Kind.Other,
@@ -225,6 +226,10 @@ class WalkViewModel @Inject constructor(
         // EmptyRecording is "user tapped stop too fast" or a silent
         // background-kill. Either way, no banner — return to Idle.
         is VoiceRecorderError.EmptyRecording -> VoiceRecorderUiState.Idle
+        // NoActiveRecording on stop = a UI double-tap raced ahead of
+        // the first stop's completion. The first stop succeeded;
+        // ignoring the second is the correct UX.
+        is VoiceRecorderError.NoActiveRecording -> VoiceRecorderUiState.Idle
         else -> VoiceRecorderUiState.Error(
             message = err.message ?: "stop failed",
             kind = VoiceRecorderUiState.Kind.Other,
