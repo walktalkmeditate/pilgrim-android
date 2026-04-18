@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <jni.h>
 #include <android/log.h>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -28,16 +29,60 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeInit(
 }
 
 // Reads a 16-bit mono PCM WAV at 16 kHz, returns float[] in [-1, 1].
-// Matches the format produced by VoiceRecorder's WavWriter (44-byte
-// RIFF header, 16-bit signed little-endian PCM, mono, 16 kHz).
+// Walks RIFF chunks to locate the `data` subchunk rather than assuming
+// the canonical 44-byte header — Pilgrim's WavWriter writes the
+// canonical layout, but a future import path or a hand-edited file
+// might include LIST/INFO chunks that push the data offset later.
+// Validates RIFF/WAVE magic and rejects unsupported encodings so a
+// malformed file produces an empty result (mapped upstream to a no-
+// speech placeholder + log) rather than silent garbage.
 static std::vector<float> readWavPcmF32(const char* path) {
     std::ifstream file(path, std::ios::binary);
     std::vector<float> samples;
     if (!file.is_open()) return samples;
-    file.seekg(44);
-    int16_t s;
-    while (file.read(reinterpret_cast<char*>(&s), sizeof(s))) {
-        samples.push_back(s / 32768.0f);
+
+    char magic[4];
+    uint32_t riffSize = 0;
+    if (!file.read(magic, 4) || std::string(magic, 4) != "RIFF") return samples;
+    if (!file.read(reinterpret_cast<char*>(&riffSize), 4)) return samples;
+    if (!file.read(magic, 4) || std::string(magic, 4) != "WAVE") return samples;
+
+    bool fmtOk = false;
+    while (file.read(magic, 4)) {
+        uint32_t chunkSize = 0;
+        if (!file.read(reinterpret_cast<char*>(&chunkSize), 4)) return samples;
+        if (std::string(magic, 4) == "fmt ") {
+            if (chunkSize < 16) return samples;
+            uint16_t audioFormat = 0, numChannels = 0, bitsPerSample = 0;
+            uint32_t sampleRate = 0;
+            file.read(reinterpret_cast<char*>(&audioFormat), 2);
+            file.read(reinterpret_cast<char*>(&numChannels), 2);
+            file.read(reinterpret_cast<char*>(&sampleRate), 4);
+            file.seekg(6, std::ios::cur);
+            file.read(reinterpret_cast<char*>(&bitsPerSample), 2);
+            if (chunkSize > 16) file.seekg(chunkSize - 16, std::ios::cur);
+            // PCM (1) + mono + 16-bit + 16 kHz only — matches WavWriter.
+            if (audioFormat != 1 || numChannels != 1 || bitsPerSample != 16 || sampleRate != 16000) {
+                LOGW("unsupported WAV: fmt=%u ch=%u rate=%u bits=%u",
+                     audioFormat, numChannels, sampleRate, bitsPerSample);
+                return samples;
+            }
+            fmtOk = true;
+        } else if (std::string(magic, 4) == "data") {
+            if (!fmtOk) return samples;
+            samples.reserve(chunkSize / 2);
+            int16_t s;
+            uint32_t bytesRead = 0;
+            while (bytesRead < chunkSize && file.read(reinterpret_cast<char*>(&s), sizeof(s))) {
+                samples.push_back(s / 32768.0f);
+                bytesRead += 2;
+            }
+            return samples;
+        } else {
+            // Skip unknown chunks (LIST/INFO/etc.). Chunks are 2-byte
+            // aligned per RIFF spec — pad if the size is odd.
+            file.seekg(chunkSize + (chunkSize & 1), std::ios::cur);
+        }
     }
     return samples;
 }
