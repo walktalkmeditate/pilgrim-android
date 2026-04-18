@@ -21,9 +21,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
+import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -34,6 +38,9 @@ class WalkSummaryViewModelTest {
 
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
+    private lateinit var playback: FakeVoicePlaybackController
+    private lateinit var scheduler: FakeTranscriptionScheduler
+    private lateinit var sweeper: OrphanRecordingSweeper
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -53,7 +60,17 @@ class WalkSummaryViewModelTest {
             waypointDao = db.waypointDao(),
             voiceRecordingDao = db.voiceRecordingDao(),
         )
+        playback = FakeVoicePlaybackController()
+        scheduler = FakeTranscriptionScheduler()
+        sweeper = OrphanRecordingSweeper(context, repository, scheduler)
     }
+
+    private fun newViewModel(walkId: Long) = WalkSummaryViewModel(
+        repository = repository,
+        playback = playback,
+        sweeper = sweeper,
+        savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
+    )
 
     @After
     fun tearDown() {
@@ -63,7 +80,7 @@ class WalkSummaryViewModelTest {
 
     @Test
     fun `NotFound state when walk row is missing`() = runTest(dispatcher) {
-        val vm = WalkSummaryViewModel(repository, SavedStateHandle(mapOf("walkId" to 999L)))
+        val vm = newViewModel(walkId = 999L)
 
         vm.state.test {
             // Might be Loading first, then NotFound
@@ -85,7 +102,7 @@ class WalkSummaryViewModelTest {
             RouteDataSample(walkId = walk.id, timestamp = 60_900L, latitude = 0.0, longitude = 0.001),
         )
 
-        val vm = WalkSummaryViewModel(repository, SavedStateHandle(mapOf("walkId" to walk.id)))
+        val vm = newViewModel(walkId = walk.id)
 
         vm.state.test {
             var item = awaitItem()
@@ -113,7 +130,7 @@ class WalkSummaryViewModelTest {
         repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 40_000L, eventType = WalkEventType.MEDITATION_START))
         repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 45_000L, eventType = WalkEventType.MEDITATION_END))
 
-        val vm = WalkSummaryViewModel(repository, SavedStateHandle(mapOf("walkId" to walk.id)))
+        val vm = newViewModel(walkId = walk.id)
 
         vm.state.test {
             var item = awaitItem()
@@ -136,7 +153,7 @@ class WalkSummaryViewModelTest {
         repository.finishWalk(walk, endTimestamp = 60_000L)
         repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 30_000L, eventType = WalkEventType.PAUSED))
 
-        val vm = WalkSummaryViewModel(repository, SavedStateHandle(mapOf("walkId" to walk.id)))
+        val vm = newViewModel(walkId = walk.id)
 
         vm.state.test {
             var item = awaitItem()
@@ -157,7 +174,7 @@ class WalkSummaryViewModelTest {
         repository.finishWalk(walk, endTimestamp = 60_000L)
         repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 40_000L, eventType = WalkEventType.MEDITATION_START))
 
-        val vm = WalkSummaryViewModel(repository, SavedStateHandle(mapOf("walkId" to walk.id)))
+        val vm = newViewModel(walkId = walk.id)
 
         vm.state.test {
             var item = awaitItem()
@@ -168,4 +185,76 @@ class WalkSummaryViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // Note: Room Flow observation tests + sweep delegation tests are
+    // intentionally omitted from the VM layer. observeVoiceRecordings
+    // is exhaustively covered by VoiceRecordingDataLayerTest, and the
+    // sweeper's behavior is covered by OrphanRecordingSweeperTest. The
+    // VM tests below verify only the public delegation API surface
+    // (no runTest needed — the calls are synchronous on a fake).
+
+    @Test
+    fun `playRecording delegates to the controller`() {
+        val walk = kotlinx.coroutines.runBlocking { repository.startWalk(startTimestamp = 0L) }
+        val recording = insertSimpleRecording(walk.id)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.playRecording(recording)
+
+        assertEquals(listOf(recording.id), playback.playCalls)
+    }
+
+    @Test
+    fun `pausePlayback delegates to the controller`() {
+        val walk = kotlinx.coroutines.runBlocking { repository.startWalk(startTimestamp = 0L) }
+        val recording = insertSimpleRecording(walk.id)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.playRecording(recording)
+        vm.pausePlayback()
+
+        assertEquals(1, playback.pauseCalls.get())
+    }
+
+    @Test
+    fun `stopPlayback delegates to the controller`() {
+        val vm = newViewModel(walkId = 1L)
+
+        vm.stopPlayback()
+
+        assertEquals(1, playback.stopCalls.get())
+    }
+
+    @Test
+    fun `onCleared releases the playback controller`() {
+        val walk = kotlinx.coroutines.runBlocking { repository.startWalk(startTimestamp = 0L) }
+        val vm = newViewModel(walkId = walk.id)
+
+        val store = androidx.lifecycle.ViewModelStore()
+        store.put("vm", vm)
+        store.clear()
+
+        assertEquals(1, playback.releaseCalls.get())
+    }
+
+    private fun insertSimpleRecording(
+        walkId: Long,
+        transcription: String? = null,
+        fileRelativePath: String? = null,
+    ): VoiceRecording {
+        val walk = kotlinx.coroutines.runBlocking { repository.getWalk(walkId)!! }
+        val start = nextTimestamp.getAndAdd(60_000L)
+        val recording = VoiceRecording(
+            walkId = walkId,
+            startTimestamp = start,
+            endTimestamp = start + 5_000L,
+            durationMillis = 5_000L,
+            fileRelativePath = fileRelativePath ?: "recordings/${walk.uuid}/rec-$start.wav",
+            transcription = transcription,
+        )
+        val id = kotlinx.coroutines.runBlocking { repository.recordVoice(recording) }
+        return recording.copy(id = id)
+    }
+
+    private val nextTimestamp = java.util.concurrent.atomic.AtomicLong(1_000_000L)
 }

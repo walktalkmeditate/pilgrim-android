@@ -8,11 +8,13 @@ import androidx.work.Configuration
 import com.mapbox.common.MapboxOptions
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
 
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
+    @Inject lateinit var orphanSweeperScheduler: OrphanSweeperScheduler
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -28,5 +30,10 @@ class PilgrimApp : Application(), Configuration.Provider {
         // map tiles will fail to load; the placeholder map card handles
         // that visually until a valid token is configured.
         MapboxOptions.accessToken = BuildConfig.MAPBOX_ACCESS_TOKEN
+
+        // KEEP policy means this is a no-op after the first launch; the
+        // periodic sweeper runs on its own daily cadence regardless of
+        // how often the user opens the app.
+        orphanSweeperScheduler.scheduleDaily()
     }
 }

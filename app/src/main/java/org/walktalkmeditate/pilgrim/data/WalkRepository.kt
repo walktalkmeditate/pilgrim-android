@@ -33,6 +33,8 @@ class WalkRepository @Inject constructor(
 ) {
     fun observeAllWalks(): Flow<List<Walk>> = walkDao.observeAll()
 
+    suspend fun allWalks(): List<Walk> = walkDao.getAll()
+
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
     suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)

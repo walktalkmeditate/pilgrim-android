@@ -19,6 +19,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,10 @@ fun WalkSummaryScreen(
     viewModel: WalkSummaryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val recordings by viewModel.recordings.collectAsStateWithLifecycle()
+    val playbackUiState by viewModel.playbackUiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
     Column(
         modifier = Modifier
@@ -70,6 +75,16 @@ fun WalkSummaryScreen(
                 SummaryMap(points = s.summary.routePoints)
                 Spacer(Modifier.height(PilgrimSpacing.big))
                 SummaryStats(summary = s.summary)
+                if (recordings.isNotEmpty()) {
+                    Spacer(Modifier.height(PilgrimSpacing.big))
+                    VoiceRecordingsSection(
+                        walkStartTimestamp = s.summary.walk.startTimestamp,
+                        recordings = recordings,
+                        playbackUiState = playbackUiState,
+                        onPlay = viewModel::playRecording,
+                        onPause = viewModel::pausePlayback,
+                    )
+                }
             }
         }
 

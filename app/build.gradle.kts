@@ -153,6 +153,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
 
     implementation(libs.androidx.navigation.compose)
 
@@ -174,6 +176,8 @@ dependencies {
     implementation(libs.play.services.location)
 
     implementation(libs.mapbox.maps.android)
+
+    implementation(libs.androidx.media3.exoplayer)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
