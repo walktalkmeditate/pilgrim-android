@@ -177,13 +177,15 @@ class WalkViewModel @Inject constructor(
      *
      *  1. [LocationSource.lastKnownLocation] — typically the most recent
      *     system-cached GPS fix (FusedLocationProvider).
-     *  2. Most recent walk's LAST route sample — where the user was when
-     *     they finished their previous walk. Likely close to where they
-     *     are now if they're walking again from the same starting
-     *     point.
-     *  3. Most recent walk's FIRST route sample — falls through from (2)
-     *     if the walk had no samples recorded for some reason.
-     *  4. null — caller (PilgrimMap) leaves Mapbox's default camera.
+     *  2. Most recent finished walk's LAST route sample — where the user
+     *     was when they last finished a walk. Usually close to where
+     *     they are now if they're walking from the same starting point.
+     *  3. null — caller (PilgrimMap) leaves Mapbox's default camera.
+     *
+     * (A walk with zero route samples — service killed before any GPS
+     * fix landed — falls through to 3; a separate "first sample"
+     * fallback would behave identically because both queries are LIMIT 1
+     * over the same row set.)
      */
     private suspend fun seedLocation(): LocationPoint? {
         locationSource.lastKnownLocation()?.let { return it }

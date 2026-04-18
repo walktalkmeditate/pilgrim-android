@@ -15,7 +15,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.util.Log
 import com.mapbox.geojson.Point
+import kotlinx.coroutines.delay
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.MapView
@@ -140,6 +142,24 @@ fun PilgrimMap(
                 }
             }
             // Style is textured; kick the fade-in animation.
+            styleLoaded = true
+        }
+        // Safety net for the failure case: loadStyle's success callback
+        // is only delivered on success. With an empty/invalid Mapbox
+        // token, a network failure before any tile is cached, or a
+        // certificate error, the callback never fires — without this
+        // timeout the map card would render alpha=0 forever with no
+        // feedback. Better to show Mapbox's error tile than an
+        // invisible rectangle. The delay is cancelled naturally when
+        // LaunchedEffect re-keys (theme toggle) or the composable
+        // leaves composition.
+        delay(STYLE_LOAD_TIMEOUT_MS)
+        if (!styleLoaded) {
+            Log.w(
+                "PilgrimMap",
+                "style load did not complete within ${STYLE_LOAD_TIMEOUT_MS}ms; " +
+                    "fading in anyway (check MAPBOX_ACCESS_TOKEN + network)",
+            )
             styleLoaded = true
         }
     }
@@ -279,3 +299,7 @@ private const val MAX_FIT_ZOOM = 17.0
 private const val FOLLOW_EASE_MS = 800L
 private const val FIT_PADDING_DP = 32
 private const val FADE_IN_MS = 400
+// 3s is comfortably above typical cold-load times (~100-500ms per
+// Mapbox v11 traces) but short enough to avoid leaving the user
+// staring at a blank card on failure paths.
+private const val STYLE_LOAD_TIMEOUT_MS = 3_000L
