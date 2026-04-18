@@ -373,6 +373,32 @@ class WalkViewModelTest {
     }
 
     @Test
+    fun `finishWalk while recording inserts row before scheduling transcription`() =
+        runTest(dispatcher) {
+            // Regression guard for the scheduler-vs-INSERT race that the
+            // .first { !is Recording } wait in finishWalk closes. The
+            // scheduler must observe the auto-stopped recording's row.
+            controller.startWalk(intention = null)
+            val walkId = requireActiveWalkId()
+
+            viewModel.toggleRecording()
+            viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+            viewModel.audioLevel.first { it > 0f }
+
+            clock.advanceTo(3_000L)
+            viewModel.finishWalk()
+
+            controller.state.first { it is WalkState.Finished }
+            viewModel.voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
+
+            // Both must be true at the moment we observe the schedule
+            // call: the auto-stopped recording's row was committed AND
+            // the scheduler was invoked with the just-finished walkId.
+            assertEquals(1, repository.voiceRecordingsFor(walkId).size)
+            assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
+        }
+
+    @Test
     fun `recordingsCount reflects rows for the active walk`() = runTest(dispatcher) {
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()

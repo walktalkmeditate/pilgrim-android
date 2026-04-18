@@ -59,7 +59,15 @@ class WhisperCppEngine @Inject constructor(
                 val text = synchronized(nativeLock) {
                     val handle = ensureLoaded()
                     nativeTranscribe(handle, wavPath.absolutePathString())
-                } ?: return@withContext Result.failure(WhisperError.InferenceFailed(-1))
+                }
+                // The JNI returns nullptr on whisper_full failure; the
+                // real `whisper_full` rc is logged in whisper-jni.cpp at
+                // WARN level (`PilgrimWhisper rc=...`) but is not threaded
+                // back to Kotlin. -1 here is a placeholder for "see
+                // logcat". Threading the rc would require a richer JNI
+                // signature; revisit if a future stage adds analytics
+                // that need to discriminate failure modes.
+                    ?: return@withContext Result.failure(WhisperError.InferenceFailed(-1))
                 Result.success(TranscriptionResult(text = text.trim(), wordsPerMinute = null))
             } catch (e: WhisperError) {
                 Result.failure(e)
