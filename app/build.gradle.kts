@@ -24,6 +24,7 @@ fun String.toJavaStringLiteral(): String =
 android {
     namespace = "org.walktalkmeditate.pilgrim"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "org.walktalkmeditate.pilgrim"
@@ -35,6 +36,23 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "MAPBOX_ACCESS_TOKEN", mapboxAccessToken.toJavaStringLiteral())
+
+        ndk {
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += "-DANDROID_STL=c++_static"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     sourceSets {
@@ -88,6 +106,10 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // Page-aligned (16 KB) JNI .so packaging for Android 15+.
+            useLegacyPackaging = false
+        }
     }
 
     testOptions {
@@ -131,6 +153,9 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
+    implementation(libs.androidx.work.runtime.ktx)
 
     implementation(libs.androidx.datastore.preferences)
 
@@ -148,6 +173,7 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core.ktx)
     testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.androidx.work.testing)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

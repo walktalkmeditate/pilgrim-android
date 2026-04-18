@@ -27,6 +27,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
 import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
+import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -53,6 +54,7 @@ class WalkViewModelTest {
     private lateinit var controller: WalkController
     private lateinit var fakeAudioCapture: FakeAudioCapture
     private lateinit var voiceRecorder: VoiceRecorder
+    private lateinit var transcriptionScheduler: FakeTranscriptionScheduler
     private lateinit var viewModel: WalkViewModel
     private val dispatcher = UnconfinedTestDispatcher()
 
@@ -79,7 +81,8 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder)
+        transcriptionScheduler = FakeTranscriptionScheduler()
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler)
     }
 
     @After
@@ -133,6 +136,23 @@ class WalkViewModelTest {
             assertTrue(awaitItem() is WalkState.Finished)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `finishWalk schedules transcription for the just-finished walkId`() = runTest(dispatcher) {
+        viewModel.startWalk()
+        val activeWalkId = controller.state.first { it is WalkState.Active }
+            .let { (it as WalkState.Active).walk.walkId }
+
+        clock.advanceTo(5_000L)
+        viewModel.finishWalk()
+
+        // viewModelScope's launch + Room hop may suspend across
+        // dispatchers. Await Finished (or, equivalently, await the
+        // first scheduler invocation) before asserting.
+        controller.state.first { it is WalkState.Finished }
+
+        assertEquals(listOf(activeWalkId), transcriptionScheduler.scheduledWalkIds)
     }
 
     @Test
@@ -297,7 +317,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler)
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -326,7 +346,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler)
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
