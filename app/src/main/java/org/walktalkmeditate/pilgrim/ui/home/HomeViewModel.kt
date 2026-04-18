@@ -9,10 +9,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -49,21 +47,18 @@ class HomeViewModel @Inject constructor(
      * a rare hemisphere flip doesn't force a row-list recomposition;
      * the HomeScreen `remember(rows, hemisphere)` keys on both
      * explicitly and invalidates the strokes list on either change.
+     *
+     * Note on first-frame behavior: after a user's very first walk
+     * (which wrote Southern to DataStore via
+     * [org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel.finishWalk]),
+     * the first HomeScreen render may briefly show Northern before
+     * the DataStore read propagates (tens of ms). The
+     * `distinctUntilChanged` inside [HemisphereRepository] prevents a
+     * redundant second emit; the `@Composable`'s `remember` re-keys
+     * on the hemisphere change and re-tints without a visible flicker.
+     * Accepted as imperceptible for a one-time first-install edge case.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
-
-    init {
-        // Defensive pre-read: `hemisphere` is a
-        // SharingStarted.WhileSubscribed flow, so nothing collects
-        // DataStore until a subscriber attaches. Forcing a read in
-        // `init` warms the cache so the first frame of HomeScreen
-        // reads the cached hemisphere value rather than the initial
-        // Northern default (which would otherwise briefly tint the
-        // thread wrong right after a first-walk-ever finish).
-        viewModelScope.launch {
-            hemisphereRepository.hemisphere.first()
-        }
-    }
 
     val uiState: StateFlow<HomeUiState> = repository.observeAllWalks()
         .map { walks ->
