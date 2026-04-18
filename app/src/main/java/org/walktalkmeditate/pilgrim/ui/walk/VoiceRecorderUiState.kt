@@ -9,7 +9,17 @@ package org.walktalkmeditate.pilgrim.ui.walk
 sealed class VoiceRecorderUiState {
     data object Idle : VoiceRecorderUiState()
     data object Recording : VoiceRecorderUiState()
-    data class Error(val message: String, val kind: Kind) : VoiceRecorderUiState()
+
+    /**
+     * @param id monotonic counter assigned by the emitter (WalkViewModel).
+     *           Two errors with identical [message] and [kind] but different
+     *           [id]s are NOT equal, which is intentional: a Compose
+     *           `LaunchedEffect(error)` keyed on this state needs to
+     *           re-fire when the same logical error repeats — otherwise
+     *           the auto-dismiss timer wouldn't reset for back-to-back
+     *           PermissionDenied errors landing within the dismiss window.
+     */
+    data class Error(val message: String, val kind: Kind, val id: Long) : VoiceRecorderUiState()
 
     enum class Kind {
         /** RECORD_AUDIO not granted at tap time. */
