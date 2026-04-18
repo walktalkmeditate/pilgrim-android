@@ -61,6 +61,10 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             val id = currentRecordingId ?: return
             Log.w(TAG, "playback error for recording $id", error)
             audioFocus.abandon()
+            // Null currentRecordingId so a stale `pause()` arriving on
+            // the next frame can't transition state into Paused on a
+            // player that ExoPlayer has already reset to STATE_IDLE.
+            currentRecordingId = null
             _state.value = PlaybackState.Error(id, error.message ?: "playback failed")
         }
     }
