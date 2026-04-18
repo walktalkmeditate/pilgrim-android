@@ -4,7 +4,6 @@ package org.walktalkmeditate.pilgrim.ui.home
 import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.Locale
@@ -133,7 +132,4 @@ class HomeFormatTest {
         assertEquals("Just now", HomeFormat.relativeDate(context, walk, now, zone, Locale.US))
     }
 
-    @Suppress("unused")
-    private fun midnightUtc(year: Int, month: Int, day: Int): Long =
-        LocalDate.of(year, month, day).atStartOfDay(zone).toInstant().toEpochMilli()
 }
