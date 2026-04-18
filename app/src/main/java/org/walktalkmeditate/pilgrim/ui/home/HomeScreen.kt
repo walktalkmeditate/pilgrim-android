@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,6 +28,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
@@ -57,6 +59,7 @@ fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
     onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
+    onEnterCalligraphyPreview: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -114,6 +117,19 @@ fun HomeScreen(
 
         Spacer(Modifier.height(PilgrimSpacing.big))
         BatteryExemptionCard(viewModel = permissionsViewModel)
+
+        // Debug-only preview entry point for Stage 3-C's calligraphy
+        // renderer. Removed in Stage 3-E when the renderer lands inside
+        // this screen's scroll.
+        if (BuildConfig.DEBUG) {
+            Spacer(Modifier.height(PilgrimSpacing.big))
+            TextButton(
+                onClick = onEnterCalligraphyPreview,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Calligraphy preview (debug)")
+            }
+        }
     }
 }
 
