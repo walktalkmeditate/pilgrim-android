@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -362,7 +363,21 @@ class WalkViewModel @Inject constructor(
             // recording and KEEP policy means we never retry. Wait for
             // _voiceRecorderState to settle (Idle on success, Error on
             // stop failure — both mean no more pending IO write).
-            _voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
+            //
+            // Bounded wait: VoiceRecorder.stop()'s internal CountDownLatch
+            // has no timeout, and on some OEM AudioRecord impls the
+            // capture loop's read() can block indefinitely. The user
+            // tapping Finish must always exit the walk; if state is
+            // still Recording after FINISH_STOP_TIMEOUT_MS, give up on
+            // graceful auto-stop and schedule transcription anyway. The
+            // potentially-orphaned WAV is recoverable by Stage 2-E's
+            // sweeper.
+            val settled = withTimeoutOrNull(FINISH_STOP_TIMEOUT_MS) {
+                _voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
+            }
+            if (settled == null) {
+                Log.w(TAG, "voice recorder did not settle within ${FINISH_STOP_TIMEOUT_MS}ms; scheduling anyway")
+            }
             walkIdOrNull(controller.state.value)?.let { walkId ->
                 transcriptionScheduler.scheduleForWalk(walkId)
             }
@@ -386,6 +401,10 @@ class WalkViewModel @Inject constructor(
     private companion object {
         const val TICK_INTERVAL_MS = 1_000L
         const val SUBSCRIBER_GRACE_MS = 5_000L
+        // 5 s comfortably exceeds the typical 100 ms capture-loop drain
+        // while still letting the user out of the walk if AudioRecord
+        // hangs (some MediaTek devices, mic-seized scenarios).
+        const val FINISH_STOP_TIMEOUT_MS = 5_000L
         const val TAG = "WalkViewModel"
     }
 }
