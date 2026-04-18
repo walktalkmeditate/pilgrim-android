@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.domain.Clock
 
 /**
  * Debug-only VM for the Stage 3-C preview screen. Loads finished walks
@@ -25,6 +26,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 @HiltViewModel
 class CalligraphyPathPreviewViewModel @Inject constructor(
     private val repository: WalkRepository,
+    private val clock: Clock,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<List<PreviewStroke>>(emptyList())
@@ -56,7 +58,7 @@ class CalligraphyPathPreviewViewModel @Inject constructor(
     }
 
     private fun synthetic(): List<PreviewStroke> {
-        val baseMillis = System.currentTimeMillis() - 240L * 86_400_000L
+        val baseMillis = clock.now() - 240L * 86_400_000L
         return (0 until 8).map { i ->
             val start = baseMillis + i * 30L * 86_400_000L
             val pace = if (i % 2 == 0) 400.0 else 800.0
