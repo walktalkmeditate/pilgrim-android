@@ -60,6 +60,9 @@ fun PilgrimNavHost(
             HomeScreen(
                 permissionsViewModel = permissionsViewModel,
                 onEnterActiveWalk = { navController.navigate(Routes.ACTIVE_WALK) },
+                onEnterWalkSummary = { walkId ->
+                    navController.navigate(Routes.walkSummary(walkId))
+                },
             )
         }
         composable(Routes.ACTIVE_WALK) {

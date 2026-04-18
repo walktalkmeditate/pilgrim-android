@@ -38,10 +38,15 @@
     <string name="battery_exemption_action">Ask my phone</string>
     <string name="battery_exemption_later">Later</string>
 
-    <string name="home_placeholder_title">The road is made by walking.</string>
-    <string name="home_placeholder_subtitle">Ready when you are.</string>
+    <string name="home_title">Walks</string>
+    <string name="home_empty_message">No walks yet. Ready when you are.</string>
     <string name="home_action_start_walk">Start a walk</string>
     <string name="home_action_resume_walk">Resume your walk</string>
+    <string name="home_recording_count">%1$d voice notes</string>
+    <string name="home_recording_count_singular">1 voice note</string>
+    <string name="home_relative_just_now">Just now</string>
+    <string name="home_relative_minutes_ago">%1$d minutes ago</string>
+    <string name="home_relative_hours_ago">%1$d hours ago</string>
 
     <string name="walk_stat_distance">Distance</string>
     <string name="walk_stat_pace">Pace</string>
