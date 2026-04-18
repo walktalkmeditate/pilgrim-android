@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -147,6 +148,27 @@ class TranscriptionRunnerTest {
     }
 
     @Test
+    fun `ModelLoadFailed aborts the batch and bubbles for WorkManager retry`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val first = insertRecording(walk.id)
+        val second = insertRecording(walk.id)
+        engine.failure = WhisperError.ModelLoadFailed()
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertTrue("expected failure, was $outcome", outcome.isFailure)
+        assertTrue(
+            "cause should be ModelLoadFailed, was ${outcome.exceptionOrNull()}",
+            outcome.exceptionOrNull() is WhisperError.ModelLoadFailed,
+        )
+        // Neither row should have been written; the worker will retry
+        // the entire batch.
+        val rows = repository.voiceRecordingsFor(walk.id).associateBy { it.id }
+        assertNull(rows.getValue(first.id).transcription)
+        assertNull(rows.getValue(second.id).transcription)
+    }
+
+    @Test
     fun `transcribePending returns count of successful transcriptions`() = runBlocking {
         val walk = repository.startWalk(startTimestamp = 0L)
         repeat(3) { insertRecording(walk.id) }
@@ -157,12 +179,17 @@ class TranscriptionRunnerTest {
         assertEquals(3, outcome.getOrNull())
     }
 
+    private val timestampCounter = AtomicLong(1_000_000L)
+
     private fun insertRecording(
         walkId: Long,
         transcription: String? = null,
         durationMillis: Long = 5_000L,
     ): VoiceRecording = runBlocking {
-        val start = System.currentTimeMillis()
+        // Strictly-monotonic timestamps so the DAO's
+        // ORDER BY start_timestamp ASC produces deterministic batch
+        // order regardless of test wall-clock granularity.
+        val start = timestampCounter.getAndAdd(60_000L)
         val end = start + durationMillis
         val recording = VoiceRecording(
             walkId = walkId,

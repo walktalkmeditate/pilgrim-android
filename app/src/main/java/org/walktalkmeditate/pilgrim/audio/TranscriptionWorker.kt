@@ -21,7 +21,14 @@ class TranscriptionWorker @AssistedInject constructor(
         val outcome = runner.transcribePending(walkId)
         return outcome.fold(
             onSuccess = { Result.success() },
-            onFailure = { Result.failure() },
+            onFailure = { error ->
+                // Disk-full at install time, asset-stream errors, or
+                // any other model-load failure is plausibly transient.
+                // Ask WorkManager to back off and retry rather than
+                // marking the walk's transcription permanently failed.
+                if (error is WhisperError.ModelLoadFailed) Result.retry()
+                else Result.failure()
+            },
         )
     }
 
