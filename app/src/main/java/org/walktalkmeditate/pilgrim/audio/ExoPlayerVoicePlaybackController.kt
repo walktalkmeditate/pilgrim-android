@@ -71,7 +71,7 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
     override fun play(recording: VoiceRecording) {
         mainHandler.post {
-            val granted = audioFocus.requestMediaPlayback()
+            val granted = audioFocus.requestMediaPlayback(onLossListener = ::onAudioFocusLost)
             if (!granted) {
                 _state.value = PlaybackState.Error(recording.id, "audio focus denied")
                 return@post
@@ -120,6 +120,25 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             audioFocus.abandon()
             currentRecordingId = null
             _state.value = PlaybackState.Idle
+        }
+    }
+
+    /**
+     * Invoked by [AudioFocusCoordinator] on the focus listener thread
+     * when the OS reclaims focus (incoming call, navigation prompt,
+     * another media app). Pausing here keeps the player in a state
+     * that lets the user manually resume — auto-resuming on focus
+     * regain is intentionally NOT done (Stage 2-E is a passive
+     * listen-back surface; the user reacts to the interruption).
+     */
+    private fun onAudioFocusLost() {
+        mainHandler.post {
+            val p = player ?: return@post
+            val id = currentRecordingId ?: return@post
+            if (p.isPlaying) {
+                p.pause()
+                _state.value = PlaybackState.Paused(id)
+            }
         }
     }
 
