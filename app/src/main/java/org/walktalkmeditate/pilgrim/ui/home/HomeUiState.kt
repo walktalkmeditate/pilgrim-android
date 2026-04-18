@@ -9,6 +9,14 @@ package org.walktalkmeditate.pilgrim.ui.home
  */
 data class HomeWalkRow(
     val walkId: Long,
+    // Raw fields (Stage 3-E): the calligraphy journal thread uses these
+    // to synthesize a CalligraphyStrokeSpec per row. The formatted text
+    // fields below are still cached so card composition stays a
+    // pass-through.
+    val uuid: String,
+    val startTimestamp: Long,
+    val distanceMeters: Double,
+    val durationSeconds: Double,
     val relativeDate: String,
     val durationText: String,
     val distanceText: String,
