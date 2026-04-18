@@ -38,20 +38,37 @@ class AudioFocusCoordinator @Inject constructor(
      * the OS routes audio through the loudspeaker (not the earpiece —
      * USAGE_VOICE_COMMUNICATION would do that, which is wrong for a
      * walk-summary listen-back). Returns true if focus was granted.
+     *
+     * The optional [onLossListener] is invoked when the OS reclaims
+     * focus (incoming call, navigation prompt, another media app). The
+     * caller should pause its own playback when notified — ExoPlayer's
+     * built-in focus handling is intentionally disabled so the
+     * coordinator stays the single owner.
      */
-    fun requestMediaPlayback(): Boolean = request(usage = AudioAttributes.USAGE_MEDIA)
+    fun requestMediaPlayback(onLossListener: (() -> Unit)? = null): Boolean =
+        request(usage = AudioAttributes.USAGE_MEDIA, onLossListener = onLossListener)
 
-    private fun request(usage: Int): Boolean {
+    private fun request(usage: Int, onLossListener: (() -> Unit)? = null): Boolean {
         abandonIfHeld()
         val attrs = AudioAttributes.Builder()
             .setUsage(usage)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        val builder = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(attrs)
             .setWillPauseWhenDucked(false)
             .setAcceptsDelayedFocusGain(false)
-            .build()
+        if (onLossListener != null) {
+            builder.setOnAudioFocusChangeListener { focusChange ->
+                if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+                ) {
+                    onLossListener.invoke()
+                }
+            }
+        }
+        val request = builder.build()
         val result = audioManager.requestAudioFocus(request)
         val granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         // Only record the request if focus was actually granted —
