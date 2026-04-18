@@ -80,8 +80,12 @@ static std::vector<float> readWavPcmF32(const char* path) {
             return samples;
         } else {
             // Skip unknown chunks (LIST/INFO/etc.). Chunks are 2-byte
-            // aligned per RIFF spec — pad if the size is odd.
-            file.seekg(chunkSize + (chunkSize & 1), std::ios::cur);
+            // aligned per RIFF spec — pad if the size is odd. Promote
+            // to uint64_t before adding the pad byte: chunkSize is
+            // uint32_t, so 0xFFFFFFFF + 1 would wrap to 0 → infinite
+            // re-read of the same chunk header on a crafted file.
+            const uint64_t skip = static_cast<uint64_t>(chunkSize) + (chunkSize & 1u);
+            file.seekg(static_cast<std::streamoff>(skip), std::ios::cur);
         }
     }
     return samples;
