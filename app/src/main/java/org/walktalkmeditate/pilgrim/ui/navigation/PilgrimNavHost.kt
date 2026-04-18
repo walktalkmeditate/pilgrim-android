@@ -75,8 +75,16 @@ fun PilgrimNavHost(
                     }
                 },
                 onEnterCalligraphyPreview = {
-                    navController.navigate(Routes.CALLIGRAPHY_PREVIEW) {
-                        launchSingleTop = true
+                    // Defense in depth: the HomeScreen button that
+                    // invokes this is BuildConfig.DEBUG-gated, but so
+                    // is the composable() registration below. If a
+                    // release build ever ended up calling this lambda,
+                    // navigate() would throw for an unknown route —
+                    // short-circuit here instead.
+                    if (BuildConfig.DEBUG) {
+                        navController.navigate(Routes.CALLIGRAPHY_PREVIEW) {
+                            launchSingleTop = true
+                        }
                     }
                 },
             )

@@ -69,6 +69,11 @@ fun CalligraphyPath(
             val halfWidth = strokeWidth / 2f
 
             val midY = (sy + ey) / 2f
+            // Antisymmetric control points produce a gentle S-curve
+            // between the two dots: cp1 leans the same direction as the
+            // seed, cp2 leans the opposite. Matches the iOS renderer
+            // and is what makes the thread feel hand-drawn rather than
+            // mechanically offset.
             val cpOffset = meanderSeed(strokes[i]) * maxMeanderPx * 0.4f
             val cp1X = sx + cpOffset
             val cp1Y = midY - verticalSpacingPx * 0.2f
