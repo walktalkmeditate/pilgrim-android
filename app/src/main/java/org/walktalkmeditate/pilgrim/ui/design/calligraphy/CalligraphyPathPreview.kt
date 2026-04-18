@@ -40,13 +40,21 @@ fun CalligraphyPathPreviewScreen(
     // The `@ReadOnlyComposable` reads land in the composable body so
     // they participate in theme invalidation; the actual per-stroke
     // HSB math runs inside `remember` so unrelated recompositions
-    // don't rebuild N Color allocations.
-    val baseColors: Map<SeasonalInkFlavor, androidx.compose.ui.graphics.Color> = mapOf(
-        SeasonalInkFlavor.Ink to SeasonalInkFlavor.Ink.toBaseColor(),
-        SeasonalInkFlavor.Moss to SeasonalInkFlavor.Moss.toBaseColor(),
-        SeasonalInkFlavor.Rust to SeasonalInkFlavor.Rust.toBaseColor(),
-        SeasonalInkFlavor.Dawn to SeasonalInkFlavor.Dawn.toBaseColor(),
-    )
+    // don't rebuild N Color allocations. The map is itself wrapped
+    // in `remember` keyed by the four Color values so a recomposition
+    // that doesn't cross a theme boundary reuses the same instance.
+    val inkColor = SeasonalInkFlavor.Ink.toBaseColor()
+    val mossColor = SeasonalInkFlavor.Moss.toBaseColor()
+    val rustColor = SeasonalInkFlavor.Rust.toBaseColor()
+    val dawnColor = SeasonalInkFlavor.Dawn.toBaseColor()
+    val baseColors = remember(inkColor, mossColor, rustColor, dawnColor) {
+        mapOf(
+            SeasonalInkFlavor.Ink to inkColor,
+            SeasonalInkFlavor.Moss to mossColor,
+            SeasonalInkFlavor.Rust to rustColor,
+            SeasonalInkFlavor.Dawn to dawnColor,
+        )
+    }
 
     val strokes = remember(previews, hemisphere, baseColors) {
         previews.map { preview ->

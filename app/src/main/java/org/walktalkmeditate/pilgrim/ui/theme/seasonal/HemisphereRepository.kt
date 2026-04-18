@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.theme.seasonal
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -50,6 +53,15 @@ class HemisphereRepository @Inject constructor(
      */
     val hemisphere: StateFlow<Hemisphere> =
         dataStore.data
+            // Disk / serialization errors from DataStore land here. We
+            // log + fall back to Northern instead of crashing the
+            // Singleton's CoroutineScope. A subsequent subscriber (or
+            // the WhileSubscribed re-start) will re-try the read.
+            .catch { throwable ->
+                if (throwable is CancellationException) throw throwable
+                Log.w(TAG, "DataStore read failed; emitting Northern fallback", throwable)
+                emit(androidx.datastore.preferences.core.emptyPreferences())
+            }
             .map { prefs ->
                 when (prefs[KEY_HEMISPHERE]) {
                     INT_SOUTHERN -> Hemisphere.Southern
@@ -63,20 +75,39 @@ class HemisphereRepository @Inject constructor(
                 initialValue = Hemisphere.Northern,
             )
 
-    /** Explicit user override. Persists; survives re-inference. */
+    /**
+     * Explicit user override. Persists; survives re-inference. No UI
+     * surface exposes this yet — Stage 3-D ships the plumbing only.
+     * A future Settings screen will call this when the user toggles
+     * hemisphere manually. Current callers: tests.
+     */
     suspend fun setOverride(hemisphere: Hemisphere) {
         dataStore.edit { it[KEY_HEMISPHERE] = hemisphere.toInt() }
     }
 
     /**
      * Try to infer the hemisphere from the last-known location. No-op
-     * if a value is already cached OR no location is available. Safe
-     * to call concurrently — the read/check/write all happen inside
-     * a single [dataStore.edit] transaction so two racing callers
-     * can't both clobber an override in flight.
+     * if a value is already cached OR no location is available (or
+     * the location subsystem throws SecurityException because the
+     * user hasn't granted permission yet). Safe to call concurrently
+     * — the read/check/write all happen inside a single
+     * [dataStore.edit] transaction so two racing callers can't both
+     * clobber an override in flight.
      */
     suspend fun refreshFromLocationIfNeeded() {
-        val location = locationSource.lastKnownLocation() ?: return
+        // lastKnownLocation() is a best-effort probe. On real devices
+        // it can throw SecurityException if ACCESS_COARSE_LOCATION /
+        // ACCESS_FINE_LOCATION haven't been granted yet — treat that
+        // as "no location available" per the same precedent as
+        // WalkViewModel.seedLocation.
+        val location = try {
+            locationSource.lastKnownLocation()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "lastKnownLocation failed; treating as no-op", t)
+            null
+        } ?: return
         val inferred = Hemisphere.fromLatitude(location.latitude)
         dataStore.edit { prefs ->
             // Only write on the unknown → known transition. Preserves
@@ -94,6 +125,7 @@ class HemisphereRepository @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "HemisphereRepo"
         val KEY_HEMISPHERE = intPreferencesKey("hemisphere")
         const val INT_NORTHERN = 0
         const val INT_SOUTHERN = 1
