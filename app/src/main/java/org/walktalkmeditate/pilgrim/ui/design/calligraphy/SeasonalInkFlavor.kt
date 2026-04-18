@@ -67,18 +67,3 @@ fun SeasonalInkFlavor.toSeasonalColor(
     val base = toBaseColor()
     return SeasonalColorEngine.applySeasonalShift(base, intensity, date, hemisphere)
 }
-
-/**
- * Legacy flat accessor. Preserved as a deprecated shim so any in-
- * flight branch keeps compiling; new code should use
- * [toSeasonalColor]. Removed when Stage 3-E lands and the preview
- * screen is deleted.
- */
-@Deprecated(
-    message = "Use toSeasonalColor(date, hemisphere) — Stage 3-D introduces date-driven HSB shifts.",
-    replaceWith = ReplaceWith("toSeasonalColor(date, hemisphere)"),
-    level = DeprecationLevel.WARNING,
-)
-@Composable
-@ReadOnlyComposable
-fun SeasonalInkFlavor.toColor(): Color = toBaseColor()
