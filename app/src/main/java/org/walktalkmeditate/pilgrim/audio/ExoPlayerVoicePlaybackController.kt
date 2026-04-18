@@ -67,7 +67,7 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
     override fun play(recording: VoiceRecording) {
         mainHandler.post {
-            val granted = audioFocus.requestTransient()
+            val granted = audioFocus.requestMediaPlayback()
             if (!granted) {
                 _state.value = PlaybackState.Error(recording.id, "audio focus denied")
                 return@post
@@ -121,7 +121,12 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
     private fun createPlayer(): ExoPlayer {
         val attrs = AudioAttributes.Builder()
-            .setUsage(C.USAGE_VOICE_COMMUNICATION)
+            // USAGE_MEDIA, NOT USAGE_VOICE_COMMUNICATION — the latter
+            // routes audio through the in-call earpiece, which is
+            // inaudible when the phone is held away from the ear. Voice
+            // notes on the summary screen are media playback even
+            // though the *content* is speech.
+            .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
             .build()
         return ExoPlayer.Builder(context)

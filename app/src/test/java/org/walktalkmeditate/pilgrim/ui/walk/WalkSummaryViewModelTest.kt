@@ -226,7 +226,7 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
-    fun `onCleared releases the playback controller`() {
+    fun `onCleared stops playback without releasing the singleton`() {
         val walk = kotlinx.coroutines.runBlocking { repository.startWalk(startTimestamp = 0L) }
         val vm = newViewModel(walkId = walk.id)
 
@@ -234,7 +234,11 @@ class WalkSummaryViewModelTest {
         store.put("vm", vm)
         store.clear()
 
-        assertEquals(1, playback.releaseCalls.get())
+        // Stop, NOT release — the @Singleton VoicePlaybackController
+        // outlives the ViewModel and must remain ready for the next
+        // walk-summary screen.
+        assertEquals(1, playback.stopCalls.get())
+        assertEquals(0, playback.releaseCalls.get())
     }
 
     private fun insertSimpleRecording(

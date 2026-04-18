@@ -123,7 +123,13 @@ class WalkSummaryViewModel @Inject constructor(
     fun stopPlayback() = playback.stop()
 
     override fun onCleared() {
-        playback.release()
+        // Stop, don't release: VoicePlaybackController is @Singleton and
+        // outlives this ViewModel (matches WhisperCppEngine's Stage 2-D
+        // pattern). A previous design called release() here, which set
+        // player = null and would race with a subsequent VM's play()
+        // posted to the same main looper. Stop just halts current
+        // playback; the next VM finds the player ready to use.
+        playback.stop()
         super.onCleared()
     }
 
