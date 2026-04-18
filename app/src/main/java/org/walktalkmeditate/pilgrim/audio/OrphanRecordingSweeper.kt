@@ -158,8 +158,12 @@ class OrphanRecordingSweeper @Inject constructor(
             repository.deleteVoiceRecording(row)
             // Defensive: even if row delete succeeds, the file might
             // outlive it. Use the same canonical-path guard as case (a).
-            safeDeleteOrphanFile(file)
-            true
+            // If the file delete fails the row is still gone — next
+            // sweep will pick the file up as a case-(a) orphan — but
+            // we count this zombie sweep only when BOTH row and file
+            // are reconciled, so the metric reflects reality.
+            val fileDeleted = safeDeleteOrphanFile(file)
+            fileDeleted
         } catch (t: Throwable) {
             Log.w(TAG, "case (c) zombie delete row ${row.id} failed", t)
             false
