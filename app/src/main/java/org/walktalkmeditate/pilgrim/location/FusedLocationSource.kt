@@ -14,11 +14,13 @@ import com.google.android.gms.location.Priority
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 @Singleton
@@ -86,6 +88,33 @@ class FusedLocationSource @Inject constructor(
             client.removeLocationUpdates(callback)
         }
     }.buffer(Channel.UNLIMITED)
+
+    @SuppressLint("MissingPermission")
+    override suspend fun lastKnownLocation(): LocationPoint? =
+        suspendCancellableCoroutine { cont ->
+            client.lastLocation
+                .addOnSuccessListener { location ->
+                    if (location == null) {
+                        cont.resume(null)
+                        return@addOnSuccessListener
+                    }
+                    cont.resume(
+                        LocationPoint(
+                            timestamp = location.time,
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            horizontalAccuracyMeters =
+                                if (location.hasAccuracy()) location.accuracy else null,
+                            speedMetersPerSecond =
+                                if (location.hasSpeed()) location.speed else null,
+                        ),
+                    )
+                }
+                .addOnFailureListener { t ->
+                    Log.w(TAG, "lastLocation failed", t)
+                    cont.resume(null)
+                }
+        }
 
     private companion object {
         const val TAG = "FusedLocationSource"

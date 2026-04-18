@@ -49,6 +49,7 @@ fun ActiveWalkScreen(
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
+    val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
 
     // Back press during a walk would otherwise pop us to Home with the
     // controller still in Active (service still tracking, timer still
@@ -73,7 +74,7 @@ fun ActiveWalkScreen(
             .verticalScroll(rememberScrollState())
             .padding(PilgrimSpacing.big),
     ) {
-        WalkMap(points = routePoints)
+        WalkMap(points = routePoints, initialCenter = initialCameraCenter)
         Spacer(Modifier.height(PilgrimSpacing.big))
         Timer(ui.totalElapsedMillis)
         Spacer(Modifier.height(PilgrimSpacing.normal))
@@ -106,7 +107,7 @@ fun ActiveWalkScreen(
 }
 
 @Composable
-private fun WalkMap(points: List<LocationPoint>) {
+private fun WalkMap(points: List<LocationPoint>, initialCenter: LocationPoint?) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -118,6 +119,7 @@ private fun WalkMap(points: List<LocationPoint>) {
         PilgrimMap(
             points = points,
             followLatest = true,
+            initialCenter = initialCenter,
             modifier = Modifier.fillMaxSize(),
         )
     }
