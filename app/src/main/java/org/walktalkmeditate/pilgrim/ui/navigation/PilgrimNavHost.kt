@@ -15,10 +15,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
-import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPathPreviewScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
@@ -29,7 +27,6 @@ object Routes {
     const val PERMISSIONS = "permissions"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
-    const val CALLIGRAPHY_PREVIEW = "calligraphy_preview"
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
     const val WALK_SUMMARY_PATTERN = "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}"
     fun walkSummary(walkId: Long): String = "$WALK_SUMMARY_PREFIX/$walkId"
@@ -74,30 +71,7 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
-                onEnterCalligraphyPreview = {
-                    // Defense in depth: the HomeScreen button that
-                    // invokes this is BuildConfig.DEBUG-gated, but so
-                    // is the composable() registration below. If a
-                    // release build ever ended up calling this lambda,
-                    // navigate() would throw for an unknown route —
-                    // short-circuit here instead.
-                    if (BuildConfig.DEBUG) {
-                        navController.navigate(Routes.CALLIGRAPHY_PREVIEW) {
-                            launchSingleTop = true
-                        }
-                    }
-                },
             )
-        }
-        // Register the preview destination AND its Hilt-graph bindings
-        // only for debug builds. The HomeScreen entry button is also
-        // BuildConfig-gated, but keeping the route registration here
-        // means a release build can't accidentally resolve the preview
-        // route (e.g., via a rogue deep link) and instantiate its VM.
-        if (BuildConfig.DEBUG) {
-            composable(Routes.CALLIGRAPHY_PREVIEW) {
-                CalligraphyPathPreviewScreen()
-            }
         }
         composable(Routes.ACTIVE_WALK) {
             ActiveWalkScreen(

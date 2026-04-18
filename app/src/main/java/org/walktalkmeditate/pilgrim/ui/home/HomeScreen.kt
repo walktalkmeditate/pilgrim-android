@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,23 +27,38 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import org.walktalkmeditate.pilgrim.BuildConfig
+import java.time.Instant
+import java.time.ZoneId
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPath
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyStrokeSpec
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.SeasonalInkFlavor
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toSeasonalColor
 import org.walktalkmeditate.pilgrim.ui.onboarding.BatteryExemptionCard
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 
 private const val TAG = "HomeScreen"
 
+// Approximate card-row stride (card ~116dp + PilgrimSpacing.normal 16dp
+// gap). Drives CalligraphyPath's internal dot-Y placement so the thread
+// feels connected to the card list without per-card measurement.
+// Stage 3-F on-device QA may tune this value.
+private val JOURNAL_ROW_STRIDE = 132.dp
+private val JOURNAL_TOP_INSET = 24.dp
+
 /**
  * Stage 3-A: Home surface with walk list. Stage 1-E introduced the
  * scaffolding (Start button, BatteryExemptionCard, resume-check
- * LaunchedEffect); 3-A replaces the placeholder title+subtitle with
- * a [HomeViewModel]-driven list of finished walks.
+ * LaunchedEffect); 3-A replaced the placeholder with a
+ * [HomeViewModel]-driven list of finished walks; Stage 3-E lays a
+ * calligraphy ink thread behind the cards, tinted by each walk's
+ * date + the device hemisphere.
  *
  * The resume-check is preserved verbatim: on first composition, route
  * straight to ActiveWalk if the controller is already tracking or
@@ -59,7 +73,6 @@ fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
     onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
-    onEnterCalligraphyPreview: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -84,6 +97,7 @@ fun HomeScreen(
     }
 
     val uiState by homeViewModel.uiState.collectAsStateWithLifecycle()
+    val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -100,6 +114,7 @@ fun HomeScreen(
 
         HomeListContent(
             uiState = uiState,
+            hemisphere = hemisphere,
             onRowClick = onEnterWalkSummary,
         )
 
@@ -117,25 +132,13 @@ fun HomeScreen(
 
         Spacer(Modifier.height(PilgrimSpacing.big))
         BatteryExemptionCard(viewModel = permissionsViewModel)
-
-        // Debug-only preview entry point for Stage 3-C's calligraphy
-        // renderer. Removed in Stage 3-E when the renderer lands inside
-        // this screen's scroll.
-        if (BuildConfig.DEBUG) {
-            Spacer(Modifier.height(PilgrimSpacing.big))
-            TextButton(
-                onClick = onEnterCalligraphyPreview,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Calligraphy preview (debug)")
-            }
-        }
     }
 }
 
 @Composable
 private fun HomeListContent(
     uiState: HomeUiState,
+    hemisphere: Hemisphere,
     onRowClick: (Long) -> Unit,
 ) {
     when (uiState) {
@@ -159,19 +162,64 @@ private fun HomeListContent(
             )
         }
         is HomeUiState.Loaded -> {
-            // Plain Column.forEach rather than LazyColumn — the
-            // enclosing verticalScroll + LazyColumn would crash with a
-            // nested-scroll exception. Low volume of walks (tens,
-            // maybe low hundreds) is comfortable for non-lazy render.
-            // When Stage 3-E introduces the calligraphy journal
-            // thread, revisit to LazyColumn with a custom decoration.
-            Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal)) {
-                uiState.rows.forEach { row ->
-                    HomeWalkRowCard(
-                        row = row,
-                        onClick = { onRowClick(row.walkId) },
-                    )
-                }
+            JournalThread(
+                rows = uiState.rows,
+                hemisphere = hemisphere,
+                onRowClick = onRowClick,
+            )
+        }
+    }
+}
+
+/**
+ * The calligraphy-threaded walk list. Two layers:
+ *   1. [CalligraphyPath] canvas, sized to match the card stack.
+ *   2. Column of [HomeWalkRowCard]s on top.
+ *
+ * Cards are opaque `parchmentSecondary`; the thread peeks through the
+ * 16dp inter-card gaps. Cards aren't dot-aligned to the thread — the
+ * thread uses [JOURNAL_ROW_STRIDE] as an approximate card+gap spacing,
+ * which reads as "connected" without per-card measurement.
+ */
+@Composable
+private fun JournalThread(
+    rows: List<HomeWalkRow>,
+    hemisphere: Hemisphere,
+    onRowClick: (Long) -> Unit,
+) {
+    val strokes: List<CalligraphyStrokeSpec> = rows.map { row ->
+        val walkDate = Instant.ofEpochMilli(row.startTimestamp)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        val tint = SeasonalInkFlavor.forMonth(row.startTimestamp)
+            .toSeasonalColor(walkDate, hemisphere)
+        val pace = if (row.distanceMeters > 0.0 && row.durationSeconds > 0.0) {
+            row.durationSeconds / (row.distanceMeters / 1000.0)
+        } else {
+            0.0
+        }
+        CalligraphyStrokeSpec(
+            uuid = row.uuid,
+            startMillis = row.startTimestamp,
+            distanceMeters = row.distanceMeters,
+            averagePaceSecPerKm = pace,
+            ink = tint,
+        )
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        CalligraphyPath(
+            strokes = strokes,
+            modifier = Modifier.fillMaxWidth(),
+            verticalSpacing = JOURNAL_ROW_STRIDE,
+            topInset = JOURNAL_TOP_INSET,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal)) {
+            rows.forEach { row ->
+                HomeWalkRowCard(
+                    row = row,
+                    onClick = { onRowClick(row.walkId) },
+                )
             }
         }
     }

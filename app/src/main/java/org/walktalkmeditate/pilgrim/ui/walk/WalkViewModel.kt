@@ -41,6 +41,7 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -69,6 +70,7 @@ class WalkViewModel @Inject constructor(
     private val voiceRecorder: VoiceRecorder,
     private val transcriptionScheduler: TranscriptionScheduler,
     private val locationSource: LocationSource,
+    private val hemisphereRepository: HemisphereRepository,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -436,6 +438,18 @@ class WalkViewModel @Inject constructor(
             }
             if (settled == null) {
                 Log.w(TAG, "voice recorder did not settle within ${FINISH_STOP_TIMEOUT_MS}ms; scheduling anyway")
+            }
+            // Stage 3-E: cache the device hemisphere from the fresh-off-
+            // walk location before Home re-observes. Repository already
+            // try/catches SecurityException internally; the outer catch
+            // here is paranoia so any other throwable (cancellation
+            // aside) doesn't break the finish path.
+            try {
+                hemisphereRepository.refreshFromLocationIfNeeded()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "hemisphere refresh on finishWalk failed", t)
             }
             walkIdOrNull(controller.state.value)?.let { walkId ->
                 try {
