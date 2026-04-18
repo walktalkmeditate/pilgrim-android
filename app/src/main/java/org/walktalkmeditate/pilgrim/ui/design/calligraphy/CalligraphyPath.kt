@@ -69,35 +69,63 @@ fun CalligraphyPath(
             ) * taperFactor(i, strokes.size)
             val halfWidth = strokeWidth / 2f
 
-            val midY = (sy + ey) / 2f
             // Antisymmetric control points produce a gentle S-curve
             // between the two dots: cp1 leans the same direction as the
             // seed, cp2 leans the opposite. Matches the iOS renderer
             // and is what makes the thread feel hand-drawn rather than
             // mechanically offset.
             val cpOffset = meanderSeed(strokes[i]) * maxMeanderPx * 0.4f
-            val cp1X = sx + cpOffset
-            val cp1Y = midY - verticalSpacingPx * 0.2f
-            val cp2X = ex - cpOffset
-            val cp2Y = midY + verticalSpacingPx * 0.2f
 
-            val path = Path().apply {
-                moveTo(sx - halfWidth, sy)
-                cubicTo(
-                    cp1X - halfWidth, cp1Y,
-                    cp2X - halfWidth, cp2Y,
-                    ex - halfWidth, ey,
-                )
-                lineTo(ex + halfWidth, ey)
-                cubicTo(
-                    cp2X + halfWidth, cp2Y,
-                    cp1X + halfWidth, cp1Y,
-                    sx + halfWidth, sy,
-                )
-                close()
-            }
+            val path = buildRibbonPath(
+                startX = sx, startY = sy,
+                endX = ex, endY = ey,
+                halfWidth = halfWidth,
+                cpOffsetX = cpOffset,
+                verticalSpacingPx = verticalSpacingPx,
+            )
             drawInkRibbon(path, strokes[i].ink, segmentOpacity(i, strokes.size))
         }
+    }
+}
+
+/**
+ * Builds the filled-polygon [Path] for a single ribbon segment between
+ * `(startX, startY)` and `(endX, endY)`, with [halfWidth] offset on
+ * each side and antisymmetric control points scaled by [cpOffsetX].
+ *
+ * Extracted out of the Canvas draw lambda so a Robolectric test can
+ * actually exercise `Path` + `cubicTo` + `close` directly — without
+ * having to rely on Compose's draw pipeline firing under a stub
+ * rendering backend. (Closing-review catch.)
+ */
+internal fun buildRibbonPath(
+    startX: Float,
+    startY: Float,
+    endX: Float,
+    endY: Float,
+    halfWidth: Float,
+    cpOffsetX: Float,
+    verticalSpacingPx: Float,
+): Path {
+    val midY = (startY + endY) / 2f
+    val cp1X = startX + cpOffsetX
+    val cp1Y = midY - verticalSpacingPx * 0.2f
+    val cp2X = endX - cpOffsetX
+    val cp2Y = midY + verticalSpacingPx * 0.2f
+    return Path().apply {
+        moveTo(startX - halfWidth, startY)
+        cubicTo(
+            cp1X - halfWidth, cp1Y,
+            cp2X - halfWidth, cp2Y,
+            endX - halfWidth, endY,
+        )
+        lineTo(endX + halfWidth, endY)
+        cubicTo(
+            cp2X + halfWidth, cp2Y,
+            cp1X + halfWidth, cp1Y,
+            startX + halfWidth, startY,
+        )
+        close()
     }
 }
 
