@@ -10,11 +10,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -23,6 +26,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -55,6 +61,7 @@ class WalkViewModel @Inject constructor(
     private val controller: WalkController,
     private val repository: WalkRepository,
     private val clock: Clock,
+    private val voiceRecorder: VoiceRecorder,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -103,12 +110,158 @@ class WalkViewModel @Inject constructor(
             initialValue = emptyList(),
         )
 
+    // ---- Voice recording (Stage 2-C) ----
+
+    private val _voiceRecorderState = MutableStateFlow<VoiceRecorderUiState>(VoiceRecorderUiState.Idle)
+    val voiceRecorderState: StateFlow<VoiceRecorderUiState> = _voiceRecorderState.asStateFlow()
+
+    /** Per-buffer RMS level published by VoiceRecorder. Normalized 0f..1f. */
+    val audioLevel: StateFlow<Float> = voiceRecorder.audioLevel
+
+    /**
+     * Live count of VoiceRecording rows for the current walk. Swapped
+     * via flatMapLatest whenever walkIdOrNull changes so we don't leak
+     * a DAO subscription across walks.
+     */
+    val recordingsCount: StateFlow<Int> = controller.state
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
+            if (walkId == null) flowOf(0)
+            else repository.observeVoiceRecordings(walkId).map { it.size }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = 0,
+        )
+
+    /**
+     * Toggle recording on/off. Dispatches to IO because
+     * VoiceRecorder.stop() blocks on doneLatch (~100 ms) while the
+     * capture loop finishes its last buffer — never call directly from
+     * a Compose click handler on the main looper.
+     */
+    fun toggleRecording() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = _voiceRecorderState.value
+            if (current is VoiceRecorderUiState.Recording) {
+                stopRecording()
+            } else {
+                startRecording()
+            }
+        }
+    }
+
+    /** Called by Compose when the mic-permission launcher returns denied. */
+    fun emitPermissionDenied() {
+        _voiceRecorderState.value = VoiceRecorderUiState.Error(
+            message = "microphone permission required to record",
+            kind = VoiceRecorderUiState.Kind.PermissionDenied,
+        )
+    }
+
+    fun dismissRecorderError() {
+        if (_voiceRecorderState.value is VoiceRecorderUiState.Error) {
+            _voiceRecorderState.value = VoiceRecorderUiState.Idle
+        }
+    }
+
+    private suspend fun startRecording() {
+        val info = walkInfoOrNull() ?: return // walk ended between tap and dispatch
+        val result = voiceRecorder.start(walkId = info.walkId, walkUuid = info.walkUuid)
+        result.fold(
+            onSuccess = { _voiceRecorderState.value = VoiceRecorderUiState.Recording },
+            onFailure = { _voiceRecorderState.value = mapStartFailure(it) },
+        )
+    }
+
+    private suspend fun stopRecording() {
+        val result = voiceRecorder.stop()
+        result.fold(
+            onSuccess = { recording ->
+                // If the insert fails we have a .wav on disk with no DB
+                // row — Stage 2-E's sweeper cleans orphans. Surface the
+                // failure to the user as a generic Other-kind banner.
+                try {
+                    repository.recordVoice(recording)
+                    _voiceRecorderState.value = VoiceRecorderUiState.Idle
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (_: Exception) {
+                    _voiceRecorderState.value = VoiceRecorderUiState.Error(
+                        message = "couldn't save the recording",
+                        kind = VoiceRecorderUiState.Kind.Other,
+                    )
+                }
+            },
+            onFailure = { _voiceRecorderState.value = mapStopFailure(it) },
+        )
+    }
+
+    private fun mapStartFailure(err: Throwable): VoiceRecorderUiState.Error = when (err) {
+        is VoiceRecorderError.PermissionMissing -> VoiceRecorderUiState.Error(
+            "microphone permission required to record",
+            VoiceRecorderUiState.Kind.PermissionDenied,
+        )
+        is VoiceRecorderError.AudioCaptureInitFailed -> VoiceRecorderUiState.Error(
+            "couldn't start the microphone",
+            VoiceRecorderUiState.Kind.CaptureInitFailed,
+        )
+        is VoiceRecorderError.FileSystemError -> VoiceRecorderUiState.Error(
+            "couldn't save the recording",
+            VoiceRecorderUiState.Kind.Other,
+        )
+        is VoiceRecorderError.ConcurrentRecording -> VoiceRecorderUiState.Error(
+            "a recording is already in progress",
+            VoiceRecorderUiState.Kind.Other,
+        )
+        else -> VoiceRecorderUiState.Error(
+            err.message ?: "recording failed",
+            VoiceRecorderUiState.Kind.Other,
+        )
+    }
+
+    private fun mapStopFailure(err: Throwable): VoiceRecorderUiState = when (err) {
+        // EmptyRecording is "user tapped stop too fast" or a silent
+        // background-kill. Either way, no banner — return to Idle.
+        is VoiceRecorderError.EmptyRecording -> VoiceRecorderUiState.Idle
+        else -> VoiceRecorderUiState.Error(
+            message = err.message ?: "stop failed",
+            kind = VoiceRecorderUiState.Kind.Other,
+        )
+    }
+
+    private data class WalkInfo(val walkId: Long, val walkUuid: String)
+
+    private suspend fun walkInfoOrNull(): WalkInfo? {
+        val walkId = walkIdOrNull(controller.state.value) ?: return null
+        val walk = repository.getWalk(walkId) ?: return null
+        return WalkInfo(walkId = walkId, walkUuid = walk.uuid)
+    }
+
     private fun walkIdOrNull(state: WalkState): Long? = when (state) {
         WalkState.Idle -> null
         is WalkState.Active -> state.walk.walkId
         is WalkState.Paused -> state.walk.walkId
         is WalkState.Meditating -> state.walk.walkId
         is WalkState.Finished -> state.walk.walkId
+    }
+
+    init {
+        // Auto-stop when the walk finalizes mid-recording. Runs in
+        // viewModelScope; toggleRecording dispatches to IO so this
+        // collector doesn't block on VoiceRecorder.stop(). Placed
+        // after property declarations so _voiceRecorderState is
+        // already initialized when this runs.
+        viewModelScope.launch {
+            controller.state.collect { state ->
+                if (state is WalkState.Finished &&
+                    _voiceRecorderState.value is VoiceRecorderUiState.Recording
+                ) {
+                    toggleRecording()
+                }
+            }
+        }
     }
 
     fun startWalk(intention: String? = null) {

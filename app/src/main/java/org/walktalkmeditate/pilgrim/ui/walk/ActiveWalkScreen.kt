@@ -46,6 +46,9 @@ fun ActiveWalkScreen(
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
+    val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
+    val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
+    val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
 
     // Back press during a walk would otherwise pop us to Home with the
     // controller still in Active (service still tracking, timer still
@@ -79,6 +82,16 @@ fun ActiveWalkScreen(
             distanceValue = WalkFormat.distance(ui.distanceMeters),
             paceLabel = stringResource(R.string.walk_stat_pace),
             paceValue = WalkFormat.pace(ui.paceSecondsPerKm),
+        )
+        Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
+        RecordControl(
+            walkState = ui.walkState,
+            recorderState = recorderState,
+            audioLevel = audioLevel,
+            recordingsCount = recordingsCount,
+            onToggle = viewModel::toggleRecording,
+            onPermissionDenied = viewModel::emitPermissionDenied,
+            onDismissError = viewModel::dismissRecorderError,
         )
         Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
         Controls(
