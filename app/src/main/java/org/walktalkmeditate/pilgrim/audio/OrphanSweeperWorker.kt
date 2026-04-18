@@ -25,6 +25,12 @@ class OrphanSweeperWorker @AssistedInject constructor(
         val result = sweeper.sweepAll()
         Log.i(TAG, "sweepAll: $result")
         Result.success()
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+        // Cooperate with WorkManager cancellation (constraints changed
+        // mid-run, e.g., battery dropped). Without this re-throw the
+        // exception would be swallowed and we'd request retry on a
+        // worker the system was actively cancelling.
+        throw cancel
     } catch (t: Throwable) {
         Log.w(TAG, "sweepAll failed", t)
         Result.retry()
