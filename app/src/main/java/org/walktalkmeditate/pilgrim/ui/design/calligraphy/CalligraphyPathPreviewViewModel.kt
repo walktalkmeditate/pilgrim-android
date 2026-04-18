@@ -22,11 +22,16 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
  * Debug-only VM for the Stage 3-C preview screen. Observes all walks
  * from Room and emits a list of [PreviewStroke] pairing a
  * [CalligraphyStrokeSpec] (minus its final color) with the
- * [SeasonalInkFlavor] the preview Composable resolves into a
- * seasonally-shifted [Color] via
- * [SeasonalInkFlavor.toSeasonalColor] (Stage 3-D) — the VM leaves
- * `ink` as a placeholder because the color resolution needs a
- * `@Composable` context for theme reads.
+ * [SeasonalInkFlavor] that downstream rendering maps to a seasonally-
+ * shifted [Color] — the VM leaves `ink` as a placeholder because the
+ * color resolution needs a `@Composable` context for theme reads.
+ *
+ * The preview screen inlines a
+ * [org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine.applySeasonalShift]
+ * call (rather than using the convenience
+ * [SeasonalInkFlavor.toSeasonalColor] extension) so the four base
+ * PilgrimColors reads can be memoized via `remember`. Stage 3-E's
+ * journal integration will use the extension directly.
  *
  * Observes via a Flow rather than a one-shot `allWalks()` fetch so
  * that navigating away, finishing a new walk, and navigating back
@@ -68,10 +73,10 @@ class CalligraphyPathPreviewViewModel @Inject constructor(
                 finished.map { walk ->
                     val samples = repository.locationSamplesFor(walk.id)
                     // `ink` is a placeholder — the preview Composable
-                    // resolves the real color via
-                    // SeasonalInkFlavor.toSeasonalColor() + the
-                    // SeasonalColorEngine, both of which need a
-                    // @Composable context for theme reads.
+                    // resolves the real color via a direct
+                    // SeasonalColorEngine.applySeasonalShift call
+                    // (reusing a memoized base-colors map), which
+                    // needs a @Composable context for theme reads.
                     val spec = walk.toStrokeSpec(samples = samples, ink = Color.Transparent)
                     PreviewStroke(
                         spec = spec,
