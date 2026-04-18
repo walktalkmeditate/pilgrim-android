@@ -5,16 +5,26 @@ import android.Manifest
 import android.app.Application
 import android.content.Context
 import android.media.AudioManager
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -35,7 +45,11 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.location.LocationSource
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -56,6 +70,10 @@ class WalkViewModelTest {
     private lateinit var fakeAudioCapture: FakeAudioCapture
     private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var transcriptionScheduler: FakeTranscriptionScheduler
+    private lateinit var hemisphereDataStore: DataStore<Preferences>
+    private lateinit var hemisphereLocation: FakeLocationSource
+    private lateinit var hemisphereRepo: HemisphereRepository
+    private lateinit var hemisphereScope: CoroutineScope
     private lateinit var viewModel: WalkViewModel
     private val dispatcher = UnconfinedTestDispatcher()
 
@@ -83,12 +101,21 @@ class WalkViewModelTest {
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         transcriptionScheduler = FakeTranscriptionScheduler()
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource())
+        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        hemisphereDataStore = PreferenceDataStoreFactory.create(
+            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+        )
+        hemisphereLocation = FakeLocationSource()
+        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        hemisphereRepo = HemisphereRepository(hemisphereDataStore, hemisphereLocation, hemisphereScope)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo)
     }
 
     @After
     fun tearDown() {
         db.close()
+        hemisphereScope.coroutineContext[Job]?.cancel()
+        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
         Dispatchers.resetMain()
     }
 
@@ -318,7 +345,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource())
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo)
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -347,7 +374,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource())
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo)
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -453,7 +480,7 @@ class WalkViewModelTest {
         val seededSource = FakeLocationSource(lastKnown = cachedFix)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, seededSource,
+            transcriptionScheduler, seededSource, hemisphereRepo,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -479,7 +506,7 @@ class WalkViewModelTest {
 
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(lastKnown = null),
+            transcriptionScheduler, FakeLocationSource(lastKnown = null), hemisphereRepo,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -490,6 +517,58 @@ class WalkViewModelTest {
         assertEquals(4.0, seen.longitude, 0.0001)
     }
 
+    // --- Stage 3-E: finishWalk caches hemisphere -------------------
+
+    @Test
+    fun `finishWalk infers hemisphere from lastKnownLocation`() = runTest(dispatcher) {
+        hemisphereLocation.lastKnown = LocationPoint(
+            timestamp = 0L, latitude = -33.8688, longitude = 151.2093,
+        )
+        controller.startWalk(intention = null)
+        viewModel.finishWalk()
+
+        // finishWalk's refresh call writes to DataStore on a real
+        // Dispatchers.Default scope. Bridge to wall-clock so the
+        // runTest virtual dispatcher doesn't race the DataStore edit.
+        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                hemisphereRepo.hemisphere.first { it == Hemisphere.Southern }
+            }
+        }
+        assertEquals(Hemisphere.Southern, observed)
+    }
+
+    @Test
+    fun `finishWalk swallows hemisphere refresh failures`() = runTest(dispatcher) {
+        val throwingSource = object : LocationSource {
+            override fun locationFlow() = emptyFlow<LocationPoint>()
+            override suspend fun lastKnownLocation(): LocationPoint? {
+                throw SecurityException("permission revoked mid-walk")
+            }
+        }
+        val throwingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+        val throwingDataStore = PreferenceDataStoreFactory.create(
+            produceFile = { context.preferencesDataStoreFile(THROWING_STORE_NAME) },
+        )
+        val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
+        val vm = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder,
+            transcriptionScheduler, FakeLocationSource(), throwingRepo,
+        )
+        controller.startWalk(intention = null)
+        // Must not propagate the SecurityException. The repository's
+        // internal try/catch is what absorbs it; this test guards
+        // against a regression where WalkViewModel.finishWalk's outer
+        // catch is the only line of defense.
+        vm.finishWalk()
+        // Give the viewModelScope coroutine time to settle — without a
+        // thrown exception there's no observable signal other than
+        // "test reached this line without crashing".
+        throwingScope.coroutineContext[Job]?.cancel()
+        context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+    }
+
     private fun requireActiveWalkId(): Long =
         controller.state.value.let { state ->
             when (state) {
@@ -497,6 +576,11 @@ class WalkViewModelTest {
                 else -> error("expected Active state, got $state")
             }
         }
+
+    private companion object {
+        const val HEMISPHERE_STORE_NAME = "walk-vm-hemisphere-test"
+        const val THROWING_STORE_NAME = "walk-vm-hemisphere-throwing-test"
+    }
 }
 
 private class FakeClock(initial: Long) : Clock {
