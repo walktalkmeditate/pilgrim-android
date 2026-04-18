@@ -26,11 +26,25 @@ class AudioFocusCoordinator @Inject constructor(
 ) {
     private val activeRequest = AtomicReference<AudioFocusRequest?>(null)
 
-    /** Returns true if focus was granted. */
-    fun requestTransient(): Boolean {
+    /**
+     * Request transient focus for voice CAPTURE (the recorder). Uses
+     * USAGE_VOICE_COMMUNICATION which ducks media playback during the
+     * recording window. Returns true if focus was granted.
+     */
+    fun requestTransient(): Boolean = request(usage = AudioAttributes.USAGE_VOICE_COMMUNICATION)
+
+    /**
+     * Request transient focus for voice PLAYBACK. Uses USAGE_MEDIA so
+     * the OS routes audio through the loudspeaker (not the earpiece —
+     * USAGE_VOICE_COMMUNICATION would do that, which is wrong for a
+     * walk-summary listen-back). Returns true if focus was granted.
+     */
+    fun requestMediaPlayback(): Boolean = request(usage = AudioAttributes.USAGE_MEDIA)
+
+    private fun request(usage: Int): Boolean {
         abandonIfHeld()
         val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setUsage(usage)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
