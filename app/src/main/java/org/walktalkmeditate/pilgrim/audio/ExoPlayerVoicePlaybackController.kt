@@ -71,20 +71,23 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
     override fun play(recording: VoiceRecording) {
         mainHandler.post {
+            // Resume-in-place: same recording, currently Paused. Focus
+            // is still held from the original play(); re-requesting it
+            // would briefly abandon and re-acquire, which other audio
+            // apps observe and which can return DELAYED/FAILED on
+            // contended systems.
+            if (currentRecordingId == recording.id && _state.value is PlaybackState.Paused) {
+                val p = player ?: return@post
+                p.play()
+                _state.value = PlaybackState.Playing(recording.id)
+                return@post
+            }
             val granted = audioFocus.requestMediaPlayback(onLossListener = ::onAudioFocusLost)
             if (!granted) {
                 _state.value = PlaybackState.Error(recording.id, "audio focus denied")
                 return@post
             }
             val p = player ?: createPlayer().also { player = it }
-            // If the same recording is already Paused, just resume in
-            // place rather than rebuilding the MediaItem (keeps the
-            // current playback position).
-            if (currentRecordingId == recording.id && _state.value is PlaybackState.Paused) {
-                p.play()
-                _state.value = PlaybackState.Playing(recording.id)
-                return@post
-            }
             currentRecordingId = recording.id
             val absoluteFile = java.io.File(context.filesDir, recording.fileRelativePath)
             p.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(absoluteFile)))
