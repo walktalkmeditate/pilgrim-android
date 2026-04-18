@@ -17,6 +17,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPathPreviewScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
@@ -27,6 +28,7 @@ object Routes {
     const val PERMISSIONS = "permissions"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
+    const val CALLIGRAPHY_PREVIEW = "calligraphy_preview"
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
     const val WALK_SUMMARY_PATTERN = "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}"
     fun walkSummary(walkId: Long): String = "$WALK_SUMMARY_PREFIX/$walkId"
@@ -71,7 +73,15 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
+                onEnterCalligraphyPreview = {
+                    navController.navigate(Routes.CALLIGRAPHY_PREVIEW) {
+                        launchSingleTop = true
+                    }
+                },
             )
+        }
+        composable(Routes.CALLIGRAPHY_PREVIEW) {
+            CalligraphyPathPreviewScreen()
         }
         composable(Routes.ACTIVE_WALK) {
             ActiveWalkScreen(

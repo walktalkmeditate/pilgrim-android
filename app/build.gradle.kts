@@ -199,6 +199,12 @@ dependencies {
     testImplementation(libs.androidx.test.core.ktx)
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.androidx.work.testing)
+    // Stage 3-C: Compose UI test on the JVM via Robolectric. Used by
+    // CalligraphyPathComposableTest to exercise the Path + DrawScope
+    // pipeline without a device.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.compose.ui.test.manifest)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
