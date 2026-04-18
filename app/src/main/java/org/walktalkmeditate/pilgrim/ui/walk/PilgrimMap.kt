@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -63,6 +66,17 @@ fun PilgrimMap(
     // whichever composition first has a non-null center AND points is
     // still empty. Later GPS fixes then drive the follow-latest branch.
     var didSetInitialCenter by remember { mutableStateOf(false) }
+    // Fade the AndroidView in once the Mapbox style has loaded. First
+    // style-load on a cold MapView is visually chunky (black flash
+    // while tiles fetch); fading from 0 → 1 when `loadStyle` invokes
+    // its completion callback reads as intentional rather than janky.
+    // Matches the iOS app's onStyleLoaded → opacity-1 pattern.
+    var styleLoaded by remember { mutableStateOf(false) }
+    val mapAlpha by animateFloatAsState(
+        targetValue = if (styleLoaded) 1f else 0f,
+        animationSpec = tween(durationMillis = FADE_IN_MS),
+        label = "mapFadeIn",
+    )
     // Tracked per-composition: when onRelease clears mapView the composable
     // is exiting so remember resets naturally, giving a new MapView instance
     // a fresh opt-out on next entry.
@@ -125,11 +139,13 @@ fun PilgrimMap(
                     // not crash the map. Errors (OOM, etc.) still propagate.
                 }
             }
+            // Style is textured; kick the fade-in animation.
+            styleLoaded = true
         }
     }
 
     AndroidView(
-        modifier = modifier,
+        modifier = modifier.alpha(mapAlpha),
         factory = { context ->
             // No MapInitOptions(styleUri): earlier attempts to pre-load the
             // style from the constructor raced against LaunchedEffect's
@@ -262,3 +278,4 @@ private const val FOLLOW_ZOOM = 16.0
 private const val MAX_FIT_ZOOM = 17.0
 private const val FOLLOW_EASE_MS = 800L
 private const val FIT_PADDING_DP = 32
+private const val FADE_IN_MS = 400
