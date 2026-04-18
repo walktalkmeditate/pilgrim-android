@@ -7,12 +7,14 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
-import app.cash.turbine.test
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -57,19 +59,15 @@ class HemisphereRepositoryTest {
 
     @Test fun `defaults to northern when no override and no location`() = runTest {
         val repo = HemisphereRepository(dataStore, locationSource, scope)
-        repo.hemisphere.test {
-            assertEquals(Hemisphere.Northern, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
+        // Collect via .first — the StateFlow's initialValue is immediately
+        // available without needing to wait on a real-dispatcher upstream.
+        assertEquals(Hemisphere.Northern, repo.hemisphere.value)
     }
 
     @Test fun `refresh is a no-op when no location is available`() = runTest {
         val repo = HemisphereRepository(dataStore, locationSource, scope)
         repo.refreshFromLocationIfNeeded()
-        repo.hemisphere.test {
-            assertEquals(Hemisphere.Northern, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
+        assertEquals(Hemisphere.Northern, repo.hemisphere.value)
     }
 
     @Test fun `infers southern from negative latitude`() = runTest {
@@ -78,14 +76,16 @@ class HemisphereRepositoryTest {
         )
         val repo = HemisphereRepository(dataStore, locationSource, scope)
         repo.refreshFromLocationIfNeeded()
-        repo.hemisphere.test {
-            // The initial Eagerly emission may be Northern (pre-write);
-            // await until Southern arrives.
-            var latest = awaitItem()
-            while (latest != Hemisphere.Southern) latest = awaitItem()
-            assertEquals(Hemisphere.Southern, latest)
-            cancelAndIgnoreRemainingEvents()
+        // Wait for the StateFlow (running on real Dispatchers.Default
+        // in [scope]) to observe the DataStore write. `withTimeout`
+        // under `runTest` uses virtual time by default, so bridge to
+        // real time via the limited-parallelism dispatcher.
+        val observed = withContext(realTimeDispatcher()) {
+            withTimeout(AWAIT_TIMEOUT_MS) {
+                repo.hemisphere.first { it == Hemisphere.Southern }
+            }
         }
+        assertEquals(Hemisphere.Southern, observed)
     }
 
     @Test fun `override wins over auto-inference`() = runTest {
@@ -94,19 +94,27 @@ class HemisphereRepositoryTest {
         )
         val repo = HemisphereRepository(dataStore, locationSource, scope)
         repo.setOverride(Hemisphere.Northern)
-        repo.refreshFromLocationIfNeeded()     // no-op because cached value exists
-        repo.hemisphere.test {
-            var latest = awaitItem()
-            while (latest != Hemisphere.Northern) latest = awaitItem()
-            assertEquals(Hemisphere.Northern, latest)
-            // Wait briefly for any racing emission to surface; refresh
-            // should NOT flip this back to Southern.
-            expectNoEvents()
-            cancelAndIgnoreRemainingEvents()
+        repo.refreshFromLocationIfNeeded()
+        val observed = withContext(realTimeDispatcher()) {
+            withTimeout(AWAIT_TIMEOUT_MS) {
+                repo.hemisphere.first { it == Hemisphere.Northern }
+            }
         }
+        assertEquals(Hemisphere.Northern, observed)
+        // A second refresh must not flip the override.
+        repo.refreshFromLocationIfNeeded()
+        val stillNorthern = withContext(realTimeDispatcher()) {
+            withTimeout(AWAIT_TIMEOUT_MS) {
+                repo.hemisphere.first()
+            }
+        }
+        assertEquals(Hemisphere.Northern, stillNorthern)
     }
+
+    private fun realTimeDispatcher() = Dispatchers.Default.limitedParallelism(1)
 
     private companion object {
         const val DATASTORE_NAME = "hemisphere-test"
+        const val AWAIT_TIMEOUT_MS = 3_000L
     }
 }

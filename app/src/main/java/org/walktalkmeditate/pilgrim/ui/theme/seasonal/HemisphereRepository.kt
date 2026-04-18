@@ -10,7 +10,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.location.LocationSource
@@ -41,6 +41,12 @@ class HemisphereRepository @Inject constructor(
      * [Hemisphere.Northern] as the initial value before the first
      * DataStore read completes and whenever no override has been
      * cached yet.
+     *
+     * `WhileSubscribed` (not Eagerly) matches [HomeViewModel]'s
+     * pattern: unit tests that don't subscribe don't keep a
+     * never-completing DataStore reader alive; DataStore failures
+     * can recover on the next subscription (an Eagerly collector
+     * that dies on a disk error wouldn't restart).
      */
     val hemisphere: StateFlow<Hemisphere> =
         dataStore.data
@@ -50,9 +56,10 @@ class HemisphereRepository @Inject constructor(
                     else -> Hemisphere.Northern
                 }
             }
+            .distinctUntilChanged()
             .stateIn(
                 scope = scope,
-                started = SharingStarted.Eagerly,
+                started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
                 initialValue = Hemisphere.Northern,
             )
 
@@ -64,15 +71,21 @@ class HemisphereRepository @Inject constructor(
     /**
      * Try to infer the hemisphere from the last-known location. No-op
      * if a value is already cached OR no location is available. Safe
-     * to call repeatedly — it only writes on the transition from
-     * "unknown" → "known".
+     * to call concurrently — the read/check/write all happen inside
+     * a single [dataStore.edit] transaction so two racing callers
+     * can't both clobber an override in flight.
      */
     suspend fun refreshFromLocationIfNeeded() {
-        val current = dataStore.data.first()[KEY_HEMISPHERE]
-        if (current != null) return
         val location = locationSource.lastKnownLocation() ?: return
         val inferred = Hemisphere.fromLatitude(location.latitude)
-        dataStore.edit { it[KEY_HEMISPHERE] = inferred.toInt() }
+        dataStore.edit { prefs ->
+            // Only write on the unknown → known transition. Preserves
+            // a user's explicit setOverride() against a late-arriving
+            // auto-inference.
+            if (prefs[KEY_HEMISPHERE] == null) {
+                prefs[KEY_HEMISPHERE] = inferred.toInt()
+            }
+        }
     }
 
     private fun Hemisphere.toInt(): Int = when (this) {
@@ -84,5 +97,6 @@ class HemisphereRepository @Inject constructor(
         val KEY_HEMISPHERE = intPreferencesKey("hemisphere")
         const val INT_NORTHERN = 0
         const val INT_SOUTHERN = 1
+        const val SUBSCRIBER_GRACE_MS = 5_000L
     }
 }
