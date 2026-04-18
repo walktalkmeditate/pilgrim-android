@@ -45,7 +45,9 @@
     <string name="home_recording_count">%1$d voice notes</string>
     <string name="home_recording_count_singular">1 voice note</string>
     <string name="home_relative_just_now">Just now</string>
+    <string name="home_relative_minute_ago">1 minute ago</string>
     <string name="home_relative_minutes_ago">%1$d minutes ago</string>
+    <string name="home_relative_hour_ago">1 hour ago</string>
     <string name="home_relative_hours_ago">%1$d hours ago</string>
 
     <string name="walk_stat_distance">Distance</string>

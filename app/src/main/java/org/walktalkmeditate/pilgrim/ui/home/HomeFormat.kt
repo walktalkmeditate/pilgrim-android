@@ -40,11 +40,19 @@ object HomeFormat {
         val minutes = deltaMs / 60_000L
         if (minutes < 1L) return context.getString(R.string.home_relative_just_now)
         if (minutes < 60L) {
-            return context.getString(R.string.home_relative_minutes_ago, minutes.toInt())
+            return if (minutes == 1L) {
+                context.getString(R.string.home_relative_minute_ago)
+            } else {
+                context.getString(R.string.home_relative_minutes_ago, minutes.toInt())
+            }
         }
         val hours = minutes / 60L
         if (hours < 24L) {
-            return context.getString(R.string.home_relative_hours_ago, hours.toInt())
+            return if (hours == 1L) {
+                context.getString(R.string.home_relative_hour_ago)
+            } else {
+                context.getString(R.string.home_relative_hours_ago, hours.toInt())
+            }
         }
         val walkDate = Instant.ofEpochMilli(timestampMs).atZone(zone).toLocalDate()
         val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
