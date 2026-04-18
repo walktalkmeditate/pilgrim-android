@@ -35,12 +35,13 @@ import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPath
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyStrokeSpec
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.SeasonalInkFlavor
-import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toSeasonalColor
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toBaseColor
 import org.walktalkmeditate.pilgrim.ui.onboarding.BatteryExemptionCard
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 
 private const val TAG = "HomeScreen"
@@ -187,24 +188,50 @@ private fun JournalThread(
     hemisphere: Hemisphere,
     onRowClick: (Long) -> Unit,
 ) {
-    val strokes: List<CalligraphyStrokeSpec> = rows.map { row ->
-        val walkDate = Instant.ofEpochMilli(row.startTimestamp)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate()
-        val tint = SeasonalInkFlavor.forMonth(row.startTimestamp)
-            .toSeasonalColor(walkDate, hemisphere)
-        val pace = if (row.distanceMeters > 0.0 && row.durationSeconds > 0.0) {
-            row.durationSeconds / (row.distanceMeters / 1000.0)
-        } else {
-            0.0
-        }
-        CalligraphyStrokeSpec(
-            uuid = row.uuid,
-            startMillis = row.startTimestamp,
-            distanceMeters = row.distanceMeters,
-            averagePaceSecPerKm = pace,
-            ink = tint,
+    // Resolve the four base seasonal palette colors from the current
+    // theme once per theme change. The per-stroke seasonal HSB shift
+    // then runs inside `remember` so a scroll or unrelated recomposition
+    // doesn't rebuild N Color allocations. Matches Stage 3-B's
+    // staticCompositionLocalOf hygiene lesson.
+    val inkBase = SeasonalInkFlavor.Ink.toBaseColor()
+    val mossBase = SeasonalInkFlavor.Moss.toBaseColor()
+    val rustBase = SeasonalInkFlavor.Rust.toBaseColor()
+    val dawnBase = SeasonalInkFlavor.Dawn.toBaseColor()
+    val baseColors = remember(inkBase, mossBase, rustBase, dawnBase) {
+        mapOf(
+            SeasonalInkFlavor.Ink to inkBase,
+            SeasonalInkFlavor.Moss to mossBase,
+            SeasonalInkFlavor.Rust to rustBase,
+            SeasonalInkFlavor.Dawn to dawnBase,
         )
+    }
+
+    val strokes: List<CalligraphyStrokeSpec> = remember(rows, hemisphere, baseColors) {
+        rows.map { row ->
+            val walkDate = Instant.ofEpochMilli(row.startTimestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+            val flavor = SeasonalInkFlavor.forMonth(row.startTimestamp)
+            val base = baseColors.getValue(flavor)
+            val tint = SeasonalColorEngine.applySeasonalShift(
+                base = base,
+                intensity = SeasonalColorEngine.Intensity.Moderate,
+                date = walkDate,
+                hemisphere = hemisphere,
+            )
+            val pace = if (row.distanceMeters > 0.0 && row.durationSeconds > 0.0) {
+                row.durationSeconds / (row.distanceMeters / 1000.0)
+            } else {
+                0.0
+            }
+            CalligraphyStrokeSpec(
+                uuid = row.uuid,
+                startMillis = row.startTimestamp,
+                distanceMeters = row.distanceMeters,
+                averagePaceSecPerKm = pace,
+                ink = tint,
+            )
+        }
     }
 
     Box(modifier = Modifier.fillMaxWidth()) {
