@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -354,9 +355,14 @@ class WalkViewModel @Inject constructor(
     fun finishWalk() {
         viewModelScope.launch {
             controller.finishWalk()
-            // After Finished is reached the controller still exposes the
-            // walk's id; enqueue Stage 2-D's transcription pass for any
-            // VoiceRecording rows whose transcription is still null.
+            // The init-block auto-stop collector launches an IO coroutine
+            // to stop a still-active recording and INSERT its row. If we
+            // schedule transcription before that INSERT commits, the
+            // worker's `voiceRecordingsFor(walkId)` would miss the last
+            // recording and KEEP policy means we never retry. Wait for
+            // _voiceRecorderState to settle (Idle on success, Error on
+            // stop failure — both mean no more pending IO write).
+            _voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
             walkIdOrNull(controller.state.value)?.let { walkId ->
                 transcriptionScheduler.scheduleForWalk(walkId)
             }

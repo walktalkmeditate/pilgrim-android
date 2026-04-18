@@ -110,8 +110,9 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
     // hardware concurrency so 2-core budget devices don't oversubscribe.
     unsigned hw = std::thread::hardware_concurrency();
     wparams.n_threads = std::max(1u, std::min(4u, hw == 0 ? 2u : hw));
-    if (whisper_full(ctx, wparams, samples.data(), samples.size()) != 0) {
-        LOGW("whisper_full failed");
+    int rc = whisper_full(ctx, wparams, samples.data(), samples.size());
+    if (rc != 0) {
+        LOGW("whisper_full failed rc=%d", rc);
         return nullptr;
     }
     std::string out;
