@@ -443,6 +443,53 @@ class WalkViewModelTest {
         assertTrue("Errors must not be structurally equal", first != second)
     }
 
+    @Test
+    fun `initialCameraCenter seeds from lastKnownLocation when available`() = runTest(dispatcher) {
+        val cachedFix = org.walktalkmeditate.pilgrim.domain.LocationPoint(
+            timestamp = 123L,
+            latitude = 37.7749,
+            longitude = -122.4194,
+        )
+        val seededSource = FakeLocationSource(lastKnown = cachedFix)
+        val vm = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder,
+            transcriptionScheduler, seededSource,
+        )
+
+        val seen = vm.initialCameraCenter.first { it != null }
+        assertEquals(cachedFix, seen)
+    }
+
+    @Test
+    fun `initialCameraCenter falls back to prior walks last route sample when no cached fix`() = runTest(dispatcher) {
+        val priorWalk = repository.startWalk(startTimestamp = 0L)
+        repository.recordLocation(
+            org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(
+                walkId = priorWalk.id, timestamp = 100L,
+                latitude = 1.0, longitude = 2.0,
+            ),
+        )
+        repository.recordLocation(
+            org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(
+                walkId = priorWalk.id, timestamp = 200L,
+                latitude = 3.0, longitude = 4.0,
+            ),
+        )
+        repository.finishWalk(priorWalk, endTimestamp = 300L)
+
+        val vm = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder,
+            transcriptionScheduler, FakeLocationSource(lastKnown = null),
+        )
+
+        val seen = vm.initialCameraCenter.first { it != null }
+        // Cascade should pick the LAST sample chronologically — where
+        // the user finished their prior walk, a better seed than where
+        // they started it.
+        assertEquals(3.0, seen!!.latitude, 0.0001)
+        assertEquals(4.0, seen.longitude, 0.0001)
+    }
+
     private fun requireActiveWalkId(): Long =
         controller.state.value.let { state ->
             when (state) {
