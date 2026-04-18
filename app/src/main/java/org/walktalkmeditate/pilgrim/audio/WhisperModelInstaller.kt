@@ -50,7 +50,7 @@ class WhisperModelInstaller @Inject constructor(
         // from compression via aaptOptions.noCompress in app/build.gradle.kts,
         // so this returns a real length. Falls back to streaming-count
         // if compression rules ever change.
-        return runCatching {
+        val size = runCatching {
             context.assets.openFd("$ASSET_DIR/$FILE").use { it.length }
         }.getOrNull()?.takeIf { it > 0 }
             ?: context.assets.open("$ASSET_DIR/$FILE", AssetManager.ACCESS_STREAMING).use { input ->
@@ -61,6 +61,13 @@ class WhisperModelInstaller @Inject constructor(
                 }
                 total
             }
+        // A zero-byte expected size would let any zero-byte target file
+        // (e.g., a stale partial install with the temp deleted but the
+        // target rename incomplete) be accepted as "installed" — the
+        // model would then fail to load. Refuse early so the caller
+        // sees a clear failure.
+        require(size > 0L) { "bundled whisper model asset is empty" }
+        return size
     }
 
     private companion object {

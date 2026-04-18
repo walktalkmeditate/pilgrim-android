@@ -31,6 +31,14 @@ class TranscriptionRunner @Inject constructor(
         val filesRoot = context.filesDir.toPath().toAbsolutePath().normalize()
         var count = 0
         for (recording in pending) {
+            if (recording.fileRelativePath.isBlank()) {
+                // A blank path resolves to filesDir itself (a directory),
+                // which std::ifstream can't read — JNI returns "" and the
+                // runner would commit NO_SPEECH_PLACEHOLDER, masking what
+                // is really a data-integrity bug. Skip and log instead.
+                Log.w(TAG, "skipping recording ${recording.id}: blank fileRelativePath")
+                continue
+            }
             val absolute = filesRoot.resolve(recording.fileRelativePath).normalize()
             if (!absolute.startsWith(filesRoot)) {
                 // Defensive: a malformed `file_relative_path` (absolute or
