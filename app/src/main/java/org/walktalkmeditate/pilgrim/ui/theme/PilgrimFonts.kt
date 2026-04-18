@@ -15,9 +15,18 @@ import org.walktalkmeditate.pilgrim.R
  *
  * [cormorantGaramond] uses a single variable-weight TTF with three
  * `Font` declarations at different weights. Android 11+ (API 30+)
- * interpolates weights from the wght axis; API 28/29 fall back to the
- * nearest available instance — visually similar enough for our
- * header-only usage.
+ * correctly interpolates along the wght axis via
+ * [FontVariation.Settings]. On API 28/29 the platform typeface loader's
+ * variable-font support is partial: for fonts whose `fvar` table
+ * declares a continuous axis WITHOUT named instances (which is how
+ * Cormorant Garamond ships), the weight hint may be ignored and all
+ * three entries render at the font's default instance (~300 for
+ * Cormorant). That's a visual degradation, not a crash. Stage 3-G's
+ * on-device QA checklist should verify headings vs body weight
+ * contrast on a real API 28/29 device; if it's unusable, the fix is
+ * to vendor upstream's static-weight TTFs from
+ * github.com/CatharsisFonts/Cormorant instead of google/fonts'
+ * variable-only build.
  *
  * [lato] uses static-weight TTFs. Google Fonts still ships static
  * Lato; static Cormorant is no longer distributed.

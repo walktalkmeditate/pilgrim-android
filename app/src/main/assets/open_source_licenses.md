@@ -21,8 +21,11 @@ Third-party assets and code bundled with Pilgrim for Android.
   and `lato_bold.ttf` (700).
 
 Both font families vendored at google/fonts commit
-`47831f08ec6d6d7ad6b465f23dc9f9a890a2a04b`. See
-`app/src/main/res/font/VENDORING.md` for re-vendor procedure.
+`47831f08ec6d6d7ad6b465f23dc9f9a890a2a04b`. See the KDoc block in
+`ui/theme/PilgrimFonts.kt` for the pinned commit hash and re-vendor
+procedure (Android's `res/font/` directory rejects non-TTF files, so
+the doc lives next to the usage site instead of inside the resource
+folder).
 
 ## Native libraries (on-device transcription)
 
