@@ -8,7 +8,7 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 - **License**: GPL-3.0-or-later. **No OutRun mention anywhere** — this is framed as a fresh project, not a fork, per direct user instruction.
 - **Copyright**: `Walk Talk Meditate contributors`.
 - **Starting version**: 0.1.0. Do not mirror iOS version numbers.
-- **Min SDK**: 28. **Target SDK**: 35. **Java toolchain**: 17.
+- **Min SDK**: 28. **Target SDK**: 36. **Java toolchain**: 17.
 
 ## Architecture
 
