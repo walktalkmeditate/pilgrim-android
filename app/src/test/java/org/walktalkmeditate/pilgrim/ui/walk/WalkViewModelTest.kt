@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.media.AudioManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -20,10 +23,15 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
+import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -38,17 +46,21 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
 @Config(sdk = [34], application = Application::class)
 class WalkViewModelTest {
 
+    private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
     private lateinit var clock: FakeClock
     private lateinit var controller: WalkController
+    private lateinit var fakeAudioCapture: FakeAudioCapture
+    private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var viewModel: WalkViewModel
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        val context = ApplicationProvider.getApplicationContext<Context>()
+        context = ApplicationProvider.getApplicationContext()
+        shadowOf(context as Application).grantPermissions(Manifest.permission.RECORD_AUDIO)
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -64,7 +76,10 @@ class WalkViewModelTest {
         )
         clock = FakeClock(initial = 1_000L)
         controller = WalkController(repository, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock)
+        fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
+        val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
+        voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder)
     }
 
     @After
@@ -242,6 +257,127 @@ class WalkViewModelTest {
 
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // ---------- Stage 2-C: recording surface ----------
+
+    @Test
+    fun `toggleRecording when idle starts recording`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        viewModel.voiceRecorderState.test {
+            assertEquals(VoiceRecorderUiState.Idle, awaitItem())
+            viewModel.toggleRecording()
+            assertEquals(VoiceRecorderUiState.Recording, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `toggleRecording when recording stops and inserts a row`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+        viewModel.audioLevel.first { it > 0f }
+
+        clock.advanceTo(3_000L)
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Idle }
+
+        val recordings = repository.voiceRecordingsFor(walkId)
+        assertEquals(1, recordings.size)
+        assertEquals(walkId, recordings[0].walkId)
+    }
+
+    @Test
+    fun `stop on empty recording maps to Cancelled Idle and no DB row`() = runTest(dispatcher) {
+        // Empty bursts → read() returns -1 immediately → VoiceRecorder.stop
+        // returns EmptyRecording, which the ViewModel maps to Idle (silent).
+        fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
+        val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
+        voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder)
+
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Idle }
+
+        assertEquals(0, repository.voiceRecordingsFor(walkId).size)
+    }
+
+    @Test
+    fun `emitPermissionDenied flips state to Error with PermissionDenied kind`() {
+        viewModel.emitPermissionDenied()
+        val state = viewModel.voiceRecorderState.value
+        assertTrue("state should be Error, was $state", state is VoiceRecorderUiState.Error)
+        assertEquals(
+            VoiceRecorderUiState.Kind.PermissionDenied,
+            (state as VoiceRecorderUiState.Error).kind,
+        )
+    }
+
+    @Test
+    fun `AudioCapture init failure maps to Error with CaptureInitFailed kind`() = runTest(dispatcher) {
+        fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
+        val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
+        voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder)
+
+        controller.startWalk(intention = null)
+        viewModel.toggleRecording()
+
+        val errState = viewModel.voiceRecorderState
+            .first { it is VoiceRecorderUiState.Error } as VoiceRecorderUiState.Error
+        assertEquals(VoiceRecorderUiState.Kind.CaptureInitFailed, errState.kind)
+    }
+
+    @Test
+    fun `WalkState transitioning to Finished while recording auto-stops`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+        viewModel.audioLevel.first { it > 0f }
+
+        clock.advanceTo(3_000L)
+        controller.finishWalk()
+
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Idle }
+        assertEquals(1, repository.voiceRecordingsFor(walkId).size)
+    }
+
+    @Test
+    fun `recordingsCount reflects rows for the active walk`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+
+        viewModel.recordingsCount.test {
+            assertEquals(0, awaitItem())
+            repository.recordVoice(
+                VoiceRecording(
+                    walkId = walkId,
+                    startTimestamp = 1_000L,
+                    endTimestamp = 2_000L,
+                    durationMillis = 1_000L,
+                    fileRelativePath = "recordings/x/a.wav",
+                ),
+            )
+            assertEquals(1, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `dismissRecorderError returns state to Idle from Error`() {
+        viewModel.emitPermissionDenied()
+        viewModel.dismissRecorderError()
+        assertEquals(VoiceRecorderUiState.Idle, viewModel.voiceRecorderState.value)
     }
 
     private fun requireActiveWalkId(): Long =
