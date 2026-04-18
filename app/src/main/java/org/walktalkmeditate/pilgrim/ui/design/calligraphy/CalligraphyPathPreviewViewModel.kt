@@ -12,8 +12,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
 /**
  * Debug-only VM for the Stage 3-C preview screen. Observes all walks
@@ -35,7 +38,21 @@ import org.walktalkmeditate.pilgrim.domain.Clock
 class CalligraphyPathPreviewViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val clock: Clock,
+    hemisphereRepository: HemisphereRepository,
 ) : ViewModel() {
+
+    /**
+     * Current hemisphere, proxied from [HemisphereRepository] so the
+     * preview screen can observe it alongside [state]. Seeded on first
+     * `collect` via the repository's Eager `stateIn`.
+     */
+    val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
+
+    init {
+        viewModelScope.launch {
+            hemisphereRepository.refreshFromLocationIfNeeded()
+        }
+    }
 
     val state: StateFlow<List<PreviewStroke>> = repository.observeAllWalks()
         .map { walks ->
