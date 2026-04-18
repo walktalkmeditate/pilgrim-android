@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -122,9 +123,14 @@ class WalkViewModel @Inject constructor(
      * `LaunchedEffect(error)` keys on the full state — without
      * different ids the auto-dismiss timer wouldn't reset for repeat
      * errors landing inside the dismiss window.
+     *
+     * AtomicLong because emit sites span both the main thread
+     * (`emitPermissionDenied` from the Compose permission callback)
+     * and `Dispatchers.IO` (start/stop failure paths). A plain
+     * `++Long` read-modify-write would race and could collide ids.
      */
-    private var errorIdCounter: Long = 0
-    private fun nextErrorId(): Long = ++errorIdCounter
+    private val errorIdCounter = AtomicLong(0L)
+    private fun nextErrorId(): Long = errorIdCounter.incrementAndGet()
 
     private fun errorState(message: String, kind: VoiceRecorderUiState.Kind) =
         VoiceRecorderUiState.Error(message, kind, nextErrorId())
