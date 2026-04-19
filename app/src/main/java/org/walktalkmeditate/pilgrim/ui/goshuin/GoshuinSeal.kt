@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.goshuin
 
+import androidx.compose.runtime.Immutable
 import java.time.LocalDate
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 
@@ -14,7 +15,17 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
  * Mirrors [org.walktalkmeditate.pilgrim.ui.home.HomeWalkRow] in
  * spirit: precompute what the VM can, defer theme-dependent work to
  * composition.
+ *
+ * `@Immutable` is required because [walkDate] is [LocalDate], an
+ * external JDK type not in Compose's default stable-class set. Without
+ * the annotation, the Compose compiler marks the class Unstable and
+ * [GoshuinSealCell] fails its skip check on any ancestor recomposition
+ * (e.g., the hemisphere StateFlow re-emitting the same value). Matches
+ * the `@Immutable` precedent on [SealSpec]. [HomeWalkRow] doesn't
+ * need this — it holds only primitives + `String?`, which Compose
+ * infers as stable automatically.
  */
+@Immutable
 data class GoshuinSeal(
     val walkId: Long,
     /** `ink = Color.Transparent` placeholder; resolved in [GoshuinScreen]. */
