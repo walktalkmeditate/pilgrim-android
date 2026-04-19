@@ -94,12 +94,17 @@ fun SealRevealOverlay(
         label = "sealRevealShadow",
     )
 
-    // First effect drives the initial choreography. `phase == Revealed`
-    // guard before the auto-dismiss assignment prevents double-firing
-    // if the user tapped mid-hold (which flipped phase to Dismissing).
+    // First effect drives the initial choreography. Each post-delay
+    // phase assignment is guarded by a check that the user hasn't
+    // already tapped to dismiss during the delay — without the check,
+    // a tap during the 200ms press phase would (a) still fire a
+    // confusing haptic 100-200ms later, and (b) overwrite the tap's
+    // `phase = Dismissing` with `phase = Revealed`, regressing the
+    // "tap to dismiss early" contract into a 2.8s hold.
     LaunchedEffect(Unit) {
         phase = SealRevealPhase.Pressing
         delay(PRESS_DURATION_MS.toLong())
+        if (phase != SealRevealPhase.Pressing) return@LaunchedEffect
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         phase = SealRevealPhase.Revealed
         delay(HOLD_DURATION_MS)
