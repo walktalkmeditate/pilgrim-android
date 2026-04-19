@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.design.seals
 
+import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -44,7 +46,17 @@ class SealPreviewViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            hemisphereRepository.refreshFromLocationIfNeeded()
+            try {
+                hemisphereRepository.refreshFromLocationIfNeeded()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                // Repository already try/catches SecurityException
+                // internally; this outer wrap catches DataStore disk
+                // failures (full disk, corrupt prefs). Debug-only
+                // surface — don't let a disk hiccup crash the preview.
+                Log.w(TAG, "hemisphere refresh on preview init failed", t)
+            }
         }
     }
 
@@ -114,6 +126,7 @@ class SealPreviewViewModel @Inject constructor(
     )
 
     private companion object {
+        const val TAG = "SealPreviewVM"
         const val SUBSCRIBER_GRACE_MS = 5_000L
     }
 }
