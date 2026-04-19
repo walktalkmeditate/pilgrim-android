@@ -49,4 +49,32 @@ class WalkFormatTest {
     fun `pace returns em-dash for null or undefined`() {
         assertEquals("—", WalkFormat.pace(null))
     }
+
+    // --- Stage 4-B: typed distance label (goshuin seal center text) ---
+
+    @Test
+    fun `distanceLabel below 100m returns meter value`() {
+        assertEquals(DistanceLabel("0", "m"), WalkFormat.distanceLabel(0.0))
+        assertEquals(DistanceLabel("25", "m"), WalkFormat.distanceLabel(25.3))
+        assertEquals(DistanceLabel("99", "m"), WalkFormat.distanceLabel(99.4))
+    }
+
+    @Test
+    fun `distanceLabel at 100m boundary crosses to km`() {
+        assertEquals(DistanceLabel("0.10", "km"), WalkFormat.distanceLabel(100.0))
+    }
+
+    @Test
+    fun `distanceLabel at or above 100m uses two-decimal km`() {
+        assertEquals(DistanceLabel("1.23", "km"), WalkFormat.distanceLabel(1_234.0))
+        assertEquals(DistanceLabel("12.34", "km"), WalkFormat.distanceLabel(12_340.0))
+    }
+
+    @Test
+    fun `distanceLabel 99_9 rounds up to 100m meter unit`() {
+        // Rounding edge: 99.9 rounds to 100, but 99.9 < 100.0 so the
+        // branch stays in meters. Result: "100 m" (unit stays m, value
+        // is the round).
+        assertEquals(DistanceLabel("100", "m"), WalkFormat.distanceLabel(99.9))
+    }
 }

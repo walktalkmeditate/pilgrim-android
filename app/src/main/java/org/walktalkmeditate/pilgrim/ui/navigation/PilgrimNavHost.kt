@@ -15,10 +15,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
-import org.walktalkmeditate.pilgrim.ui.design.seals.SealPreviewScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
@@ -29,7 +27,6 @@ object Routes {
     const val PERMISSIONS = "permissions"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
-    const val SEAL_PREVIEW = "seal_preview"
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
     const val WALK_SUMMARY_PATTERN = "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}"
     fun walkSummary(walkId: Long): String = "$WALK_SUMMARY_PREFIX/$walkId"
@@ -74,29 +71,7 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
-                onEnterSealPreview = {
-                    // Defense-in-depth: the HomeScreen button that
-                    // invokes this is BuildConfig.DEBUG-gated AND the
-                    // composable() registration below is too. If a
-                    // release build ever ended up calling this lambda,
-                    // navigate() would throw for an unknown route —
-                    // short-circuit here instead.
-                    if (BuildConfig.DEBUG) {
-                        navController.navigate(Routes.SEAL_PREVIEW) {
-                            launchSingleTop = true
-                        }
-                    }
-                },
             )
-        }
-        // Register the preview destination AND its Hilt-graph bindings
-        // only for debug builds. Keeps a release build from resolving
-        // the preview route via a rogue deep link and instantiating the
-        // debug VM. (Same pattern Stage 3-C used for calligraphy preview.)
-        if (BuildConfig.DEBUG) {
-            composable(Routes.SEAL_PREVIEW) {
-                SealPreviewScreen()
-            }
         }
         composable(Routes.ACTIVE_WALK) {
             ActiveWalkScreen(

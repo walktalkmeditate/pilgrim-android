@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,6 +22,10 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
+import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
 /**
  * Three-state load for the summary screen: the VM's [summary] flow
@@ -45,6 +50,14 @@ data class WalkSummary(
     val paceSecondsPerKm: Double?,
     val waypointCount: Int,
     val routePoints: List<LocationPoint>,
+    /**
+     * Pre-built goshuin seal spec for the Stage 4-B reveal animation.
+     * [SealSpec.ink] is [Color.Transparent] here — the composable
+     * resolves the real seasonal-shifted color via
+     * [org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine]
+     * in `@Composable` context (theme reads can't happen in a VM).
+     */
+    val sealSpec: SealSpec,
 )
 
 @HiltViewModel
@@ -52,12 +65,21 @@ class WalkSummaryViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val playback: VoicePlaybackController,
     private val sweeper: OrphanRecordingSweeper,
+    hemisphereRepository: HemisphereRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val walkId: Long = requireNotNull(savedStateHandle.get<Long>(ARG_WALK_ID)) {
         "walkId argument missing from nav savedStateHandle"
     }
+
+    /**
+     * Proxied from [HemisphereRepository] so the summary screen can
+     * resolve the seal's seasonal tint. Separate from [state] so a
+     * rare hemisphere flip doesn't force a re-emission of the full
+     * [WalkSummaryUiState.Loaded] payload.
+     */
+    val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
@@ -142,6 +164,15 @@ class WalkSummaryViewModel @Inject constructor(
 
     private suspend fun buildState(): WalkSummaryUiState {
         val walk = repository.getWalk(walkId) ?: return WalkSummaryUiState.NotFound
+        // Production never navigates to WalkSummary for an unfinished
+        // walk — ActiveWalkScreen's `onFinished` callback only fires on
+        // WalkState.Finished, which requires `endTimestamp` to be set.
+        // But defend against a rogue call (deep link, test harness,
+        // direct repository manipulation): without an endTimestamp the
+        // seal spec's `requireNotNull(endTimestamp)` would throw and
+        // the state flow would propagate the exception. Treat unfinished
+        // walks as Not Found instead.
+        if (walk.endTimestamp == null) return WalkSummaryUiState.NotFound
         val samples = repository.locationSamplesFor(walkId)
         val events = repository.eventsFor(walkId)
         val waypoints = repository.waypointsFor(walkId)
@@ -171,6 +202,16 @@ class WalkSummaryViewModel @Inject constructor(
             null
         }
 
+        val distanceLabel = WalkFormat.distanceLabel(distance)
+        val sealSpec = walk.toSealSpec(
+            samples = samples,
+            // Placeholder — resolved to a seasonal tint in the
+            // @Composable layer where LocalPilgrimColors is available.
+            ink = Color.Transparent,
+            displayDistance = distanceLabel.value,
+            unitLabel = distanceLabel.unit,
+        )
+
         return WalkSummaryUiState.Loaded(
             WalkSummary(
                 walk = walk,
@@ -182,6 +223,7 @@ class WalkSummaryViewModel @Inject constructor(
                 paceSecondsPerKm = pace,
                 waypointCount = waypoints.size,
                 routePoints = points,
+                sealSpec = sealSpec,
             ),
         )
     }

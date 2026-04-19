@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,7 +29,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
 import java.time.ZoneId
-import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
@@ -76,7 +74,6 @@ fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
     onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
-    onEnterSealPreview: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -136,19 +133,6 @@ fun HomeScreen(
 
         Spacer(Modifier.height(PilgrimSpacing.big))
         BatteryExemptionCard(viewModel = permissionsViewModel)
-
-        // Debug-only: Stage 4-A seal renderer preview.
-        // Removed when Stage 4-B integrates the seal into the real
-        // walk-finish flow (reveal animation).
-        if (BuildConfig.DEBUG) {
-            Spacer(Modifier.height(PilgrimSpacing.big))
-            TextButton(
-                onClick = onEnterSealPreview,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Seal preview (debug)")
-            }
-        }
     }
 }
 
