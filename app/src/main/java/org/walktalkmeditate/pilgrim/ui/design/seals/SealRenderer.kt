@@ -215,8 +215,20 @@ private fun DrawScope.drawCenterText(
             isAntiAlias = true
             textAlign = NativePaint.Align.CENTER
         }
-        val distanceBaseline = center.y
-        val unitBaseline = distanceBaseline + unitTextPx + gapPx
+        // Visual-center the two-line block around `center.y`.
+        // `Paint.drawText`'s y parameter is the glyph BASELINE, not the
+        // visual center — naive `center.y` would place digits above
+        // the center with the unit label sitting below, skewing the
+        // block upward. Measure both lines' ascent/descent and offset
+        // so their combined visual box straddles center.y evenly.
+        val distanceMetrics = distancePaint.fontMetrics
+        val unitMetrics = unitPaint.fontMetrics
+        val distanceHeight = distanceMetrics.descent - distanceMetrics.ascent
+        val unitHeight = unitMetrics.descent - unitMetrics.ascent
+        val totalHeight = distanceHeight + gapPx + unitHeight
+        val blockTop = center.y - totalHeight / 2f
+        val distanceBaseline = blockTop - distanceMetrics.ascent
+        val unitBaseline = distanceBaseline + distanceMetrics.descent + gapPx - unitMetrics.ascent
         native.drawText(distance, center.x, distanceBaseline, distancePaint)
         native.drawText(unit, center.x, unitBaseline, unitPaint)
     }
