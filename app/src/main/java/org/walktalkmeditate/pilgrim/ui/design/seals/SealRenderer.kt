@@ -49,7 +49,13 @@ fun SealRenderer(
     spec: SealSpec,
     modifier: Modifier = Modifier,
 ) {
-    val geometry = remember(spec) { sealGeometry(spec) }
+    // Key on the hash-seed fields only: geometry is deterministic from
+    // uuid + startMillis + distanceMeters. Including `ink` in the key
+    // (the full `spec`) would recompute identical geometry on every
+    // theme/hemisphere flip, since those update `ink` but not the seed.
+    val geometry = remember(spec.uuid, spec.startMillis, spec.distanceMeters) {
+        sealGeometry(spec)
+    }
     val context = LocalContext.current
     val cormorantTypeface = remember {
         ResourcesCompat.getFont(context, R.font.cormorant_garamond_variable)

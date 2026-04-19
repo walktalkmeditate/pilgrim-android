@@ -81,7 +81,12 @@ private const val MAX_RADIALS = 12
 internal fun sealGeometry(spec: SealSpec): SealGeometry {
     val b = sealHashBytes(spec)
     return SealGeometry(
-        rotationDeg = (b.u(0).toFloat() / 255f) * 360f,
+        // Divide by 256 (not 255) so the 256 distinct byte values map to
+        // the half-open interval [0, 360). Dividing by 255 would produce
+        // exactly 360° for byte=0xFF, which is visually identical to 0°
+        // but violates the [0, 360) contract and would break any future
+        // tightened test.
+        rotationDeg = (b.u(0).toFloat() / 256f) * 360f,
         rings = buildRings(b),
         radialLines = buildRadials(b),
         arcs = buildArcs(b),
