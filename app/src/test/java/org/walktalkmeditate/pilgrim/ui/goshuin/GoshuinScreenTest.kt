@@ -167,4 +167,31 @@ class GoshuinScreenTest {
         composeRule.onNodeWithText("Unique-tag").performClick()
         assertEquals(42L, tappedWalkId)
     }
+
+    @Test fun `Loaded - milestone cell shows milestone label not date`() {
+        // The cell with a non-null milestone should show the milestone
+        // label INSTEAD OF the date. shortDateLabel = "should-not-show"
+        // proves the substitution.
+        val sealWithMilestone = seal(id = 7L).copy(
+            shortDateLabel = "should-not-show",
+            milestone = GoshuinMilestone.FirstWalk,
+        )
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    GoshuinScreenContent(
+                        uiState = GoshuinUiState.Loaded(
+                            seals = listOf(sealWithMilestone),
+                            totalCount = 1,
+                        ),
+                        hemisphere = Hemisphere.Northern,
+                        onBack = {},
+                        onSealTap = {},
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("First Walk").assertIsDisplayed()
+    }
 }

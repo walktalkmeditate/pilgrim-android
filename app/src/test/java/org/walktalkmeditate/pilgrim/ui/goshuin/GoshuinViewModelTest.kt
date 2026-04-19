@@ -27,6 +27,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -35,6 +36,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
@@ -205,6 +207,57 @@ class GoshuinViewModelTest {
             }
         }
         assertEquals(Hemisphere.Southern, observed)
+    }
+
+    // --- Stage 4-D: milestone propagation -------------------------
+
+    @Test
+    fun `Loaded marks single finished walk as FirstWalk milestone`() = runTest(dispatcher) {
+        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
+
+        val vm = newViewModel()
+        vm.uiState.test {
+            val loaded = awaitLoaded(this)
+            assertEquals(GoshuinMilestone.FirstWalk, loaded.seals[0].milestone)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `Loaded marks longest walk among 3 with LongestWalk milestone`() = runTest(dispatcher) {
+        // Three walks: w1 = oldest (FirstWalk wins by precedence),
+        // w2 = max distance (LongestWalk), w3 = no milestone (not 1st,
+        // not longest, not 10th, second walk in the same Winter-1970
+        // season-year).
+        val w1 = runBlocking { repository.startWalk(startTimestamp = 1_000_000L) }
+        runBlocking {
+            repository.recordLocation(RouteDataSample(walkId = w1.id, timestamp = 1_100_000L, latitude = 0.0, longitude = 0.0))
+            repository.recordLocation(RouteDataSample(walkId = w1.id, timestamp = 1_200_000L, latitude = 0.0, longitude = 0.0001))
+            repository.finishWalk(w1, endTimestamp = 1_600_000L)
+        }
+        val w2 = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking {
+            repository.recordLocation(RouteDataSample(walkId = w2.id, timestamp = 5_100_000L, latitude = 0.0, longitude = 0.0))
+            repository.recordLocation(RouteDataSample(walkId = w2.id, timestamp = 5_200_000L, latitude = 0.0, longitude = 0.05))
+            repository.finishWalk(w2, endTimestamp = 5_600_000L)
+        }
+        val w3 = runBlocking { repository.startWalk(startTimestamp = 9_000_000L) }
+        runBlocking {
+            repository.recordLocation(RouteDataSample(walkId = w3.id, timestamp = 9_100_000L, latitude = 0.0, longitude = 0.0))
+            repository.recordLocation(RouteDataSample(walkId = w3.id, timestamp = 9_200_000L, latitude = 0.0, longitude = 0.005))
+            repository.finishWalk(w3, endTimestamp = 9_600_000L)
+        }
+
+        val vm = newViewModel()
+        vm.uiState.test {
+            val loaded = awaitLoaded(this)
+            val byId = loaded.seals.associateBy { it.walkId }
+            assertEquals(GoshuinMilestone.FirstWalk, byId.getValue(w1.id).milestone)
+            assertEquals(GoshuinMilestone.LongestWalk, byId.getValue(w2.id).milestone)
+            assertNull(byId.getValue(w3.id).milestone)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     private suspend fun awaitLoaded(

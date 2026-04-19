@@ -24,6 +24,9 @@ import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
+import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestone
+import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones
+import org.walktalkmeditate.pilgrim.ui.goshuin.WalkMilestoneInput
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
@@ -58,6 +61,17 @@ data class WalkSummary(
      * in `@Composable` context (theme reads can't happen in a VM).
      */
     val sealSpec: SealSpec,
+    /**
+     * Stage 4-D: highest-precedence milestone for the current walk
+     * across the user's entire history (or `null` when no milestone
+     * applies). Detected via [GoshuinMilestones.detect] in
+     * [WalkSummaryViewModel.buildState] using the same shared pure
+     * function the goshuin grid uses, so the visual halo on the grid
+     * cell and the celebratory haptic on the reveal overlay are always
+     * in sync. The Stage 4-B reveal overlay reads this through its
+     * `isMilestone` flag and fires a 2-pulse haptic + 0.5s extra hold.
+     */
+    val milestone: GoshuinMilestone? = null,
 )
 
 @HiltViewModel
@@ -216,6 +230,15 @@ class WalkSummaryViewModel @Inject constructor(
             unitLabel = distanceLabel.unit,
         )
 
+        // Stage 4-D: detect milestone for THIS walk against the user's
+        // entire finished-walk history. Reuses the cached `distance`
+        // for the current walk so we don't re-haversine the samples
+        // we just iterated; other walks pay one `locationSamplesFor`
+        // per row. Same N+1 cost as `GoshuinViewModel`; acceptable
+        // here because milestone detection is a once-per-summary-load
+        // computation, not a hot path.
+        val milestone = detectMilestoneFor(walk, distance)
+
         return WalkSummaryUiState.Loaded(
             WalkSummary(
                 walk = walk,
@@ -228,7 +251,50 @@ class WalkSummaryViewModel @Inject constructor(
                 waypointCount = waypoints.size,
                 routePoints = points,
                 sealSpec = sealSpec,
+                milestone = milestone,
             ),
+        )
+    }
+
+    private suspend fun detectMilestoneFor(
+        currentWalk: Walk,
+        currentDistance: Double,
+    ): GoshuinMilestone? {
+        val finished = repository.allWalks()
+            .filter { it.endTimestamp != null }
+            .sortedWith(
+                compareByDescending<Walk> { it.endTimestamp }
+                    .thenByDescending { it.id },
+            )
+        if (finished.isEmpty()) return null
+        val inputs = finished.map { walk ->
+            val d = if (walk.id == currentWalk.id) {
+                currentDistance
+            } else {
+                walkDistanceMeters(
+                    repository.locationSamplesFor(walk.id).map {
+                        LocationPoint(
+                            timestamp = it.timestamp,
+                            latitude = it.latitude,
+                            longitude = it.longitude,
+                        )
+                    },
+                )
+            }
+            WalkMilestoneInput(
+                walkId = walk.id,
+                uuid = walk.uuid,
+                startTimestamp = walk.startTimestamp,
+                distanceMeters = d,
+            )
+        }
+        val currentIndex = finished.indexOfFirst { it.id == currentWalk.id }
+        if (currentIndex < 0) return null
+        return GoshuinMilestones.detect(
+            walkIndex = currentIndex,
+            walk = inputs[currentIndex],
+            allFinished = inputs,
+            hemisphere = hemisphere.value,
         )
     }
 
