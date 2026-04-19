@@ -67,7 +67,39 @@ class GoshuinViewModel @Inject constructor(
             if (finished.isEmpty()) {
                 GoshuinUiState.Empty
             } else {
-                val seals = finished.map { mapToSeal(it) }
+                // Compute distance per finished walk once. mapToSeal
+                // uses it for the SealSpec; the milestone detector uses
+                // it to find LongestWalk across the full snapshot.
+                val distances = finished.associate { walk ->
+                    walk.id to walkDistanceMeters(samplesFor(walk.id))
+                }
+                val milestoneInputs = finished.map { walk ->
+                    WalkMilestoneInput(
+                        walkId = walk.id,
+                        uuid = walk.uuid,
+                        startTimestamp = walk.startTimestamp,
+                        distanceMeters = distances.getValue(walk.id),
+                    )
+                }
+                // Snapshot the hemisphere at flow-emission time. A
+                // subsequent hemisphere flip (rare — user crosses
+                // equator) recomputes milestones on the next emission.
+                // Acceptable: a "First of Spring" cell flipping to
+                // "First of Autumn" matches the rest of the app's
+                // seasonal-color hemisphere-change behavior.
+                val currentHemisphere = hemisphere.value
+                val seals = finished.mapIndexed { index, walk ->
+                    mapToSeal(
+                        walk = walk,
+                        distance = distances.getValue(walk.id),
+                        milestone = GoshuinMilestones.detect(
+                            walkIndex = index,
+                            walk = milestoneInputs[index],
+                            allFinished = milestoneInputs,
+                            hemisphere = currentHemisphere,
+                        ),
+                    )
+                }
                 GoshuinUiState.Loaded(seals = seals, totalCount = seals.size)
             }
         }
@@ -81,15 +113,20 @@ class GoshuinViewModel @Inject constructor(
             initialValue = GoshuinUiState.Loading,
         )
 
-    private suspend fun mapToSeal(walk: Walk): GoshuinSeal {
-        val samples = repository.locationSamplesFor(walk.id).map {
+    private suspend fun samplesFor(walkId: Long): List<LocationPoint> =
+        repository.locationSamplesFor(walkId).map {
             LocationPoint(
                 timestamp = it.timestamp,
                 latitude = it.latitude,
                 longitude = it.longitude,
             )
         }
-        val distance = walkDistanceMeters(samples)
+
+    private fun mapToSeal(
+        walk: Walk,
+        distance: Double,
+        milestone: GoshuinMilestone?,
+    ): GoshuinSeal {
         val distanceLabel = WalkFormat.distanceLabel(distance)
         val sealSpec = walk.toSealSpec(
             distanceMeters = distance,
@@ -111,6 +148,7 @@ class GoshuinViewModel @Inject constructor(
             sealSpec = sealSpec,
             walkDate = walkDate,
             shortDateLabel = shortDateFormatter.format(walkDate),
+            milestone = milestone,
         )
     }
 

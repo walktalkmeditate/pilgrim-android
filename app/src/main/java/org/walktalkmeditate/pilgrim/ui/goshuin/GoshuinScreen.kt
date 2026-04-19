@@ -47,6 +47,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 
 private val CELL_SEAL_SIZE = 140.dp
 private val CELL_FRAME_SIZE = 148.dp
+private val CELL_HALO_SIZE = 156.dp
+private val CELL_HALO_STROKE = 2.dp
+private const val CELL_HALO_ALPHA = 0.5f
 private const val SEAL_FRAME_ALPHA = 0.04f
 private const val PLACEHOLDER_UUID = "goshuin-empty-placeholder"
 private const val PLACEHOLDER_ALPHA = 0.10f
@@ -259,6 +262,7 @@ private fun GoshuinSealCell(
 ) {
     val baseInk = pilgrimColors.rust
     val frameColor = pilgrimColors.ink.copy(alpha = SEAL_FRAME_ALPHA)
+    val haloColor = pilgrimColors.dawn.copy(alpha = CELL_HALO_ALPHA)
 
     // Per-cell seasonal tint — matches
     // `WalkSummaryScreen.specForReveal`. Keyed on the full set of
@@ -291,9 +295,24 @@ private fun GoshuinSealCell(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            modifier = Modifier.size(CELL_FRAME_SIZE),
+            modifier = Modifier.size(CELL_HALO_SIZE),
             contentAlignment = Alignment.Center,
         ) {
+            // Stage 4-D milestone halo — outermost ring, only when this
+            // walk hit a milestone. Sits ~4dp outside the inked frame.
+            if (seal.milestone != null) {
+                Box(
+                    modifier = Modifier
+                        .size(CELL_HALO_SIZE)
+                        .drawBehind {
+                            drawCircle(
+                                color = haloColor,
+                                radius = size.minDimension / 2f,
+                                style = Stroke(width = CELL_HALO_STROKE.toPx()),
+                            )
+                        },
+                )
+            }
             // Thin ink-outline circle behind the seal: the
             // "stamp-on-paper" frame.
             Box(
@@ -314,9 +333,12 @@ private fun GoshuinSealCell(
         }
         Spacer(Modifier.height(PilgrimSpacing.small))
         Text(
-            text = seal.shortDateLabel,
+            // Milestone label takes precedence over the date when the
+            // walk crossed a threshold — the label IS the recognition.
+            text = seal.milestone?.let(GoshuinMilestones::label)
+                ?: seal.shortDateLabel,
             style = pilgrimType.caption,
-            color = pilgrimColors.fog,
+            color = if (seal.milestone != null) pilgrimColors.dawn else pilgrimColors.fog,
         )
     }
 }
