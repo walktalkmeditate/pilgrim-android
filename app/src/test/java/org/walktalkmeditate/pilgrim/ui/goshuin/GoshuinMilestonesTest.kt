@@ -137,6 +137,23 @@ class GoshuinMilestonesTest {
         assertEquals(GoshuinMilestone.FirstWalk, m)
     }
 
+    @Test fun `all-zero-distance walks - newer walk does not become LongestWalk`() {
+        // Initial-review regression guard: when every finished walk has
+        // distance = 0 (e.g., 2 short indoor sessions / GPS denied),
+        // `maxByOrNull` would tie-break to the most recent walk and
+        // award a spurious "Longest Walk" halo for a 0-meter session.
+        // The detector now requires `maxDistance > 0.0`.
+        val w1 = walk(1L, LocalDate.of(2026, 1, 1), distance = 0.0)
+        val w2 = walk(2L, LocalDate.of(2026, 1, 2), distance = 0.0)
+        val list = listOf(w2, w1)
+        val mNewer = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list, hemisphere = Hemisphere.Northern)
+        // w2 is not the firstWalk (walkNumber=2) and not LongestWalk
+        // (max distance is 0). Falls through to FirstOfSeason check:
+        // both walks in Jan 2026 (Winter); w1 is earlier in same
+        // season → not first-of-season → null.
+        assertNull(mNewer)
+    }
+
     @Test fun `precedence - LongestWalk overrides NthWalk(10)`() {
         // 10 walks where the 10th is also the longest. Precedence picks
         // LongestWalk, not NthWalk(10).

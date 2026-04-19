@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -43,6 +44,16 @@ sealed class WalkSummaryUiState {
     data object NotFound : WalkSummaryUiState()
 }
 
+/**
+ * `@Immutable` because `WalkSummary` contains [Walk] — a Room entity
+ * from an external module that the Compose compiler can't infer as
+ * stable, even though all of `Walk`'s fields are primitives + `String?`.
+ * Without this annotation Compose marks the whole class Unstable and
+ * `WalkSummaryScreen`'s child composables that take a [WalkSummary]
+ * skip-check-fail on every hemisphere-flow re-emission, causing
+ * needless recomposition. Same lesson as Stage 4-C `GoshuinSeal`.
+ */
+@Immutable
 data class WalkSummary(
     val walk: Walk,
     val totalElapsedMillis: Long,
