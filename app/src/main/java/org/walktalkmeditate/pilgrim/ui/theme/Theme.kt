@@ -21,6 +21,10 @@ fun PilgrimTheme(
     // LocalPilgrimTypography is a staticCompositionLocalOf (reference-equality).
     val type = remember { pilgrimTypography() }
 
+    // `outline` is consumed by Material3's OutlinedButton (and TextField
+    // borders). Left unmapped, it falls back to M3's default cool
+    // purple-gray, which clashes with Pilgrim's warm earth palette.
+    // Stone-at-40% reads as a muted secondary-button border.
     val m3 = if (darkTheme) {
         darkColorScheme(
             primary = colors.stone,
@@ -30,6 +34,7 @@ fun PilgrimTheme(
             surface = colors.parchmentSecondary,
             onSurface = colors.ink,
             surfaceVariant = colors.parchmentTertiary,
+            outline = colors.stone.copy(alpha = 0.4f),
             error = colors.rust,
         )
     } else {
@@ -41,6 +46,7 @@ fun PilgrimTheme(
             surface = colors.parchmentSecondary,
             onSurface = colors.ink,
             surfaceVariant = colors.parchmentTertiary,
+            outline = colors.stone.copy(alpha = 0.4f),
             error = colors.rust,
         )
     }
