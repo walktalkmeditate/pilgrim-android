@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,12 @@ fun SealRevealOverlay(
 ) {
     var phase by remember { mutableStateOf(SealRevealPhase.Hidden) }
     val haptic = LocalHapticFeedback.current
+    // Snapshot the latest [onDismiss] so a parent that passes a fresh
+    // lambda each recomposition doesn't leave us firing a stale
+    // closure when the already-running LaunchedEffect resumes after
+    // its delay. Standard rememberUpdatedState pattern for suspend-
+    // scope callbacks.
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
 
     val scale by animateFloatAsState(
         targetValue = when (phase) {
@@ -105,13 +112,18 @@ fun SealRevealOverlay(
     LaunchedEffect(phase) {
         if (phase == SealRevealPhase.Dismissing) {
             delay(FADE_DURATION_MS.toLong())
-            onDismiss()
+            currentOnDismiss()
         }
     }
 
     // `MutableInteractionSource` + `indication = null` suppresses the
     // default material ripple — the overlay background shouldn't pulse.
     val interactionSource = remember { MutableInteractionSource() }
+    // `clickable(enabled = phase != Dismissing)` releases touch capture
+    // during the 300ms fade-out so taps aimed at the underlying
+    // summary content (e.g., the Done button) land on the button
+    // rather than being swallowed by the fading overlay.
+    val overlayInteractive = phase != SealRevealPhase.Dismissing
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -120,6 +132,7 @@ fun SealRevealOverlay(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
+                enabled = overlayInteractive,
             ) {
                 if (phase != SealRevealPhase.Dismissing) {
                     phase = SealRevealPhase.Dismissing
