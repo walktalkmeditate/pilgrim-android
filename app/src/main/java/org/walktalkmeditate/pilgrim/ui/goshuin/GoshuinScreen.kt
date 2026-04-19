@@ -197,7 +197,12 @@ private fun GoshuinEmpty() {
                 ink = Color.Transparent,
             )
         }
-        val fadedInk = pilgrimColors.fog.copy(alpha = PLACEHOLDER_ALPHA)
+        // Use `ink` (the theme's designated content color) rather than
+        // `fog`: in dark mode, `fog` is a medium gray that blends
+        // invisibly against near-black parchment, which erases the
+        // ghost-seal effect. `ink` produces a visible-but-subtle trace
+        // in both light (dark brown) and dark (cream) modes.
+        val fadedInk = pilgrimColors.ink.copy(alpha = PLACEHOLDER_ALPHA)
         SealRenderer(
             spec = placeholderSpec.copy(ink = fadedInk),
             modifier = Modifier.size(CELL_SEAL_SIZE),
