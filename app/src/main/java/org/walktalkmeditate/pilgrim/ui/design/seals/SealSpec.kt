@@ -3,10 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.design.seals
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
-import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
-import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 
 /**
  * Per-walk input for the goshuin seal renderer. Same shape as
@@ -77,14 +74,22 @@ internal fun sealHashBytes(spec: SealSpec): ByteArray {
 internal fun ByteArray.u(index: Int): Int = this[index].toInt() and 0xFF
 
 /**
- * Build a [SealSpec] from a finished [Walk] + its GPS samples and a
- * caller-resolved [ink] color. Caller also formats [displayDistance]
- * + [unitLabel] — locale-aware formatting lives in
- * [org.walktalkmeditate.pilgrim.ui.walk.WalkFormat], which this data
- * class intentionally doesn't depend on.
+ * Build a [SealSpec] from a finished [Walk] with caller-supplied
+ * distance, color, and distance-label text. The caller is expected
+ * to have already computed `distanceMeters` (usually via
+ * [org.walktalkmeditate.pilgrim.domain.walkDistanceMeters] over the
+ * walk's GPS samples) and locale-formatted the display strings via
+ * [org.walktalkmeditate.pilgrim.ui.walk.WalkFormat].
+ *
+ * Accepts `distanceMeters` as a pre-computed parameter rather than
+ * re-running haversine on `samples` here — this guarantees the seal
+ * and the rest of the summary UI share a single source of truth for
+ * the walk's distance. If a future stage adds a GPS-accuracy filter
+ * upstream of `walkDistanceMeters`, both surfaces move together
+ * instead of silently diverging.
  */
 fun Walk.toSealSpec(
-    samples: List<RouteDataSample>,
+    distanceMeters: Double,
     ink: Color,
     displayDistance: String,
     unitLabel: String,
@@ -92,14 +97,11 @@ fun Walk.toSealSpec(
     val endMs = requireNotNull(endTimestamp) {
         "toSealSpec called on an unfinished walk (uuid=$uuid); filter before calling."
     }
-    val distance = walkDistanceMeters(
-        samples.map { LocationPoint(timestamp = it.timestamp, latitude = it.latitude, longitude = it.longitude) },
-    )
     val durationSec = (endMs - startTimestamp) / 1000.0
     return SealSpec(
         uuid = uuid,
         startMillis = startTimestamp,
-        distanceMeters = distance,
+        distanceMeters = distanceMeters,
         durationSeconds = durationSec,
         displayDistance = displayDistance,
         unitLabel = unitLabel,
