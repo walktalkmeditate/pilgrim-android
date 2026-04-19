@@ -42,6 +42,10 @@
     <string name="home_empty_message">No walks yet. Ready when you are.</string>
     <string name="home_action_start_walk">Start a walk</string>
     <string name="home_action_resume_walk">Resume your walk</string>
+    <string name="home_action_view_goshuin">View goshuin</string>
+    <string name="goshuin_title">Goshuin</string>
+    <string name="goshuin_empty_caption">Your goshuin will fill as you walk</string>
+    <string name="goshuin_back_content_description">Back</string>
     <string name="home_recording_count">%1$d voice notes</string>
     <string name="home_recording_count_singular">1 voice note</string>
     <string name="home_relative_just_now">Just now</string>
