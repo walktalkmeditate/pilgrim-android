@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -74,6 +75,7 @@ fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
     onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
+    onEnterGoshuin: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -129,6 +131,15 @@ fun HomeScreen(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.home_action_start_walk))
+        }
+
+        Spacer(Modifier.height(PilgrimSpacing.normal))
+
+        OutlinedButton(
+            onClick = onEnterGoshuin,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.home_action_view_goshuin))
         }
 
         Spacer(Modifier.height(PilgrimSpacing.big))
