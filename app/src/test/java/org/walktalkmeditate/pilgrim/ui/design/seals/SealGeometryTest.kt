@@ -22,16 +22,42 @@ class SealGeometryTest {
     )
 
     @Test fun `ring count is bounded`() {
+        // BASE_RING_MIN=3 + b[1] % BASE_RING_RANGE=3 → always [3, 5].
+        // MAX_RINGS=8 is the safety ceiling for future bumps (iOS adds
+        // rings by meditation ratio, currently unused in Stage 4-A).
+        // Assert the tight actual bound here so a regression that
+        // changes the hash mapping fails loud — the MAX_RINGS ceiling
+        // is tested separately by `ring count respects MAX_RINGS ceiling`.
         repeat(100) { i ->
             val g = sealGeometry(spec(uuid = "uuid-$i"))
-            assertTrue("ring count ${g.rings.size} out of [3, 8]", g.rings.size in 3..8)
+            assertTrue("ring count ${g.rings.size} out of [3, 5]", g.rings.size in 3..5)
+        }
+    }
+
+    @Test fun `ring count respects MAX_RINGS ceiling`() {
+        // Defensive sanity check: no spec should ever produce > 8 rings
+        // even if someone widens BASE_RING_RANGE. The coerceAtMost caps
+        // it. Run a larger sample to catch rare hash edges.
+        repeat(500) { i ->
+            val g = sealGeometry(spec(uuid = "ceiling-$i", startMillis = i.toLong() * 1000))
+            assertTrue("ring count ${g.rings.size} exceeds MAX_RINGS=8", g.rings.size <= 8)
         }
     }
 
     @Test fun `radial line count is bounded`() {
+        // BASE_RADIAL_MIN=4 + b[8] % BASE_RADIAL_RANGE=5 → always [4, 8].
+        // MAX_RADIALS=12 is the safety ceiling for future bumps (iOS adds
+        // radials by talk ratio, currently unused in Stage 4-A).
         repeat(100) { i ->
             val g = sealGeometry(spec(uuid = "radial-$i"))
-            assertTrue("radial count ${g.radialLines.size} out of [4, 12]", g.radialLines.size in 4..12)
+            assertTrue("radial count ${g.radialLines.size} out of [4, 8]", g.radialLines.size in 4..8)
+        }
+    }
+
+    @Test fun `radial line count respects MAX_RADIALS ceiling`() {
+        repeat(500) { i ->
+            val g = sealGeometry(spec(uuid = "radceiling-$i", startMillis = i.toLong() * 1000))
+            assertTrue("radial count ${g.radialLines.size} exceeds MAX_RADIALS=12", g.radialLines.size <= 12)
         }
     }
 
