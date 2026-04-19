@@ -127,13 +127,19 @@ fun WalkSummaryScreen(
                     .atZone(ZoneId.systemDefault())
                     .toLocalDate()
             }
-            val tintedInk = SeasonalColorEngine.applySeasonalShift(
-                base = baseInk,
-                intensity = SeasonalColorEngine.Intensity.Full,
-                date = walkDate,
-                hemisphere = hemisphere,
-            )
-            val specForReveal = loaded.summary.sealSpec.copy(ink = tintedInk)
+            // Cache the seasonal-shifted spec so unrelated recompositions
+            // (e.g., a recordings-flow update while the overlay is
+            // visible) don't re-run the HSV shift + allocate a fresh
+            // SealSpec. Matches Stage 3-E's JournalThread pattern.
+            val specForReveal = remember(loaded.summary.sealSpec, baseInk, walkDate, hemisphere) {
+                val tintedInk = SeasonalColorEngine.applySeasonalShift(
+                    base = baseInk,
+                    intensity = SeasonalColorEngine.Intensity.Full,
+                    date = walkDate,
+                    hemisphere = hemisphere,
+                )
+                loaded.summary.sealSpec.copy(ink = tintedInk)
+            }
             SealRevealOverlay(
                 spec = specForReveal,
                 onDismiss = { showReveal = false },
