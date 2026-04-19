@@ -100,18 +100,21 @@ class GoshuinViewModel @Inject constructor(
         val walkDate = Instant.ofEpochMilli(walk.startTimestamp)
             .atZone(ZoneId.systemDefault())
             .toLocalDate()
+        // Rebuild the formatter per call so a runtime locale change
+        // (user toggles system language) takes effect on the next Room
+        // emission without a process restart. Matches [HomeFormat]
+        // precedent, which rebuilds `ofPattern(..., locale)` inside
+        // `relativeDate` rather than caching at class load.
+        val shortDateFormatter = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
         return GoshuinSeal(
             walkId = walk.id,
             sealSpec = sealSpec,
             walkDate = walkDate,
-            shortDateLabel = SHORT_DATE_FORMATTER.format(walkDate),
+            shortDateLabel = shortDateFormatter.format(walkDate),
         )
     }
 
     private companion object {
         const val SUBSCRIBER_GRACE_MS = 5_000L
-        // Locale-sensitive: `"Apr 19"` on en-US, `"19 avr."` on fr-FR.
-        private val SHORT_DATE_FORMATTER: DateTimeFormatter =
-            DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
     }
 }
