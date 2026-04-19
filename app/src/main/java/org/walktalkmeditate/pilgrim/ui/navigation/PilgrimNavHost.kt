@@ -106,11 +106,20 @@ fun PilgrimNavHost(
             GoshuinScreen(
                 onBack = { navController.popBackStack() },
                 onSealTap = { walkId ->
-                    // launchSingleTop guards against a double-tap
-                    // rapidly committing two identical WALK_SUMMARY
-                    // entries (same pattern as Home→Summary).
+                    // launchSingleTop only dedupes the SAME route
+                    // string; two different walkIds tapped within
+                    // ~100ms (real double-tap jitter) would each get
+                    // a distinct `walk_summary/{id}` route and stack:
+                    //   Goshuin → Summary(A) → Summary(B)
+                    // Back from Summary(B) would then land on
+                    // Summary(A), not the grid. popUpTo(GOSHUIN) ahead
+                    // of the navigate collapses any in-flight Summary
+                    // so the stack is always [Goshuin, Summary(N)] —
+                    // correct for double-tap races AND for sequential
+                    // browsing (Summary(A) → back → Summary(B)).
                     navController.navigate(Routes.walkSummary(walkId)) {
                         launchSingleTop = true
+                        popUpTo(Routes.GOSHUIN) { inclusive = false }
                     }
                 },
             )

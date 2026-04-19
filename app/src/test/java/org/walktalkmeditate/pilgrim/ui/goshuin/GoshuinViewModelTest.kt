@@ -210,8 +210,13 @@ class GoshuinViewModelTest {
     private suspend fun awaitLoaded(
         turbine: app.cash.turbine.ReceiveTurbine<GoshuinUiState>,
     ): GoshuinUiState.Loaded {
+        // Only drain `Loading`, not `Empty`. Skipping `Empty` would hide
+        // a future regression where the finished-walk filter drops all
+        // rows — the test would hang on `awaitItem()` waiting for a
+        // `Loaded` that never arrives, instead of failing fast with a
+        // clear cast exception.
         var item = turbine.awaitItem()
-        while (item is GoshuinUiState.Loading || item is GoshuinUiState.Empty) {
+        while (item is GoshuinUiState.Loading) {
             item = turbine.awaitItem()
         }
         assertNotNull(item)
