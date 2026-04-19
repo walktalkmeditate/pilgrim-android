@@ -75,10 +75,17 @@ class SealGeometryTest {
         }
     }
 
-    @Test fun `rotation in 0 to 360`() {
-        repeat(100) { i ->
-            val g = sealGeometry(spec(uuid = "rot-$i"))
-            assertTrue("rotation ${g.rotationDeg} out of range", g.rotationDeg in 0f..360f)
+    @Test fun `rotation in 0 to 360 exclusive`() {
+        // Tighter bound than just `0..360f`: the formula divides by 256
+        // (not 255), so byte=0xFF produces 358.59° — strictly below 360.
+        // A regression that uses /255 would produce exactly 360° for one
+        // in 256 seeds and fail this test.
+        repeat(500) { i ->
+            val g = sealGeometry(spec(uuid = "rot-$i", startMillis = i.toLong()))
+            assertTrue(
+                "rotation ${g.rotationDeg} out of [0, 360)",
+                g.rotationDeg >= 0f && g.rotationDeg < 360f,
+            )
         }
     }
 
