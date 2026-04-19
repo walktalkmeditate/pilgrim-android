@@ -141,4 +141,30 @@ class GoshuinScreenTest {
         composeRule.onNodeWithContentDescription("Back").performClick()
         assertEquals(1, backCalls)
     }
+
+    @Test fun `seal cell click fires onSealTap with correct walkId`() {
+        // Use a single cell with a unique date caption so the tap-target
+        // node is unambiguous — two cells sharing "Apr 19" would return
+        // multiple nodes and break `onNodeWithText`.
+        val single = seal(id = 42L).copy(shortDateLabel = "Unique-tag")
+        var tappedWalkId: Long? = null
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    GoshuinScreenContent(
+                        uiState = GoshuinUiState.Loaded(
+                            seals = listOf(single),
+                            totalCount = 1,
+                        ),
+                        hemisphere = Hemisphere.Northern,
+                        onBack = {},
+                        onSealTap = { id -> tappedWalkId = id },
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Unique-tag").performClick()
+        assertEquals(42L, tappedWalkId)
+    }
 }
