@@ -54,8 +54,15 @@ object GoshuinMilestones {
         // the more meaningful "Longest Walk" label. Tie-break: when two
         // walks share the same max distance, the most recent (lower
         // index) wins via `maxByOrNull`'s stable first-match semantics.
+        //
+        // The `maxDistance > 0.0` guard prevents a spurious "Longest
+        // Walk" award when every finished walk has distance = 0 (e.g.,
+        // a user with 2 short indoor sessions / GPS denied — without
+        // the guard, walk #2 would win the all-zero tie-break and get
+        // a celebration halo for a 0-meter walk).
+        val maxDistance = allFinished.maxOf { it.distanceMeters }
         val longestId = allFinished.maxByOrNull { it.distanceMeters }?.walkId
-        if (longestId == walk.walkId && allFinished.size > 1) {
+        if (longestId == walk.walkId && allFinished.size > 1 && maxDistance > 0.0) {
             return GoshuinMilestone.LongestWalk
         }
 
