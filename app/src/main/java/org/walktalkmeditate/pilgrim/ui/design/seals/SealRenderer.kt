@@ -65,6 +65,26 @@ fun SealRenderer(
         ResourcesCompat.getFont(context, R.font.lato_regular)
             ?: Typeface.DEFAULT
     }
+    // Stage 4-B polish: cache Paint instances so the 60fps reveal
+    // animation doesn't allocate 4 Paint + 2 FontMetrics per frame.
+    // `textSize` + `color` mutate per-draw (cheap field assignments);
+    // `typeface` + `textAlign` + `isAntiAlias` are stable across the
+    // composable's lifetime. Keyed on typeface so a font-resource
+    // failover (→ Typeface.DEFAULT) rebuilds the paints.
+    val distancePaint = remember(cormorantTypeface) {
+        NativePaint().apply {
+            typeface = cormorantTypeface
+            isAntiAlias = true
+            textAlign = NativePaint.Align.CENTER
+        }
+    }
+    val unitPaint = remember(latoTypeface) {
+        NativePaint().apply {
+            typeface = latoTypeface
+            isAntiAlias = true
+            textAlign = NativePaint.Align.CENTER
+        }
+    }
 
     Canvas(modifier = modifier.aspectRatio(1f)) {
         val canvasSize = size.minDimension
@@ -88,8 +108,8 @@ fun SealRenderer(
             distance = spec.displayDistance,
             unit = spec.unitLabel,
             ink = spec.ink,
-            distanceTypeface = cormorantTypeface,
-            unitTypeface = latoTypeface,
+            distancePaint = distancePaint,
+            unitPaint = unitPaint,
         )
     }
 }
@@ -197,30 +217,20 @@ private fun DrawScope.drawCenterText(
     distance: String,
     unit: String,
     ink: Color,
-    distanceTypeface: Typeface,
-    unitTypeface: Typeface,
+    distancePaint: NativePaint,
+    unitPaint: NativePaint,
 ) {
     val distanceTextPx = canvasSize * 0.09f
     val unitTextPx = canvasSize * 0.032f
     val gapPx = canvasSize * 0.008f
-    val distanceArgb = ink.toArgb()
-    val unitArgb = ink.copy(alpha = (ink.alpha * 0.9f).coerceIn(0f, 1f)).toArgb()
+    // Mutate the cached paints per-frame — no allocation, just field
+    // assignments on the Paint already created at composition time.
+    distancePaint.textSize = distanceTextPx
+    distancePaint.color = ink.toArgb()
+    unitPaint.textSize = unitTextPx
+    unitPaint.color = ink.copy(alpha = (ink.alpha * 0.9f).coerceIn(0f, 1f)).toArgb()
     drawIntoCanvas { composeCanvas ->
         val native = composeCanvas.nativeCanvas
-        val distancePaint = NativePaint().apply {
-            typeface = distanceTypeface
-            textSize = distanceTextPx
-            color = distanceArgb
-            isAntiAlias = true
-            textAlign = NativePaint.Align.CENTER
-        }
-        val unitPaint = NativePaint().apply {
-            typeface = unitTypeface
-            textSize = unitTextPx
-            color = unitArgb
-            isAntiAlias = true
-            textAlign = NativePaint.Align.CENTER
-        }
         // Visual-center the two-line block around `center.y`.
         // `Paint.drawText`'s y parameter is the glyph BASELINE, not the
         // visual center — naive `center.y` would place digits above

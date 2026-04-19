@@ -3,16 +3,26 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -30,23 +40,31 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.location.FakeLocationSource
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class WalkSummaryViewModelTest {
 
+    private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
     private lateinit var playback: FakeVoicePlaybackController
     private lateinit var scheduler: FakeTranscriptionScheduler
     private lateinit var sweeper: OrphanRecordingSweeper
+    private lateinit var hemisphereDataStore: DataStore<Preferences>
+    private lateinit var hemisphereLocation: FakeLocationSource
+    private lateinit var hemisphereRepo: HemisphereRepository
+    private lateinit var hemisphereScope: CoroutineScope
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        val context = ApplicationProvider.getApplicationContext<Context>()
+        context = ApplicationProvider.getApplicationContext()
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -63,18 +81,28 @@ class WalkSummaryViewModelTest {
         playback = FakeVoicePlaybackController()
         scheduler = FakeTranscriptionScheduler()
         sweeper = OrphanRecordingSweeper(context, repository, scheduler)
+        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        hemisphereDataStore = PreferenceDataStoreFactory.create(
+            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+        )
+        hemisphereLocation = FakeLocationSource()
+        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        hemisphereRepo = HemisphereRepository(hemisphereDataStore, hemisphereLocation, hemisphereScope)
     }
 
     private fun newViewModel(walkId: Long) = WalkSummaryViewModel(
         repository = repository,
         playback = playback,
         sweeper = sweeper,
+        hemisphereRepository = hemisphereRepo,
         savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
     )
 
     @After
     fun tearDown() {
         db.close()
+        hemisphereScope.coroutineContext[Job]?.cancel()
+        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
         Dispatchers.resetMain()
     }
 
@@ -261,4 +289,54 @@ class WalkSummaryViewModelTest {
     }
 
     private val nextTimestamp = java.util.concurrent.atomic.AtomicLong(1_000_000L)
+
+    // --- Stage 4-B: goshuin seal reveal plumbing ---------------------
+
+    @Test
+    fun `Loaded state carries sealSpec with walk uuid and raw seed fields`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 0.0, longitude = 0.0),
+        )
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_200_000L, latitude = 0.0, longitude = 0.001),
+        )
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.state.test {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            val loaded = item as WalkSummaryUiState.Loaded
+            val spec = loaded.summary.sealSpec
+            assertEquals(walk.uuid, spec.uuid)
+            assertEquals(walk.startTimestamp, spec.startMillis)
+            assertTrue("distanceMeters=${spec.distanceMeters}", spec.distanceMeters > 0.0)
+            assertTrue("displayDistance should be non-empty", spec.displayDistance.isNotEmpty())
+            assertTrue("unitLabel ${spec.unitLabel} should be m or km", spec.unitLabel in setOf("m", "km"))
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `hemisphere StateFlow proxies the repository`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        val vm = newViewModel(walkId = walk.id)
+        assertEquals(Hemisphere.Northern, vm.hemisphere.value)
+        hemisphereRepo.setOverride(Hemisphere.Southern)
+        // Bridge to real-dispatcher time since the repo's StateFlow
+        // collects on Dispatchers.Default, not the runTest virtual clock.
+        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                vm.hemisphere.first { it == Hemisphere.Southern }
+            }
+        }
+        assertEquals(Hemisphere.Southern, observed)
+    }
+
+    private companion object {
+        const val HEMISPHERE_STORE_NAME = "walk-summary-vm-hemisphere-test"
+    }
 }
