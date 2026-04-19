@@ -26,8 +26,13 @@ internal data class Ring(
     /**
      * null → solid; non-null → on/off dash lengths as fractions of
      * the canvas size (so the dash pattern scales with the seal).
+     *
+     * Stored as `List<Float>` (not `FloatArray`) so the enclosing
+     * `data class`'s auto-generated `equals`/`hashCode` uses content
+     * equality. The renderer converts to `FloatArray` at draw time
+     * via `toFloatArray()` for `PathEffect.dashPathEffect`.
      */
-    val dashPattern: FloatArray?,
+    val dashPattern: List<Float>?,
 )
 
 internal data class Radial(
@@ -98,7 +103,7 @@ private fun buildRings(b: ByteArray): List<Ring> {
             } else {
                 val dashLen = 0.008f + (b.u(8 + i % 4) % 5) * 0.004f
                 val gapLen = 0.004f + (b.u(10 + i % 4) % 4) * 0.003f
-                floatArrayOf(dashLen, gapLen)
+                listOf(dashLen, gapLen)
             },
         )
     }
