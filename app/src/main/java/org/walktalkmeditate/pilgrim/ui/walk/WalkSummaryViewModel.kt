@@ -204,7 +204,11 @@ class WalkSummaryViewModel @Inject constructor(
 
         val distanceLabel = WalkFormat.distanceLabel(distance)
         val sealSpec = walk.toSealSpec(
-            samples = samples,
+            // Reuse the haversine sum computed above — `toSealSpec`
+            // takes the distance directly so both the seal's center
+            // text and the summary stats share a single source of
+            // truth (future accuracy-filter changes apply uniformly).
+            distanceMeters = distance,
             // Placeholder — resolved to a seasonal tint in the
             // @Composable layer where LocalPilgrimColors is available.
             ink = Color.Transparent,
