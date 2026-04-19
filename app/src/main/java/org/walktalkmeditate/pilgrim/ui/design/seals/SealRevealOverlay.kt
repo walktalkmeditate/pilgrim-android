@@ -57,6 +57,13 @@ fun SealRevealOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     sealSizeDp: Int = DEFAULT_SEAL_SIZE_DP,
+    /**
+     * Stage 4-D: when `true`, the reveal celebrates with a 2-pulse
+     * `LongPress` haptic (vs the standard single pulse) and holds
+     * 0.5s longer (3.0s vs 2.5s). Default `false` preserves Stage 4-B
+     * behavior for non-milestone walks and existing test fixtures.
+     */
+    isMilestone: Boolean = false,
 ) {
     var phase by remember { mutableStateOf(SealRevealPhase.Hidden) }
     val haptic = LocalHapticFeedback.current
@@ -112,8 +119,22 @@ fun SealRevealOverlay(
         delay(PRESS_DURATION_MS.toLong())
         if (phase != SealRevealPhase.Pressing) return@LaunchedEffect
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        if (isMilestone) {
+            // Stage 4-D milestone celebration: 2nd pulse 120ms after
+            // the first. The body reads the double-tap as distinct
+            // from a non-milestone reveal even with the phone in a
+            // pocket. The +120ms latency before phase=Revealed is
+            // imperceptible to the visual flow.
+            delay(MILESTONE_PULSE_GAP_MS)
+            // Re-check the phase guard — the user could tap during
+            // the inter-pulse window. Same belt-and-suspenders policy
+            // as the press-phase tap guard above.
+            if (phase != SealRevealPhase.Pressing) return@LaunchedEffect
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
         phase = SealRevealPhase.Revealed
-        delay(HOLD_DURATION_MS)
+        val hold = HOLD_DURATION_MS + if (isMilestone) MILESTONE_HOLD_BONUS_MS else 0L
+        delay(hold)
         if (phase == SealRevealPhase.Revealed) {
             phase = SealRevealPhase.Dismissing
         }
@@ -176,6 +197,9 @@ private const val PRESS_DURATION_MS = 200
 private const val FADE_DURATION_MS = 300
 private const val SHADOW_DURATION_MS = 150
 private const val HOLD_DURATION_MS = 2500L
+// Stage 4-D milestone celebration timings.
+private const val MILESTONE_PULSE_GAP_MS = 120L
+private const val MILESTONE_HOLD_BONUS_MS = 500L
 
 // iOS `spring(response: 0.4, dampingFraction: 0.6)` doesn't map 1:1 to
 // Compose's dampingRatio/stiffness; these are empirically close. Stage

@@ -41,6 +41,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
+import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestone
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
@@ -334,6 +335,23 @@ class WalkSummaryViewModelTest {
             }
         }
         assertEquals(Hemisphere.Southern, observed)
+    }
+
+    // --- Stage 4-D: milestone propagation ----------------------------
+
+    @Test
+    fun `Loaded state carries FirstWalk milestone for the only finished walk`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(walkId = walk.id)
+        vm.state.test {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            val loaded = item as WalkSummaryUiState.Loaded
+            assertEquals(GoshuinMilestone.FirstWalk, loaded.summary.milestone)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     private companion object {

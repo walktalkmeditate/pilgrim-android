@@ -89,4 +89,22 @@ class SealRevealOverlayTest {
         composeRule.waitForIdle()
         composeRule.onRoot().assertExists()
     }
+
+    @Test fun `overlay renders with isMilestone flag set`() {
+        // Stage 4-D: the milestone celebration adds a 2nd haptic pulse
+        // and 0.5s extra hold. Animation timing + haptic firing aren't
+        // asserted (Robolectric stubs both); this test confirms the
+        // composition path with `isMilestone = true` doesn't throw.
+        composeRule.setContent {
+            Box(Modifier.size(400.dp, 800.dp)) {
+                SealRevealOverlay(
+                    spec = testSpec(),
+                    onDismiss = {},
+                    isMilestone = true,
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onRoot().assertExists()
+    }
 }

@@ -143,6 +143,7 @@ fun WalkSummaryScreen(
             SealRevealOverlay(
                 spec = specForReveal,
                 onDismiss = { showReveal = false },
+                isMilestone = loaded.summary.milestone != null,
             )
         }
     }

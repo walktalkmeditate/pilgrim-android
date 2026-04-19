@@ -34,4 +34,12 @@ data class GoshuinSeal(
     val walkDate: LocalDate,
     /** Pre-formatted short date for the caption, e.g., `"Apr 19"`. */
     val shortDateLabel: String,
+    /**
+     * Stage 4-D: highest-precedence milestone for this walk (or `null`
+     * when no milestone applies). Computed by
+     * [GoshuinMilestones.detect] in the VM. The cell renders a halo
+     * ring when non-null and uses [GoshuinMilestones.label] in place
+     * of [shortDateLabel].
+     */
+    val milestone: GoshuinMilestone? = null,
 )
