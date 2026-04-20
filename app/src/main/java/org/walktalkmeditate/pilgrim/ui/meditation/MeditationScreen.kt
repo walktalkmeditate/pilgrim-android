@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import org.walktalkmeditate.pilgrim.R
@@ -237,7 +238,13 @@ private fun formatTimer(elapsedSeconds: Int): String {
     val total = elapsedSeconds.coerceAtLeast(0)
     val minutes = total / 60
     val seconds = total % 60
-    return "%d:%02d".format(minutes, seconds)
+    // `Locale.US` explicitly — on Arabic / Persian / Hindi system
+    // locales, `%d` / `%02d` with `Locale.getDefault()` produce non-
+    // ASCII digits (`٣:٤٢`) which breaks both the visual timer format
+    // and the test assertions (`"0:00"` etc.). Matches the
+    // `WalkFormat.kt` precedent for all numeric formatting in this
+    // codebase.
+    return String.format(Locale.US, "%d:%02d", minutes, seconds)
 }
 
 private const val TIMER_TICK_MS = 1_000L
