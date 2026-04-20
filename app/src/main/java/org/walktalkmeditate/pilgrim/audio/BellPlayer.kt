@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.R
@@ -64,11 +65,15 @@ class BellPlayer @Inject constructor(
         )
         // Single cleanup path — both the natural completion callback,
         // the error callback, and the safety-net timeout route through
-        // `cleanup`, which is idempotent via the `cleanedUp` guard.
-        var cleanedUp = false
+        // `cleanup`. `AtomicBoolean.compareAndSet` makes the guard
+        // thread-safe: `MediaPlayer` callbacks MAY fire on the thread
+        // that called `prepare` (Default, since this path runs from the
+        // bell observer's Dispatchers.Default scope) while the safety-
+        // net `Handler.postDelayed` always fires on Main — the two
+        // could race at the tail of the bell's duration.
+        val cleanedUp = AtomicBoolean(false)
         val cleanup = {
-            if (!cleanedUp) {
-                cleanedUp = true
+            if (cleanedUp.compareAndSet(false, true)) {
                 try {
                     player.release()
                 } catch (t: Throwable) {
