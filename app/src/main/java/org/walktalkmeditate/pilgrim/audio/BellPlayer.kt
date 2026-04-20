@@ -11,6 +11,7 @@ import android.os.Looper
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.R
@@ -72,11 +73,14 @@ class BellPlayer @Inject constructor(
 
         // Declared up front so the focus-loss listener can reach the
         // per-play cleanup via a forward reference. The listener fires
-        // on a system-chosen thread (possibly Main, possibly not),
-        // so the cleanup must be thread-safe — which it is via the
-        // AtomicBoolean guard below.
+        // on a system-chosen thread (possibly Main, possibly a binder
+        // thread — Android docs don't guarantee), so the publication
+        // of `cleanupRef` must cross threads safely. `AtomicReference`
+        // provides the happens-before edge that a plain mutable field
+        // wouldn't under the JMM. The AtomicBoolean guard below then
+        // dedupes concurrent invocations.
         val cleanedUp = AtomicBoolean(false)
-        val cleanupRef = arrayOfNulls<(() -> Unit)?>(1)
+        val cleanupRef = AtomicReference<(() -> Unit)?>(null)
 
         val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(bellAttributes)
@@ -88,7 +92,7 @@ class BellPlayer @Inject constructor(
                     focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
                 ) {
                     Log.i(TAG, "bell focus lost — stopping bell")
-                    cleanupRef[0]?.invoke()
+                    cleanupRef.get()?.invoke()
                 }
             }
             .build()
@@ -135,7 +139,7 @@ class BellPlayer @Inject constructor(
         // Per-play safety-net runnable captured by reference so
         // `cleanup` can remove it and avoid a stale firing after
         // natural completion.
-        val safetyNet = Runnable { cleanupRef[0]?.invoke() }
+        val safetyNet = Runnable { cleanupRef.get()?.invoke() }
 
         val cleanup: () -> Unit = {
             if (cleanedUp.compareAndSet(false, true)) {
@@ -152,7 +156,7 @@ class BellPlayer @Inject constructor(
                 }
             }
         }
-        cleanupRef[0] = cleanup
+        cleanupRef.set(cleanup)
 
         player.setOnCompletionListener { cleanup() }
         player.setOnErrorListener { _, what, extra ->
