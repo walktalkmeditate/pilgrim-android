@@ -24,6 +24,20 @@ class GoshuinMilestonesTest {
         )
     }
 
+    @Test fun `empty allFinished - returns null without crashing`() {
+        // Defensive regression guard: production callers pre-filter to
+        // a non-empty finished list before calling detect, but
+        // `maxOf { distanceMeters }` would throw `NoSuchElementException`
+        // on an empty list. The entry-point guard returns null instead.
+        val m = GoshuinMilestones.detect(
+            walkIndex = 0,
+            walk = walk(1L, LocalDate.of(2026, 4, 19)),
+            allFinished = emptyList(),
+            hemisphere = Hemisphere.Northern,
+        )
+        assertNull(m)
+    }
+
     @Test fun `first walk - is FirstWalk milestone`() {
         val w = walk(1L, LocalDate.of(2026, 4, 19))
         val m = GoshuinMilestones.detect(walkIndex = 0, walk = w, allFinished = listOf(w), hemisphere = Hemisphere.Northern)
