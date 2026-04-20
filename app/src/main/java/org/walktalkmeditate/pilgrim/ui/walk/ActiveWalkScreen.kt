@@ -42,6 +42,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @Composable
 fun ActiveWalkScreen(
     onFinished: (walkId: Long) -> Unit,
+    onEnterMeditation: () -> Unit,
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -63,9 +64,17 @@ fun ActiveWalkScreen(
 
     // Key on state *class* so navigation fires on transitions only,
     // not on every location-sample-driven Active → Active recomposition.
+    // Stage 5-A adds the Meditating branch: when the user taps the
+    // Meditate control, the VM dispatches MeditateStart → state becomes
+    // Meditating → this observer forwards to the dedicated
+    // MeditationScreen. The Idle/Active/Paused cases no-op because
+    // ActiveWalk IS the right surface for those.
     LaunchedEffect(ui.walkState::class) {
-        val state = ui.walkState
-        if (state is WalkState.Finished) onFinished(state.walk.walkId)
+        when (val state = ui.walkState) {
+            is WalkState.Finished -> onFinished(state.walk.walkId)
+            is WalkState.Meditating -> onEnterMeditation()
+            else -> Unit
+        }
     }
 
     Column(

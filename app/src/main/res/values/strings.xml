@@ -68,6 +68,8 @@
     <string name="walk_action_end_meditation">End meditation</string>
     <string name="walk_action_finish">Finish walk</string>
 
+    <string name="meditation_done">Done</string>
+
     <string name="summary_title">Walk complete.</string>
     <string name="summary_action_done">Done</string>
     <string name="summary_unavailable">This walk\'s details couldn\'t be loaded.</string>
