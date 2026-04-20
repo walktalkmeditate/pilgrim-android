@@ -87,9 +87,21 @@ class BellPlayer @Inject constructor(
             .setWillPauseWhenDucked(false)
             .setAcceptsDelayedFocusGain(false)
             .setOnAudioFocusChangeListener { focusChange ->
+                // `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK` is deliberately
+                // NOT in the stop-cases list: we've signed the
+                // `setWillPauseWhenDucked(false)` contract, which
+                // tells the OS "I'll self-manage ducking, don't
+                // auto-pause me." For a 3-second bell, self-managing
+                // ducking means just letting the bell continue at its
+                // current volume — implementing manual volume ramping
+                // for such a short cue isn't worth the complexity, and
+                // the OS's other ducking consumers already received
+                // their own duck signal. Treating CAN_DUCK as a full
+                // stop would both violate the declared contract and
+                // silence the bell unnecessarily when any other app
+                // nearby requests ducking focus.
                 if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
-                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
-                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
                 ) {
                     Log.i(TAG, "bell focus lost — stopping bell")
                     cleanupRef.get()?.invoke()
