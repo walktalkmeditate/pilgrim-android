@@ -87,7 +87,7 @@
     <string name="settings_voice_guides_subtitle">Audio reflections for your walk</string>
 
     <string name="voice_guide_picker_title">Voice guides</string>
-    <string name="voice_guide_picker_empty">No voice guides yet. Check your connection and pull to refresh.</string>
+    <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>
     <string name="voice_guide_status_downloaded">Downloaded</string>
     <string name="voice_guide_status_downloading">Downloading %1$d of %2$d</string>

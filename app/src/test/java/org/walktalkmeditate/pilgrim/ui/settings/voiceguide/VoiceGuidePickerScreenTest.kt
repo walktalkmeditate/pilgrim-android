@@ -41,8 +41,9 @@ class VoiceGuidePickerScreenTest {
                 }
             }
         }
-        composeRule.onNodeWithText("No voice guides yet. Check your connection and pull to refresh.")
-            .assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "No voice guides yet. Check your connection — the catalog will load when you're online.",
+        ).assertIsDisplayed()
     }
 
     @Test fun `NotDownloaded pack shows name and tagline`() {

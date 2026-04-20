@@ -91,13 +91,30 @@ class VoiceGuideCatalogRepository @Inject constructor(
                 isSelected = base.isSelected,
                 reason = FAIL_REASON_DOWNLOAD,
             )
-            // Terminal success → filesystem should now report Downloaded;
-            // Cancelled → filesystem dictates (partial files may remain
-            // but isPackDownloaded will be false). Fall through to
-            // whatever the filesystem-based base state says.
-            DownloadProgress.State.Succeeded, DownloadProgress.State.Cancelled -> base
+            // Terminal transitions re-read the filesystem — the outer
+            // combine's captured `base` was computed BEFORE the worker
+            // ran and is stale now that files exist on disk. Without
+            // this recheck, the picker would stay on NotDownloaded
+            // forever after a successful download (no invalidation
+            // triggers a re-read because the worker doesn't broadcast
+            // through VoiceGuideFileStore.invalidations). The auto-
+            // select observer also depends on seeing Downloaded here.
+            DownloadProgress.State.Succeeded, DownloadProgress.State.Cancelled ->
+                if (fileStore.isPackDownloaded(base.pack)) {
+                    VoiceGuidePackState.Downloaded(base.pack, base.isSelected)
+                } else {
+                    VoiceGuidePackState.NotDownloaded(base.pack, base.isSelected)
+                }
         }
     }
+
+    /**
+     * Request a manifest refresh from the CDN. Idempotent; deduped
+     * by the manifest service. Called by the picker ViewModel on
+     * screen open so an empty or stale cache populates without
+     * requiring a user gesture.
+     */
+    fun refreshManifest() = manifestService.syncIfNeeded()
 
     fun download(packId: String) = scheduler.enqueue(packId)
     fun retry(packId: String) = scheduler.retry(packId)

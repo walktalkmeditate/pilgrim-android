@@ -10,7 +10,9 @@ import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,6 +69,16 @@ class VoiceGuideManifestService @Inject constructor(
         File(context.filesDir, LOCAL_MANIFEST_NAME)
     }
 
+    /**
+     * Completes when the init-time cache load finishes (regardless of
+     * whether a cache existed). Consumers that need to synchronously
+     * look up a pack by id right after app start — notably
+     * [VoiceGuideDownloadWorker] running on WorkManager reschedule —
+     * should `.await()` this before calling [pack].
+     */
+    private val _initialLoad = CompletableDeferred<Unit>()
+    val initialLoad: Deferred<Unit> get() = _initialLoad
+
     init {
         // Async load so the constructor (typically called on whatever
         // thread first triggers Hilt injection — Main for
@@ -74,7 +86,13 @@ class VoiceGuideManifestService @Inject constructor(
         // starts empty and flips to the cached value on first
         // emission once I/O completes. Subscribers to `packs` already
         // handle the empty-first-emission case.
-        scope.launch(Dispatchers.IO) { loadLocalManifestFromDisk() }
+        scope.launch(Dispatchers.IO) {
+            try {
+                loadLocalManifestFromDisk()
+            } finally {
+                _initialLoad.complete(Unit)
+            }
+        }
     }
 
     /** Lookup a pack by id in the currently-cached catalog. */
