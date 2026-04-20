@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,11 +31,11 @@ import okhttp3.Request
  * from a user surface (Stage 5-D picker) to refresh against the CDN.
  *
  * Thread safety: [_packs] and [_isSyncing] are `MutableStateFlow`;
- * concurrent `syncIfNeeded` calls are deduped via the
- * `_isSyncing.value` guard before any work is launched. Network I/O
- * hops to `Dispatchers.IO`; file I/O (load/save cache) is synchronous
- * on the calling thread — small file (~KBs), acceptable on any
- * dispatcher.
+ * concurrent `syncIfNeeded` calls are deduped via an atomic
+ * `_isSyncing.compareAndSet` check that runs synchronously before
+ * any coroutine is launched. Network I/O hops to `Dispatchers.IO`;
+ * file I/O (load/save cache) is synchronous on the calling thread —
+ * small file (~KBs), acceptable on any dispatcher.
  *
  * Cache policy: writes the manifest to
  * `filesDir/voice_guide_manifest.json` atomically (write-to-tmp +
@@ -116,6 +117,14 @@ class VoiceGuideManifestService @Inject constructor(
                     }
                     json.decodeFromString<VoiceGuideManifest>(body)
                 }
+            } catch (ce: CancellationException) {
+                // Must not be swallowed — propagating cancellation is
+                // load-bearing for structured concurrency. Without
+                // this, scope cancellation mid-fetch would be logged
+                // as a network error and the caller would silently
+                // continue with `null`, leaving the finally block to
+                // reset `_isSyncing` on an already-cancelled scope.
+                throw ce
             } catch (t: Throwable) {
                 Log.w(TAG, "manifest fetch failed", t)
                 null
