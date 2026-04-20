@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,7 +79,11 @@ fun MeditationScreen(
     // — the user's mental model is "the timer started when I saw this
     // screen". Accounting truth lives in the reducer via
     // `totalMeditatedMillis`, unaffected by what the UI displays.
-    var elapsedSeconds by remember { mutableIntStateOf(0) }
+    //
+    // `rememberSaveable` so the timer survives configuration changes
+    // (screen rotation mid-session); `mutableIntStateOf` has a built-in
+    // saver that handles the int-specialization correctly.
+    var elapsedSeconds by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(TIMER_TICK_MS)
@@ -131,7 +136,16 @@ fun MeditationScreen(
     // to ActiveWalk with the controller still in Meditating, and
     // ActiveWalkScreen's state observer would immediately bounce back
     // to MeditationScreen — oscillation bug.
-    BackHandler(enabled = !didEnd) { endSession() }
+    //
+    // Enabled unconditionally (including after `didEnd`): once the user
+    // has tapped Done, `endSession` is idempotent (guarded by `didEnd`),
+    // and the state transition to Active fires `onEnded` via the
+    // observer above — pop happens naturally. Guarding `BackHandler`
+    // on `!didEnd` would let the system default back fire during the
+    // ~1-2 frame window between Done tap and state settle, letting the
+    // user escape to ActiveWalk while still in Meditating → oscillation
+    // via ActiveWalk's own state observer.
+    BackHandler { endSession() }
 
     val moss = pilgrimColors.moss
     MeditationScreenContent(
