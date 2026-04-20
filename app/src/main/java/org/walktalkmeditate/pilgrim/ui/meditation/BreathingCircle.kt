@@ -11,7 +11,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,18 +50,45 @@ internal fun BreathingCircle(
         label = "breathScale",
     )
 
-    Canvas(modifier = modifier.size(CIRCLE_SIZE_DP.dp)) {
+    // Cache the moss-alpha color lists so a 30-minute session doesn't
+    // allocate on every frame. The brushes themselves are built inside
+    // the Canvas lambda below but with a FIXED `radius` — scale is
+    // applied via `Modifier.scale` on the Canvas, so the draw block
+    // runs only when the moss color or canvas dimensions change.
+    val outerColors = remember(moss) {
+        listOf(
+            moss.copy(alpha = 0.5f),
+            moss.copy(alpha = 0.15f),
+            moss.copy(alpha = 0f),
+        )
+    }
+    val innerColors = remember(moss) {
+        listOf(
+            moss.copy(alpha = 0.7f),
+            moss.copy(alpha = 0.3f),
+        )
+    }
+
+    Canvas(
+        // `Modifier.scale(scale)` applies the breath animation at the
+        // GraphicsLayer level — the compositor updates a transform
+        // matrix each frame without re-running the DrawScope block.
+        // Previously the animation drove `outerRadius = base * scale`
+        // inside the draw block, causing 2 Brush + 2 List<Color>
+        // allocations per frame (≈216K short-lived objects across a
+        // 30-min session). Moving scale out of the draw code caches
+        // the brushes once per moss-color / canvas-size change.
+        modifier = modifier
+            .size(CIRCLE_SIZE_DP.dp)
+            .scale(scale),
+    ) {
         val center = Offset(size.width / 2f, size.height / 2f)
-        val outerRadius = (size.minDimension / 2f) * scale
+        val outerRadius = size.minDimension / 2f
 
         // Outer halo — moss at 50% fading to 0%, broad and soft.
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    moss.copy(alpha = 0.5f),
-                    moss.copy(alpha = 0.15f),
-                    moss.copy(alpha = 0f),
-                ),
+                colors = outerColors,
                 center = center,
                 radius = outerRadius,
             ),
@@ -70,10 +99,7 @@ internal fun BreathingCircle(
         val innerRadius = outerRadius * INNER_CORE_FRACTION
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    moss.copy(alpha = 0.7f),
-                    moss.copy(alpha = 0.3f),
-                ),
+                colors = innerColors,
                 center = center,
                 radius = innerRadius,
             ),
