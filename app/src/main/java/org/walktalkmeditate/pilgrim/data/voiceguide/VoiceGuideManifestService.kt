@@ -68,7 +68,13 @@ class VoiceGuideManifestService @Inject constructor(
     }
 
     init {
-        loadLocalManifest()
+        // Async load so the constructor (typically called on whatever
+        // thread first triggers Hilt injection — Main for
+        // @HiltViewModel consumers) doesn't block on disk. `_packs`
+        // starts empty and flips to the cached value on first
+        // emission once I/O completes. Subscribers to `packs` already
+        // handle the empty-first-emission case.
+        scope.launch(Dispatchers.IO) { loadLocalManifestFromDisk() }
     }
 
     /** Lookup a pack by id in the currently-cached catalog. */
@@ -142,7 +148,7 @@ class VoiceGuideManifestService @Inject constructor(
             }
         }
 
-    private fun loadLocalManifest() {
+    private fun loadLocalManifestFromDisk() {
         if (!localManifestFile.exists()) return
         try {
             val text = localManifestFile.readText()
