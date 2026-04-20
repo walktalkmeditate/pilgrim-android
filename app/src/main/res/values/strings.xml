@@ -80,4 +80,34 @@
     <string name="recording_play">Play</string>
     <string name="recording_pause">Pause</string>
     <string name="recording_wpm_caption">%1$d wpm</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_back_content_description">Back</string>
+    <string name="settings_voice_guides_row">Voice guides</string>
+    <string name="settings_voice_guides_subtitle">Audio reflections for your walk</string>
+
+    <string name="voice_guide_picker_title">Voice guides</string>
+    <string name="voice_guide_picker_empty">No voice guides yet. Check your connection and pull to refresh.</string>
+    <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>
+    <string name="voice_guide_status_downloaded">Downloaded</string>
+    <string name="voice_guide_status_downloading">Downloading %1$d of %2$d</string>
+    <string name="voice_guide_status_not_downloaded">Not downloaded</string>
+    <string name="voice_guide_status_failed">Download failed</string>
+    <string name="voice_guide_status_selected">Selected</string>
+
+    <string name="voice_guide_detail_title">Pack</string>
+    <string name="voice_guide_detail_tagline_label">Tagline</string>
+    <string name="voice_guide_detail_description_label">About</string>
+    <string name="voice_guide_detail_duration_label">Duration</string>
+    <string name="voice_guide_detail_size_label">Download size</string>
+    <string name="voice_guide_detail_meditation_label">Includes meditation guide</string>
+    <string name="voice_guide_detail_action_download">Download</string>
+    <string name="voice_guide_detail_action_cancel">Cancel download</string>
+    <string name="voice_guide_detail_action_retry">Retry download</string>
+    <string name="voice_guide_detail_action_select">Use as my guide</string>
+    <string name="voice_guide_detail_action_deselect">Unset as guide</string>
+    <string name="voice_guide_detail_action_delete">Delete download</string>
+    <string name="voice_guide_detail_not_found">This pack isn\'t available.</string>
+
+    <string name="voice_guide_duration_minutes_format">%1$d min</string>
 </resources>
