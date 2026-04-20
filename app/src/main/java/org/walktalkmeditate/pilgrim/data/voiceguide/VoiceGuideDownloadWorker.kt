@@ -53,6 +53,13 @@ class VoiceGuideDownloadWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val packId = inputData.getString(KEY_PACK_ID) ?: return Result.failure()
+        // Wait for the service's async cache load to complete before
+        // the lookup, otherwise a WorkManager reschedule after process
+        // death would race with `init { scope.launch { ... } }` and
+        // `pack(id)` would return null on packs that DO exist in the
+        // cache. Scoped to the worker's lifecycle — cancellation
+        // propagates via the suspension.
+        manifestService.initialLoad.await()
         val pack = manifestService.pack(id = packId) ?: return Result.failure()
 
         val all = fileStore.allPrompts(pack)

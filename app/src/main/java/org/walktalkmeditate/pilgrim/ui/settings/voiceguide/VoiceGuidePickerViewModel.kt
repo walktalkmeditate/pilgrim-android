@@ -21,6 +21,15 @@ import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePackState
 class VoiceGuidePickerViewModel @Inject constructor(
     private val catalog: VoiceGuideCatalogRepository,
 ) : ViewModel() {
+
+    init {
+        // Kick off a manifest refresh on screen open. No-op if one is
+        // already in flight (deduped by the manifest service's CAS).
+        // First-run users with an empty cache see packs arrive as soon
+        // as the network responds.
+        catalog.refreshManifest()
+    }
+
     val packStates: StateFlow<List<VoiceGuidePackState>> = catalog.packStates
 
     fun download(packId: String) = catalog.download(packId)
