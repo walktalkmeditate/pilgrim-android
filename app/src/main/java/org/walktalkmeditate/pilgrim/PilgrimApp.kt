@@ -10,6 +10,7 @@ import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
+import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
@@ -24,6 +25,16 @@ class PilgrimApp : Application(), Configuration.Provider {
      * block would never run — bells would silently not fire.
      */
     @Inject lateinit var meditationBellObserver: MeditationBellObserver
+
+    /**
+     * App-scoped auto-select observer for the voice-guide picker —
+     * calls `selectIfUnset` when a pack transitions to Downloaded so
+     * the first successful download becomes the active guide. Started
+     * explicitly (like a service) rather than via `init { launch }`
+     * so the subscription is visible + cancellable from the owning
+     * Application class.
+     */
+    @Inject lateinit var voiceGuideDownloadObserver: VoiceGuideDownloadObserver
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -51,5 +62,10 @@ class PilgrimApp : Application(), Configuration.Provider {
         // stays lazy and bells silently don't fire. `hashCode()` is a
         // side-effect-free op that ensures the field is actually used.
         meditationBellObserver.hashCode()
+
+        // Start the voice-guide auto-select observer for the app's
+        // process lifetime. Its collection on `catalog.packStates`
+        // lives on `VoiceGuideCatalogScope`, so no per-screen tether.
+        voiceGuideDownloadObserver.start()
     }
 }

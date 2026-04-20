@@ -21,6 +21,10 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
+import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
+import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailScreen
+import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailViewModel
+import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePickerScreen
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
@@ -34,6 +38,13 @@ object Routes {
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
     const val WALK_SUMMARY_PATTERN = "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}"
     fun walkSummary(walkId: Long): String = "$WALK_SUMMARY_PREFIX/$walkId"
+
+    const val SETTINGS = "settings"
+    const val VOICE_GUIDE_PICKER = "voice_guides"
+    private const val VOICE_GUIDE_DETAIL_PREFIX = "voice_guide"
+    const val VOICE_GUIDE_DETAIL_PATTERN =
+        "$VOICE_GUIDE_DETAIL_PREFIX/{${VoiceGuidePackDetailViewModel.ARG_PACK_ID}}"
+    fun voiceGuideDetail(packId: String): String = "$VOICE_GUIDE_DETAIL_PREFIX/$packId"
 }
 
 @Composable
@@ -81,6 +92,47 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
+                onEnterSettings = {
+                    navController.navigate(Routes.SETTINGS) {
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenVoiceGuides = {
+                    navController.navigate(Routes.VOICE_GUIDE_PICKER) {
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(Routes.VOICE_GUIDE_PICKER) {
+            VoiceGuidePickerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenPack = { packId ->
+                    // Same nav pattern as Goshuin → Summary: launchSingleTop
+                    // plus popUpTo(picker) so cross-pack double-tap never
+                    // stacks two detail screens.
+                    navController.navigate(Routes.voiceGuideDetail(packId)) {
+                        launchSingleTop = true
+                        popUpTo(Routes.VOICE_GUIDE_PICKER) { inclusive = false }
+                    }
+                },
+            )
+        }
+        composable(
+            route = Routes.VOICE_GUIDE_DETAIL_PATTERN,
+            arguments = listOf(
+                navArgument(VoiceGuidePackDetailViewModel.ARG_PACK_ID) {
+                    type = NavType.StringType
+                },
+            ),
+        ) {
+            VoiceGuidePackDetailScreen(
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.ACTIVE_WALK) {
