@@ -88,18 +88,18 @@ class BellPlayer @Inject constructor(
             .setAcceptsDelayedFocusGain(false)
             .setOnAudioFocusChangeListener { focusChange ->
                 // `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK` is deliberately
-                // NOT in the stop-cases list: we've signed the
-                // `setWillPauseWhenDucked(false)` contract, which
-                // tells the OS "I'll self-manage ducking, don't
-                // auto-pause me." For a 3-second bell, self-managing
-                // ducking means just letting the bell continue at its
-                // current volume — implementing manual volume ramping
-                // for such a short cue isn't worth the complexity, and
-                // the OS's other ducking consumers already received
-                // their own duck signal. Treating CAN_DUCK as a full
-                // stop would both violate the declared contract and
-                // silence the bell unnecessarily when any other app
-                // nearby requests ducking focus.
+                // NOT in the stop-cases list. `setWillPauseWhenDucked(false)`
+                // above (the default) tells the OS to auto-duck this
+                // player's volume for transient focus loss — rather
+                // than converting the duckable loss to a full
+                // `LOSS_TRANSIENT` that the app must react to. The
+                // listener receives `CAN_DUCK` as informational; the
+                // OS handles the volume reduction automatically.
+                // For a 3-second bell, doing nothing is correct: the
+                // OS is already attenuating. Treating CAN_DUCK as a
+                // full stop would both silence the bell unnecessarily
+                // when another app nearby requests ducking focus and
+                // contradict the declared request mode.
                 if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
                     focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
                 ) {
