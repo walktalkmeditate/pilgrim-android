@@ -48,13 +48,41 @@ class AudioFocusCoordinator @Inject constructor(
     fun requestMediaPlayback(onLossListener: (() -> Unit)? = null): Boolean =
         request(usage = AudioAttributes.USAGE_MEDIA, onLossListener = onLossListener)
 
-    private fun request(usage: Int, onLossListener: (() -> Unit)? = null): Boolean {
+    /**
+     * Request transient DUCKING focus for a short audible cue (bell,
+     * earcon). Uses `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` so concurrent
+     * media (music / podcast) is briefly attenuated rather than paused
+     * — the user hears the bell overlaid on their existing listening,
+     * not an interruption.
+     *
+     * `USAGE_MEDIA + CONTENT_TYPE_SONIFICATION` routes the sound
+     * through the loudspeaker (not the earpiece) and marks it as a
+     * non-speech, non-music audible notification — the OS's ducking
+     * policy treats it appropriately.
+     *
+     * Returns true if focus was granted. Callers should no-op the
+     * playback when false (phone call, exclusive-focus app active).
+     */
+    fun requestBellDucking(onLossListener: (() -> Unit)? = null): Boolean =
+        request(
+            usage = AudioAttributes.USAGE_MEDIA,
+            contentType = AudioAttributes.CONTENT_TYPE_SONIFICATION,
+            gainMode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            onLossListener = onLossListener,
+        )
+
+    private fun request(
+        usage: Int,
+        contentType: Int = AudioAttributes.CONTENT_TYPE_SPEECH,
+        gainMode: Int = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
+        onLossListener: (() -> Unit)? = null,
+    ): Boolean {
         abandonIfHeld()
         val attrs = AudioAttributes.Builder()
             .setUsage(usage)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .setContentType(contentType)
             .build()
-        val builder = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        val builder = AudioFocusRequest.Builder(gainMode)
             .setAudioAttributes(attrs)
             .setWillPauseWhenDucked(false)
             .setAcceptsDelayedFocusGain(false)
