@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.data.voiceguide
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
 
 /**
  * Reactive join of [VoiceGuideManifestService.packs] +
@@ -44,12 +46,20 @@ class VoiceGuideCatalogRepository @Inject constructor(
             // combine fires on initial subscription.
             fileStore.invalidations.onStart { emit(Unit) },
         ) { packs, selectedId, _ ->
-            packs.map { pack ->
-                val isSelected = pack.id == selectedId
-                if (fileStore.isPackDownloaded(pack)) {
-                    VoiceGuidePackState.Downloaded(pack, isSelected)
-                } else {
-                    VoiceGuidePackState.NotDownloaded(pack, isSelected)
+            // Hop to Dispatchers.IO for the filesystem walk — the
+            // outer scope runs on Dispatchers.Default (shared with
+            // whisper.cpp transcription), and each pack does
+            // `exists()` + `length()` syscalls per prompt. A 20-prompt
+            // pack = 40 syscalls per combine emission, and the combine
+            // re-fires on every WorkInfo progress tick.
+            withContext(Dispatchers.IO) {
+                packs.map { pack ->
+                    val isSelected = pack.id == selectedId
+                    if (fileStore.isPackDownloaded(pack)) {
+                        VoiceGuidePackState.Downloaded(pack, isSelected)
+                    } else {
+                        VoiceGuidePackState.NotDownloaded(pack, isSelected)
+                    }
                 }
             }
         }
@@ -73,7 +83,7 @@ class VoiceGuideCatalogRepository @Inject constructor(
             pairs.map { (base, progress) -> applyProgress(base, progress) }
         }
 
-    private fun applyProgress(
+    private suspend fun applyProgress(
         base: VoiceGuidePackState,
         progress: DownloadProgress?,
     ): VoiceGuidePackState {
@@ -100,10 +110,12 @@ class VoiceGuideCatalogRepository @Inject constructor(
             // through VoiceGuideFileStore.invalidations). The auto-
             // select observer also depends on seeing Downloaded here.
             DownloadProgress.State.Succeeded, DownloadProgress.State.Cancelled ->
-                if (fileStore.isPackDownloaded(base.pack)) {
-                    VoiceGuidePackState.Downloaded(base.pack, base.isSelected)
-                } else {
-                    VoiceGuidePackState.NotDownloaded(base.pack, base.isSelected)
+                withContext(Dispatchers.IO) {
+                    if (fileStore.isPackDownloaded(base.pack)) {
+                        VoiceGuidePackState.Downloaded(base.pack, base.isSelected)
+                    } else {
+                        VoiceGuidePackState.NotDownloaded(base.pack, base.isSelected)
+                    }
                 }
         }
     }
