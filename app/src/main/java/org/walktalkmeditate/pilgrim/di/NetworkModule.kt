@@ -7,9 +7,13 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
+import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestUrl
 
 /**
@@ -61,6 +65,21 @@ object NetworkModule {
     @Singleton
     @VoiceGuideManifestUrl
     fun provideVoiceGuideManifestUrl(): String = VoiceGuideConfig.MANIFEST_URL
+
+    /**
+     * Long-lived scope for
+     * [org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestService]'s
+     * sync coroutine. Lives for the app process; `SupervisorJob` so a
+     * failed fetch doesn't tear the scope down. Lives in
+     * [NetworkModule] (not `AudioModule`) because the manifest
+     * fetcher is a network/data concern, not an audio one. See
+     * [VoiceGuideManifestScope].
+     */
+    @Provides
+    @Singleton
+    @VoiceGuideManifestScope
+    fun provideVoiceGuideManifestScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 30L

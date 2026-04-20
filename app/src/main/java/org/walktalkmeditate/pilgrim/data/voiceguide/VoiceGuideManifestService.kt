@@ -161,6 +161,12 @@ class VoiceGuideManifestService @Inject constructor(
         return try {
             val text = localManifestFile.readText()
             json.decodeFromString<VoiceGuideManifest>(text).version
+        } catch (ce: CancellationException) {
+            // Same invariant as fetchRemoteManifest: propagate
+            // cancellation so `syncIfNeeded` doesn't falsely treat a
+            // cancelled read as "no cached version" and call
+            // saveLocalManifest on an already-cancelled coroutine.
+            throw ce
         } catch (t: Throwable) {
             null
         }
@@ -182,6 +188,12 @@ class VoiceGuideManifestService @Inject constructor(
                     StandardCopyOption.REPLACE_EXISTING,
                 )
             }
+        } catch (ce: CancellationException) {
+            // Delete the (possibly partial) tmp file before propagating
+            // cancellation, matching the non-CE failure path. Leaves
+            // the real cache file intact because rename hasn't run.
+            tmp.delete()
+            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "failed to save local manifest; in-memory state retains it", t)
             tmp.delete()
