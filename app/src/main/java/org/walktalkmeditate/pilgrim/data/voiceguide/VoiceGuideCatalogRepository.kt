@@ -139,8 +139,14 @@ class VoiceGuideCatalogRepository @Inject constructor(
      * Delete the pack's files; if the deleted pack was the selected
      * pack, also clear the selection. Matches iOS's
      * "can't have a deleted pack as the active guide" semantics.
+     *
+     * Cancels any in-flight download for the pack first as defense
+     * in depth — otherwise a user who taps Delete while a REPLACE
+     * retry is mid-stream could end up with partially-downloaded
+     * files recreated post-delete. No-op on a finished worker.
      */
     suspend fun delete(pack: VoiceGuidePack) {
+        scheduler.cancel(pack.id)
         fileStore.deletePack(pack)
         if (selection.selectedPackId.value == pack.id) selection.deselect()
     }

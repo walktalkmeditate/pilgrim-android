@@ -6,10 +6,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.withContext
 
 /**
  * Filesystem source-of-truth for voice-guide prompt downloads.
@@ -94,11 +96,21 @@ class VoiceGuideFileStore @Inject constructor(
      * Best-effort — ignores per-file delete failures. Emits an
      * invalidation so observers re-derive state regardless of outcome.
      */
-    fun deletePack(pack: VoiceGuidePack) {
-        allPrompts(pack).forEach { prompt ->
-            fileForPrompt(prompt.r2Key).delete()
+    suspend fun deletePack(pack: VoiceGuidePack) {
+        // Hop to Dispatchers.IO — callers are typically on
+        // `viewModelScope.launch { ... }` (default Main) and this
+        // does up to ~50 file syscalls for a big pack. Policy
+        // matches every other FS-touching path in this layer
+        // (manifest save/load, catalog's combine + applyProgress).
+        // Stage 2-E memory: "viewModelScope.launch defaults to
+        // Main (need IO for file I/O = ANR)" — the orphan-sweeper
+        // fix applied the same policy at its repository seam.
+        withContext(Dispatchers.IO) {
+            allPrompts(pack).forEach { prompt ->
+                fileForPrompt(prompt.r2Key).delete()
+            }
+            pruneEmptyDirs()
         }
-        pruneEmptyDirs()
         _invalidations.tryEmit(Unit)
     }
 
