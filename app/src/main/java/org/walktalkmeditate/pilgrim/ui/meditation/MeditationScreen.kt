@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -93,12 +94,18 @@ fun MeditationScreen(
 
     // Observe state transitions AWAY from Meditating. Keyed on state
     // class (not the full state) so Active→Active recompositions on
-    // location samples wouldn't re-fire — here state is Meditating on
-    // entry so the first composition doesn't fire, only real
-    // transitions do.
+    // location samples wouldn't re-fire. The `hasSeenMeditating`
+    // latch prevents a spurious initial fire if the StateFlow's first
+    // emission arrives non-Meditating (cold-restart race, WhileSubscribed
+    // grace gap from an upstream subscription flicker, process-death
+    // restore where state settles to `Finished` before first composition).
+    // onEnded only fires after the screen has witnessed Meditating at
+    // least once — the intended "state transitioned away" semantics.
+    var hasSeenMeditating by remember { mutableStateOf(false) }
     LaunchedEffect(ui.walkState::class) {
-        if (ui.walkState !is WalkState.Meditating) {
-            currentOnEnded()
+        when {
+            ui.walkState is WalkState.Meditating -> hasSeenMeditating = true
+            hasSeenMeditating -> currentOnEnded()
         }
     }
 
@@ -192,6 +199,16 @@ internal fun MeditationScreenContent(
             onClick = onDone,
             enabled = enabled,
             shape = RoundedCornerShape(DONE_BUTTON_CORNER_DP.dp),
+            // Set the content color on the button itself so M3 can
+            // auto-derive `disabledContentColor` (contentColor × 0.38
+            // alpha). An explicit `color` on the child Text would
+            // bypass `LocalContentColor` — the text would stay full
+            // `fog` even when disabled, giving the user no visual
+            // signal that their tap was accepted during the ~1-2
+            // frame state-transition window.
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = pilgrimColors.fog,
+            ),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = PilgrimSpacing.big),
@@ -199,7 +216,6 @@ internal fun MeditationScreenContent(
             Text(
                 text = stringResource(R.string.meditation_done),
                 style = pilgrimType.button,
-                color = pilgrimColors.fog,
             )
         }
     }
