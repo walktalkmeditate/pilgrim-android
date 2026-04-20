@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.voiceguide
 
+import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -39,10 +41,28 @@ class VoiceGuideDownloadObserver @Inject constructor(
                         prev != null &&
                         prev !is VoiceGuidePackState.Downloaded
                 if (becameDownloaded) {
-                    selection.selectIfUnset(id)
+                    // Defend the collect against DataStore write
+                    // failures (disk full, corrupt prefs, transient
+                    // I/O). Without this, a single throw kills the
+                    // observer coroutine — `SupervisorJob` keeps
+                    // siblings alive but does NOT restart the failed
+                    // child. Auto-select would break silently for the
+                    // rest of the process lifetime. Re-throw CE so
+                    // scope cancellation still propagates.
+                    try {
+                        selection.selectIfUnset(id)
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "selectIfUnset failed for $id; auto-select skipped this emission", t)
+                    }
                 }
             }
             previous = current
         }
+    }
+
+    private companion object {
+        const val TAG = "VoiceGuideDownloadObs"
     }
 }
