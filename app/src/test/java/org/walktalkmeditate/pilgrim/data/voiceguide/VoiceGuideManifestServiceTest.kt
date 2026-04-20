@@ -214,7 +214,17 @@ class VoiceGuideManifestServiceTest {
 
     @Test fun `isSyncing emits true during fetch then false`() = runTest {
         val remote = manifest(version = "v1")
-        server.enqueue(MockResponse().setBody(json.encodeToString(remote)))
+        // Body delay guarantees the `true` state is observable:
+        // `_isSyncing` is a StateFlow, which conflates. Without the
+        // delay, an in-process MockWebServer can return before
+        // Turbine's collector has a chance to observe `true`, and the
+        // true → false transition collapses into a single `false`
+        // emission, hanging the test on `assertTrue(awaitItem())`.
+        server.enqueue(
+            MockResponse()
+                .setBodyDelay(200, TimeUnit.MILLISECONDS)
+                .setBody(json.encodeToString(remote))
+        )
         val service = buildService()
 
         service.isSyncing.test {
