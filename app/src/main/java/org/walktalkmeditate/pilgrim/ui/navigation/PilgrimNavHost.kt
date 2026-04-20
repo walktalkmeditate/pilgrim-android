@@ -19,6 +19,7 @@ import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
+import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryScreen
@@ -29,6 +30,7 @@ object Routes {
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
     const val GOSHUIN = "goshuin"
+    const val MEDITATION = "meditation"
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
     const val WALK_SUMMARY_PATTERN = "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}"
     fun walkSummary(walkId: Long): String = "$WALK_SUMMARY_PREFIX/$walkId"
@@ -87,6 +89,29 @@ fun PilgrimNavHost(
                     navController.navigate(Routes.walkSummary(walkId)) {
                         popUpTo(Routes.HOME) { inclusive = false }
                     }
+                },
+                onEnterMeditation = {
+                    // launchSingleTop protects against a double-fire
+                    // of the state-class observer if the reducer
+                    // briefly bounces through Meditating during a
+                    // restored session. Without it, two MEDITATION
+                    // entries could stack.
+                    navController.navigate(Routes.MEDITATION) {
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(Routes.MEDITATION) {
+            MeditationScreen(
+                onEnded = {
+                    // Pop back to ActiveWalk. If the walk was finished
+                    // externally (state went straight Meditating →
+                    // Finished), ActiveWalk's state observer will then
+                    // fire onFinished on its next composition, cleanly
+                    // chaining to the summary screen — two hops but
+                    // correct.
+                    navController.popBackStack(Routes.ACTIVE_WALK, inclusive = false)
                 },
             )
         }
