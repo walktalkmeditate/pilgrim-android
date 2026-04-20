@@ -101,7 +101,19 @@ fun MeditationScreen(
     // restore where state settles to `Finished` before first composition).
     // onEnded only fires after the screen has witnessed Meditating at
     // least once — the intended "state transitioned away" semantics.
-    var hasSeenMeditating by remember { mutableStateOf(false) }
+    // `rememberSaveable` so the latch survives a configuration change
+    // (screen rotation). Without this, rotating during the ~1-2 frame
+    // window between Done tap and the state transition landing would:
+    //   (a) reset `hasSeenMeditating` to false,
+    //   (b) leave state=Active (the transition committed before
+    //       rotation),
+    //   (c) the LaunchedEffect below runs with state=Active but
+    //       hasSeen=false → neither branch fires → user is STUCK on
+    //       MeditationScreen with an Active walk; re-tapping Done
+    //       is a reducer no-op so they can't escape.
+    // `mutableStateOf<Boolean>` has a built-in saver, same as
+    // `mutableIntStateOf` used for `elapsedSeconds` above.
+    var hasSeenMeditating by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(ui.walkState::class) {
         when {
             ui.walkState is WalkState.Meditating -> hasSeenMeditating = true
