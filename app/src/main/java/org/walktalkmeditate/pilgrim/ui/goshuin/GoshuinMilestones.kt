@@ -33,6 +33,17 @@ data class WalkMilestoneInput(
  * iOS uses `Set<Milestone>.first` which depends on Swift's hash-based
  * iteration order — non-deterministic across processes. Android fixes
  * this with explicit precedence above.
+ *
+ * **List-ordering note:** callers pass [allFinished] sorted by
+ * `endTimestamp DESC` (walk completion order) because the goshuin
+ * grid and summary paths both present walks most-recently-finished
+ * first. The [walkIndex]-derived `walkNumber` for [FirstWalk] /
+ * [NthWalk] therefore reflects that order. In contrast, the
+ * [FirstOfSeason] check compares `startTimestamp` (walk beginning)
+ * — the two orderings can diverge for a walk that was paused
+ * overnight (started one day, ended the next). In practice the
+ * disagreement only affects whether a rare overnight walk is the
+ * "first of season"; all other milestone outputs are unaffected.
  */
 object GoshuinMilestones {
 
@@ -42,6 +53,13 @@ object GoshuinMilestones {
         allFinished: List<WalkMilestoneInput>,
         hemisphere: Hemisphere,
     ): GoshuinMilestone? {
+        // Defensive guard: the function's two production callers
+        // already filter to non-empty `finished` lists, but keeping
+        // this check at the entry point means a future caller (test,
+        // preview, new feature) can pass `emptyList()` without
+        // crashing on `allFinished.maxOf` below.
+        if (allFinished.isEmpty()) return null
+
         // walkNumber is 1-based, where walkIndex 0 = newest = highest
         // walkNumber. iOS computed walkNumber = walkIndex + 1 from the
         // OLDEST-first page-view loop; same effective number expressed
