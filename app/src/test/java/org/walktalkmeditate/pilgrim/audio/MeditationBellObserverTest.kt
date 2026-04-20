@@ -82,6 +82,20 @@ class MeditationBellObserverTest {
         s.cancel()
     }
 
+    @Test fun `same-class Meditating re-emission does not fire bell`() = runTest {
+        // Guard for a future refactor: if the observer ever compared
+        // by value instead of class, two Meditating states with
+        // different `meditationStartedAt` timestamps would count as
+        // a transition and ring a spurious bell. Class-compare is
+        // correct; this test documents the invariant.
+        val s = newScenario(initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L))
+        advanceUntilIdle()
+        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 3_000L)
+        advanceUntilIdle()
+        assertEquals(0, s.player.playCount)
+        s.cancel()
+    }
+
     @Test fun `Idle then Active fires zero bells`() = runTest {
         val s = newScenario(initial = WalkState.Idle)
         advanceUntilIdle()
