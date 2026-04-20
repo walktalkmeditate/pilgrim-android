@@ -10,6 +10,9 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import org.walktalkmeditate.pilgrim.audio.voiceguide.ExoPlayerVoiceGuidePlayer
+import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlaybackScope
+import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlayer
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideCatalogScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadScheduler
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideSelectionScope
@@ -31,6 +34,10 @@ abstract class VoiceGuideModule {
     abstract fun bindDownloadScheduler(
         impl: WorkManagerVoiceGuideDownloadScheduler,
     ): VoiceGuideDownloadScheduler
+
+    @Binds
+    @Singleton
+    abstract fun bindVoiceGuidePlayer(impl: ExoPlayerVoiceGuidePlayer): VoiceGuidePlayer
 
     companion object {
         /**
@@ -54,6 +61,17 @@ abstract class VoiceGuideModule {
         @Singleton
         @VoiceGuideSelectionScope
         fun provideVoiceGuideSelectionScope(): CoroutineScope =
+            CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        /**
+         * Long-lived scope for [org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator]'s
+         * state-observer + per-session scheduler coroutines. `SupervisorJob`
+         * so one scheduler's failure doesn't tear the whole scope down.
+         */
+        @Provides
+        @Singleton
+        @VoiceGuidePlaybackScope
+        fun provideVoiceGuidePlaybackScope(): CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
 }
