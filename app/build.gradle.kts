@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     // AGP 9.0+ registers Kotlin natively; no separate kotlin.android plugin.
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
 }
@@ -192,6 +193,12 @@ dependencies {
 
     implementation(libs.androidx.media3.exoplayer)
 
+    // Stage 5-C: HTTP + JSON for the voice-guide manifest fetch. First
+    // introduction of OkHttp + kotlinx.serialization; Phase 8
+    // (Collective Counter, Share Worker) will reuse the same stack.
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
@@ -199,6 +206,7 @@ dependencies {
     testImplementation(libs.androidx.test.core.ktx)
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.androidx.work.testing)
+    testImplementation(libs.okhttp.mockwebserver)
     // Stage 3-C: Compose UI test on the JVM via Robolectric. Used by
     // CalligraphyPathComposableTest to exercise the Path + DrawScope
     // pipeline without a device.
