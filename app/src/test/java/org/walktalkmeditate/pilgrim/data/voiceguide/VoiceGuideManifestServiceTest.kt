@@ -92,6 +92,16 @@ class VoiceGuideManifestServiceTest {
         scope.coroutineContext[Job]?.children?.forEach { it.join() }
     }
 
+    /**
+     * Construct the service and wait for its async init-block disk
+     * load to complete, so tests can synchronously observe the
+     * cached state. (init now launches `loadLocalManifestFromDisk`
+     * on `Dispatchers.IO` to stay off the Hilt-injection thread.)
+     */
+    private fun buildServiceAndWaitForInit(
+        url: String = server.url("/manifest.json").toString(),
+    ): VoiceGuideManifestService = buildService(url).also { awaitSync() }
+
     private fun manifest(
         version: String = "2026-01-01",
         packs: List<VoiceGuidePack> = emptyList(),
@@ -122,7 +132,7 @@ class VoiceGuideManifestServiceTest {
         val cached = manifest(version = "cached-1", packs = listOf(samplePack("seeded")))
         cacheFile.writeText(json.encodeToString(cached))
 
-        val service = buildService()
+        val service = buildServiceAndWaitForInit()
         assertEquals(1, service.packs.value.size)
         assertEquals("seeded", service.packs.value.first().id)
     }
@@ -130,7 +140,7 @@ class VoiceGuideManifestServiceTest {
     @Test fun `init with corrupt cache treats as absent and leaves file alone`() {
         cacheFile.writeText("{ not json")
 
-        val service = buildService()
+        val service = buildServiceAndWaitForInit()
         assertTrue(service.packs.value.isEmpty())
         // Corrupt file remains until syncIfNeeded rewrites it —
         // nothing eagerly deletes user data.
@@ -156,7 +166,7 @@ class VoiceGuideManifestServiceTest {
         val cached = manifest(version = "good", packs = listOf(samplePack("keep")))
         cacheFile.writeText(json.encodeToString(cached))
         server.enqueue(MockResponse().setResponseCode(503))
-        val service = buildService()
+        val service = buildServiceAndWaitForInit()
 
         service.syncIfNeeded()
         awaitSync()
@@ -174,7 +184,7 @@ class VoiceGuideManifestServiceTest {
         // Ensure the filesystem clock can tick past the original mtime.
         Thread.sleep(1_100)
         server.enqueue(MockResponse().setBody(json.encodeToString(same)))
-        val service = buildService()
+        val service = buildServiceAndWaitForInit()
 
         service.syncIfNeeded()
         awaitSync()
@@ -187,7 +197,7 @@ class VoiceGuideManifestServiceTest {
         cacheFile.writeText(json.encodeToString(old))
         val new = manifest(version = "v2", packs = listOf(samplePack("b")))
         server.enqueue(MockResponse().setBody(json.encodeToString(new)))
-        val service = buildService()
+        val service = buildServiceAndWaitForInit()
 
         service.syncIfNeeded()
         awaitSync()
@@ -242,7 +252,7 @@ class VoiceGuideManifestServiceTest {
             packs = listOf(samplePack("alpha"), samplePack("beta")),
         )
         cacheFile.writeText(json.encodeToString(cached))
-        val service = buildService()
+        val service = buildServiceAndWaitForInit()
 
         assertNull(service.pack(id = "missing"))
         assertNotNull(service.pack(id = "alpha"))
