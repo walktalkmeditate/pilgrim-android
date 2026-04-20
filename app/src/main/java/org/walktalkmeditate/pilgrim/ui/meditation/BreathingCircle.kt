@@ -13,8 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -70,17 +70,24 @@ internal fun BreathingCircle(
     }
 
     Canvas(
-        // `Modifier.scale(scale)` applies the breath animation at the
-        // GraphicsLayer level — the compositor updates a transform
-        // matrix each frame without re-running the DrawScope block.
-        // Previously the animation drove `outerRadius = base * scale`
-        // inside the draw block, causing 2 Brush + 2 List<Color>
-        // allocations per frame (≈216K short-lived objects across a
-        // 30-min session). Moving scale out of the draw code caches
-        // the brushes once per moss-color / canvas-size change.
+        // `Modifier.graphicsLayer { scaleX = scale; scaleY = scale }`
+        // with the **lambda form** reads the animated `scale` during
+        // the DRAW phase — `BreathingCircle` does NOT recompose on
+        // every frame. The compositor updates only the layer's
+        // transform matrix per frame. The alternative value form
+        // `Modifier.scale(scale)` reads `scale` in composition scope,
+        // causing ~108K unnecessary recompositions over a 30-min
+        // session (real overhead under battery saver).
+        //
+        // The DrawScope block runs only when the modifier chain above
+        // changes (stable) or `moss` changes (rare theme flip).
+        // Brushes + color lists are allocated once, not per frame.
         modifier = modifier
             .size(CIRCLE_SIZE_DP.dp)
-            .scale(scale),
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
     ) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val outerRadius = size.minDimension / 2f
