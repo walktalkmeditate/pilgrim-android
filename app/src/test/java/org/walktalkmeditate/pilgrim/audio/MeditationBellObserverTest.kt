@@ -96,6 +96,23 @@ class MeditationBellObserverTest {
         s.cancel()
     }
 
+    @Test fun `Idle then Meditating (restore path) does not fire bell`() = runTest {
+        // Real-world scenario: user's walk was mid-meditation when the
+        // process was killed. App relaunches: `WalkController` inits
+        // to `Idle`. HomeScreen's resume-check calls `restoreActiveWalk`,
+        // which writes `Meditating` to the state flow. This is not a
+        // user-initiated boundary — the user hasn't tapped Meditate
+        // this session. Observer must suppress the bell for this path
+        // even though the Meditating state is the second emission
+        // (not the first, which is what the generic skip catches).
+        val s = newScenario(initial = WalkState.Idle)
+        advanceUntilIdle()
+        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+        advanceUntilIdle()
+        assertEquals(0, s.player.playCount)
+        s.cancel()
+    }
+
     @Test fun `Idle then Active fires zero bells`() = runTest {
         val s = newScenario(initial = WalkState.Idle)
         advanceUntilIdle()

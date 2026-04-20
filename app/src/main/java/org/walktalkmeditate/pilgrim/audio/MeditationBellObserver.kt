@@ -11,16 +11,27 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
  * Subscribes to the walk-state flow and fires [BellPlaying.play] on
- * every Meditating boundary transition:
- *  - Active → Meditating (start bell)
- *  - Meditating → Active (end bell)
- *  - Meditating → Finished (end bell — walk finished during meditation)
+ * every USER-INITIATED Meditating boundary transition:
+ *  - Active → Meditating (user tapped Meditate — start bell)
+ *  - Meditating → Active (user tapped Done — end bell)
+ *  - Meditating → Finished (walk finished during meditation — end bell)
  *
  * Discards its first collection — observing the CURRENT state of a
- * `@Singleton` controller at app-init time is not a transition (it's
- * cold-process Idle, or a restored Meditating session). Only real,
- * observed transitions ring the bell. Same first-emission-skip
- * pattern as Stage 5-A's `hasSeenMeditating` latch.
+ * `@Singleton` controller at app-init time is not a transition (it
+ * is always cold-process `Idle` because
+ * [org.walktalkmeditate.pilgrim.walk.WalkController] initializes its
+ * state flow to `Idle`).
+ *
+ * **Restore-path suppression.** After the first-emission skip lands on
+ * `Idle`, `HomeScreen`'s resume-check may call `restoreActiveWalk()`,
+ * which writes a restored state (possibly `Meditating`) directly into
+ * the state flow. The observer would see `Idle → Meditating` and fire
+ * a spurious "welcome back" bell — a bell the user did not trigger.
+ * The guard below treats `Idle → Meditating` as a restore path, not a
+ * user-initiated boundary. User-initiated `MeditateStart` dispatches
+ * always originate from `Active` (you can't meditate without first
+ * starting a walk), so `Active → Meditating` and `Idle → Meditating`
+ * are domain-distinguishable.
  *
  * Instantiated eagerly at app start via `PilgrimApp.onCreate`'s
  * `@Inject` reference — without that reference, Hilt is lazy and the
@@ -49,13 +60,19 @@ class MeditationBellObserver @Inject constructor(
                 val prev = lastStateClass
                 lastStateClass = curr
                 // First emission is the CURRENT state of a @Singleton
-                // at app init — not a transition. Skip regardless of
-                // whether it's Idle (cold start) or Meditating
-                // (restored session).
+                // at app init — always `Idle` because WalkController
+                // initializes there. Skip.
                 if (prev == null) return@collect
                 val wasMeditating = prev == WalkState.Meditating::class
                 val isMeditating = curr == WalkState.Meditating::class
-                if (wasMeditating != isMeditating) {
+                // Suppress the bell on the restore path. After the
+                // Idle first-emission is consumed, `restoreActiveWalk`
+                // may write a resumed `Meditating` state; that's not a
+                // user-initiated boundary — silent resume. User-
+                // initiated `MeditateStart` always comes from Active.
+                val isRestoreIntoMeditating =
+                    prev == WalkState.Idle::class && isMeditating
+                if (wasMeditating != isMeditating && !isRestoreIntoMeditating) {
                     bellPlayer.play()
                 }
             }
