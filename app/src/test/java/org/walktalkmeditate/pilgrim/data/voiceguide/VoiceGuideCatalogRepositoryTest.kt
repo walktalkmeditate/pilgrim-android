@@ -205,6 +205,37 @@ class VoiceGuideCatalogRepositoryTest {
         }
     }
 
+    /**
+     * Exercises `applyProgress(Succeeded)`'s filesystem re-read branch:
+     * without it the catalog is stuck on `NotDownloaded` after the
+     * worker writes files. Scheduler stub emits `Succeeded` AFTER the
+     * prompt files are on disk — we expect `Downloaded` to surface.
+     */
+    @Test fun `scheduler Succeeded after files-on-disk surfaces as Downloaded`() = runTest {
+        val pr = prompt("p/a.aac", 5)
+        val pk = pack("p", listOf(pr))
+        seedManifest(listOf(pk))
+        val repo = buildRepo()
+
+        repo.packStates.test {
+            var current = awaitItem()
+            while (current.firstOrNull() !is VoiceGuidePackState.NotDownloaded) {
+                current = awaitItem()
+            }
+
+            // Worker would do this: write the prompt file then
+            // transition WorkInfo to SUCCEEDED.
+            fileStore.fileForPrompt(pr.r2Key).writeBytes(ByteArray(5))
+            scheduler.emit("p", DownloadProgress(DownloadProgress.State.Succeeded, 1, 1))
+
+            var terminal = awaitItem()
+            while (terminal.firstOrNull() !is VoiceGuidePackState.Downloaded) {
+                terminal = awaitItem()
+            }
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     @Test fun `delete clears selection if deleted pack was selected`() = runTest {
         val pr = prompt("p/a.aac", 5)
         val pk = pack("p", listOf(pr))
