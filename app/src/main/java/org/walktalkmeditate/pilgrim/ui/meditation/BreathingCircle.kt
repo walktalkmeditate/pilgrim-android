@@ -14,9 +14,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 
 /**
@@ -51,10 +51,11 @@ internal fun BreathingCircle(
     )
 
     // Cache the moss-alpha color lists so a 30-minute session doesn't
-    // allocate on every frame. The brushes themselves are built inside
-    // the Canvas lambda below but with a FIXED `radius` — scale is
-    // applied via `Modifier.scale` on the Canvas, so the draw block
-    // runs only when the moss color or canvas dimensions change.
+    // allocate on every frame. The brushes are built inside the Canvas
+    // DrawScope below with a FIXED `radius` — scale is applied via
+    // `Modifier.graphicsLayer { scaleX / scaleY }` (lambda form) on the
+    // Canvas, so the draw block runs only when `moss` or canvas
+    // dimensions change.
     val outerColors = remember(moss) {
         listOf(
             moss.copy(alpha = 0.5f),
