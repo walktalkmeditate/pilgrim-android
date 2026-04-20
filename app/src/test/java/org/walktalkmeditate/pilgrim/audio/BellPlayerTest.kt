@@ -24,15 +24,14 @@ import org.robolectric.annotation.Config
 class BellPlayerTest {
 
     private lateinit var context: Application
-    private lateinit var audioFocus: AudioFocusCoordinator
+    private lateinit var audioManager: AudioManager
     private lateinit var player: BellPlayer
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        val audioManager = context.getSystemService(AudioManager::class.java)
-        audioFocus = AudioFocusCoordinator(audioManager)
-        player = BellPlayer(context = context, audioFocus = audioFocus)
+        audioManager = context.getSystemService(AudioManager::class.java)
+        player = BellPlayer(context = context, audioManager = audioManager)
     }
 
     @Test fun `play does not crash when Robolectric grants focus`() {
