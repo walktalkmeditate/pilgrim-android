@@ -155,7 +155,7 @@ One transition → one bell. `wasMeditating xor isMeditating` is true for both d
 - Meditating → Active → 1 bell.
 - Meditating → Finished → 1 bell.
 - Meditating → Meditating (same-state re-emission of identical `WalkState.Meditating::class` — won't happen in practice, but guard) → 0 bells (guarded by state-class comparison).
-- Full sequence: Idle → Active → Meditating → Active → Meditating → Finished → 3 bells.
+- Full sequence: Idle → Active → Meditating → Active → Meditating → Finished → 4 bells (4 Meditating-boundary crossings).
 
 Observer uses `FakeWalkController` exposing a `MutableStateFlow<WalkState>`. `FakeBellPlayer` counts `play()` calls.
 
