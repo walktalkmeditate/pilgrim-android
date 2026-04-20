@@ -33,9 +33,14 @@ import okhttp3.Request
  * Thread safety: [_packs] and [_isSyncing] are `MutableStateFlow`;
  * concurrent `syncIfNeeded` calls are deduped via an atomic
  * `_isSyncing.compareAndSet` check that runs synchronously before
- * any coroutine is launched. Network I/O hops to `Dispatchers.IO`;
- * file I/O (load/save cache) is synchronous on the calling thread —
- * small file (~KBs), acceptable on any dispatcher.
+ * any coroutine is launched. Network I/O hops to `Dispatchers.IO`
+ * inside `fetchRemoteManifest`; cache read/write in `syncIfNeeded`
+ * also hops to `Dispatchers.IO` because the outer scope runs on
+ * `Dispatchers.Default`, which is shared with whisper.cpp
+ * transcription. The synchronous `loadLocalManifest()` in `init`
+ * runs on the Hilt-injection thread — acceptable only because the
+ * file is a few KB; any future growth would warrant moving that
+ * read off the main thread.
  *
  * Cache policy: writes the manifest to
  * `filesDir/voice_guide_manifest.json` atomically (write-to-tmp +
@@ -90,9 +95,15 @@ class VoiceGuideManifestService @Inject constructor(
         scope.launch {
             try {
                 val remote = fetchRemoteManifest() ?: return@launch
-                val localVersion = readLocalVersion()
+                // Disk I/O hops explicitly to Dispatchers.IO — the
+                // outer launch is on Dispatchers.Default, which is the
+                // fixed CPU-bound pool shared with whisper.cpp
+                // transcription (Stage 2-D). Blocking a Default thread
+                // on a file write would contend with that pool AND
+                // trip StrictMode in debug builds.
+                val localVersion = withContext(Dispatchers.IO) { readLocalVersion() }
                 if (remote.version != localVersion) {
-                    saveLocalManifest(remote)
+                    withContext(Dispatchers.IO) { saveLocalManifest(remote) }
                 }
                 _packs.value = remote.packs
             } finally {
