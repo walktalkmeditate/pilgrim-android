@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestUrl
+import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePromptBaseUrl
 
 /**
  * First-introduction HTTP + JSON infrastructure for Stage 5-C. The
@@ -65,6 +66,12 @@ object NetworkModule {
     @Singleton
     @VoiceGuideManifestUrl
     fun provideVoiceGuideManifestUrl(): String = VoiceGuideConfig.MANIFEST_URL
+
+    /** Voice-guide prompt CDN base URL — `<base><r2Key>` per prompt. */
+    @Provides
+    @Singleton
+    @VoiceGuidePromptBaseUrl
+    fun provideVoiceGuidePromptBaseUrl(): String = VoiceGuideConfig.PROMPT_BASE_URL
 
     /**
      * Long-lived scope for
