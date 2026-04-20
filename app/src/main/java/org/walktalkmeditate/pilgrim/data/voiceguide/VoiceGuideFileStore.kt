@@ -75,15 +75,45 @@ class VoiceGuideFileStore @Inject constructor(
         allPrompts(pack).all { isPromptAvailable(it) }
 
     /**
-     * Recursively delete the pack's directory under [promptsRoot].
-     * Best-effort — a failure to delete a handful of files is logged
-     * by `deleteRecursively` but not surfaced. Emits an invalidation
-     * so observers re-derive state regardless of the delete outcome.
+     * Delete every prompt file the pack owns by reusing [fileForPrompt]
+     * (same function that placed them there). A prior version deleted
+     * `File(promptsRoot, pack.id)` recursively, which ONLY worked
+     * because `r2Key` happens to be `"<packId>/<name>"` under iOS's
+     * current CDN layout. The class comment explicitly promises any
+     * `r2Key` scheme is fine — if iOS reorganizes (e.g. shared prefix
+     * like `"audio/<packId>/…"` or flat `"<promptId>.opus"`), the
+     * directory-delete would silently no-op and the files would leak
+     * forever with no user-accessible cleanup path. Driving delete
+     * from the same `fileForPrompt` mapping the worker uses for
+     * writes eliminates the drift.
+     *
+     * After deleting prompt files, also prune now-empty parent
+     * directories up to `promptsRoot` — keeps the cache tidy without
+     * assuming any particular layout.
+     *
+     * Best-effort — ignores per-file delete failures. Emits an
+     * invalidation so observers re-derive state regardless of outcome.
      */
     fun deletePack(pack: VoiceGuidePack) {
-        val dir = File(promptsRoot, pack.id)
-        if (dir.exists()) dir.deleteRecursively()
+        allPrompts(pack).forEach { prompt ->
+            fileForPrompt(prompt.r2Key).delete()
+        }
+        pruneEmptyDirs()
         _invalidations.tryEmit(Unit)
+    }
+
+    /**
+     * Walk children of [promptsRoot] and delete any directory that is
+     * now empty after a pack delete. Only one level deep — matches
+     * iOS's flat-per-pack layout and avoids accidentally removing
+     * directories still owned by other packs.
+     */
+    private fun pruneEmptyDirs() {
+        promptsRoot.listFiles()?.forEach { child ->
+            if (child.isDirectory && child.list()?.isEmpty() == true) {
+                child.delete()
+            }
+        }
     }
 
     private companion object {
