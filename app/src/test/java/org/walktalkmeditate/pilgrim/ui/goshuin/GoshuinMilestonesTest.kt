@@ -55,11 +55,13 @@ class GoshuinMilestonesTest {
     }
 
     @Test fun `seventh walk in middle of list - no milestone`() {
-        // 7 walks all on the same Winter day (same season-year), all
-        // distance 1000.0. The middle walk (index 3 in most-recent-first
-        // list = walk #4 in 1-based numbering) has neither first/longest/
-        // nth/firstOfSeason. The OLDEST is the firstOfSeason (1st walk),
-        // the most-recent is the longest tie-break winner.
+        // 7 walks across consecutive Winter days (same season-year),
+        // all distance 1000.0. The middle walk (index 3 in
+        // most-recent-first list = walk #4 in 1-based numbering) has
+        // no milestone: not the first walk (walkNumber=4), not the
+        // longest (the all-equal tie breaks to most-recent at index 0),
+        // not a multiple of 10, and not first-of-season (walks 1-3 are
+        // earlier in the same Winter 2026 season).
         val list = (1..7).map { walk(it.toLong(), LocalDate.of(2026, 1, 1).plusDays((it - 1).toLong()), distance = 1000.0) }.reversed()
         val middle = list[3]
         val m = GoshuinMilestones.detect(walkIndex = 3, walk = middle, allFinished = list, hemisphere = Hemisphere.Northern)
@@ -108,8 +110,11 @@ class GoshuinMilestonesTest {
         val spring1 = walk(2L, LocalDate.of(2026, 3, 21), distance = 100.0)
         val spring2 = walk(3L, LocalDate.of(2026, 4, 1), distance = 100.0)
         val winter2 = walk(4L, LocalDate.of(2026, 1, 16), distance = 9_999.0)
-        // Most-recent-first: list[0]=winter2(Jan 16), list[1]=spring2(Apr 1),
-        // list[2]=spring1(Mar 21), list[3]=winter(Jan 15)
+        // Most-recent-first by startTimestamp DESC:
+        //   list[0] = spring2 (Apr 1)
+        //   list[1] = winter2 (Jan 16) — carries the LongestWalk
+        //   list[2] = spring1 (Mar 21) — should get FirstOfSeason(Spring)
+        //   list[3] = winter  (Jan 15) — gets FirstWalk (walkNumber == 1)
         val list = listOf(spring2, winter2, spring1, winter)
         val mSpring1 = GoshuinMilestones.detect(walkIndex = 2, walk = spring1, allFinished = list, hemisphere = Hemisphere.Northern)
         assertEquals(GoshuinMilestone.FirstOfSeason(Season.Spring), mSpring1)
