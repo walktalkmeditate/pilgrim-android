@@ -5,12 +5,17 @@ import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -76,6 +81,7 @@ fun HomeScreen(
     onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
     onEnterGoshuin: () -> Unit,
+    onEnterSettings: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -108,11 +114,24 @@ fun HomeScreen(
             .verticalScroll(rememberScrollState())
             .padding(PilgrimSpacing.big),
     ) {
-        Text(
-            text = stringResource(R.string.home_title),
-            style = pilgrimType.displayMedium,
-            color = pilgrimColors.ink,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = stringResource(R.string.home_title),
+                style = pilgrimType.displayMedium,
+                color = pilgrimColors.ink,
+            )
+            IconButton(onClick = onEnterSettings) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.settings_title),
+                    tint = pilgrimColors.ink,
+                )
+            }
+        }
         Spacer(Modifier.height(PilgrimSpacing.big))
 
         HomeListContent(
