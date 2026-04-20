@@ -20,6 +20,7 @@ import org.walktalkmeditate.pilgrim.audio.BellPlayer
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.audio.MeditationBellScope
 import org.walktalkmeditate.pilgrim.audio.MeditationObservedWalkState
+import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
@@ -56,6 +57,18 @@ abstract class AudioModule {
         @Singleton
         @MeditationBellScope
         fun provideMeditationBellScope(): CoroutineScope =
+            CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        /**
+         * Long-lived scope for [org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestService]'s
+         * sync coroutine. Lives for the app process; `SupervisorJob` so
+         * a failed fetch doesn't tear the scope down. See
+         * [VoiceGuideManifestScope].
+         */
+        @Provides
+        @Singleton
+        @VoiceGuideManifestScope
+        fun provideVoiceGuideManifestScope(): CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
         /**
