@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 import androidx.compose.ui.graphics.Color
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.roundToInt
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
 import org.walktalkmeditate.pilgrim.core.celestial.Planet
@@ -20,9 +21,15 @@ import org.walktalkmeditate.pilgrim.core.celestial.SunTimes
  */
 internal object LightReadingPresenter {
 
-    /** "HH:mm" formatter, locale-independent. */
+    /**
+     * "HH:mm" formatter, pinned to [Locale.ROOT] to guarantee ASCII
+     * digits. Without this, Arabic / Persian / Hindi system locales
+     * render sunrise/sunset times as ٠٥:٤٧ / ۰۵:۴۷ / ०५:४७ via
+     * `DecimalStyle.ofDefaultLocale()`. Stage 5-A precedent for
+     * numeric formatting.
+     */
     private val timeFormatter: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("HH:mm")
+        DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
 
     /**
      * Moon-phase emoji matching the 8 canonical names produced by
