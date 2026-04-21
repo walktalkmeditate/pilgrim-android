@@ -95,7 +95,15 @@ class VoiceGuideScheduler(
     /**
      * Error/abort path. Clears `isPlaying` without marking the prompt
      * played — so the same prompt can be retried on the next tick.
-     * Called by the player's focus-loss / error listeners.
+     *
+     * Currently unused by production paths: the player's single-fire
+     * `onFinished` contract means aborts go through `markPlayed`
+     * instead, which matches the documented MVP behavior (user hears
+     * a different prompt next tick rather than a replay of the
+     * interrupted one). Reserved for a future path that wants to
+     * retry the same prompt after an abort — wire it in by
+     * splitting the player's completion callback into
+     * `onCompleted` + `onAborted`.
      */
     fun markPlaybackAborted() {
         isPlaying = false

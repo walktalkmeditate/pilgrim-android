@@ -183,18 +183,28 @@ class VoiceGuideOrchestrator @Inject constructor(
             return
         }
         sched.markPlaybackStarted()
-        try {
-            player.play(file) { sched.markPlayed(prompt.id) }
-        } catch (ce: CancellationException) {
-            sched.markPlaybackAborted()
-            throw ce
-        } catch (t: Throwable) {
-            Log.w(TAG, "player.play failed for ${prompt.r2Key}", t)
-            sched.markPlaybackAborted()
-        }
+        // `player.play` is non-suspend and returns immediately after
+        // posting to the main handler — it can't throw CE from the
+        // coroutine (cancellation lands at the `delay()` in the outer
+        // loop) and any main-thread exception inside the post would
+        // never propagate here. No try/catch needed.
+        player.play(file) { sched.markPlayed(prompt.id) }
     }
 
     private suspend fun eligiblePackOrNull(): VoiceGuidePack? {
+        // `selectedPackId.value` assumes the upstream `stateIn(
+        // WhileSubscribed)` flow has already captured the persisted
+        // DataStore value. In practice this is true because the
+        // picker UI (Stage 5-D) subscribes the flow when the user
+        // navigates there to select a pack, and `WhileSubscribed`
+        // retains the last value after subscribers leave. On a true
+        // process-restart scenario where nothing has ever subscribed
+        // (e.g., user selected on device A, restored walk on device B
+        // from a `.pilgrim` import — hypothetical), `.value` would
+        // return the initial `null` until something collects and
+        // warms the flow. If we see silent misses during on-device
+        // QA, add a `selectedPackId.first { it != null }` barrier
+        // with a bounded `withTimeoutOrNull`.
         val packId = selectedPackId.value ?: return null
         manifestService.initialLoad.await()
         val pack = manifestService.pack(id = packId) ?: return null
