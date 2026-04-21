@@ -1,0 +1,326 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package org.walktalkmeditate.pilgrim.audio.soundscape
+
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
+import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
+import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
+import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
+import org.walktalkmeditate.pilgrim.domain.WalkState
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class SoundscapeOrchestratorTest {
+
+    private val acc = WalkAccumulator(walkId = 1L, startedAt = 1_000L)
+
+    private lateinit var context: Application
+    private lateinit var server: MockWebServer
+    private lateinit var httpClient: OkHttpClient
+    private lateinit var json: Json
+    private lateinit var fileStore: SoundscapeFileStore
+    private lateinit var manifestService: AudioManifestService
+    private lateinit var manifestScope: CoroutineScope
+    private val capturingPlayer = CapturingSoundscapePlayer()
+
+    private val manifestCache: File get() = File(context.filesDir, "audio_manifest.json")
+    private val soundscapeRoot: File get() = File(context.filesDir, "audio/soundscape")
+
+    @Before fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        manifestCache.delete()
+        soundscapeRoot.deleteRecursively()
+
+        server = MockWebServer().also { it.start() }
+        httpClient = OkHttpClient()
+        json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        fileStore = SoundscapeFileStore(context)
+        manifestScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
+
+    @After fun tearDown() {
+        manifestScope.cancel()
+        server.shutdown()
+        manifestCache.delete()
+        soundscapeRoot.deleteRecursively()
+    }
+
+    private fun asset(id: String, type: String = AudioAssetType.SOUNDSCAPE, size: Long = 128L) =
+        AudioAsset(
+            id = id, type = type, name = id, displayName = id,
+            durationSec = 120.0, r2Key = "$type/$id.aac", fileSizeBytes = size,
+        )
+
+    private fun seedManifest(assets: List<AudioAsset>) {
+        manifestCache.writeText(
+            json.encodeToString(AudioManifest(version = "v1", assets = assets)),
+        )
+        manifestService = AudioManifestService(
+            context = context,
+            httpClient = httpClient,
+            json = json,
+            scope = manifestScope,
+            manifestUrl = server.url("/manifest.json").toString(),
+        )
+        runBlocking {
+            manifestScope.coroutineContext[Job]?.children?.forEach { it.join() }
+        }
+    }
+
+    private fun writeAssetFile(a: AudioAsset) {
+        fileStore.fileFor(a).writeBytes(ByteArray(a.fileSizeBytes.toInt()))
+    }
+
+    @Test fun `Meditating with no selection does not play`() = runTest {
+        seedManifest(listOf(asset("rain")))
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>(null)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `Meditating with selection but file missing does not play`() = runTest {
+        seedManifest(listOf(asset("rain")))
+        // No file written.
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `Meditating with eligible soundscape plays after start delay`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        // Before the 800ms delay elapses, no play yet.
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+        // After the delay completes, play fires once.
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `Meditating to Active stops the player and cancels pending play`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        val playsDuringMed = capturingPlayer.playCount
+
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        advanceTimeBy(2_000)
+        runCurrent()
+
+        // No additional plays after transition.
+        assertEquals(playsDuringMed, capturingPlayer.playCount)
+        assertTrue(
+            "expected at least one stop on exit, got ${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        s.cancel()
+    }
+
+    @Test fun `exit during start delay cancels without playing`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        // User bails mid-delay (tap Done at ~400ms).
+        advanceTimeBy(400)
+        runCurrent()
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        advanceTimeBy(2_000)
+        runCurrent()
+        // The delay got cancelled before play fired.
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `Finished stops the player`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        walkState.value = WalkState.Finished(acc, endedAt = 5_000L)
+        runCurrent()
+        assertTrue(capturingPlayer.stopCount >= 1)
+        s.cancel()
+    }
+
+    @Test fun `re-entering Meditating after Active replays`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        val firstCount = capturingPlayer.playCount
+
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        walkState.value = WalkState.Meditating(acc, meditationStartedAt = 6_000L)
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertTrue(
+            "expected a second play after re-entering Meditating, got ${capturingPlayer.playCount}",
+            capturingPlayer.playCount > firstCount,
+        )
+        s.cancel()
+    }
+
+    @Test fun `type-mismatched asset id is ineligible`() = runTest {
+        // Seed a BELL-typed asset with the same id — the manifest has
+        // the id but the filter must reject non-soundscape types.
+        val bell = asset("bell1", type = AudioAssetType.BELL)
+        seedManifest(listOf(bell))
+        writeAssetFile(bell) // Written into soundscape/ dir — for this test it's irrelevant; the type check runs first.
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("bell1")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    // --- fakes ---
+
+    private class CapturingSoundscapePlayer : SoundscapePlayer {
+        private val _state = MutableStateFlow<SoundscapePlayer.State>(SoundscapePlayer.State.Idle)
+        override val state: StateFlow<SoundscapePlayer.State> = _state.asStateFlow()
+        private val played = CopyOnWriteArrayList<File>()
+        @Volatile var stopCount: Int = 0
+        val playCount: Int get() = played.size
+
+        override fun play(file: File) {
+            played += file
+            _state.value = SoundscapePlayer.State.Playing
+        }
+
+        override fun stop() {
+            stopCount += 1
+            _state.value = SoundscapePlayer.State.Idle
+        }
+
+        override fun release() {
+            _state.value = SoundscapePlayer.State.Idle
+        }
+    }
+}
