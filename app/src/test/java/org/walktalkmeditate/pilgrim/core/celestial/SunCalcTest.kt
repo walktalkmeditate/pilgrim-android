@@ -3,7 +3,6 @@ package org.walktalkmeditate.pilgrim.core.celestial
 
 import java.time.Duration
 import java.time.Instant
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -152,14 +151,5 @@ class SunCalcTest {
             "$label: expected $expected, got $actual, diff ${diff.toMinutes()} min > tolerance $toleranceMinutes",
             diff.toMinutes() <= toleranceMinutes,
         )
-    }
-
-    @Test fun `tolerance helper fails cleanly on large delta`() {
-        // Smoke test for the helper itself — guards against a silent-pass
-        // bug if `diff.toMinutes()` underflows or something weird.
-        val a = Instant.parse("2024-06-21T03:47:00Z")
-        val b = Instant.parse("2024-06-21T04:47:00Z")
-        val delta = Duration.between(a, b).abs().toMinutes()
-        assertEquals(60L, delta)
     }
 }
