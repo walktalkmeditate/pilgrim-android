@@ -22,6 +22,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockWebServer
+import org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

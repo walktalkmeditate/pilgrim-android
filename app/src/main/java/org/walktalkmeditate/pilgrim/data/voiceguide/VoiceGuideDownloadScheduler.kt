@@ -16,6 +16,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress
 
 /**
  * Fan-out of [VoiceGuideDownloadWorker] enqueues, keyed by pack id.
@@ -35,14 +36,6 @@ interface VoiceGuideDownloadScheduler {
 
     /** Progress + terminal state for a pack. Emits null until any work exists. */
     fun observe(packId: String): Flow<DownloadProgress?>
-}
-
-data class DownloadProgress(
-    val state: State,
-    val completed: Int,
-    val total: Int,
-) {
-    enum class State { Enqueued, Running, Succeeded, Failed, Cancelled }
 }
 
 @Singleton
