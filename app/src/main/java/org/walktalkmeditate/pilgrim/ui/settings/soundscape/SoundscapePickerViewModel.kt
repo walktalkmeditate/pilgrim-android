@@ -60,8 +60,4 @@ class SoundscapePickerViewModel @Inject constructor(
             }
         }
     }
-
-    fun onCancelDownload(state: SoundscapeState) {
-        if (state is SoundscapeState.Downloading) catalog.cancel(state.asset.id)
-    }
 }
