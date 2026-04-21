@@ -10,12 +10,14 @@ internal object VoiceGuideConfig {
     const val MANIFEST_URL = "https://cdn.pilgrimapp.org/voiceguide/manifest.json"
 
     /**
-     * Base URL for per-prompt downloads. Resolution: `<base><r2Key>`
-     * where `r2Key` comes from the manifest (e.g. "morning-walk/p1.aac").
-     * iOS's equivalent builds `<base>/<packId>/<promptId>.aac`, but
-     * we use `r2Key` verbatim — the manifest is authoritative about
-     * the path, so if iOS ever ships `.opus` prompts or a new
-     * directory scheme, `r2Key` reflects it automatically.
+     * Base URL for per-prompt downloads. Resolution: `<base>/<r2Key>`
+     * where `r2Key` is a full CDN path from the root (e.g.
+     * `voiceguide/breeze/breeze_01.aac`). **Must NOT include the
+     * `voiceguide/` segment** — it's already in `r2Key`. The worker's
+     * URL assembly (`baseUrl.trimEnd('/') + "/" + r2Key.trimStart('/')`)
+     * would otherwise produce `…/voiceguide/voiceguide/…` → 404.
+     * Device QA caught this — Robolectric MockWebServer tests
+     * served any path and hid the collision.
      */
-    const val PROMPT_BASE_URL = "https://cdn.pilgrimapp.org/voiceguide/"
+    const val PROMPT_BASE_URL = "https://cdn.pilgrimapp.org/"
 }
