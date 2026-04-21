@@ -110,4 +110,19 @@
     <string name="voice_guide_detail_not_found">This pack isn\'t available.</string>
 
     <string name="voice_guide_duration_minutes_format">%1$d min</string>
+
+    <string name="settings_soundscapes_row">Soundscapes</string>
+    <string name="settings_soundscapes_subtitle">Ambient sound for meditation</string>
+
+    <string name="soundscape_picker_title">Soundscapes</string>
+    <string name="soundscape_picker_empty">No soundscapes yet. Check your connection — the catalog will load when you\'re online.</string>
+    <string name="soundscape_status_not_downloaded">Not downloaded</string>
+    <string name="soundscape_status_downloading">Downloading&#8230;</string>
+    <string name="soundscape_status_downloaded">Downloaded</string>
+    <string name="soundscape_status_failed">Download failed</string>
+    <string name="soundscape_status_selected">Selected</string>
+    <string name="soundscape_delete_title">Delete soundscape?</string>
+    <string name="soundscape_delete_message">%1$s will be removed from this device. You can download it again later.</string>
+    <string name="soundscape_delete_confirm">Delete</string>
+    <string name="soundscape_delete_cancel">Cancel</string>
 </resources>
