@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress
 
 /**
  * Reactive join of [VoiceGuideManifestService.packs] +
