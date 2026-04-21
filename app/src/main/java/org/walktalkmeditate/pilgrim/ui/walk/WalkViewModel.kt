@@ -85,6 +85,21 @@ class WalkViewModel @Inject constructor(
     )
 
     /**
+     * Raw walk-state passthrough for navigation observers.
+     * Intentionally NOT routed through [uiState]'s WhileSubscribed
+     * stateIn — during a long meditation, ActiveWalk's composition
+     * is disposed by NavHost, uiState loses its sole subscriber,
+     * the 5s grace expires, upstream unsubscribes, and uiState.value
+     * freezes at the stale Meditating snapshot. When the user taps
+     * Done, MeditationScreen pops → ActiveWalk re-composes → reads
+     * stale uiState.value (Meditating) → fires `onEnterMeditation()`
+     * → loops back into MeditationScreen. Device QA caught this
+     * with meditations >5s. Using `controller.state` (Singleton,
+     * always hot) bypasses the stale-cache trap.
+     */
+    val walkState: StateFlow<WalkState> = controller.state
+
+    /**
      * Live polyline for the Active Walk map. Observes Room's route
      * sample table for the current walk's id and maps to domain
      * [LocationPoint]s. Emits an empty list while no walk is in progress.

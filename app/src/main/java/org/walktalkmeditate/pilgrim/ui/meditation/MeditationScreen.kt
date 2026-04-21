@@ -70,6 +70,9 @@ fun MeditationScreen(
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
+    // Navigation observer reads this (not ui.walkState) — bypasses
+    // the WhileSubscribed stateIn's stale-cache trap.
+    val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     // Snapshot the latest `onEnded` so a parent passing a fresh lambda
     // each recomposition doesn't leave us firing a stale closure when
     // the state-observer LaunchedEffect resumes. Same rememberUpdatedState
@@ -115,9 +118,9 @@ fun MeditationScreen(
     // `mutableStateOf<Boolean>` has a built-in saver, same as
     // `mutableIntStateOf` used for `elapsedSeconds` above.
     var hasSeenMeditating by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(ui.walkState::class) {
+    LaunchedEffect(navWalkState::class) {
         when {
-            ui.walkState is WalkState.Meditating -> hasSeenMeditating = true
+            navWalkState is WalkState.Meditating -> hasSeenMeditating = true
             hasSeenMeditating -> currentOnEnded()
         }
     }

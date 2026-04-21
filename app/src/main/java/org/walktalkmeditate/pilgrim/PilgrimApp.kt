@@ -12,6 +12,7 @@ import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
 import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
+import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 
 @HiltAndroidApp
@@ -55,6 +56,15 @@ class PilgrimApp : Application(), Configuration.Provider {
      */
     @Inject lateinit var soundscapeOrchestrator: SoundscapeOrchestrator
 
+    /**
+     * App-scoped auto-download observer for soundscapes. Matches
+     * iOS's behavior of downloading all soundscapes in the background
+     * as soon as the manifest is fetched — users never need to tap
+     * download in the picker. Kicks a manifest sync on start so fresh
+     * installs begin downloading immediately.
+     */
+    @Inject lateinit var soundscapeAutoDownloadObserver: SoundscapeAutoDownloadObserver
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -96,5 +106,10 @@ class PilgrimApp : Application(), Configuration.Provider {
         // walk-state flow + selected-soundscape-id flow and drives
         // the looping ExoPlayer-backed player during meditation.
         soundscapeOrchestrator.start()
+
+        // Start the soundscape auto-download observer. Triggers a
+        // manifest sync and enqueues background downloads for any
+        // soundscape assets not already on disk (iOS parity).
+        soundscapeAutoDownloadObserver.start()
     }
 }
