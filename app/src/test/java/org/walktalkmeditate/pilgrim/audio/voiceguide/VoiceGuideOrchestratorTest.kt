@@ -158,6 +158,55 @@ class VoiceGuideOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `post-meditation silence preserved when pack briefly ineligible`() = runTest {
+        // Regression test for the exitingMeditation-preservation fix.
+        // Scenario: Meditating → Active transition fires before the
+        // pack's files are ready (e.g., transient filesystem hiccup,
+        // late-completing download). If the first Active spawn sees
+        // the pack ineligible, `exitingMeditation` must STAY set so
+        // the next Active emission — with the pack now eligible —
+        // still applies the silence window. Pre-fix, the flag was
+        // cleared on first spawn attempt regardless of eligibility,
+        // and the walk guide resumed immediately on the next
+        // emission rather than after 10-15 min.
+        val pk = pack()
+        seedManifest(listOf(pk))
+        // Files NOT written — pack ineligible at moment of Meditating→Active.
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        VoiceGuideOrchestrator(
+            walkState, selectedPackId, manifestService, fileStore,
+            capturingPlayer, FixedClock(), s,
+        ).start()
+        runCurrent()
+
+        // Meditating → Active without files yet: first spawn attempt
+        // finds the pack ineligible, returns without playing.
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+
+        // Files appear, Active re-emits.
+        writePromptFiles(pk)
+        walkState.value = WalkState.Active(acc.copy(totalPausedMillis = 1L))
+        runCurrent()
+
+        // Silence window should STILL be armed (exitingMeditation was
+        // preserved). With a random 10-15 min silence, decide()
+        // returns null for the current FixedClock snapshot → no play.
+        // Pre-fix behavior: silence window would be lost (cleared on
+        // the first ineligible spawn) → scheduler would play on the
+        // next tick, giving playCount >= 1.
+        assertEquals(
+            "post-meditation silence should suppress playback for 10-15 min",
+            0, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
     @Test fun `scheduler re-spawns on Active after initial no-pack early return`() = runTest {
         // Regression test for the stale-walkJob bug: if the first
         // schedulerLoop returns normally (pack not eligible at the
