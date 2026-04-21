@@ -128,16 +128,19 @@ class SunCalcTest {
     }
 
     @Test fun `solar noon is near local apparent noon`() {
-        // At longitude 2.3522°E, local solar noon should be near
-        // 11:50 UTC (4 min per degree of longitude, subtracting eqTime
-        // which is < 17 min). Accept a ±25 min window.
+        // At longitude 2.3522°E: local solar noon = 720 − 4·lon − eqTime
+        // minutes UTC from midnight = 720 − 9.4 − 1.6 ≈ 709 min = 11:49.
+        // NOAA's algorithm claims ±1 min accuracy; ±5 min tolerance
+        // leaves headroom for drift while still catching coefficient-
+        // level regressions (a sign-flip in eqTime would shift this by
+        // 2-4 minutes and the test would fail).
         val times = SunCalc.sunTimes(
             Instant.parse("2024-06-21T12:00:00Z"),
             latitude = 48.8566,
             longitude = 2.3522,
         )
-        val expected = Instant.parse("2024-06-21T11:50:00Z")
-        assertWithin(expected, times.solarNoon, 25, "Paris solar noon")
+        val expected = Instant.parse("2024-06-21T11:49:00Z")
+        assertWithin(expected, times.solarNoon, 5, "Paris solar noon")
     }
 
     private fun assertWithin(

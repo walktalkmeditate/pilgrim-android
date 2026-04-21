@@ -54,6 +54,15 @@ class KoanPickerTest {
                 "koan has disallowed chars: ${koan.text}",
                 allowed.matches(koan.text),
             )
+            // Attributions share the same character-set contract —
+            // otherwise a future addition like "Nāgārjuna" could slip
+            // past the text-only check.
+            koan.attribution?.let { attrib ->
+                assertTrue(
+                    "attribution has disallowed chars: $attrib",
+                    allowed.matches(attrib),
+                )
+            }
         }
     }
 

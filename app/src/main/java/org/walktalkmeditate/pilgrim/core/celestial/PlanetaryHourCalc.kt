@@ -97,6 +97,16 @@ internal object PlanetaryHourCalc {
         // sunset. If the walk is before today's sunrise, adjust by
         // subtracting 24h from the reference so the elapsed
         // calculation stays positive.
+        //
+        // Caveat: `sunset - 24h` APPROXIMATES yesterday's sunset. In
+        // reality sunset shifts 1–3 minutes per day (more near
+        // solstices at high latitudes), so for the first ~1–3 minutes
+        // after yesterday's true sunset, `elapsedMs` goes slightly
+        // negative and gets clamped by `coerceAtLeast(0L)` — placing
+        // the user in the first night hour (12) when they're
+        // astronomically in the last of the previous day. Acceptable
+        // for this contemplative feature; a fix would require the
+        // caller to pass yesterday's sunset separately.
         val nightSpanMs = 24L * 60L * 60L * 1000L - daySpanMs
         // Symmetric divide-by-zero guard for a 24h daySpan (sunrise +
         // 24h == sunset). Same reachability note as above.

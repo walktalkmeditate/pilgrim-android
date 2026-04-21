@@ -33,7 +33,9 @@ data class LightReading(
          * Compute a LightReading. Pure — no I/O, no clock reads.
          *
          * @param walkId the walk's primary-key id (used as part of
-         *   the koan seed).
+         *   the koan seed). Must be positive — Room's
+         *   `@PrimaryKey(autoGenerate = true)` produces ids starting
+         *   at 1; a zero id would collapse the koan seed.
          * @param startedAtEpochMs the walk's start timestamp in UTC
          *   epoch milliseconds. Used for moon/sun/planetary-hour
          *   computation AND as part of the koan seed.
