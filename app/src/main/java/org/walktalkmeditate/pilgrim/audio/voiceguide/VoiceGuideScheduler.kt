@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio.voiceguide
 
+import java.util.Collections
 import kotlin.random.Random
 import org.walktalkmeditate.pilgrim.data.voiceguide.PromptDensity
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePrompt
@@ -22,7 +23,13 @@ import org.walktalkmeditate.pilgrim.domain.Clock
  *  - `setPostMeditationSilence` adds a one-shot forced-quiet window,
  *    used by the walk-context scheduler after meditation ends.
  *
- * Not thread-safe — all access must come from the same coroutine.
+ * Cross-thread visibility: the orchestrator calls `decide` +
+ * `markPlaybackStarted` on `Dispatchers.Default`; the player's
+ * `onFinished` callback fires on the main thread and calls
+ * `markPlayed`. Without guards, JVM memory-model cache visibility
+ * could mask those writes from the scheduler loop. Fields that
+ * cross threads are `@Volatile`, and [played] is a synchronized
+ * set. Everything else mutates only from the orchestrator loop.
  */
 class VoiceGuideScheduler(
     private val context: SchedulerContext,
@@ -43,12 +50,17 @@ class VoiceGuideScheduler(
 
     private val prompts: List<VoiceGuidePrompt> = prompts.sortedBy { it.seq }
 
-    private var sessionStartMillis: Long? = null
-    private var lastPlayedMillis: Long? = null
-    private var nextIntervalSec: Int = scheduling.initialDelaySec
-    private val played = mutableSetOf<String>()
-    private var isPlaying = false
-    private var silenceUntilMillis: Long? = null
+    // `@Volatile` for fields read from the scheduler loop (Default)
+    // AND written from the player's main-thread onFinished callback.
+    // `played` is backed by a synchronized set because it's mutated
+    // by add (main) and queried by contains/find (Default).
+    @Volatile private var sessionStartMillis: Long? = null
+    @Volatile private var lastPlayedMillis: Long? = null
+    @Volatile private var nextIntervalSec: Int = scheduling.initialDelaySec
+    private val played: MutableSet<String> =
+        Collections.synchronizedSet(mutableSetOf())
+    @Volatile private var isPlaying = false
+    @Volatile private var silenceUntilMillis: Long? = null
 
     fun start() {
         sessionStartMillis = clock.now()
