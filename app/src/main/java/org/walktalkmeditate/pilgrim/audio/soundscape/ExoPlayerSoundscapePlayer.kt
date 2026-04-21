@@ -83,15 +83,21 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             // not fire during normal playback. If we see it (rare
             // codec edge case in which REPEAT_MODE_ONE doesn't
             // suppress the end event), tear down cleanly — abandon
-            // focus, unregister noisy receiver, transition to Error
-            // so the state is visible. Transitioning to Idle here
-            // would silently leak the focus request (Stage 5-F
-            // review lesson).
+            // focus, unregister noisy receiver, and discard the
+            // player so the next play() creates a fresh instance.
+            // Transitioning to Idle here would silently leak the
+            // focus request (Stage 5-F review lesson). Keeping the
+            // same ExoPlayer and calling prepare() on it is
+            // technically legal per ExoPlayer's contract, but
+            // STATE_ENDED is an abnormal terminal for a looping
+            // player and reusing the instance relies on codec/
+            // version-dependent behavior. Replace it.
             when (playbackState) {
                 Player.STATE_READY -> {
                     _state.value = SoundscapePlayer.State.Playing
                 }
                 Player.STATE_ENDED -> {
+                    discardPlayer()
                     abandonFocus()
                     unregisterNoisyReceiver()
                     _state.value = SoundscapePlayer.State.Error("loop ended unexpectedly")
@@ -104,6 +110,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "playback error", error)
+            discardPlayer()
             _state.value = SoundscapePlayer.State.Error(
                 error.message ?: "playback failed",
             )
@@ -187,6 +194,20 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         unregisterNoisyReceiver()
         _state.value = SoundscapePlayer.State.Idle
         wasPlayingBeforeTransientLoss = false
+    }
+
+    /**
+     * Null the player and schedule its release on the main handler.
+     * Must not call `release()` synchronously from within a listener
+     * callback — that would re-enter ExoPlayer's dispatch loop. Used
+     * by the `STATE_ENDED` and `onPlayerError` paths so the next
+     * `play()` creates a fresh instance via `createPlayer()` instead
+     * of reusing an ExoPlayer that's already terminated.
+     */
+    private fun discardPlayer() {
+        val p = player ?: return
+        player = null
+        mainHandler.post { p.release() }
     }
 
     /** Pause for transient focus loss — keep focus request, mark resumable. */
