@@ -155,11 +155,11 @@ class SoundscapeOrchestratorTest {
         ).start()
         runCurrent()
         // Before the 800ms delay elapses, no play yet.
-        advanceTimeBy(500)
+        advanceTimeBy(799)
         runCurrent()
         assertEquals(0, capturingPlayer.playCount)
         // After the delay completes, play fires once.
-        advanceTimeBy(500)
+        advanceTimeBy(1)
         runCurrent()
         assertEquals(1, capturingPlayer.playCount)
         s.cancel()

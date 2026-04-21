@@ -93,10 +93,16 @@ class SoundscapeOrchestrator @Inject constructor(
                                 delay(START_DELAY_MS)
                                 val asset = eligibleSoundscapeOrNullSync()
                                 if (asset != null) {
+                                    // `fileFor` is pure (no FS write)
+                                    // since `SoundscapeFileStore` pre-
+                                    // creates the root dir via its
+                                    // `by lazy` initializer. exists +
+                                    // length are a couple of syscalls
+                                    // — fine on Dispatchers.Default
+                                    // without a `withContext(IO)`
+                                    // hop that would also break
+                                    // virtual-time tests.
                                     val file = fileStore.fileFor(asset)
-                                    // Re-check on the delay side —
-                                    // the file could have been deleted
-                                    // during the 800ms window.
                                     if (file.exists() && file.length() > 0L) {
                                         player.play(file)
                                     } else {

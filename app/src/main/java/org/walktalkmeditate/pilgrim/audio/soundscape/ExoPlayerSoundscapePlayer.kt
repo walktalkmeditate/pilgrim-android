@@ -79,17 +79,23 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
-            // No auto-stop on STATE_ENDED because REPEAT_MODE_ONE
-            // loops internally — we'd never see STATE_ENDED during
-            // normal playback. If we do (file glitch, etc.), let
-            // the state flip back to ended and the orchestrator
-            // will decide whether to retry.
+            // REPEAT_MODE_ONE loops internally, so STATE_ENDED should
+            // not fire during normal playback. If we see it (rare
+            // codec edge case in which REPEAT_MODE_ONE doesn't
+            // suppress the end event), tear down cleanly — abandon
+            // focus, unregister noisy receiver, transition to Error
+            // so the state is visible. Transitioning to Idle here
+            // would silently leak the focus request (Stage 5-F
+            // review lesson).
             when (playbackState) {
                 Player.STATE_READY -> {
                     _state.value = SoundscapePlayer.State.Playing
                 }
                 Player.STATE_ENDED -> {
-                    _state.value = SoundscapePlayer.State.Idle
+                    abandonFocus()
+                    unregisterNoisyReceiver()
+                    _state.value = SoundscapePlayer.State.Error("loop ended unexpectedly")
+                    wasPlayingBeforeTransientLoss = false
                 }
                 // STATE_IDLE, STATE_BUFFERING — no state transition here.
                 else -> Unit
@@ -218,6 +224,11 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
     }
 
     private fun requestFocus(): Boolean {
+        // Defensive abandon: if STATE_ENDED or an error path earlier
+        // left `activeFocusRequest` non-null without abandon, any new
+        // requestFocus would leak the prior request to the OS. No-op
+        // when nothing is held. Stage 5-F review lesson.
+        abandonFocus()
         val sysAttrs = SystemAudioAttributes.Builder()
             .setUsage(SystemAudioAttributes.USAGE_MEDIA)
             .setContentType(SystemAudioAttributes.CONTENT_TYPE_MUSIC)

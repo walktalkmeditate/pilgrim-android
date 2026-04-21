@@ -20,14 +20,14 @@ Phase 5's last unshipped deliverable is soundscape playback ("Bell and soundscap
 - **`SoundscapeSelectionRepository`** — DataStore-backed `selectedSoundscapeId: StateFlow<String?>`. Separate key (`selected_soundscape_id`) from voice-guide so user can combine independent selections. No auto-select-on-first-download (iOS doesn't either; user explicitly picks).
 - **`SoundscapeCatalogRepository`** — joins manifest + filesystem + selection + in-flight progress into `List<SoundscapeState>` DTOs for the picker. Same shape as Stage 5-D's `VoiceGuideCatalogRepository` (including terminal-state filesystem re-read, manifest-worker-side-effect handling, and `isActive` job-guard).
 - **`SoundscapePlayer`** — interface + `ExoPlayerSoundscapePlayer` impl. ExoPlayer with `REPEAT_MODE_ONE`, standalone `AudioFocusRequest(AUDIOFOCUS_GAIN)`, `handleAudioFocus = false`, `BECOMING_NOISY` receiver (Stage 5-E lesson), `AudioAttributes(USAGE_MEDIA + CONTENT_TYPE_MUSIC)`.
-- **`SoundscapeOrchestrator`** — `@Singleton` observing `WalkController.state`. Starts soundscape on `Meditating` state (with a 500ms delay to let the bell ring), stops on `Meditating → anything-else`.
+- **`SoundscapeOrchestrator`** — `@Singleton` observing `WalkController.state`. Starts soundscape on `Meditating` state (with a 800ms delay to let the bell ring), stops on `Meditating → anything-else`.
 - **Settings picker** — extend `SettingsScreen` with a second row ("Soundscapes"). New `SoundscapePickerScreen` — single list, tap-to-select (downloaded) or tap-to-download (not-downloaded), long-press for delete. Simpler than Stage 5-D's picker+detail split — iOS's UI is a one-screen list.
 - **Tests**: manifest parsing, file store, download worker (`.build()` mandate), scheduler, catalog repository join, player (ExoPlayer builder + REPEAT_MODE + focus request smoke test), orchestrator state-transition tests.
 
 **NOT in scope (deferred):**
 - **User-adjustable soundscape / duck-level volume sliders** (iOS has these; Android uses fixed defaults — soundscape at 1.0, OS-managed duck level). Phase 10.
 - **Crossfade between soundscapes** when switching mid-session (iOS has 4s crossfade). ExoPlayer supports multiple instances but adds complexity; MVP uses hard cut on switch.
-- **Fade-in on start / fade-out on stop** (iOS does 2s fade). MVP does hard start/stop. Soundscape starts 500ms after the meditation bell which acts as a natural transition cue.
+- **Fade-in on start / fade-out on stop** (iOS does 2s fade). MVP does hard start/stop. Soundscape starts 800ms after the meditation bell which acts as a natural transition cue.
 - **Gapless loop at boundary** — ExoPlayer's `REPEAT_MODE_ONE` is continuous, but gap-free-ness depends on the audio file having appropriate metadata. Any click is an audio-engineering fix, not an app-code fix.
 - **Auto-select on first download** (iOS doesn't do it for soundscape either).
 - **In-picker audition playback** (iOS has play/stop per row). Defer.
@@ -73,7 +73,7 @@ WalkController.state: StateFlow<WalkState>
    │    on Meditating
    ▼
 SoundscapeOrchestrator (@Singleton, @VoiceGuidePlaybackScope-style scope)
-   │    waits 500ms (let bell ring)
+   │    waits 800ms (let bell ring)
    │    resolves selected + downloaded asset
    ▼
 SoundscapePlayer.play(file)
@@ -260,7 +260,7 @@ class SoundscapeOrchestrator @Inject constructor(
                         if (asset != null) {
                             playJob = scope.launch {
                                 try {
-                                    // iOS delays 500ms after bell to let it
+                                    // iOS delays 800ms after bell to let it
                                     // land before soundscape starts — matches.
                                     delay(MEDITATION_START_DELAY_MS)
                                     if (!currentCoroutineContext().isActive) return@launch
@@ -296,7 +296,7 @@ class SoundscapeOrchestrator @Inject constructor(
 
     private companion object {
         const val TAG = "SoundscapeOrch"
-        const val MEDITATION_START_DELAY_MS = 500L
+        const val MEDITATION_START_DELAY_MS = 800L
     }
 }
 ```
@@ -400,13 +400,13 @@ Integration test coverage: spawn both players, verify soundscape player's listen
 - **`SoundscapeOrchestratorTest`** — Robolectric with `MutableStateFlow<WalkState>` + fake player. ~6 cases:
   - No selection → no spawn on Meditating
   - Selection + not-downloaded → no spawn
-  - Selection + downloaded → spawn after 500ms delay
+  - Selection + downloaded → spawn after 800ms delay
   - Meditating → Active → stop
   - Meditating → Finished → stop
   - Meditating → Paused → stop
 - **`SoundscapePickerScreenTest`** — Compose + Robolectric. ~3 cases covering the four state variants.
 
-Tests use `runCurrent()` pattern from Stage 5-E for the 500ms-delay coroutine, + `advanceTimeBy(500)` to cross the delay threshold.
+Tests use `runCurrent()` pattern from Stage 5-E for the 800ms-delay coroutine, + `advanceTimeBy(500)` to cross the delay threshold.
 
 ## Sequencing
 
