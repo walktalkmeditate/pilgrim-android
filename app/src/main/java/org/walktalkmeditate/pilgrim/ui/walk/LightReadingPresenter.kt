@@ -75,16 +75,16 @@ internal object LightReadingPresenter {
      */
     fun sunLine(sun: SunTimes?, zoneId: ZoneId): String? {
         if (sun == null) return null
-        val sunrise = sun.sunrise
-        val sunset = sun.sunset
-        if (sunrise == null && sunset == null) return null
         val fmt = timeFormatter.withZone(zoneId)
-        return when {
-            sunrise != null && sunset != null ->
-                "Sunrise ${fmt.format(sunrise)} · Sunset ${fmt.format(sunset)}"
-            sunrise != null -> "Sunrise ${fmt.format(sunrise)}"
-            else -> "Sunset ${fmt.format(sunset)}"
-        }
+        // Build each half independently so each Instant is guarded by
+        // its own `.let` — removes a Kotlin-Java-interop NPE trap where
+        // a future refactor that bypasses the both-null early return
+        // could pass a nullable Instant into the Java `format()` method
+        // without the compiler flagging it.
+        val risePart = sun.sunrise?.let { "Sunrise ${fmt.format(it)}" }
+        val setPart = sun.sunset?.let { "Sunset ${fmt.format(it)}" }
+        val parts = listOfNotNull(risePart, setPart)
+        return if (parts.isEmpty()) null else parts.joinToString(" · ")
     }
 
     /**
