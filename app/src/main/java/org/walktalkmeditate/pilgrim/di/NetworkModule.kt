@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestScope
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestUrl
+import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeBaseUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestUrl
@@ -96,6 +97,15 @@ object NetworkModule {
     @Singleton
     @AudioManifestUrl
     fun provideAudioManifestUrl(): String = AudioConfig.MANIFEST_URL
+
+    /**
+     * Soundscape CDN base URL — `<base>/soundscape/<assetId>.aac`
+     * per asset. Matches iOS's reconstructed-from-id convention.
+     */
+    @Provides
+    @Singleton
+    @SoundscapeBaseUrl
+    fun provideSoundscapeBaseUrl(): String = AudioConfig.BASE_URL
 
     /**
      * Long-lived scope for [org.walktalkmeditate.pilgrim.data.audio.AudioManifestService]'s
