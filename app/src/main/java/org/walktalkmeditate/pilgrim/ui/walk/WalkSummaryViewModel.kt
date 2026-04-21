@@ -7,6 +7,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
+import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -83,6 +85,15 @@ data class WalkSummary(
      * `isMilestone` flag and fires a 2-pulse haptic + 0.5s extra hold.
      */
     val milestone: GoshuinMilestone? = null,
+    /**
+     * Stage 6-B: Light Reading aggregate for this walk — moon phase,
+     * sun times (if GPS was available), planetary hour, and a
+     * deterministic koan. Null iff [LightReading.from] threw
+     * (unreachable in production since Room's autoGenerate gives
+     * walkId >= 1; guarded via `runCatching` for defensive logging).
+     * When null, the card simply doesn't render.
+     */
+    val lightReading: LightReading? = null,
 )
 
 @HiltViewModel
@@ -250,6 +261,25 @@ class WalkSummaryViewModel @Inject constructor(
         // computation, not a hot path.
         val milestone = detectMilestoneFor(walk, distance)
 
+        // Stage 6-B: compute Light Reading. Pure, deterministic from
+        // walkId + startedAt + first GPS location. `runCatching` is
+        // defense-in-depth — LightReading.from requires walkId > 0,
+        // which Room's autoGenerate guarantees. On failure we log
+        // and leave lightReading = null; the card simply doesn't
+        // render. Uses device `ZoneId.systemDefault()` at render time
+        // (documented iOS-parity limitation).
+        val firstLocation = points.firstOrNull()
+        val lightReading = runCatching {
+            LightReading.from(
+                walkId = walkId,
+                startedAtEpochMs = walk.startTimestamp,
+                location = firstLocation,
+                zoneId = ZoneId.systemDefault(),
+            )
+        }.onFailure {
+            android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
+        }.getOrNull()
+
         return WalkSummaryUiState.Loaded(
             WalkSummary(
                 walk = walk,
@@ -263,6 +293,7 @@ class WalkSummaryViewModel @Inject constructor(
                 routePoints = points,
                 sealSpec = sealSpec,
                 milestone = milestone,
+                lightReading = lightReading,
             ),
         )
     }
