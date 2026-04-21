@@ -10,6 +10,7 @@ import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
+import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 
 @HiltAndroidApp
@@ -35,6 +36,16 @@ class PilgrimApp : Application(), Configuration.Provider {
      * Application class.
      */
     @Inject lateinit var voiceGuideDownloadObserver: VoiceGuideDownloadObserver
+
+    /**
+     * App-scoped orchestrator for voice-guide prompt playback.
+     * Watches the walk controller's state + the selected pack and
+     * spawns per-session scheduler coroutines that call the
+     * `VoiceGuidePlayer` at the right moments. Same start-once,
+     * runs-for-process-lifetime shape as the bell observer + download
+     * observer above.
+     */
+    @Inject lateinit var voiceGuideOrchestrator: VoiceGuideOrchestrator
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -67,5 +78,10 @@ class PilgrimApp : Application(), Configuration.Provider {
         // process lifetime. Its collection on `catalog.packStates`
         // lives on `VoiceGuideCatalogScope`, so no per-screen tether.
         voiceGuideDownloadObserver.start()
+
+        // Start the voice-guide playback orchestrator. Observes the
+        // walk-state flow + selected-pack flow and drives the player
+        // via per-session scheduler coroutines on VoiceGuidePlaybackScope.
+        voiceGuideOrchestrator.start()
     }
 }
