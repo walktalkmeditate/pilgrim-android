@@ -18,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.buffer
 import okio.sink
+import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 
@@ -57,23 +58,22 @@ class SoundscapeDownloadWorker @AssistedInject constructor(
         if (fileStore.isAvailable(asset)) return Result.success()
 
         if (isStopped) return Result.failure()
-        val ok = downloadAsset(asset.id, asset.fileSizeBytes) ||
-            (!isStopped && downloadAsset(asset.id, asset.fileSizeBytes))
+        val ok = downloadAsset(asset) || (!isStopped && downloadAsset(asset))
 
         return if (ok && fileStore.isAvailable(asset)) Result.success() else Result.retry()
     }
 
-    private suspend fun downloadAsset(assetId: String, expectedSize: Long): Boolean =
+    private suspend fun downloadAsset(asset: AudioAsset): Boolean =
         withContext(Dispatchers.IO) {
-            val url = baseUrl.trimEnd('/') + "/soundscape/$assetId.aac"
-            val asset = manifestService.asset(assetId) ?: return@withContext false
+            val url = baseUrl.trimEnd('/') + "/soundscape/${asset.id}.aac"
+            val expectedSize = asset.fileSizeBytes
             val target = fileStore.fileFor(asset)
             val tmp = File(target.parentFile, target.name + TMP_SUFFIX)
             try {
                 val request = Request.Builder().url(url).build()
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        Log.w(TAG, "asset $assetId non-2xx: ${response.code}")
+                        Log.w(TAG, "asset ${asset.id} non-2xx: ${response.code}")
                         return@use false
                     }
                     val body = response.body ?: return@use false
@@ -81,7 +81,7 @@ class SoundscapeDownloadWorker @AssistedInject constructor(
                     if (tmp.length() != expectedSize) {
                         Log.w(
                             TAG,
-                            "asset $assetId size mismatch: ${tmp.length()} vs $expectedSize",
+                            "asset ${asset.id} size mismatch: ${tmp.length()} vs $expectedSize",
                         )
                         tmp.delete()
                         return@use false
@@ -99,7 +99,7 @@ class SoundscapeDownloadWorker @AssistedInject constructor(
                 tmp.delete()
                 throw ce
             } catch (t: Throwable) {
-                Log.w(TAG, "asset $assetId failed", t)
+                Log.w(TAG, "asset ${asset.id} failed", t)
                 tmp.delete()
                 false
             }

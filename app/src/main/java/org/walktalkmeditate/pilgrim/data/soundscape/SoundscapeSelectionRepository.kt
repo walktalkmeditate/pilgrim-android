@@ -48,19 +48,6 @@ class SoundscapeSelectionRepository @Inject constructor(
         dataStore.edit { it.remove(KEY_SELECTED) }
     }
 
-    /**
-     * Atomic read-check-write. Reserved for a future
-     * auto-select-on-first-download flow (not currently wired —
-     * iOS doesn't auto-select for soundscape either).
-     */
-    suspend fun selectIfUnset(assetId: String) {
-        dataStore.edit { prefs ->
-            if (prefs[KEY_SELECTED] == null) {
-                prefs[KEY_SELECTED] = assetId
-            }
-        }
-    }
-
     private companion object {
         const val TAG = "SoundscapeSelection"
         val KEY_SELECTED = stringPreferencesKey("selected_soundscape_id")
