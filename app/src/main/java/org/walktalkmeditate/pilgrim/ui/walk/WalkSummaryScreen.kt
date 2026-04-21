@@ -93,6 +93,16 @@ fun WalkSummaryScreen(
                     SummaryMap(points = s.summary.routePoints)
                     Spacer(Modifier.height(PilgrimSpacing.big))
                     SummaryStats(summary = s.summary)
+                    // Stage 6-B: contemplative payoff card below the
+                    // stats. VM's runCatching means a compute failure
+                    // yields null here and the card just doesn't
+                    // render. Room's autoGenerate guarantees the
+                    // walkId > 0 precondition LightReading.from needs,
+                    // so null is unreachable in production today.
+                    s.summary.lightReading?.let { reading ->
+                        Spacer(Modifier.height(PilgrimSpacing.big))
+                        WalkLightReadingCard(reading = reading)
+                    }
                     if (recordings.isNotEmpty()) {
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         VoiceRecordingsSection(
