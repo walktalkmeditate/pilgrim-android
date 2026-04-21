@@ -10,6 +10,7 @@ import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
+import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 
@@ -47,6 +48,13 @@ class PilgrimApp : Application(), Configuration.Provider {
      */
     @Inject lateinit var voiceGuideOrchestrator: VoiceGuideOrchestrator
 
+    /**
+     * App-scoped orchestrator for soundscape ambient loop playback
+     * during meditation. Watches walk-state + selected-soundscape-id
+     * and plays/stops the looping ExoPlayer-backed player.
+     */
+    @Inject lateinit var soundscapeOrchestrator: SoundscapeOrchestrator
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -83,5 +91,10 @@ class PilgrimApp : Application(), Configuration.Provider {
         // walk-state flow + selected-pack flow and drives the player
         // via per-session scheduler coroutines on VoiceGuidePlaybackScope.
         voiceGuideOrchestrator.start()
+
+        // Start the soundscape playback orchestrator. Observes the
+        // walk-state flow + selected-soundscape-id flow and drives
+        // the looping ExoPlayer-backed player during meditation.
+        soundscapeOrchestrator.start()
     }
 }

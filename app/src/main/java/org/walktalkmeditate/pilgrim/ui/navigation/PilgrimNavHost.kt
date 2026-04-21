@@ -22,6 +22,7 @@ import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
+import org.walktalkmeditate.pilgrim.ui.settings.soundscape.SoundscapePickerScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailViewModel
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePickerScreen
@@ -45,6 +46,8 @@ object Routes {
     const val VOICE_GUIDE_DETAIL_PATTERN =
         "$VOICE_GUIDE_DETAIL_PREFIX/{${VoiceGuidePackDetailViewModel.ARG_PACK_ID}}"
     fun voiceGuideDetail(packId: String): String = "$VOICE_GUIDE_DETAIL_PREFIX/$packId"
+
+    const val SOUNDSCAPE_PICKER = "soundscapes"
 }
 
 @Composable
@@ -107,6 +110,16 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
+                onOpenSoundscapes = {
+                    navController.navigate(Routes.SOUNDSCAPE_PICKER) {
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(Routes.SOUNDSCAPE_PICKER) {
+            SoundscapePickerScreen(
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.VOICE_GUIDE_PICKER) {
