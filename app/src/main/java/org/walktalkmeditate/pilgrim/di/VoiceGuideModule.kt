@@ -10,13 +10,19 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.audio.voiceguide.ExoPlayerVoiceGuidePlayer
+import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideObservedWalkState
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlaybackScope
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlayer
+import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideSelectedPackId
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideCatalogScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadScheduler
+import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideSelectionRepository
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideSelectionScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.WorkManagerVoiceGuideDownloadScheduler
+import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
  * Voice-guide layer bindings: scheduler interface → WorkManager
@@ -73,5 +79,33 @@ abstract class VoiceGuideModule {
         @VoiceGuidePlaybackScope
         fun provideVoiceGuidePlaybackScope(): CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        /**
+         * Expose `WalkController.state` as a narrow `StateFlow<WalkState>`
+         * so the voice-guide orchestrator depends only on the read-only
+         * observation interface — tests can inject any `MutableStateFlow`
+         * without building a full `WalkController` with its Room + clock
+         * dependencies. Mirrors the shape of
+         * `@MeditationObservedWalkState` (Stage 5-B).
+         */
+        @Provides
+        @Singleton
+        @VoiceGuideObservedWalkState
+        fun provideVoiceGuideObservedWalkState(
+            controller: WalkController,
+        ): StateFlow<WalkState> = controller.state
+
+        /**
+         * Narrow the selection repository to its read-only
+         * `selectedPackId` flow so the orchestrator depends only on
+         * the observation interface — tests inject a
+         * `MutableStateFlow<String?>` directly.
+         */
+        @Provides
+        @Singleton
+        @VoiceGuideSelectedPackId
+        fun provideVoiceGuideSelectedPackId(
+            selection: VoiceGuideSelectionRepository,
+        ): StateFlow<String?> = selection.selectedPackId
     }
 }
