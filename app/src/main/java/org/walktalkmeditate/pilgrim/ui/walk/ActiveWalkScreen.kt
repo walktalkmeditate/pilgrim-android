@@ -46,6 +46,11 @@ fun ActiveWalkScreen(
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
+    // Navigation observer reads this (not ui.walkState) — the latter
+    // is a WhileSubscribed(5s) stateIn and goes stale when ActiveWalk's
+    // composition is disposed during a long meditation. walkState is a
+    // passthrough of the Singleton controller.state — always fresh.
+    val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
@@ -69,8 +74,8 @@ fun ActiveWalkScreen(
     // Meditating → this observer forwards to the dedicated
     // MeditationScreen. The Idle/Active/Paused cases no-op because
     // ActiveWalk IS the right surface for those.
-    LaunchedEffect(ui.walkState::class) {
-        when (val state = ui.walkState) {
+    LaunchedEffect(navWalkState::class) {
+        when (val state = navWalkState) {
             is WalkState.Finished -> onFinished(state.walk.walkId)
             is WalkState.Meditating -> onEnterMeditation()
             else -> Unit

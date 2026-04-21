@@ -37,17 +37,19 @@ import kotlinx.coroutines.flow.asStateFlow
  * Audio focus: standalone `AudioFocusRequest(AUDIOFOCUS_GAIN)` —
  * long-term ownership. When voice-guide fires
  * `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, the OS sends
- * `LOSS_TRANSIENT_CAN_DUCK` to our listener and auto-ducks the
- * stream (because `setWillPauseWhenDucked(false)` configures the
- * OS to handle the duck). We rely on the OS auto-duck rather than
- * manually dipping volume — simpler than iOS's 0.5s fade curve but
- * semantically correct.
+ * `LOSS_TRANSIENT_CAN_DUCK` to our listener. **We manually lower
+ * the player's volume** to [DUCK_VOLUME]; the OS does NOT auto-duck
+ * when we own focus via a standalone `AudioFocusRequest` with
+ * `handleAudioFocus = false` on ExoPlayer — Stage 5-G device-QA
+ * confirmed. `setWillPauseWhenDucked(false)` only controls whether
+ * to PAUSE vs DUCK, not who performs the duck. Matches iOS's manual
+ * volume-dip behavior (minus the fade curve, for now).
  *
  * Focus-loss handling:
  *  - `LOSS` → stop + abandon (another app took focus permanently).
  *  - `LOSS_TRANSIENT` → pause; next `GAIN` resumes.
- *  - `LOSS_TRANSIENT_CAN_DUCK` → no-op (OS auto-ducks).
- *  - `GAIN` → resume if we were paused-on-transient-loss.
+ *  - `LOSS_TRANSIENT_CAN_DUCK` → dip volume to [DUCK_VOLUME].
+ *  - `GAIN` → restore volume AND resume if paused-on-transient-loss.
  *
  * `handleAudioFocus = false` on ExoPlayer — we own the focus path.
  * `BECOMING_NOISY` receiver stops playback on headphone unplug
@@ -161,6 +163,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             val p = player ?: createPlayer().also { player = it }
             p.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             p.repeatMode = Player.REPEAT_MODE_ONE
+            p.volume = FULL_VOLUME
             p.prepare()
             p.play()
             registerNoisyReceiver()
@@ -209,6 +212,16 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         val p = player ?: return
         player = null
         mainHandler.post { p.release() }
+    }
+
+    /** Dip ExoPlayer volume for duckable transient focus loss. Main thread. */
+    private fun duckVolume() {
+        player?.volume = DUCK_VOLUME
+    }
+
+    /** Restore ExoPlayer volume when focus returns. Main thread. */
+    private fun restoreVolume() {
+        player?.volume = FULL_VOLUME
     }
 
     /** Pause for transient focus loss — keep focus request, mark resumable. */
@@ -271,11 +284,17 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
                         mainHandler.post { pauseForTransientLoss() }
                     }
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                        // Informational — OS auto-ducks. Do not pause or
-                        // change state. Stage 5-B / 5-E lesson.
+                        // OS does NOT auto-duck when we own focus via a
+                        // standalone AudioFocusRequest + handleAudioFocus
+                        // = false on ExoPlayer. Dip the ExoPlayer volume
+                        // manually. Stage 5-G lesson.
+                        mainHandler.post { duckVolume() }
                     }
                     AudioManager.AUDIOFOCUS_GAIN -> {
-                        mainHandler.post { resumeFromTransientLoss() }
+                        mainHandler.post {
+                            restoreVolume()
+                            resumeFromTransientLoss()
+                        }
                     }
                 }
             }, mainHandler)
@@ -315,5 +334,13 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     private companion object {
         const val TAG = "SoundscapePlayer"
+        const val FULL_VOLUME = 1.0f
+
+        /**
+         * Ducked volume when voice-guide (or any app) requests
+         * `GAIN_TRANSIENT_MAY_DUCK`. iOS uses ~0.3 with a 0.5s fade.
+         * We hard-step to match for MVP; fade curve can come later.
+         */
+        const val DUCK_VOLUME = 0.3f
     }
 }
