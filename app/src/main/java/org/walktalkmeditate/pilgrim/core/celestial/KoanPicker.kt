@@ -17,6 +17,12 @@ package org.walktalkmeditate.pilgrim.core.celestial
 internal object KoanPicker {
 
     fun pick(walkId: Long, startedAtEpochMs: Long): Koan {
+        // Room's @PrimaryKey(autoGenerate = true) produces ids starting
+        // at 1; a zero id collapses the LCG multiplier term to 0 and
+        // leaves `seed = startedAtEpochMs.toULong()` with reduced
+        // entropy (a 0L timestamp then deterministically picks the
+        // first koan). Fail fast rather than silently degenerate.
+        require(walkId > 0L) { "walkId must be positive (Room autoGenerate starts at 1)" }
         val corpus = Koans.all
         check(corpus.isNotEmpty()) { "Koan corpus must not be empty" }
         val seed = (walkId.toULong() * 6364136223846793005uL) xor startedAtEpochMs.toULong()
