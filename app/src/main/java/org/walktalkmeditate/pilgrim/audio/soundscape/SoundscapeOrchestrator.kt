@@ -81,40 +81,14 @@ class SoundscapeOrchestrator @Inject constructor(
             when (state) {
                 is WalkState.Meditating -> {
                     // `isActive != true` catches (1) first-ever-null,
-                    // (2) cancelled, and (3) completed-but-not-null
-                    // (play dispatch completed, soundscape looping
-                    // inside the player now, job done). Without the
-                    // (3) branch, a Meditating → non-Meditating →
-                    // Meditating cycle would find `playJob` non-null
-                    // and skip the re-play. Stage 5-E lesson.
+                    // (2) cancelled, and (3) completed-but-not-null.
+                    // With the `player.state` observer below keeping
+                    // the job alive for the duration of meditation,
+                    // case (3) is now rare (only if the initial
+                    // eligibility check returns null — e.g., no
+                    // soundscape selected). Stage 5-E lesson.
                     if (playJob?.isActive != true) {
-                        playJob = scope.launch {
-                            try {
-                                delay(START_DELAY_MS)
-                                val asset = eligibleSoundscapeOrNullSync()
-                                if (asset != null) {
-                                    // `fileFor` is pure (no FS write)
-                                    // since `SoundscapeFileStore` pre-
-                                    // creates the root dir via its
-                                    // `by lazy` initializer. exists +
-                                    // length are a couple of syscalls
-                                    // — fine on Dispatchers.Default
-                                    // without a `withContext(IO)`
-                                    // hop that would also break
-                                    // virtual-time tests.
-                                    val file = fileStore.fileFor(asset)
-                                    if (file.exists() && file.length() > 0L) {
-                                        player.play(file)
-                                    } else {
-                                        Log.w(TAG, "file vanished during start delay: ${asset.id}")
-                                    }
-                                }
-                            } catch (ce: CancellationException) {
-                                throw ce
-                            } catch (t: Throwable) {
-                                Log.w(TAG, "soundscape start failed", t)
-                            }
-                        }
+                        playJob = scope.launch { runSessionLoop() }
                     }
                 }
                 is WalkState.Active,
@@ -126,6 +100,65 @@ class SoundscapeOrchestrator @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Per-meditation-session loop: waits the start-delay, dispatches
+     * `player.play(file)`, then suspends observing `player.state`
+     * for the duration of the session so a mid-session `Error`
+     * transition (STATE_ENDED on a REPEAT_MODE_ONE loop or a codec
+     * error) can trigger a single retry. Without this observer, the
+     * playJob would complete immediately after the fire-and-forget
+     * `player.play()` and the orchestrator would miss the Error —
+     * soundscape would go silent until the user exited meditation
+     * and re-entered.
+     *
+     * The retry budget is one per meditation session. A second
+     * consecutive Error ends the session silently rather than
+     * hammering on a genuinely broken file. On `Meditating → other`
+     * state transition, `scope.launch` is cancelled and the
+     * `CancellationException` unwinds through the `collect`.
+     */
+    private suspend fun runSessionLoop() {
+        var retryBudget = 1
+        try {
+            delay(START_DELAY_MS)
+            if (!attemptPlay()) return
+            // Suspend on `player.state` for the rest of the session.
+            // `collect` runs until `playJob.cancel()` fires (from the
+            // walkState observer) or we explicitly return. Re-entry
+            // via retryBudget keeps emissions flowing.
+            player.state.collect { s ->
+                if (s is SoundscapePlayer.State.Error && retryBudget > 0) {
+                    retryBudget -= 1
+                    Log.w(TAG, "soundscape mid-session error; retrying once")
+                    delay(RETRY_DELAY_MS)
+                    attemptPlay()
+                }
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "soundscape session loop failed", t)
+        }
+    }
+
+    /**
+     * One-shot play attempt. Returns `true` if `player.play` was
+     * dispatched, `false` if the asset was ineligible or the file
+     * vanished. Non-suspend `fileFor` + `exists + length` reads are
+     * safe on `Dispatchers.Default` — a couple of syscalls, no ANR
+     * risk, and `SoundscapeFileStore.fileFor` is pure (no mkdirs).
+     */
+    private fun attemptPlay(): Boolean {
+        val asset = eligibleSoundscapeOrNullSync() ?: return false
+        val file = fileStore.fileFor(asset)
+        if (!(file.exists() && file.length() > 0L)) {
+            Log.w(TAG, "file vanished during start delay: ${asset.id}")
+            return false
+        }
+        player.play(file)
+        return true
     }
 
     /**
@@ -156,5 +189,6 @@ class SoundscapeOrchestrator @Inject constructor(
     private companion object {
         const val TAG = "SoundscapeOrch"
         const val START_DELAY_MS = 800L
+        const val RETRY_DELAY_MS = 250L
     }
 }
