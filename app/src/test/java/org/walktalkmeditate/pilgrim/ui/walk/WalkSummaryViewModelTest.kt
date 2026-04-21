@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -316,6 +317,34 @@ class WalkSummaryViewModelTest {
             assertTrue("distanceMeters=${spec.distanceMeters}", spec.distanceMeters > 0.0)
             assertTrue("displayDistance should be non-empty", spec.displayDistance.isNotEmpty())
             assertTrue("unitLabel ${spec.unitLabel} should be m or km", spec.unitLabel in setOf("m", "km"))
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `Loaded state carries a LightReading computed from first location`() = runTest(dispatcher) {
+        // Stage 6-B: the VM wraps LightReading.from in runCatching, so a
+        // regression that breaks the factory would silently set
+        // lightReading = null. Assert non-null on a walk with a real
+        // GPS sample — sun should also populate since we have lat/lon.
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 48.8566, longitude = 2.3522),
+        )
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.state.test {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            val loaded = item as WalkSummaryUiState.Loaded
+            val reading = loaded.summary.lightReading
+            assertNotNull("LightReading should be computed for a walk with GPS samples", reading)
+            assertNotNull("moon should be populated", reading!!.moon)
+            assertNotNull("sun should be populated when location is present", reading.sun)
+            assertNotNull("planetaryHour should be populated", reading.planetaryHour)
+            assertTrue("koan text should be non-blank", reading.koan.text.isNotBlank())
             cancelAndIgnoreRemainingEvents()
         }
     }

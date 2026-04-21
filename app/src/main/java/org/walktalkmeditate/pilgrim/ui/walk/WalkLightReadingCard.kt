@@ -24,6 +24,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -55,14 +58,26 @@ fun WalkLightReadingCard(
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
 
+    val copyKoan = {
+        clipboard.setText(AnnotatedString(reading.koan.text))
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .pointerInput(reading.koan.text) {
-                detectTapGestures(
-                    onLongPress = {
-                        clipboard.setText(AnnotatedString(reading.koan.text))
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                detectTapGestures(onLongPress = { copyKoan() })
+            }
+            // TalkBack exposure for the long-press action. Without
+            // this, the clipboard feature is unreachable for
+            // screen-reader users — `detectTapGestures` doesn't
+            // surface to the accessibility tree on its own.
+            .semantics {
+                customActions = listOf(
+                    CustomAccessibilityAction(label = "Copy koan") {
+                        copyKoan()
+                        true
                     },
                 )
             },
