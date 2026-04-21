@@ -3,14 +3,11 @@ package org.walktalkmeditate.pilgrim.ui.settings.soundscape
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -180,12 +177,10 @@ private fun SoundscapeRow(
             }
         },
         supportingContent = {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = statusLine(state),
-                    color = statusColor(state),
-                )
-            }
+            Text(
+                text = statusLine(state),
+                color = statusColor(state),
+            )
         },
         trailingContent = { TrailingIcon(state) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -216,7 +211,7 @@ private fun TrailingIcon(state: SoundscapeState) {
         is SoundscapeState.Downloaded -> if (state.isSelected) {
             Icon(Icons.Default.Check, contentDescription = null, tint = pilgrimColors.moss)
         } else {
-            Spacer(Modifier.height(24.dp).size(24.dp))
+            Spacer(Modifier.size(24.dp))
         }
         is SoundscapeState.Failed -> Icon(
             Icons.Default.ErrorOutline,

@@ -29,10 +29,10 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 /**
- * Settings scaffold. Stage 5-D ships it with a single "Voice guides"
- * row; Phase 10 will add more rows (weather opt-in, haptics,
- * hemisphere override, export/import). Minimal M3 styling to match
- * the app's soft, text-forward aesthetic.
+ * Settings scaffold. Currently surfaces audio-catalog pickers (voice
+ * guides + soundscapes); Phase 10 will add more rows (weather opt-in,
+ * haptics, hemisphere override, export/import). Minimal M3 styling to
+ * match the app's soft, text-forward aesthetic.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
