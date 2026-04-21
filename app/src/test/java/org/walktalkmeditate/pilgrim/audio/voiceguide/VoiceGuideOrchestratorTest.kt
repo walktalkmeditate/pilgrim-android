@@ -158,6 +158,43 @@ class VoiceGuideOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `scheduler re-spawns on Active after initial no-pack early return`() = runTest {
+        // Regression test for the stale-walkJob bug: if the first
+        // schedulerLoop returns normally (pack not eligible at the
+        // moment of Active), `walkJob` holds a completed Job. Without
+        // the `isActive` guard, subsequent Active emissions — which
+        // fire on every GPS sample during a real walk — would skip
+        // the spawn. This test flips Active → Active (new acc, so
+        // StateFlow re-emits) after the pack files appear, and
+        // asserts a prompt plays.
+        val pk = pack()
+        seedManifest(listOf(pk))
+        // Initially pack is NOT downloaded (no prompt files).
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        VoiceGuideOrchestrator(
+            walkState, selectedPackId, manifestService, fileStore,
+            capturingPlayer, FixedClock(), s,
+        ).start()
+        runCurrent()
+        assertEquals("no spawn before files exist", 0, capturingPlayer.playCount)
+
+        // Files appear mid-walk (download completes).
+        writePromptFiles(pk)
+        // Active re-emits with a modified accumulator — StateFlow
+        // dedupes by equals, so we need a field difference. In a
+        // real walk, every GPS sample increases distance → new acc.
+        walkState.value = WalkState.Active(acc.copy(totalPausedMillis = 1L))
+        runCurrent()
+
+        assertTrue(
+            "expected spawn on re-emitted Active, got ${capturingPlayer.playCount}",
+            capturingPlayer.playCount >= 1,
+        )
+        s.cancel()
+    }
+
     @Test fun `Active with eligible pack eventually plays a prompt`() = runTest {
         val pk = pack()
         seedManifest(listOf(pk))
