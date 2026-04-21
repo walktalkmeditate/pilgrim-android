@@ -25,6 +25,25 @@ import kotlinx.coroutines.flow.stateIn
  * Independent of voice-guide selection: user can have voice-guide
  * A + soundscape B, or just one, or neither. Mirrors iOS's
  * `UserPreferences.selectedSoundscapeId` key.
+ *
+ * **SharingStarted.Eagerly** (vs voice-guide's `WhileSubscribed(5s)`)
+ * because [SoundscapeOrchestrator] reads `.value` synchronously
+ * inside a non-suspend eligibility check — `.value` reads do NOT
+ * count as StateFlow subscribers, so a `WhileSubscribed` flow would
+ * return the initial `null` until someone explicitly `collect`s.
+ * Voice-guide avoids this via the always-on `VoiceGuideDownloadObserver`
+ * which keeps the catalog flow (and therefore the selection flow
+ * underneath) warm for the app's lifetime. Soundscape has no
+ * equivalent observer — we opted out of auto-select-on-first-
+ * download (iOS doesn't either). `Eagerly` is safe with the
+ * upstream `.catch { emit(emptyPreferences()) }` in place (Stage
+ * 3-D lesson: without `.catch`, DataStore errors would terminate
+ * the flow and `Eagerly` would never recover).
+ *
+ * Without this, a cold process restore into a Meditating state with
+ * a persisted soundscape selection would silent-play — the
+ * orchestrator's 800ms-delayed `.value` read would land before any
+ * subscriber warmed DataStore.
  */
 @Singleton
 class SoundscapeSelectionRepository @Inject constructor(
@@ -38,7 +57,7 @@ class SoundscapeSelectionRepository @Inject constructor(
         }
         .map { it[KEY_SELECTED] }
         .distinctUntilChanged()
-        .stateIn(scope, SharingStarted.WhileSubscribed(5_000L), null)
+        .stateIn(scope, SharingStarted.Eagerly, null)
 
     suspend fun select(assetId: String) {
         dataStore.edit { it[KEY_SELECTED] = assetId }
