@@ -88,7 +88,18 @@ class VoiceGuideOrchestrator @Inject constructor(
             when (state) {
                 is WalkState.Active -> {
                     meditationJob?.cancel(); meditationJob = null
-                    if (walkJob == null) {
+                    // `walkJob?.isActive != true` catches three cases:
+                    // (1) null — first-ever spawn, (2) cancelled, and
+                    // CRITICAL (3) completed-but-not-null. Plain
+                    // `== null` misses (3): if `eligiblePackOrNull()`
+                    // returns null (pack not yet downloaded, no
+                    // selection, etc.), `runSchedulerLoop` returns
+                    // normally and `walkJob` stays referencing a
+                    // completed Job. Without the `isActive` check,
+                    // no new scheduler would spawn for the rest of
+                    // the walk even after a pack becomes eligible
+                    // (e.g., download completes + auto-selects).
+                    if (walkJob?.isActive != true) {
                         val silenceSec =
                             if (exitingMeditation) randomPostMeditationSilenceSec() else 0
                         walkJob = scope.launch {
@@ -109,7 +120,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                 is WalkState.Meditating -> {
                     walkJob?.cancel(); walkJob = null
                     exitingMeditation = true
-                    if (meditationJob == null) {
+                    if (meditationJob?.isActive != true) {
                         meditationJob = scope.launch {
                             try {
                                 runSchedulerLoop(

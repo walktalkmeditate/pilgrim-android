@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio.voiceguide
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes as SystemAudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -75,6 +79,31 @@ class ExoPlayerVoiceGuidePlayer @Inject constructor(
     private val pendingOnFinished = AtomicReference<(() -> Unit)?>(null)
     private val completionFired = AtomicBoolean(true) // "armed" only during a play
 
+    /**
+     * Receives `ACTION_AUDIO_BECOMING_NOISY` (headphones unplugged /
+     * Bluetooth A2DP disconnect). Stops playback so a prompt doesn't
+     * suddenly blast through the loudspeaker in a public space —
+     * embarrassing failure mode, and one the audio-focus listener
+     * can't catch because BECOMING_NOISY is a hardware-routing event
+     * not a focus event. ExoPlayer would normally register its own
+     * receiver as part of its focus handling, but we use
+     * `handleAudioFocus = false` to own the focus path ourselves, so
+     * we also own this receiver.
+     */
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                Log.i(TAG, "audio becoming noisy — stopping playback")
+                mainHandler.post {
+                    internalStop()
+                    fireCompletionOnce()
+                    abandonFocus()
+                }
+            }
+        }
+    }
+    private var noisyReceiverRegistered = false
+
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
@@ -127,6 +156,7 @@ class ExoPlayerVoiceGuidePlayer @Inject constructor(
             p.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             p.prepare()
             p.play()
+            registerNoisyReceiver()
             _state.value = VoiceGuidePlayer.State.Playing
         }
     }
@@ -145,6 +175,7 @@ class ExoPlayerVoiceGuidePlayer @Inject constructor(
             player = null
             p?.removeListener(playerListener)
             p?.release()
+            unregisterNoisyReceiver()
             fireCompletionOnce()
             abandonFocus()
             _state.value = VoiceGuidePlayer.State.Idle
@@ -154,7 +185,35 @@ class ExoPlayerVoiceGuidePlayer @Inject constructor(
     /** Must be called on main thread (wrap in mainHandler.post if needed). */
     private fun internalStop() {
         player?.stop()
+        unregisterNoisyReceiver()
         _state.value = VoiceGuidePlayer.State.Idle
+    }
+
+    private fun registerNoisyReceiver() {
+        if (noisyReceiverRegistered) return
+        val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+        // API 33+ requires explicit exported flag on dynamic receivers.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(noisyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(noisyReceiver, filter)
+        }
+        noisyReceiverRegistered = true
+    }
+
+    private fun unregisterNoisyReceiver() {
+        if (!noisyReceiverRegistered) return
+        try {
+            context.unregisterReceiver(noisyReceiver)
+        } catch (t: IllegalArgumentException) {
+            // Defensive — `unregisterReceiver` throws if the receiver
+            // wasn't registered. Our flag should prevent this but a
+            // race between release() and a recycled play() could
+            // theoretically reach here. Log and move on.
+            Log.w(TAG, "noisy receiver unregister failed", t)
+        }
+        noisyReceiverRegistered = false
     }
 
     private fun createPlayer(): ExoPlayer {
