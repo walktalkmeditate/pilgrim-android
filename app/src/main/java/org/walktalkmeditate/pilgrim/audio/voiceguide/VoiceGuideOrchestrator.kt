@@ -23,12 +23,15 @@ import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
- * App-scoped coordinator that observes [WalkController.state] and
+ * App-scoped coordinator that observes the walk-state flow and
  * drives [VoiceGuideScheduler] + [VoiceGuidePlayer] on state
- * transitions. Matches the `MeditationBellObserver` (Stage 5-B)
- * and `VoiceGuideDownloadObserver` (Stage 5-D) pattern —
- * [start] once from `PilgrimApp.onCreate`, subscription lives
- * for the app process.
+ * transitions. Takes `StateFlow<WalkState>` + `StateFlow<String?>`
+ * (selected pack id) via dedicated qualifiers rather than the
+ * full `WalkController` + `VoiceGuideSelectionRepository` so tests
+ * can inject `MutableStateFlow`s directly. Matches the
+ * `MeditationBellObserver` (Stage 5-B) + `VoiceGuideDownloadObserver`
+ * (Stage 5-D) pattern — [start] once from `PilgrimApp.onCreate`,
+ * subscription lives for the app process.
  *
  * Per-session lifecycle:
  *  - `Active` (and eligible pack downloaded): spawn walk-context
@@ -42,6 +45,23 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
  * Each scheduler coroutine runs a 30-second tick loop that feeds
  * decisions to the player. The player's `onFinished` callback
  * closes the loop by advancing the scheduler's play history.
+ *
+ * MVP behavior notes (deferred deltas from iOS):
+ *  - The player's `onFinished` fires on ALL completion paths
+ *    including aborts (stop, focus loss, decode error). The
+ *    orchestrator's `{ sched.markPlayed(prompt.id) }` lambda
+ *    therefore marks prompts played even when cut off mid-stream.
+ *    Net effect: the scheduler moves on to a different prompt
+ *    next tick rather than replaying the interrupted one — user
+ *    hears variety instead of repeats. iOS distinguishes the two.
+ *  - The scheduler's `isRecordingVoice` guard is hardcoded `false`
+ *    by this orchestrator. Voice-memo recording doesn't pause the
+ *    guide via this path (the OS-level audio-focus loss already
+ *    stops the player via `AUDIOFOCUS_LOSS_TRANSIENT`). When a
+ *    voice-recording-state flow exists, wire it here.
+ *  - Deselecting the pack mid-session doesn't abort the current
+ *    scheduler (`eligiblePackOrNull` is checked once per session).
+ *    Pack-switch mid-session is out of scope per Stage 5-E design.
  */
 @Singleton
 class VoiceGuideOrchestrator @Inject constructor(
