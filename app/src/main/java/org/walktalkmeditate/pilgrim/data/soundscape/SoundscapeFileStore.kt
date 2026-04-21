@@ -40,14 +40,13 @@ class SoundscapeFileStore @Inject constructor(
     val invalidations: SharedFlow<Unit> = _invalidations.asSharedFlow()
 
     /**
-     * Absolute file for this soundscape asset. Creates the parent
-     * directory on call.
+     * Absolute file for this soundscape asset. `root` is lazy-
+     * initialized with `mkdirs()` so the parent directory is
+     * guaranteed to exist on first access; no per-call `mkdirs`.
+     * Keeping this pure read-only lets orchestrator-side eligibility
+     * checks run on any dispatcher without StrictMode complaints.
      */
-    fun fileFor(asset: AudioAsset): File {
-        val file = File(root, "${asset.id}.aac")
-        file.parentFile?.mkdirs()
-        return file
-    }
+    fun fileFor(asset: AudioAsset): File = File(root, "${asset.id}.aac")
 
     /** True iff the file exists AND its length matches the manifest. */
     fun isAvailable(asset: AudioAsset): Boolean {
