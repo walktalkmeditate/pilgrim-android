@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.celestial
 
+import androidx.compose.runtime.Immutable
+
 /**
  * Moon phase snapshot at an instant.
  *
@@ -9,6 +11,7 @@ package org.walktalkmeditate.pilgrim.core.celestial
  * `LunarPhase`: reference new moon at 2000-01-06 18:14 UTC, synodic
  * month 29.530588770576 days.
  */
+@Immutable
 data class MoonPhase(
     /**
      * English phase name — one of the 8 canonical buckets:

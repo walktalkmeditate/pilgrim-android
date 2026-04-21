@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.celestial
 
+import androidx.compose.runtime.Immutable
 import java.time.Instant
 import java.time.ZoneId
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -22,6 +23,7 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
  * walkId + timestamp contribute, so two walks from the same
  * coordinates still pick distinct koans.
  */
+@Immutable
 data class LightReading(
     val moon: MoonPhase,
     val sun: SunTimes?,
