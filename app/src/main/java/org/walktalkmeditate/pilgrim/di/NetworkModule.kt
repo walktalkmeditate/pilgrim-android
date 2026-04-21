@@ -12,6 +12,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestScope
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestUrl
@@ -86,6 +89,22 @@ object NetworkModule {
     @Singleton
     @VoiceGuideManifestScope
     fun provideVoiceGuideManifestScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Unified audio manifest URL (Stage 5-F). */
+    @Provides
+    @Singleton
+    @AudioManifestUrl
+    fun provideAudioManifestUrl(): String = AudioConfig.MANIFEST_URL
+
+    /**
+     * Long-lived scope for [org.walktalkmeditate.pilgrim.data.audio.AudioManifestService]'s
+     * sync coroutine. Same shape as the voice-guide manifest scope.
+     */
+    @Provides
+    @Singleton
+    @AudioManifestScope
+    fun provideAudioManifestScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private const val CONNECT_TIMEOUT_SEC = 10L
