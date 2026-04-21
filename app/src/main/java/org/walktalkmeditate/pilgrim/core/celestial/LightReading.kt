@@ -29,6 +29,14 @@ data class LightReading(
     val sun: SunTimes?,
     val planetaryHour: PlanetaryHour,
     val koan: Koan,
+    /**
+     * The zone the aggregate was computed with. Callers rendering
+     * local-time display (e.g., a "Sunrise 05:47" label) MUST use
+     * this zone — passing a different zone would visualise the
+     * sun-times column in one tz while the planetary hour was
+     * computed in another. Stage 6-B review lesson.
+     */
+    val zoneId: ZoneId,
 ) {
     companion object {
         /**
@@ -59,7 +67,7 @@ data class LightReading(
             val instant = Instant.ofEpochMilli(startedAtEpochMs)
             val moon = MoonCalc.moonPhase(instant)
             val sun = location?.let {
-                SunCalc.sunTimes(instant, it.latitude, it.longitude)
+                SunCalc.sunTimes(instant, it.latitude, it.longitude, zoneId)
             }
             val planetaryHour = PlanetaryHourCalc.planetaryHour(instant, zoneId, sun)
             val koan = KoanPicker.pick(walkId, startedAtEpochMs)
@@ -68,6 +76,7 @@ data class LightReading(
                 sun = sun,
                 planetaryHour = planetaryHour,
                 koan = koan,
+                zoneId = zoneId,
             )
         }
     }
