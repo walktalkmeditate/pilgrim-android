@@ -63,7 +63,6 @@ internal object SunCalc {
         val obliquityCorr = meanObliquity + 0.00256 * cos(Math.toRadians(125.04 - 1934.136 * tCenturies))
 
         val declRad = asin(sin(Math.toRadians(obliquityCorr)) * sin(Math.toRadians(sunAppLong)))
-        val declDeg = Math.toDegrees(declRad)
 
         val y = tan(Math.toRadians(obliquityCorr / 2)).let { it * it }
         val eqTime = run {

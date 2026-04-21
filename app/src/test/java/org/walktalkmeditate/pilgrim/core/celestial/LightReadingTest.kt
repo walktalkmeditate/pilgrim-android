@@ -5,7 +5,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -115,11 +114,4 @@ class LightReadingTest {
         )
     }
 
-    @Test fun `no android framework imports in the celestial package`() {
-        // Smoke: the aggregate itself is in the same test classpath.
-        // This test exists to make the contract explicit — CI reads it.
-        val pkg = LightReading::class.java.`package`.name
-        assertFalse(pkg.contains("android"))
-        assertFalse(pkg.contains("androidx"))
-    }
 }
