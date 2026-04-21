@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,6 +39,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenVoiceGuides: () -> Unit,
+    onOpenSoundscapes: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -73,6 +75,12 @@ fun SettingsScreen(
                 title = stringResource(R.string.settings_voice_guides_row),
                 subtitle = stringResource(R.string.settings_voice_guides_subtitle),
                 onClick = onOpenVoiceGuides,
+            )
+            SettingsRow(
+                icon = Icons.Default.Spa,
+                title = stringResource(R.string.settings_soundscapes_row),
+                subtitle = stringResource(R.string.settings_soundscapes_subtitle),
+                onClick = onOpenSoundscapes,
             )
         }
     }
