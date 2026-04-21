@@ -116,6 +116,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             )
             abandonFocus()
             unregisterNoisyReceiver()
+            wasPlayingBeforeTransientLoss = false
         }
     }
 

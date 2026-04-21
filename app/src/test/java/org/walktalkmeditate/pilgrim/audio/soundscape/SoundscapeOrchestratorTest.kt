@@ -278,6 +278,95 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `player Error mid-session triggers one retry, then stops`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        // Simulate a mid-session codec error: player transitions to
+        // Error while walkState is still Meditating. Orchestrator
+        // should retry ONE time.
+        capturingPlayer.simulateError("decode failure")
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(
+            "expected one retry after first Error, got ${capturingPlayer.playCount}",
+            2, capturingPlayer.playCount,
+        )
+
+        // Second consecutive Error: retry budget exhausted, no more plays.
+        capturingPlayer.simulateError("decode failure again")
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(
+            "expected no further plays after budget exhaustion, got ${capturingPlayer.playCount}",
+            2, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
+    @Test fun `retry budget resets when re-entering Meditating after Active`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        // Burn the retry budget in session 1.
+        capturingPlayer.simulateError("e1")
+        advanceTimeBy(500)
+        runCurrent()
+        capturingPlayer.simulateError("e2")
+        advanceTimeBy(500)
+        runCurrent()
+        val session1Plays = capturingPlayer.playCount
+
+        // Exit to Active then re-enter Meditating — new session.
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        walkState.value = WalkState.Meditating(acc, meditationStartedAt = 6_000L)
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(
+            "expected fresh play on new session, got ${capturingPlayer.playCount - session1Plays}",
+            1, capturingPlayer.playCount - session1Plays,
+        )
+
+        // Session 2 should have its own retry budget.
+        capturingPlayer.simulateError("session 2 glitch")
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(
+            "expected a session-2 retry, got ${capturingPlayer.playCount - session1Plays}",
+            2, capturingPlayer.playCount - session1Plays,
+        )
+        s.cancel()
+    }
+
     @Test fun `type-mismatched asset id is ineligible`() = runTest {
         // Seed a BELL-typed asset with the same id — the manifest has
         // the id but the filter must reject non-soundscape types.
@@ -321,6 +410,11 @@ class SoundscapeOrchestratorTest {
 
         override fun release() {
             _state.value = SoundscapePlayer.State.Idle
+        }
+
+        /** Test hook: transition the player to Error as ExoPlayer would. */
+        fun simulateError(reason: String) {
+            _state.value = SoundscapePlayer.State.Error(reason)
         }
     }
 }
