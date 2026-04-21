@@ -77,9 +77,17 @@ internal object PlanetaryHourCalc {
             return fallbackHourIndex(instant, zoneId)
         }
 
+        // Degenerate: sunrise == sunset produces a zero-length day
+        // span AND a full 24h night span; to avoid divide-by-zero in
+        // the daytime branch below (and to keep behavior coherent),
+        // route to the 6am–6pm fallback. SunCalc cannot produce this
+        // — polar day returns null sunrise/sunset — but a 6-B test
+        // fixture constructing SunTimes directly might.
+        val daySpanMs = Duration.between(sunrise, sunset).toMillis()
+        if (daySpanMs <= 0L) return fallbackHourIndex(instant, zoneId)
+
         // Are we within [sunrise, sunset) today? If so, daytime.
         if (!instant.isBefore(sunrise) && instant.isBefore(sunset)) {
-            val daySpanMs = Duration.between(sunrise, sunset).toMillis()
             val elapsedMs = Duration.between(sunrise, instant).toMillis()
             val segment = (elapsedMs * 12L) / daySpanMs
             return segment.toInt().coerceIn(0, 11)
@@ -89,8 +97,10 @@ internal object PlanetaryHourCalc {
         // sunset. If the walk is before today's sunrise, adjust by
         // subtracting 24h from the reference so the elapsed
         // calculation stays positive.
-        val daySpanMs = Duration.between(sunrise, sunset).toMillis()
         val nightSpanMs = 24L * 60L * 60L * 1000L - daySpanMs
+        // Symmetric divide-by-zero guard for a 24h daySpan (sunrise +
+        // 24h == sunset). Same reachability note as above.
+        if (nightSpanMs <= 0L) return fallbackHourIndex(instant, zoneId)
         val refSunset = if (instant.isBefore(sunrise)) {
             sunset.minus(Duration.ofDays(1))
         } else {
