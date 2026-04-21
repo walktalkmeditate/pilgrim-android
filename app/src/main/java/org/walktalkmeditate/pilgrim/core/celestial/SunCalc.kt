@@ -19,6 +19,17 @@ import kotlin.math.tan
  * latitudes up to ~70°; beyond that the atmospheric-refraction
  * assumptions (−0.833° constant) begin to fail.
  *
+ * **UTC-date anchor.** All returned [Instant]s are relative to the
+ * UTC day containing the input instant, NOT the caller's local
+ * day. For east-of-prime-meridian longitudes near the dateline
+ * (AEDT, NZST), the returned [SunTimes.sunrise] and/or
+ * [SunTimes.sunset] can fall on the UTC date PRIOR to the query
+ * date — e.g. Sydney's sunrise on UTC Dec 21 is actually Dec 20
+ * 18:40 UTC (= Dec 21 05:40 AEDT). Callers that render "today's
+ * sunrise" in local time should first convert the returned
+ * Instant to the user's zone, then read the local date from that
+ * zoned value.
+ *
  * Polar handling: [SunTimes.sunrise] and [SunTimes.sunset] are null
  * when the sun doesn't cross the horizon on the requested date —
  * polar day (continuous daylight) and polar night (continuous
