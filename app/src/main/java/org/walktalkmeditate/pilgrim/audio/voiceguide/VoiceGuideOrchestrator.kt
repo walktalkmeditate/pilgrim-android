@@ -91,7 +91,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                     // `walkJob?.isActive != true` catches three cases:
                     // (1) null — first-ever spawn, (2) cancelled, and
                     // CRITICAL (3) completed-but-not-null. Plain
-                    // `== null` misses (3): if `eligiblePackOrNull()`
+                    // `== null` misses (3): if the eligible-pack check
                     // returns null (pack not yet downloaded, no
                     // selection, etc.), `runSchedulerLoop` returns
                     // normally and `walkJob` stays referencing a
@@ -100,36 +100,56 @@ class VoiceGuideOrchestrator @Inject constructor(
                     // the walk even after a pack becomes eligible
                     // (e.g., download completes + auto-selects).
                     if (walkJob?.isActive != true) {
-                        val silenceSec =
-                            if (exitingMeditation) randomPostMeditationSilenceSec() else 0
-                        walkJob = scope.launch {
-                            try {
-                                runSchedulerLoop(
-                                    ctx = VoiceGuideScheduler.SchedulerContext.Walk,
-                                    postMedSilenceSec = silenceSec,
-                                )
-                            } catch (ce: CancellationException) {
-                                throw ce
-                            } catch (t: Throwable) {
-                                Log.w(TAG, "walk scheduler loop failed", t)
+                        val pack = eligiblePackOrNullSync()
+                        if (pack != null) {
+                            // Only clear `exitingMeditation` (and
+                            // consume the silence window) when we
+                            // actually spawn with an eligible pack.
+                            // If the pack is briefly ineligible here
+                            // (e.g., transient FS state), a subsequent
+                            // Active emission — fired on every GPS
+                            // sample — re-attempts the spawn with the
+                            // silence buffer still armed.
+                            val silenceSec =
+                                if (exitingMeditation) randomPostMeditationSilenceSec() else 0
+                            exitingMeditation = false
+                            walkJob = scope.launch {
+                                try {
+                                    runSchedulerLoop(
+                                        pack = pack,
+                                        ctx = VoiceGuideScheduler.SchedulerContext.Walk,
+                                        postMedSilenceSec = silenceSec,
+                                    )
+                                } catch (ce: CancellationException) {
+                                    throw ce
+                                } catch (t: Throwable) {
+                                    Log.w(TAG, "walk scheduler loop failed", t)
+                                }
                             }
                         }
-                        exitingMeditation = false
                     }
                 }
                 is WalkState.Meditating -> {
                     walkJob?.cancel(); walkJob = null
                     exitingMeditation = true
                     if (meditationJob?.isActive != true) {
-                        meditationJob = scope.launch {
-                            try {
-                                runSchedulerLoop(
-                                    ctx = VoiceGuideScheduler.SchedulerContext.Meditation,
-                                )
-                            } catch (ce: CancellationException) {
-                                throw ce
-                            } catch (t: Throwable) {
-                                Log.w(TAG, "meditation scheduler loop failed", t)
+                        val pack = eligiblePackOrNullSync()
+                        // Only spawn when BOTH pack-is-eligible AND
+                        // pack-has-meditation-prompts. Otherwise
+                        // treat as a silent meditation session.
+                        if (pack != null && pack.meditationPrompts != null &&
+                            pack.meditationScheduling != null) {
+                            meditationJob = scope.launch {
+                                try {
+                                    runSchedulerLoop(
+                                        pack = pack,
+                                        ctx = VoiceGuideScheduler.SchedulerContext.Meditation,
+                                    )
+                                } catch (ce: CancellationException) {
+                                    throw ce
+                                } catch (t: Throwable) {
+                                    Log.w(TAG, "meditation scheduler loop failed", t)
+                                }
                             }
                         }
                     }
@@ -147,17 +167,19 @@ class VoiceGuideOrchestrator @Inject constructor(
     }
 
     private suspend fun runSchedulerLoop(
+        pack: VoiceGuidePack,
         ctx: VoiceGuideScheduler.SchedulerContext,
         postMedSilenceSec: Int = 0,
     ) {
-        val pack = eligiblePackOrNull() ?: return
         val (prompts: List<VoiceGuidePrompt>, density: PromptDensity) = when (ctx) {
             VoiceGuideScheduler.SchedulerContext.Walk ->
                 pack.prompts to pack.scheduling
             VoiceGuideScheduler.SchedulerContext.Meditation -> {
-                val medPrompts = pack.meditationPrompts
-                val medDensity = pack.meditationScheduling
-                if (medPrompts == null || medDensity == null) return
+                // Caller-side eligibility check already verified these
+                // are non-null, but pass the check again as a defense
+                // for future callers that skip the observer's guard.
+                val medPrompts = pack.meditationPrompts ?: return
+                val medDensity = pack.meditationScheduling ?: return
                 medPrompts to medDensity
             }
         }
@@ -202,24 +224,34 @@ class VoiceGuideOrchestrator @Inject constructor(
         player.play(file) { sched.markPlayed(prompt.id) }
     }
 
-    private suspend fun eligiblePackOrNull(): VoiceGuidePack? {
-        // `selectedPackId.value` assumes the upstream `stateIn(
-        // WhileSubscribed)` flow has already captured the persisted
-        // DataStore value. In practice this is true because the
-        // picker UI (Stage 5-D) subscribes the flow when the user
-        // navigates there to select a pack, and `WhileSubscribed`
-        // retains the last value after subscribers leave. On a true
-        // process-restart scenario where nothing has ever subscribed
-        // (e.g., user selected on device A, restored walk on device B
-        // from a `.pilgrim` import — hypothetical), `.value` would
-        // return the initial `null` until something collects and
-        // warms the flow. If we see silent misses during on-device
-        // QA, add a `selectedPackId.first { it != null }` barrier
-        // with a bounded `withTimeoutOrNull`.
+    /**
+     * Non-suspend eligibility check called from the observer's
+     * collect lambda. Returns the pack only if it's selected, present
+     * in the manifest, and fully downloaded. If the manifest's
+     * initial load hasn't completed yet (true race on a fresh cold
+     * start followed immediately by a walk — improbable given the
+     * UI onboarding flow), `manifestService.pack(id)` returns null
+     * and we treat the pack as ineligible. The next `Active`
+     * emission (GPS sample a second or two later) retries.
+     *
+     * Keeping this non-suspend avoids a subtle `StateFlow` conflation
+     * risk: a suspend call inside `walkState.collect { }` could miss
+     * intermediate state transitions (e.g., `Active → Meditating →
+     * Active` while we're awaiting a Deferred). Observer state
+     * (walkJob/meditationJob/exitingMeditation) depends on seeing
+     * every transition.
+     *
+     * `selectedPackId.value` assumes the upstream `stateIn(
+     * WhileSubscribed)` flow has captured the persisted DataStore
+     * value. Safe in production because `VoiceGuideDownloadObserver`
+     * keeps `packStates` (→ `selectedPackId`) subscribed for the app
+     * process lifetime.
+     */
+    private fun eligiblePackOrNullSync(): VoiceGuidePack? {
         val packId = selectedPackId.value ?: return null
-        manifestService.initialLoad.await()
         val pack = manifestService.pack(id = packId) ?: return null
-        // Same rationale as above — filesystem read on Default is fine.
+        // Filesystem read on Default is fine — a couple of `exists +
+        // length` syscalls, not Main-thread, no ANR risk.
         return if (fileStore.isPackDownloaded(pack)) pack else null
     }
 
