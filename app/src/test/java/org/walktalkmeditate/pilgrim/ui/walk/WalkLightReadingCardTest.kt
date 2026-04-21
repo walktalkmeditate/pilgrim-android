@@ -77,13 +77,10 @@ class WalkLightReadingCardTest {
                 }
             }
         }
-        // Koan and footer still present.
         composeRule.onNodeWithText("The moon reflects in ten thousand pools.").assertIsDisplayed()
         composeRule.onNodeWithText("— a light reading").assertIsDisplayed()
-        // Attribution-style text NOT present. "— Zen" shouldn't exist.
-        // We can't easily assert negative text nodes; rely on the
-        // fully-populated test asserting "— Zen" IS displayed, and
-        // trust the if-null conditional.
+        // Attribution line is "— Zen" (bare-dash prefix). Assert absent.
+        composeRule.onNodeWithText("— Zen").assertDoesNotExist()
     }
 
     @Test fun `null sun hides the sun line but keeps moon and planetary`() {
@@ -101,6 +98,9 @@ class WalkLightReadingCardTest {
         composeRule.onNodeWithText("Waxing Gibbous · 78% lit").assertIsDisplayed()
         composeRule.onNodeWithText("Hour of Venus · Friday").assertIsDisplayed()
         composeRule.onNodeWithText("— a light reading").assertIsDisplayed()
+        // Sun line would start with "Sunrise " — assert that exact string
+        // from the full-reading case is absent.
+        composeRule.onNodeWithText("Sunrise 05:47 · Sunset 21:58").assertDoesNotExist()
     }
 
     @Test fun `polar sun with null rise and set hides the sun line`() {
@@ -121,6 +121,8 @@ class WalkLightReadingCardTest {
         }
         composeRule.onNodeWithText("The moon reflects in ten thousand pools.").assertIsDisplayed()
         composeRule.onNodeWithText("Waxing Gibbous · 78% lit").assertIsDisplayed()
+        // Neither Sunrise nor Sunset labels should render in the polar case.
+        composeRule.onNodeWithText("Sunrise 05:47 · Sunset 21:58").assertDoesNotExist()
     }
 
     @Test fun `long koan text renders without crash`() {
