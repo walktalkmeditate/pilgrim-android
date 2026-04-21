@@ -40,21 +40,20 @@ class WalkLightReadingCardTest {
         ),
         attribution: String? = "Zen",
         koanText: String = "The moon reflects in ten thousand pools.",
+        zoneId: ZoneId = ZoneId.of("Europe/Paris"),
     ): LightReading = LightReading(
         moon = MoonPhase(name = moonName, illumination = illumination, ageInDays = 10.0),
         sun = sun,
         planetaryHour = PlanetaryHour(planet = Planet.Venus, dayRuler = Planet.Venus),
         koan = Koan(text = koanText, attribution = attribution),
+        zoneId = zoneId,
     )
 
     @Test fun `fully-populated reading renders koan moon planetary sun attribution footer`() {
         composeRule.setContent {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
-                    WalkLightReadingCard(
-                        reading = reading(),
-                        zoneId = ZoneId.of("Europe/Paris"),
-                    )
+                    WalkLightReadingCard(reading = reading())
                 }
             }
         }
@@ -70,10 +69,7 @@ class WalkLightReadingCardTest {
         composeRule.setContent {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
-                    WalkLightReadingCard(
-                        reading = reading(attribution = null),
-                        zoneId = ZoneId.of("Europe/Paris"),
-                    )
+                    WalkLightReadingCard(reading = reading(attribution = null))
                 }
             }
         }
@@ -87,10 +83,7 @@ class WalkLightReadingCardTest {
         composeRule.setContent {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
-                    WalkLightReadingCard(
-                        reading = reading(sun = null),
-                        zoneId = ZoneId.of("Europe/Paris"),
-                    )
+                    WalkLightReadingCard(reading = reading(sun = null))
                 }
             }
         }
@@ -113,8 +106,7 @@ class WalkLightReadingCardTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     WalkLightReadingCard(
-                        reading = reading(sun = polarSun),
-                        zoneId = ZoneId.of("UTC"),
+                        reading = reading(sun = polarSun, zoneId = ZoneId.of("UTC")),
                     )
                 }
             }
@@ -132,7 +124,6 @@ class WalkLightReadingCardTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     WalkLightReadingCard(
                         reading = reading(koanText = longText, attribution = null),
-                        zoneId = ZoneId.of("Europe/Paris"),
                     )
                 }
             }

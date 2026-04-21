@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.core.celestial
 
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import kotlin.math.acos
@@ -15,20 +16,19 @@ import kotlin.math.tan
  * Sun-times calculator — NOAA Simplified Solar Position Algorithm.
  *
  * Computes sunrise, sunset, and solar noon for a latitude/longitude
- * on the UTC date containing [instant]. Accuracy ≈ ±1 minute for
- * latitudes up to ~70°; beyond that the atmospheric-refraction
- * assumptions (−0.833° constant) begin to fail.
+ * on the LOCAL date containing [instant] in [zoneId]. Accuracy ≈ ±1
+ * minute for latitudes up to ~70°; beyond that the atmospheric-
+ * refraction assumptions (−0.833° constant) begin to fail.
  *
- * **UTC-date anchor.** All returned [Instant]s are relative to the
- * UTC day containing the input instant, NOT the caller's local
- * day. For east-of-prime-meridian longitudes near the dateline
- * (AEDT, NZST), the returned [SunTimes.sunrise] and/or
- * [SunTimes.sunset] can fall on the UTC date PRIOR to the query
- * date — e.g. Sydney's sunrise on UTC Dec 21 is actually Dec 20
- * 18:40 UTC (= Dec 21 05:40 AEDT). Callers that render "today's
- * sunrise" in local time should first convert the returned
- * Instant to the user's zone, then read the local date from that
- * zoned value.
+ * **Local-date anchor.** The algorithm picks the calendar date from
+ * `instant.atZone(zoneId).toLocalDate()` — this is the user's
+ * calendar date at the walk's location. Without this, a walker in
+ * AEDT (UTC+11) starting a walk at 00:30 local (= 13:30 UTC the
+ * previous day) would see the previous day's sun times in their
+ * summary. The returned [SunTimes.sunrise]/[SunTimes.sunset]
+ * [Instant]s can still fall before or after that local midnight in
+ * UTC terms; callers rendering "today's sunrise" should convert to
+ * the same [zoneId] for display.
  *
  * Polar handling: [SunTimes.sunrise] and [SunTimes.sunset] are null
  * when the sun doesn't cross the horizon on the requested date —
@@ -44,9 +44,24 @@ internal object SunCalc {
     /** −0.833° = standard refraction (−0.583°) + sun radius (−0.25°). */
     private const val HORIZON_ZENITH_DEG = 90.833
 
-    fun sunTimes(instant: Instant, latitude: Double, longitude: Double): SunTimes {
-        val date = instant.atOffset(ZoneOffset.UTC).toLocalDate()
-        val midnightUtc = date.atStartOfDay().toInstant(ZoneOffset.UTC)
+    fun sunTimes(
+        instant: Instant,
+        latitude: Double,
+        longitude: Double,
+        zoneId: ZoneId,
+    ): SunTimes {
+        // Pick the UTC date that contains LOCAL NOON of the walker's
+        // local date in `zoneId`. The NOAA formula's
+        // `720 - 4*longitude - eqTime` baked-in longitude correction
+        // requires midnightUtc to be a real UTC midnight — we just
+        // need to pick the RIGHT one. For a walker in AEDT starting
+        // at 00:30 local (= 13:30 UTC previous day), local noon is
+        // UTC+01:00 the "correct" day, so this picks the correct UTC
+        // date rather than the stale UTC-of-instant.
+        val localDate = instant.atZone(zoneId).toLocalDate()
+        val localNoonInstant = localDate.atTime(12, 0).atZone(zoneId).toInstant()
+        val anchorDate = localNoonInstant.atOffset(ZoneOffset.UTC).toLocalDate()
+        val midnightUtc = anchorDate.atStartOfDay().toInstant(ZoneOffset.UTC)
         val jdMidnight = julianDay(midnightUtc)
 
         // Compute solar parameters at approximate solar noon UTC.

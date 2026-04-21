@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.core.celestial
 
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -17,6 +19,7 @@ class SunCalcTest {
             Instant.parse("2024-06-21T12:00:00Z"),
             latitude = 48.8566,
             longitude = 2.3522,
+            zoneId = ZoneId.of("Europe/Paris"),
         )
         assertWithin(
             expected = Instant.parse("2024-06-21T03:47:00Z"),
@@ -40,6 +43,7 @@ class SunCalcTest {
             Instant.parse("2024-12-21T12:00:00Z"),
             latitude = 48.8566,
             longitude = 2.3522,
+            zoneId = ZoneId.of("Europe/Paris"),
         )
         assertWithin(
             Instant.parse("2024-12-21T07:41:00Z"),
@@ -63,6 +67,7 @@ class SunCalcTest {
             Instant.parse("2024-12-21T00:00:00Z"),
             latitude = -33.8688,
             longitude = 151.2093,
+            zoneId = ZoneId.of("Australia/Sydney"),
         )
         assertWithin(
             Instant.parse("2024-12-20T18:40:00Z"),
@@ -85,6 +90,7 @@ class SunCalcTest {
             Instant.parse("2024-03-20T12:00:00Z"),
             latitude = 0.0,
             longitude = 0.0,
+            zoneId = ZoneOffset.UTC,
         )
         val sunrise = times.sunrise!!
         val sunset = times.sunset!!
@@ -100,6 +106,7 @@ class SunCalcTest {
             Instant.parse("2024-06-21T12:00:00Z"),
             latitude = 80.0,
             longitude = 0.0,
+            zoneId = ZoneOffset.UTC,
         )
         assertNull("polar day sunrise should be null", times.sunrise)
         assertNull("polar day sunset should be null", times.sunset)
@@ -111,6 +118,7 @@ class SunCalcTest {
             Instant.parse("2024-12-21T12:00:00Z"),
             latitude = 80.0,
             longitude = 0.0,
+            zoneId = ZoneOffset.UTC,
         )
         assertNull("polar night sunrise should be null", times.sunrise)
         assertNull("polar night sunset should be null", times.sunset)
@@ -123,6 +131,7 @@ class SunCalcTest {
             Instant.parse("2024-06-21T12:00:00Z"),
             latitude = 89.9999,
             longitude = 0.0,
+            zoneId = ZoneOffset.UTC,
         )
         assertNotNull(times.solarNoon)
     }
@@ -138,9 +147,36 @@ class SunCalcTest {
             Instant.parse("2024-06-21T12:00:00Z"),
             latitude = 48.8566,
             longitude = 2.3522,
+            zoneId = ZoneId.of("Europe/Paris"),
         )
         val expected = Instant.parse("2024-06-21T11:49:00Z")
         assertWithin(expected, times.solarNoon, 5, "Paris solar noon")
+    }
+
+    @Test fun `sydney past-local-midnight picks next UTC day for sun times`() {
+        // Walker in Sydney (AEDT = UTC+11) starts at local Dec 22
+        // 03:00 AEDT (= Dec 21 16:00 UTC). UTC-only anchoring (the
+        // old behavior) would have returned Dec 21 UTC sunrise/sunset
+        // — which is Dec 21 local in AEDT. With the zoneId fix, we
+        // anchor to the UTC date containing Dec 22 AEDT's local noon
+        // (= Dec 22 01:00 UTC), so we get Dec 22's sunrise (= Dec 21
+        // 18:40 UTC ± small drift since Sydney's summer sunrise
+        // shifts <1 min day-over-day).
+        val times = SunCalc.sunTimes(
+            Instant.parse("2024-12-21T16:00:00Z"),
+            latitude = -33.8688,
+            longitude = 151.2093,
+            zoneId = ZoneId.of("Australia/Sydney"),
+        )
+        // Dec 22's Sydney sunrise is approximately Dec 21 18:41 UTC
+        // (one minute later than Dec 21's, per astronomical drift).
+        // Tolerance ±3 min absorbs day-to-day variation.
+        assertWithin(
+            Instant.parse("2024-12-21T18:41:00Z"),
+            times.sunrise!!,
+            3,
+            "Sydney past-midnight sunrise for local Dec 22",
+        )
     }
 
     private fun assertWithin(

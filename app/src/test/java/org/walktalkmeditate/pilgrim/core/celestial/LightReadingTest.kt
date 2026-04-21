@@ -34,6 +34,10 @@ class LightReadingTest {
         assertEquals(Planet.Venus, reading.planetaryHour.dayRuler)
         assertTrue(reading.koan.text.isNotBlank())
         assertTrue(reading.koan.text in Koans.all.map { it.text })
+        // Stage 6-B: zoneId is stored on the aggregate so the UI
+        // never displays a different zone than the one the planetary
+        // hour was computed with.
+        assertEquals(ZoneId.of("Europe/Paris"), reading.zoneId)
     }
 
     @Test fun `without location sun is null but moon planetaryHour koan still computed`() {

@@ -29,7 +29,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.time.ZoneId
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -51,7 +50,6 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @Composable
 fun WalkLightReadingCard(
     reading: LightReading,
-    zoneId: ZoneId = ZoneId.systemDefault(),
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -147,8 +145,10 @@ fun WalkLightReadingCard(
             }
 
             // Sun line (conditional — omitted for no-GPS walks and
-            // polar regions).
-            val sunLine = LightReadingPresenter.sunLine(reading.sun, zoneId)
+            // polar regions). Uses the zone the reading was computed
+            // with (stored on LightReading) so display and planetary-
+            // hour calc never diverge.
+            val sunLine = LightReadingPresenter.sunLine(reading.sun, reading.zoneId)
             if (sunLine != null) {
                 Text(
                     text = sunLine,
