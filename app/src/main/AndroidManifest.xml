@@ -70,25 +70,16 @@
                 tools:node="remove" />
         </provider>
 
-        <!-- Stage 7-A: enable the Google Play services Photo Picker
-             backport on API 28-29 devices. Without this stanza the
-             AndroidX Photo Picker contract falls back to SAF
-             (ACTION_OPEN_DOCUMENT) on older OS versions — functional
-             but visually jarring (file-browser UI instead of the
-             photo grid). With Play services present, API 28-29 devices
-             get the modern picker through the GMS-delivered module.
-             No-op on devices without Play services; those fall back
-             to SAF as intended. -->
-        <service
-            android:name="com.google.android.gms.metadata.ModuleDependencies"
-            android:enabled="false"
-            android:exported="false"
-            tools:ignore="MissingClass">
-            <intent-filter>
-                <action android:name="com.google.android.gms.metadata.MODULE_DEPENDENCIES" />
-            </intent-filter>
-            <meta-data android:name="photopicker_activity:0:required" android:value="" />
-        </service>
+        <!-- Stage 7-A: No Play Services Photo Picker backport is wired
+             here. Activating the backport would require adding
+             com.google.android.gms:play-services-picker and publishing
+             the ModuleDependencies <service>. API 28-29 devices
+             therefore fall back to SAF (ACTION_OPEN_DOCUMENT) — a
+             file-browser UI rather than the photo grid, but
+             functionally correct for picking an image. API 30+ uses
+             the native Photo Picker directly. Re-evaluate wiring the
+             backport in a later stage if API-28-29 usage is
+             meaningful. -->
 
     </application>
 </manifest>

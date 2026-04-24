@@ -75,16 +75,22 @@ fun PhotoReliquarySection(
     // surface (future: deep-link, widget) doesn't leave a dead dialog.
     var photoToRemove by remember { mutableStateOf<WalkPhoto?>(null) }
 
-    // Branch on slots at launch time:
-    //  - 0 slots: button is disabled; never launch anything.
-    //  - 1 slot: PickMultipleVisualMedia requires maxItems > 1, so use
-    //    the single-pick contract.
-    //  - 2..N slots: multi-pick clamped to `slots`.
+    // Single, stable multi-picker contract with the maximum ever allowed
+    // by the cap. The OS picker enforces `maxItems`; we additionally
+    // clip in the callback to the slots available *right now* so
+    // rapid-pin sequences (user picks 5, taps Add before the first
+    // batch commits) can't exceed the cap. Pinning the contract at
+    // MAX ensures rememberLauncherForActivityResult never
+    // unregisters/registers on `slots` changes — which would race
+    // with an in-flight picker intent.
     val multiLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(
-            maxItems = slots.coerceAtLeast(2),
+            maxItems = MAX_PINS_PER_WALK,
         ),
     ) { uris -> if (uris.isNotEmpty()) onPinPhotos(uris) }
+    // Single-pick fallback kept for the `slots == 1` case —
+    // PickMultipleVisualMedia requires maxItems > 1, so we cannot clamp
+    // the multi contract to 1 even though the VM would clip anyway.
     val singleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri -> if (uri != null) onPinPhotos(listOf(uri)) }
@@ -225,8 +231,11 @@ private fun PhotoTile(
                 )
             },
     ) {
+        // Pass the URI string directly — Coil 3 resolves String
+        // content://… models via AndroidContentUriFetcher, avoiding the
+        // Uri.parse allocation that would run on every recomposition.
         SubcomposeAsyncImage(
-            model = Uri.parse(photo.photoUri),
+            model = photo.photoUri,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
