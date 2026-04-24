@@ -78,7 +78,7 @@ class WalkPhotoDataLayerTest {
     }
 
     @Test
-    fun `pinPhotos commits a batch and returns ids`() = runTest {
+    fun `pinPhotos commits a batch and returns inserted ids`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
         val refs = listOf(
             PhotoPinRef("content://x/1", takenAt = null),
@@ -86,20 +86,22 @@ class WalkPhotoDataLayerTest {
             PhotoPinRef("content://x/3", takenAt = 20L),
         )
 
-        val ids = repository.pinPhotos(walk.id, refs, pinnedAt = 5_000L)
+        val result = repository.pinPhotos(walk.id, refs, pinnedAt = 5_000L)
 
-        assertEquals(3, ids.size)
+        assertEquals(3, result.insertedIds.size)
+        assertTrue(result.insertedIds.all { it > 0 })
+        assertTrue(result.droppedOrphanUris.isEmpty())
         assertEquals(3, repository.countPhotosFor(walk.id))
-        assertTrue(ids.all { it > 0 })
     }
 
     @Test
     fun `pinPhotos with empty refs is a no-op`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
 
-        val ids = repository.pinPhotos(walk.id, refs = emptyList(), pinnedAt = 5_000L)
+        val result = repository.pinPhotos(walk.id, refs = emptyList(), pinnedAt = 5_000L)
 
-        assertTrue(ids.isEmpty())
+        assertTrue(result.insertedIds.isEmpty())
+        assertTrue(result.droppedOrphanUris.isEmpty())
         assertEquals(0, repository.countPhotosFor(walk.id))
     }
 
@@ -181,7 +183,7 @@ class WalkPhotoDataLayerTest {
     }
 
     @Test
-    fun `pinPhotos clips the batch to the cap when the walk is already near the limit`() = runTest {
+    fun `pinPhotos clips and reports orphan URIs when the walk is near the limit`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
         // Seed 18 pins of a 20-cap walk.
         repository.pinPhotos(
@@ -192,20 +194,26 @@ class WalkPhotoDataLayerTest {
         )
         assertEquals(18, repository.countPhotosFor(walk.id))
 
-        // Try to add 5 more under a 20 cap — only 2 should land.
-        val returnedIds = repository.pinPhotos(
+        // Try to add 5 more under a 20 cap — only the first 2 should
+        // land; the remaining 3 come back as orphan URIs the VM must
+        // release persistable grants on.
+        val result = repository.pinPhotos(
             walkId = walk.id,
             refs = (100..104).map { PhotoPinRef("content://y/$it", takenAt = null) },
             pinnedAt = 2_000L,
             cap = 20,
         )
 
-        assertEquals(2, returnedIds.size)
+        assertEquals(2, result.insertedIds.size)
+        assertEquals(
+            listOf("content://y/102", "content://y/103", "content://y/104"),
+            result.droppedOrphanUris,
+        )
         assertEquals(20, repository.countPhotosFor(walk.id))
     }
 
     @Test
-    fun `pinPhotos returns empty when the walk is already at the cap`() = runTest {
+    fun `pinPhotos returns all refs as orphans when the walk is already at the cap`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
         repository.pinPhotos(
             walkId = walk.id,
@@ -215,15 +223,53 @@ class WalkPhotoDataLayerTest {
         )
         assertEquals(5, repository.countPhotosFor(walk.id))
 
-        val returnedIds = repository.pinPhotos(
+        val result = repository.pinPhotos(
             walkId = walk.id,
             refs = listOf(PhotoPinRef("content://y/1", takenAt = null)),
             pinnedAt = 2_000L,
             cap = 5,
         )
 
-        assertTrue(returnedIds.isEmpty())
+        assertTrue(result.insertedIds.isEmpty())
+        assertEquals(listOf("content://y/1"), result.droppedOrphanUris)
         assertEquals(5, repository.countPhotosFor(walk.id))
+    }
+
+    @Test
+    fun `pinPhotos does NOT orphan a clipped URI still pinned to another walk`() = runTest {
+        // A URI referenced by another walk must stay out of
+        // droppedOrphanUris even when this walk's batch gets clipped —
+        // releasing its grant would tombstone the other walk's tile.
+        val walkA = repository.startWalk(startTimestamp = 1_000L)
+        val walkB = repository.startWalk(startTimestamp = 2_000L)
+        val sharedUri = "content://media/picker/0/shared"
+        repository.pinPhoto(
+            walkId = walkB.id,
+            photoUri = sharedUri,
+            takenAt = null,
+            pinnedAt = 3_000L,
+        )
+        // Fill walk A up to the cap so the next batch is fully clipped.
+        repository.pinPhotos(
+            walkId = walkA.id,
+            refs = (1..5).map { PhotoPinRef("content://a/$it", takenAt = null) },
+            pinnedAt = 4_000L,
+            cap = 5,
+        )
+
+        val result = repository.pinPhotos(
+            walkId = walkA.id,
+            refs = listOf(PhotoPinRef(sharedUri, takenAt = null)),
+            pinnedAt = 5_000L,
+            cap = 5,
+        )
+
+        assertTrue(result.insertedIds.isEmpty())
+        assertTrue(
+            "shared URI must not appear in orphan list (walk B still pins it)",
+            result.droppedOrphanUris.isEmpty(),
+        )
+        assertEquals(1, repository.countPhotosFor(walkB.id))
     }
 
     @Test
