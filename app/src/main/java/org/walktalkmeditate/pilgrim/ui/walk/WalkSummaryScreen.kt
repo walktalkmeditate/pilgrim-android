@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 
 @Composable
 fun WalkSummaryScreen(
@@ -48,6 +49,7 @@ fun WalkSummaryScreen(
     val recordings by viewModel.recordings.collectAsStateWithLifecycle()
     val playbackUiState by viewModel.playbackUiState.collectAsStateWithLifecycle()
     val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
+    val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
@@ -93,6 +95,18 @@ fun WalkSummaryScreen(
                     SummaryMap(points = s.summary.routePoints)
                     Spacer(Modifier.height(PilgrimSpacing.big))
                     SummaryStats(summary = s.summary)
+                    // Stage 7-A: the reliquary sits between the
+                    // objective stats and the interpretive Light
+                    // Reading — tangible artifacts first, felt content
+                    // after. Section always renders; its header
+                    // carries the "Add photos" affordance even with an
+                    // empty grid.
+                    Spacer(Modifier.height(PilgrimSpacing.big))
+                    PhotoReliquarySection(
+                        photos = pinnedPhotos,
+                        onPinPhotos = viewModel::pinPhotos,
+                        onUnpinPhoto = viewModel::unpinPhoto,
+                    )
                     // Stage 6-B: contemplative payoff card below the
                     // stats. VM's runCatching means a compute failure
                     // yields null here and the card just doesn't
