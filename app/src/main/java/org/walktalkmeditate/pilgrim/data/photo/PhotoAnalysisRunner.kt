@@ -51,18 +51,30 @@ class PhotoAnalysisRunner @Inject constructor(
             val top: LabeledResult? = if (bitmap == null) {
                 null
             } else {
+                // We own the Bitmap; release it once we know the
+                // labeler call has fully settled (happy path or
+                // non-CancellationException throw). On cancellation,
+                // ML Kit's Task may still be reading the native
+                // pixel buffer from a background thread — recycling
+                // at that moment would SIGSEGV on real devices. Let
+                // GC reclaim in the cancelled path; we're tearing
+                // down anyway.
+                var settled = false
                 try {
-                    labeler.label(bitmap).firstOrNull()
+                    val result = labeler.label(bitmap).firstOrNull()
+                    settled = true
+                    result
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
                     Log.w(TAG, "labeler failed id=${photo.id}; storing null label", t)
+                    // A thrown-but-not-cancelled Task has settled —
+                    // ML Kit released the bitmap internally before
+                    // raising, so we can safely recycle below.
+                    settled = true
                     null
                 } finally {
-                    // We own the Bitmap; release it before the next
-                    // iteration so a 20-photo batch doesn't accumulate
-                    // ~30 MB of decoded images in memory.
-                    bitmap.recycle()
+                    if (settled) bitmap.recycle()
                 }
             }
             try {
