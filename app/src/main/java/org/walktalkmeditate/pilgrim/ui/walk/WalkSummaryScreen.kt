@@ -29,8 +29,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.ui.walk.share.JourneyRowState
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
@@ -46,6 +49,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 @Composable
 fun WalkSummaryScreen(
     onDone: () -> Unit,
+    onShareJourney: () -> Unit = {},
     viewModel: WalkSummaryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -64,10 +68,13 @@ fun WalkSummaryScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val etegamiBusy by viewModel.etegamiBusy.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
+    val context = LocalContext.current
     val msgSaveSuccess = stringResource(R.string.etegami_save_success)
     val msgSaveFailed = stringResource(R.string.etegami_save_failed)
     val msgShareFailed = stringResource(R.string.etegami_share_failed)
     val msgNeedsPermission = stringResource(R.string.etegami_save_needs_permission)
+    val msgCopied = stringResource(R.string.share_journey_copied)
+    val msgChooserTitle = stringResource(R.string.share_modal_chooser_title)
     LaunchedEffect(viewModel) {
         viewModel.etegamiEvents.collect { ev ->
             when (ev) {
@@ -164,26 +171,47 @@ fun WalkSummaryScreen(
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         WalkLightReadingCard(reading = reading)
                     }
-                    // Stage 7-C: etegami preview card. Null when the
-                    // VM's composeEtegamiSpec throws (shouldn't happen
-                    // in production; guarded for log-and-skip). Slotted
-                    // between Light Reading (contemplative) and Voice
-                    // Recordings (conversational tail).
-                    s.summary.etegamiSpec?.let { etegami ->
+                    // Stage 8-A: wrap BOTH the 7-C/7-D etegami card +
+                    // share row AND the 8-A journey-share row in a
+                    // single hasRoute guard — iOS WalkSharingButtons
+                    // parity (whole card is absent for walks with
+                    // fewer than 2 GPS points). Share endpoint also
+                    // rejects routes < 2 points server-side.
+                    if (s.summary.routePoints.size >= 2) {
+                        s.summary.etegamiSpec?.let { etegami ->
+                            Spacer(Modifier.height(PilgrimSpacing.big))
+                            WalkEtegamiCard(spec = etegami)
+                            WalkEtegamiShareRow(
+                                busyAction = etegamiBusy,
+                                onShare = { viewModel.shareEtegami(etegami) },
+                                onSave = { viewModel.saveEtegamiToGallery(etegami) },
+                                onSavePermissionDenied = {
+                                    viewModel.notifyEtegamiSaveNeedsPermission()
+                                },
+                            )
+                        }
+                        // Stage 8-A: journey-share section (web page).
+                        val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
+                        val rowState = cachedShare.toJourneyRowState()
                         Spacer(Modifier.height(PilgrimSpacing.big))
-                        WalkEtegamiCard(spec = etegami)
-                        // Stage 7-D: share / save action row slotted
-                        // under the preview card. iOS WalkSharingButtons
-                        // pairs these affordances with the image itself.
-                        WalkEtegamiShareRow(
-                            busyAction = etegamiBusy,
-                            onShare = { viewModel.shareEtegami(etegami) },
-                            onSave = { viewModel.saveEtegamiToGallery(etegami) },
-                            onSavePermissionDenied = {
-                                // Route denial through the same
-                                // snackbar as the in-saver check, so
-                                // the user gets consistent feedback.
-                                viewModel.notifyEtegamiSaveNeedsPermission()
+                        org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareJourneyRow(
+                            state = rowState,
+                            onShareJourney = onShareJourney,
+                            onReshare = onShareJourney,
+                            onReopenModal = onShareJourney,
+                            onCopyUrl = { url ->
+                                org.walktalkmeditate.pilgrim.ui.walk.share.copyUrl(
+                                    context,
+                                    url,
+                                    msgCopied,
+                                )
+                            },
+                            onShareUrl = { url ->
+                                org.walktalkmeditate.pilgrim.ui.walk.share.launchShareChooser(
+                                    activity ?: context,
+                                    url,
+                                    msgChooserTitle,
+                                )
                             },
                         )
                     }
@@ -368,4 +396,21 @@ private fun SummaryRow(label: String, value: String) {
             color = pilgrimColors.ink,
         )
     }
+}
+
+
+/**
+ * Stage 8-A: CachedShare → JourneyRowState projection. `null` or
+ * expired → Fresh / Expired respectively; non-null + non-expired →
+ * Active. Wall-clock comparison at read time (iOS parity, no ticker).
+ */
+private fun CachedShare?.toJourneyRowState(): JourneyRowState = when {
+    this == null -> JourneyRowState.Fresh
+    isExpiredAt() -> JourneyRowState.Expired(expiryOption)
+    else -> JourneyRowState.Active(
+        url = url,
+        expiryEpochMs = expiryEpochMs,
+        shareDateEpochMs = shareDateEpochMs,
+        expiryOption = expiryOption,
+    )
 }

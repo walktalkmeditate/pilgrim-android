@@ -115,6 +115,11 @@ class WalkSummaryViewModelTest {
 
     private fun newViewModel(walkId: Long): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
+        val json = kotlinx.serialization.json.Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
+        val cachedShareStore = org.walktalkmeditate.pilgrim.data.share.CachedShareStore(context, json)
         return WalkSummaryViewModel(
             context = context,
             repository = repository,
@@ -122,6 +127,7 @@ class WalkSummaryViewModelTest {
             sweeper = sweeper,
             photoAnalysisScheduler = photoAnalysisScheduler,
             hemisphereRepository = hemisphereRepo,
+            cachedShareStore = cachedShareStore,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
     }
