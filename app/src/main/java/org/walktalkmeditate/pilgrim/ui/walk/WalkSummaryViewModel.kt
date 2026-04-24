@@ -41,6 +41,7 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones
 import org.walktalkmeditate.pilgrim.ui.goshuin.WalkMilestoneInput
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.MAX_PINS_PER_WALK
 
 /**
  * Three-state load for the summary screen: the VM's [summary] flow
@@ -218,20 +219,31 @@ class WalkSummaryViewModel @Inject constructor(
      * (persistable URI grant + `DATE_TAKEN` cursor) and Room. All rows
      * share the same `pinnedAt` wall-clock so they sort together and
      * arrive as a single grid diff.
+     *
+     * Clipping to remaining slots is done here, at commit time, against
+     * `pinnedPhotos.value` — the UI computes slots from its own
+     * snapshot, which can be stale if the user taps Add twice in quick
+     * succession before the first batch's Room write commits. Clipping
+     * on the IO side closes that race so the cap is the source of
+     * truth no matter how the UI raced ahead.
      */
     fun pinPhotos(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
+            val remainingBefore = (MAX_PINS_PER_WALK - pinnedPhotos.value.size)
+                .coerceAtLeast(0)
+            val clipped = uris.take(remainingBefore)
+            if (clipped.isEmpty()) return@launch
             val pinnedAt = System.currentTimeMillis()
-            val refs = uris.map { uri ->
+            val refs = clipped.map { uri ->
                 // Hold a persistable read grant so the URI survives
-                // process death. Safe to swallow SecurityException here:
-                // some OEM pickers (or SAF-fallback on API 28-29 without
-                // Play Services) reject the call; the ephemeral grant
-                // still works for the current process, and the row
-                // will insert either way. We simply lose cross-boot
+                // process death. Safe to swallow SecurityException
+                // here: some OEM pickers (or SAF-fallback on API 28-29
+                // without Play Services) reject the call; the ephemeral
+                // grant still works for the current process, and the
+                // row will insert either way. We simply lose cross-boot
                 // durability on those devices — a documented
-                // limitation.
+                // limitation to verify during device QA.
                 runCatching {
                     context.contentResolver.takePersistableUriPermission(
                         uri,
