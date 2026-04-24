@@ -145,7 +145,13 @@ class WalkShareViewModel @Inject constructor(
      */
     fun share() {
         if (!_isSharing.compareAndSet(expect = false, update = true)) return
-        viewModelScope.launch {
+        // Explicit IO dispatcher — viewModelScope.launch defaults to
+        // Main, and although ShareService.share() hops to IO
+        // internally via withContext, the rest of the body (payload
+        // build dispatch, DataStore put, event emit) all belong off
+        // Main anyway (Stage 2-E ANR lesson — never rely on callees
+        // to hop for you).
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val loaded = _uiState.value as? WalkShareUiState.Loaded ?: run {
                     _events.tryEmit(WalkShareEvent.Failed("Walk not loaded yet."))

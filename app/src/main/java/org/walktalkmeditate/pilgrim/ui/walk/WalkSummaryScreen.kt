@@ -57,6 +57,16 @@ fun WalkSummaryScreen(
     val playbackUiState by viewModel.playbackUiState.collectAsStateWithLifecycle()
     val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
+    // Stage 8-A: must be collected unconditionally here, not inside
+    // the Loaded branch's `if (routePoints.size >= 2)` nested block.
+    // `collectAsStateWithLifecycle` calls `remember` internally, and
+    // Compose's slot-table traversal requires `remember` calls to be
+    // made from a stable call site. Putting it inside the branch
+    // would shift positions if `state` ever transitions back to
+    // Loading (future pull-to-refresh / deletion flow) and crash
+    // with IllegalStateException. Today's single-emission state
+    // flow happens to mask the bug; hoist pre-emptively.
+    val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
@@ -191,7 +201,9 @@ fun WalkSummaryScreen(
                             )
                         }
                         // Stage 8-A: journey-share section (web page).
-                        val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
+                        // `cachedShare` is collected unconditionally at the
+                        // composable's top (see hoisting comment there);
+                        // map to the row's tri-state at the call site.
                         val rowState = cachedShare.toJourneyRowState()
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareJourneyRow(
