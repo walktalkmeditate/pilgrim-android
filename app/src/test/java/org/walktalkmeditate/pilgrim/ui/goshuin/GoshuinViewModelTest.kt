@@ -71,6 +71,7 @@ class GoshuinViewModelTest {
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
             voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
         )
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(

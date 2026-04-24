@@ -11,6 +11,7 @@ import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
@@ -18,6 +19,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 
 @Singleton
@@ -30,6 +32,7 @@ class WalkRepository @Inject constructor(
     private val activityIntervalDao: ActivityIntervalDao,
     private val waypointDao: WaypointDao,
     private val voiceRecordingDao: VoiceRecordingDao,
+    private val walkPhotoDao: WalkPhotoDao,
 ) {
     fun observeAllWalks(): Flow<List<Walk>> = walkDao.observeAll()
 
@@ -123,4 +126,65 @@ class WalkRepository @Inject constructor(
 
     suspend fun countVoiceRecordingsFor(walkId: Long): Int =
         voiceRecordingDao.countForWalk(walkId)
+
+    // --- Stage 7-A: photo reliquary -----------------------------------
+
+    /**
+     * Pin a single photo to [walkId]. Callers must hand over the exact
+     * [pinnedAt] they want stored — usually one wall-clock reading
+     * shared across a pick batch so all rows cluster together for the
+     * grid's `ORDER BY pinned_at`.
+     */
+    suspend fun pinPhoto(
+        walkId: Long,
+        photoUri: String,
+        takenAt: Long?,
+        pinnedAt: Long,
+    ): Long = walkPhotoDao.insert(
+        WalkPhoto(
+            walkId = walkId,
+            photoUri = photoUri,
+            pinnedAt = pinnedAt,
+            takenAt = takenAt,
+        ),
+    )
+
+    /**
+     * Insert a batch of picked photos under a single Room transaction so
+     * a mid-batch failure leaves none committed. All rows share the same
+     * [pinnedAt] so they sort together and the grid sees one diff rather
+     * than N.
+     */
+    suspend fun pinPhotos(
+        walkId: Long,
+        refs: List<PhotoPinRef>,
+        pinnedAt: Long,
+    ): List<Long> {
+        if (refs.isEmpty()) return emptyList()
+        return database.withTransaction {
+            walkPhotoDao.insertAll(
+                refs.map { ref ->
+                    WalkPhoto(
+                        walkId = walkId,
+                        photoUri = ref.uri,
+                        pinnedAt = pinnedAt,
+                        takenAt = ref.takenAt,
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Remove a pin by id. Returns `true` if the row existed. Idempotent:
+     * calling with a non-existent id is a safe no-op (returns `false`).
+     */
+    suspend fun unpinPhoto(photoId: Long): Boolean =
+        walkPhotoDao.deleteById(photoId) > 0
+
+    suspend fun countPhotosFor(walkId: Long): Int =
+        walkPhotoDao.countForWalk(walkId)
+
+    fun observePhotosFor(walkId: Long): Flow<List<WalkPhoto>> =
+        walkPhotoDao.observeForWalk(walkId)
 }

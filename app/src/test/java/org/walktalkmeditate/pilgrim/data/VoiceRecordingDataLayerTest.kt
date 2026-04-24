@@ -43,6 +43,7 @@ class VoiceRecordingDataLayerTest {
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
             voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
         )
     }
 

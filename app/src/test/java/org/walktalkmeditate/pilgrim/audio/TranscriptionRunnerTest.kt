@@ -52,6 +52,7 @@ class TranscriptionRunnerTest {
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
             voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
         )
         engine = FakeWhisperEngine()
         runner = TranscriptionRunner(context, repository, engine)
