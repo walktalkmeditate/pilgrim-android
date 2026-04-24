@@ -50,13 +50,16 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
  */
 @Composable
 fun WalkEtegamiShareRow(
-    busy: Boolean,
+    busyAction: WalkSummaryViewModel.EtegamiBusyAction?,
     onShare: () -> Unit,
     onSave: () -> Unit,
     onSavePermissionDenied: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val anyBusy = busyAction != null
+    val sharing = busyAction == WalkSummaryViewModel.EtegamiBusyAction.Share
+    val saving = busyAction == WalkSummaryViewModel.EtegamiBusyAction.Save
 
     val legacyPermissionContract = remember { ActivityResultContracts.RequestPermission() }
     val legacyPermissionLauncher = rememberLauncherForActivityResult(
@@ -74,9 +77,13 @@ fun WalkEtegamiShareRow(
             .padding(top = PilgrimSpacing.small),
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
     ) {
+        // Share button: spinner only when THIS action is in-flight.
+        // The Save button stays disabled-idle (icon + text, greyed)
+        // so the user sees exactly which action is running rather
+        // than both buttons spinning simultaneously.
         OutlinedButton(
-            onClick = { if (!busy) onShare() },
-            enabled = !busy,
+            onClick = { if (!anyBusy) onShare() },
+            enabled = !anyBusy,
             modifier = Modifier
                 .weight(1f)
                 .semantics {
@@ -85,7 +92,7 @@ fun WalkEtegamiShareRow(
                     )
                 },
         ) {
-            if (busy) {
+            if (sharing) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
@@ -102,7 +109,7 @@ fun WalkEtegamiShareRow(
         }
         OutlinedButton(
             onClick = {
-                if (busy) return@OutlinedButton
+                if (anyBusy) return@OutlinedButton
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     onSave()
                 } else {
@@ -113,7 +120,7 @@ fun WalkEtegamiShareRow(
                     else legacyPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
             },
-            enabled = !busy,
+            enabled = !anyBusy,
             modifier = Modifier
                 .weight(1f)
                 .semantics {
@@ -122,7 +129,7 @@ fun WalkEtegamiShareRow(
                     )
                 },
         ) {
-            if (busy) {
+            if (saving) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,

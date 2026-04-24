@@ -638,8 +638,16 @@ class WalkSummaryViewModel @Inject constructor(
      */
     private val etegamiShareMutex = Mutex()
 
-    private val _etegamiBusy = MutableStateFlow(false)
-    val etegamiBusy: StateFlow<Boolean> = _etegamiBusy.asStateFlow()
+    /**
+     * Which etegami action is currently in-flight, if any. Used by
+     * the Composable row so only the tapped button shows a spinner
+     * (the other button stays disabled-idle). `null` when no action
+     * is running.
+     */
+    private val _etegamiBusy = MutableStateFlow<EtegamiBusyAction?>(null)
+    val etegamiBusy: StateFlow<EtegamiBusyAction?> = _etegamiBusy.asStateFlow()
+
+    enum class EtegamiBusyAction { Share, Save }
 
     private val _etegamiEvents = MutableSharedFlow<EtegamiShareEvent>(
         replay = 0,
@@ -658,7 +666,7 @@ class WalkSummaryViewModel @Inject constructor(
     fun shareEtegami(spec: EtegamiSpec) {
         viewModelScope.launch(Dispatchers.Default) {
             if (!etegamiShareMutex.tryLock()) return@launch
-            _etegamiBusy.value = true
+            _etegamiBusy.value = EtegamiBusyAction.Share
             try {
                 EtegamiCacheSweeper.sweepStale(context)
                 val filename = EtegamiFilename.forWalk(spec.startedAtEpochMs)
@@ -685,7 +693,7 @@ class WalkSummaryViewModel @Inject constructor(
                 android.util.Log.w(TAG, "shareEtegami failed", t)
                 _etegamiEvents.tryEmit(EtegamiShareEvent.ShareFailed)
             } finally {
-                _etegamiBusy.value = false
+                _etegamiBusy.value = null
                 etegamiShareMutex.unlock()
             }
         }
@@ -704,7 +712,7 @@ class WalkSummaryViewModel @Inject constructor(
     fun saveEtegamiToGallery(spec: EtegamiSpec) {
         viewModelScope.launch(Dispatchers.Default) {
             if (!etegamiShareMutex.tryLock()) return@launch
-            _etegamiBusy.value = true
+            _etegamiBusy.value = EtegamiBusyAction.Save
             try {
                 val filename = EtegamiFilename.forWalk(spec.startedAtEpochMs)
                 val bitmap = EtegamiBitmapRenderer.render(spec, context)
@@ -727,7 +735,7 @@ class WalkSummaryViewModel @Inject constructor(
                 android.util.Log.w(TAG, "saveEtegamiToGallery failed", t)
                 _etegamiEvents.tryEmit(EtegamiShareEvent.SaveFailed)
             } finally {
-                _etegamiBusy.value = false
+                _etegamiBusy.value = null
                 etegamiShareMutex.unlock()
             }
         }

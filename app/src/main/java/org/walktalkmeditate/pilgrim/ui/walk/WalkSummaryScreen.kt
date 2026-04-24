@@ -173,7 +173,7 @@ fun WalkSummaryScreen(
                         // under the preview card. iOS WalkSharingButtons
                         // pairs these affordances with the image itself.
                         WalkEtegamiShareRow(
-                            busy = etegamiBusy,
+                            busyAction = etegamiBusy,
                             onShare = { viewModel.shareEtegami(etegami) },
                             onSave = { viewModel.saveEtegamiToGallery(etegami) },
                             onSavePermissionDenied = {
