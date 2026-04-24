@@ -195,18 +195,43 @@ class WalkShareViewModel @Inject constructor(
     }
 
     private suspend fun loadInputs() {
-        val walk = repository.getWalk(walkId)
+        val walk = try {
+            repository.getWalk(walkId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // Transient Room error → surface as NotFound so the UI
+            // doesn't stay stuck in Loading forever. User can
+            // dismiss + re-open; the modal is re-navigable.
+            Log.w(TAG, "getWalk($walkId) threw", t)
+            _uiState.value = WalkShareUiState.NotFound
+            return
+        }
         if (walk == null) {
             _uiState.value = WalkShareUiState.NotFound
             return
         }
         val endTs = walk.endTimestamp ?: walk.startTimestamp
-        val samples = repository.locationSamplesFor(walkId)
-        val altitudes = repository.altitudeSamplesFor(walkId)
-        val events = repository.eventsFor(walkId)
-        val intervals = repository.activityIntervalsFor(walkId)
-        val recordings = repository.voiceRecordingsFor(walkId)
-        val waypoints = repository.waypointsFor(walkId)
+        val samples: List<org.walktalkmeditate.pilgrim.data.entity.RouteDataSample>
+        val altitudes: List<org.walktalkmeditate.pilgrim.data.entity.AltitudeSample>
+        val events: List<org.walktalkmeditate.pilgrim.data.entity.WalkEvent>
+        val intervals: List<org.walktalkmeditate.pilgrim.data.entity.ActivityInterval>
+        val recordings: List<org.walktalkmeditate.pilgrim.data.entity.VoiceRecording>
+        val waypoints: List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>
+        try {
+            samples = repository.locationSamplesFor(walkId)
+            altitudes = repository.altitudeSamplesFor(walkId)
+            events = repository.eventsFor(walkId)
+            intervals = repository.activityIntervalsFor(walkId)
+            recordings = repository.voiceRecordingsFor(walkId)
+            waypoints = repository.waypointsFor(walkId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "walk-related DAO read threw for walk $walkId", t)
+            _uiState.value = WalkShareUiState.NotFound
+            return
+        }
 
         val points = samples.map {
             LocationPoint(

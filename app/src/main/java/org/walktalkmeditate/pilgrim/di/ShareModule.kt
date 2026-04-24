@@ -39,6 +39,7 @@ object ShareModule {
             .build()
 
     @Provides
+    @Singleton
     @ShareBaseUrl
     fun provideShareBaseUrl(): String = ShareConfig.BASE_URL
 

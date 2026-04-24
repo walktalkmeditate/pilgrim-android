@@ -40,6 +40,8 @@ class ShareService @Inject constructor(
     suspend fun share(payload: SharePayload): ShareResult = withContext(Dispatchers.IO) {
         val body = try {
             json.encodeToString(SharePayload.serializer(), payload)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (t: Throwable) {
             throw ShareError.EncodingFailed(t)
         }
@@ -61,14 +63,28 @@ class ShareService @Inject constructor(
             val responseBody = r.body?.string().orEmpty()
             if (r.code == 429) throw ShareError.RateLimited
             if (!r.isSuccessful) {
-                val message = runCatching {
+                // Use explicit try/catch instead of runCatching —
+                // kotlin stdlib's runCatching catches CE, which we
+                // must re-throw (Stage 5-C lesson). The JSON decode
+                // is synchronous here, so CE is unlikely but
+                // defensive correctness still applies.
+                val message = try {
                     json.decodeFromString(ErrorResponse.serializer(), responseBody).error
-                }.getOrDefault("Unknown error")
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                    "Unknown error"
+                }
                 throw ShareError.ServerError(r.code, message)
             }
-            runCatching { json.decodeFromString(SuccessResponse.serializer(), responseBody) }
-                .map { ShareResult(url = it.url, id = it.id) }
-                .getOrElse { throw ShareError.EncodingFailed(it) }
+            try {
+                val success = json.decodeFromString(SuccessResponse.serializer(), responseBody)
+                ShareResult(url = success.url, id = success.id)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                throw ShareError.EncodingFailed(t)
+            }
         }
     }
 

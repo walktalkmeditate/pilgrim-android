@@ -448,8 +448,19 @@ internal fun launchShareChooser(context: Context, url: String, chooserTitle: Str
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, url)
     }
+    val chooser = Intent.createChooser(send, chooserTitle).apply {
+        // If the caller passed a non-Activity Context (e.g.,
+        // LocalActivity.current was null and WalkSummaryScreen fell
+        // back to LocalContext.current), startActivity needs
+        // FLAG_ACTIVITY_NEW_TASK to avoid an AndroidRuntimeException.
+        // Adding it unconditionally is safe when the caller IS an
+        // Activity — the flag is a no-op.
+        if (context !is android.app.Activity) {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
     try {
-        context.startActivity(Intent.createChooser(send, chooserTitle))
+        context.startActivity(chooser)
     } catch (_: android.content.ActivityNotFoundException) {
         // Edge-case devices with no share chooser — swallow silently;
         // the user can still use Copy.

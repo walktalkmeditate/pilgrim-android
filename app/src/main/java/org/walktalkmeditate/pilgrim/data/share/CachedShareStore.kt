@@ -54,9 +54,17 @@ class CachedShareStore @Inject constructor(
         }
     }
 
-    private fun decode(blob: String): CachedShare? = runCatching {
+    private fun decode(blob: String): CachedShare? = try {
         json.decodeFromString(CachedSharePrefs.serializer(), blob).toDomain()
-    }.getOrNull()
+    } catch (ce: kotlinx.coroutines.CancellationException) {
+        // Flow cancellation during collect would propagate through
+        // the map operator's invocation of decode; kotlin stdlib's
+        // `runCatching { }` swallows CE (Stage 5-C lesson), so we
+        // use a plain try/catch with explicit CE re-throw.
+        throw ce
+    } catch (_: Throwable) {
+        null
+    }
 
     private fun keyFor(walkUuid: String) =
         stringPreferencesKey("share_cache_" + walkUuid.replace("-", ""))
