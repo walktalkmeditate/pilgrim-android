@@ -204,6 +204,14 @@ dependencies {
     // local photo-picker URIs).
     implementation(libs.coil.compose)
 
+    // Stage 7-B: bundled ML Kit Image Labeling for per-photo analysis.
+    // Bundled (not Play Services variant) so analysis works offline —
+    // matches Pilgrim's local-first ethos. ~5.7 MB APK bump.
+    // kotlinx-coroutines-play-services bridges ML Kit's Task<T> into
+    // `suspend` via `.await()`.
+    implementation(libs.mlkit.image.labeling)
+    implementation(libs.kotlinx.coroutines.play.services)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
