@@ -17,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -435,7 +436,15 @@ class WalkSummaryViewModelTest {
             pinnedAt = 1_000L,
         )
         val vm = newViewModel(walkId = walk.id)
-        // Let the observer pick up the initial row before we re-pin.
+
+        // Subscribe to pinnedPhotos so the WhileSubscribed StateFlow
+        // actually emits the seed row — the VM's dedup reads
+        // pinnedPhotos.value, which stays at initialValue when nothing
+        // observes. In production the UI subscribes; in this test we
+        // stand in for the UI with a small collector.
+        val observer = launch(Dispatchers.Default) {
+            vm.pinnedPhotos.collect { }
+        }
         withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(3_000L) { vm.pinnedPhotos.first { it.isNotEmpty() } }
         }
@@ -447,10 +456,19 @@ class WalkSummaryViewModelTest {
             ),
         )
 
-        val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) { vm.pinnedPhotos.first { it.size == 2 } }
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                while (repository.countPhotosFor(walk.id) < 2) {
+                    kotlinx.coroutines.delay(10)
+                }
+            }
         }
-        assertEquals(2, rows.size)
+        assertEquals(
+            "dedup should have filtered the already-pinned URI",
+            2,
+            repository.countPhotosFor(walk.id),
+        )
+        observer.cancel()
     }
 
     @Test

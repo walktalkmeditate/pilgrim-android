@@ -282,7 +282,7 @@ class WalkSummaryViewModel @Inject constructor(
                 }
                 PhotoPinRef(uri = uri.toString(), takenAt = readDateTaken(uri))
             }
-            try {
+            val result = try {
                 repository.pinPhotos(
                     walkId = walkId,
                     refs = refs,
@@ -293,6 +293,29 @@ class WalkSummaryViewModel @Inject constructor(
                 throw ce
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "pinPhotos failed for walk $walkId", t)
+                return@launch
+            }
+            // Release grants for URIs the repo's transactional clip
+            // dropped (e.g. because a concurrent pinPhotos committed
+            // between our pre-clip and the repo's count). The grant
+            // was taken above; without this, the URI would leak out
+            // of the app-wide persistable-grant quota with no row
+            // and therefore no unpin path to release it. The repo
+            // has already confirmed no other walk references these
+            // URIs, so releasing is safe.
+            result.droppedOrphanUris.forEach { orphan ->
+                runCatching {
+                    context.contentResolver.releasePersistableUriPermission(
+                        Uri.parse(orphan),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }.onFailure {
+                    android.util.Log.w(
+                        TAG,
+                        "releasePersistableUriPermission (orphan clip) failed for $orphan",
+                        it,
+                    )
+                }
             }
         }
     }
