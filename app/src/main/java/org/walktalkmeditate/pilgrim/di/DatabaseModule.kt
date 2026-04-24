@@ -18,6 +18,7 @@ import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 
 @Module
@@ -31,7 +32,9 @@ object DatabaseModule {
         context,
         PilgrimDatabase::class.java,
         PilgrimDatabase.DATABASE_NAME,
-    ).build()
+    )
+        .addMigrations(PilgrimDatabase.MIGRATION_2_3)
+        .build()
 
     @Provides
     fun provideWalkDao(db: PilgrimDatabase): WalkDao = db.walkDao()
@@ -53,4 +56,7 @@ object DatabaseModule {
 
     @Provides
     fun provideVoiceRecordingDao(db: PilgrimDatabase): VoiceRecordingDao = db.voiceRecordingDao()
+
+    @Provides
+    fun provideWalkPhotoDao(db: PilgrimDatabase): WalkPhotoDao = db.walkPhotoDao()
 }
