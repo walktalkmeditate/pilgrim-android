@@ -246,17 +246,36 @@ class WalkRepository @Inject constructor(
 
     /**
      * Write an ML Kit analysis result back to a pinned photo. Null
-     * [label] + [confidence] with a non-null [analyzedAt] marks a row
+     * [label] + [confidence] with a positive [analyzedAt] marks a row
      * as "analyzed but labeler produced no usable result" (URI
      * unreadable, empty result above threshold, labeler error) — the
      * UI tombstone path then handles display.
+     *
+     * The raw `@Query UPDATE` under this method bypasses the
+     * [WalkPhoto.init] invariant, so the same pair + range checks run
+     * here defensively. A caller who accidentally writes a
+     * half-populated pair or an out-of-range confidence gets an
+     * IllegalArgumentException at the repo seam rather than silently
+     * corrupting the tombstone-vs-labeled distinction downstream.
      */
     suspend fun updatePhotoAnalysis(
         photoId: Long,
         label: String?,
         confidence: Double?,
         analyzedAt: Long,
-    ) = walkPhotoDao.updateAnalysis(photoId, label, confidence, analyzedAt)
+    ) {
+        require((label == null) == (confidence == null)) {
+            "label and confidence must be both null or both non-null " +
+                "(got label=$label, confidence=$confidence)"
+        }
+        require(confidence == null || confidence in 0.0..1.0) {
+            "confidence must be null or within [0.0, 1.0] (got $confidence)"
+        }
+        require(analyzedAt > 0) {
+            "analyzedAt must be positive epoch ms (got $analyzedAt)"
+        }
+        walkPhotoDao.updateAnalysis(photoId, label, confidence, analyzedAt)
+    }
 
     /**
      * Photos still awaiting analysis for a walk. [PhotoAnalysisRunner]
