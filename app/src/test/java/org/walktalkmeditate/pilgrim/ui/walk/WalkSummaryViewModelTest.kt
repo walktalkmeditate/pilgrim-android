@@ -94,6 +94,7 @@ class WalkSummaryViewModelTest {
     }
 
     private fun newViewModel(walkId: Long) = WalkSummaryViewModel(
+        context = context,
         repository = repository,
         playback = playback,
         sweeper = sweeper,
@@ -365,6 +366,67 @@ class WalkSummaryViewModelTest {
             }
         }
         assertEquals(Hemisphere.Southern, observed)
+    }
+
+    // --- Stage 7-A: photo reliquary ----------------------------------
+
+    @Test
+    fun `pinPhotos with empty list is a no-op`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.pinPhotos(emptyList())
+
+        // No coroutine scheduled → repo count remains zero.
+        assertEquals(0, repository.countPhotosFor(walk.id))
+    }
+
+    @Test
+    fun `pinPhotos writes picked URIs through to the repository`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        val uri1 = android.net.Uri.parse("content://media/picker/0/com.example/1")
+        val uri2 = android.net.Uri.parse("content://media/picker/0/com.example/2")
+        vm.pinPhotos(listOf(uri1, uri2))
+
+        // Bridge virtual-time → Dispatchers.IO for the VM's launch(IO).
+        val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                vm.pinnedPhotos.first { it.size == 2 }
+            }
+        }
+        assertEquals(2, rows.size)
+        assertEquals(
+            setOf(uri1.toString(), uri2.toString()),
+            rows.map { it.photoUri }.toSet(),
+        )
+    }
+
+    @Test
+    fun `unpinPhoto removes the pinned row`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val id = repository.pinPhoto(
+            walkId = walk.id,
+            photoUri = "content://media/picker/0/com.example/1",
+            takenAt = null,
+            pinnedAt = 2_000L,
+        )
+        val vm = newViewModel(walkId = walk.id)
+        val initial = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) { vm.pinnedPhotos.first { it.size == 1 } }
+        }
+        assertEquals(1, initial.size)
+
+        vm.unpinPhoto(initial.first().copy(id = id))
+
+        val after = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) { vm.pinnedPhotos.first { it.isEmpty() } }
+        }
+        assertTrue(after.isEmpty())
     }
 
     // --- Stage 4-D: milestone propagation ----------------------------
