@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -44,9 +45,18 @@ fun WalkEtegamiCard(
 ) {
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(initialValue = null, spec) {
-        value = runCatching {
+        // `runCatching` swallows `CancellationException` by default
+        // (stdlib convention) — on a re-key / disposal we want the
+        // coroutine to unwind cleanly rather than assigning `null` to
+        // `value` post-cancellation. Re-throw CE explicitly per the
+        // Stage 5-C audit-all-catch-Throwable-for-CE-rethrow lesson.
+        value = try {
             EtegamiBitmapRenderer.render(spec, context).asImageBitmap()
-        }.getOrNull()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            null
+        }
     }
     Card(
         modifier = modifier.fillMaxWidth(),
