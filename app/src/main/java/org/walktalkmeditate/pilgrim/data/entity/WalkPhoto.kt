@@ -87,5 +87,27 @@ data class WalkPhoto(
         require(pinnedAt > 0) {
             "pinnedAt must be positive epoch ms (got $pinnedAt) for walk $walkId, photo $uuid"
         }
+        // Stage 7-B: topLabel and topLabelConfidence are populated
+        // together by the analysis runner (`top?.text` + `top?.confidence`
+        // from the same LabeledResult). Reject half-populated pairs so
+        // a future regression writes through updatePhotoAnalysis fails
+        // loudly instead of corrupting the tombstone-vs-labeled
+        // distinction downstream.
+        require((topLabel == null) == (topLabelConfidence == null)) {
+            "topLabel and topLabelConfidence must both be null or both non-null " +
+                "(got label=$topLabel, confidence=$topLabelConfidence) for photo $uuid"
+        }
+        require(topLabelConfidence == null || topLabelConfidence in 0.0..1.0) {
+            "topLabelConfidence must be null or within [0.0, 1.0] " +
+                "(got $topLabelConfidence) for photo $uuid"
+        }
+        // A zero analyzedAt would read as "pending" in
+        // getPendingAnalysisForWalk's `IS NULL` check only for null —
+        // but a `0` epoch-ms is a construction bug (clock not set).
+        // Reject it so the worker's retry logic isn't confused.
+        require(analyzedAt == null || analyzedAt > 0) {
+            "analyzedAt must be null or positive epoch ms " +
+                "(got $analyzedAt) for photo $uuid"
+        }
     }
 }
