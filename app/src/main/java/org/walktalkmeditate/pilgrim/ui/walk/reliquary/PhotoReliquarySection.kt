@@ -75,25 +75,29 @@ fun PhotoReliquarySection(
     // surface (future: deep-link, widget) doesn't leave a dead dialog.
     var photoToRemove by remember { mutableStateOf<WalkPhoto?>(null) }
 
-    // Single, stable multi-picker contract with the maximum ever allowed
-    // by the cap. The OS picker enforces `maxItems`; we additionally
-    // clip in the callback to the slots available *right now* so
-    // rapid-pin sequences (user picks 5, taps Add before the first
-    // batch commits) can't exceed the cap. Pinning the contract at
-    // MAX ensures rememberLauncherForActivityResult never
-    // unregisters/registers on `slots` changes — which would race
-    // with an in-flight picker intent.
-    val multiLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(
-            maxItems = MAX_PINS_PER_WALK,
-        ),
-    ) { uris -> if (uris.isNotEmpty()) onPinPhotos(uris) }
+    // Stable contract references across recompositions.
+    // `rememberLauncherForActivityResult` keys its `DisposableEffect` on
+    // the contract identity; constructing a fresh contract inline on
+    // every recompose would unregister / re-register the launcher on
+    // every tick, racing with in-flight picker intents. Wrap in
+    // `remember { }` so the contract instances survive unrelated
+    // recompositions. The picker's `maxItems` stays at MAX; the VM's
+    // pre-clip against pinnedPhotos.value and the repo's transactional
+    // count + insert inside `withTransaction` are the real defenses
+    // against exceeding the cap.
+    val multiContract = remember {
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = MAX_PINS_PER_WALK)
+    }
+    val multiLauncher = rememberLauncherForActivityResult(multiContract) { uris ->
+        if (uris.isNotEmpty()) onPinPhotos(uris)
+    }
     // Single-pick fallback kept for the `slots == 1` case —
     // PickMultipleVisualMedia requires maxItems > 1, so we cannot clamp
     // the multi contract to 1 even though the VM would clip anyway.
-    val singleLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> if (uri != null) onPinPhotos(listOf(uri)) }
+    val singleContract = remember { ActivityResultContracts.PickVisualMedia() }
+    val singleLauncher = rememberLauncherForActivityResult(singleContract) { uri ->
+        if (uri != null) onPinPhotos(listOf(uri))
+    }
 
     val haptics = LocalHapticFeedback.current
 

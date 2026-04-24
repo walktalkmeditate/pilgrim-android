@@ -11,9 +11,11 @@ import java.util.UUID
 
 /**
  * A photo the user pinned to a walk. Stores only the MediaStore
- * `content://` URI (as a String) — never the photo bytes. We hold a
- * persistable read grant via `ContentResolver.takePersistableUriPermission`
- * so the URI survives process death.
+ * `content://` URI (as a String) — never the photo bytes. The VM
+ * holds a persistable read grant via
+ * `ContentResolver.takePersistableUriPermission` so Photo Picker URIs
+ * typically survive process death. Some OEM pickers and SAF-fallback
+ * URIs on API 28-29 reject the grant call — verify during device QA.
  *
  * `@Immutable` because this class holds only primitives + `String?` —
  * matches the Compose-stability pattern used by `WalkSummary` so the
