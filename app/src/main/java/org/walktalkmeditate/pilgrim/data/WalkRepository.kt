@@ -159,32 +159,57 @@ class WalkRepository @Inject constructor(
      * reading a stale size in the VM.
      *
      * All committed rows share the same [pinnedAt] so they sort
-     * together and the grid sees one diff rather than N. Returns the
-     * ids of rows actually inserted — may be shorter than [refs] if
-     * capping clipped the batch (or empty if the walk was already at
-     * the cap by the time the transaction opened).
+     * together and the grid sees one diff rather than N.
+     *
+     * Returns a [PinPhotosResult] describing what landed and what was
+     * clipped. The VM takes persistable grants on [refs] BEFORE calling
+     * this method (idempotent if another walk already held a grant),
+     * so clipped URIs would otherwise leak — callers must release
+     * grants on [PinPhotosResult.droppedOrphanUris], which are the
+     * tail URIs whose grants no other walk references after the
+     * transaction closes. The orphan check happens in the same
+     * transaction as the insert so a concurrent writer can't race a
+     * reference in or out between the clip and the release decision.
      */
     suspend fun pinPhotos(
         walkId: Long,
         refs: List<PhotoPinRef>,
         pinnedAt: Long,
         cap: Int = Int.MAX_VALUE,
-    ): List<Long> {
-        if (refs.isEmpty()) return emptyList()
+    ): PinPhotosResult {
+        if (refs.isEmpty()) return PinPhotosResult(emptyList(), emptyList())
         return database.withTransaction {
             val remaining = (cap - walkPhotoDao.countForWalk(walkId))
                 .coerceAtLeast(0)
-            if (remaining == 0) return@withTransaction emptyList()
-            val clipped = if (remaining < refs.size) refs.take(remaining) else refs
-            walkPhotoDao.insertAll(
-                clipped.map { ref ->
-                    WalkPhoto(
-                        walkId = walkId,
-                        photoUri = ref.uri,
-                        pinnedAt = pinnedAt,
-                        takenAt = ref.takenAt,
-                    )
-                },
+            val accepted = if (remaining < refs.size) refs.take(remaining) else refs
+            val dropped = if (remaining < refs.size) refs.drop(remaining) else emptyList()
+            val insertedIds = if (accepted.isEmpty()) {
+                emptyList()
+            } else {
+                walkPhotoDao.insertAll(
+                    accepted.map { ref ->
+                        WalkPhoto(
+                            walkId = walkId,
+                            photoUri = ref.uri,
+                            pinnedAt = pinnedAt,
+                            takenAt = ref.takenAt,
+                        )
+                    },
+                )
+            }
+            // A dropped URI is "orphaned" from this app's perspective
+            // when no row (in any walk) references it anymore. VM dedup
+            // makes it unlikely the URI also appears in `accepted`, but
+            // `countByPhotoUri` is the source of truth — if another
+            // walk pins the URI, or this batch had an internal dupe,
+            // keep the grant.
+            val orphanUris = dropped
+                .map { it.uri }
+                .distinct()
+                .filter { walkPhotoDao.countByPhotoUri(it) == 0 }
+            PinPhotosResult(
+                insertedIds = insertedIds,
+                droppedOrphanUris = orphanUris,
             )
         }
     }
@@ -230,3 +255,15 @@ sealed class UnpinPhotoResult {
         val wasLastReference: Boolean,
     ) : UnpinPhotoResult()
 }
+
+/**
+ * Outcome of [WalkRepository.pinPhotos]. [insertedIds] has one id per
+ * row actually inserted (may be shorter than the caller's `refs` if
+ * the repo's transactional cap clipped the batch). [droppedOrphanUris]
+ * lists URIs whose grants the caller should release — they were
+ * dropped by the cap clip AND no other walk still references them.
+ */
+data class PinPhotosResult(
+    val insertedIds: List<Long>,
+    val droppedOrphanUris: List<String>,
+)
