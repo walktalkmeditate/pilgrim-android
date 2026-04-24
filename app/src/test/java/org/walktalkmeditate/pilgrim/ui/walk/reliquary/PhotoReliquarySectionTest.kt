@@ -169,7 +169,7 @@ class PhotoReliquarySectionTest {
     // Picker-launch paths are not driven from a unit test: ActivityResult
     // launchers open system UI that Robolectric can't simulate. The
     // contract construction itself is proven to work at runtime by
-    // assembleDebug compiling the Activity result ContractS against Coil
+    // assembleDebug compiling the ActivityResult contracts against Coil
     // + Photo Picker, plus the VM tests that exercise pinPhotos end-to-end
     // when the launcher callback fires with a hand-constructed Uri list.
 }

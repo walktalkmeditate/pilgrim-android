@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -33,6 +34,12 @@ class PilgrimDatabaseMigrationTest {
     private val dbName = "pilgrim-migration-test.db"
     private lateinit var context: Context
 
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext<Application>()
+        context.deleteDatabase(dbName)
+    }
+
     @After
     fun tearDown() {
         // Clean up on-disk DB between tests so test order is irrelevant.
@@ -40,8 +47,6 @@ class PilgrimDatabaseMigrationTest {
     }
 
     private fun openV2Shape(): SupportSQLiteDatabase {
-        context = ApplicationProvider.getApplicationContext<Application>()
-        context.deleteDatabase(dbName)
         val config = SupportSQLiteOpenHelper.Configuration.builder(context)
             .name(dbName)
             .callback(object : SupportSQLiteOpenHelper.Callback(V2_VERSION) {
