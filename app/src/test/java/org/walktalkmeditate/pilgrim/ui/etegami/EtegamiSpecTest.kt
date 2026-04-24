@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.etegami
 
 import androidx.compose.ui.graphics.Color
+import java.time.Instant
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -13,6 +14,7 @@ import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.ActivityType
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 
 class EtegamiSpecTest {
@@ -170,9 +172,15 @@ class EtegamiSpecTest {
             durationMillis = 500L,
             fileRelativePath = "recordings/1/2000.wav",
         )
+        // Route spans 1_000..61_000 so all markers lie inside the range
+        // (the compose step filters out-of-range markers).
+        val route = listOf(
+            LocationPoint(timestamp = 1_000L, latitude = 0.0, longitude = 0.0),
+            LocationPoint(timestamp = 61_000L, latitude = 0.0, longitude = 0.0),
+        )
         val spec = composeEtegamiSpec(
             walk = walk(),
-            routePoints = emptyList(),
+            routePoints = route,
             sealSpec = emptySeal,
             lightReading = null,
             distanceMeters = 0.0,
@@ -190,7 +198,53 @@ class EtegamiSpecTest {
     }
 
     @Test
-    fun `zoneId defaults to systemDefault`() {
+    fun `activity markers outside walk GPS time range are dropped`() {
+        // Walk GPS range is [1_000, 61_000]. Voice recording at 70_000
+        // (after last GPS sample — user recording a closing reflection)
+        // and meditation at 500 (before first GPS sample — shouldn't
+        // happen in practice, defense-in-depth) must be dropped to
+        // prevent visual pile-up on the route's end/start dots.
+        val route = listOf(
+            LocationPoint(timestamp = 1_000L, latitude = 0.0, longitude = 0.0),
+            LocationPoint(timestamp = 61_000L, latitude = 0.1, longitude = 0.1),
+        )
+        val lateRecording = VoiceRecording(
+            walkId = 1L,
+            startTimestamp = 70_000L,
+            endTimestamp = 72_000L,
+            durationMillis = 2_000L,
+            fileRelativePath = "recordings/1/70000.wav",
+        )
+        val earlyMeditation = ActivityInterval(
+            walkId = 1L,
+            startTimestamp = 500L,
+            endTimestamp = 900L,
+            activityType = ActivityType.MEDITATING,
+        )
+        val inRangeMeditation = ActivityInterval(
+            walkId = 1L,
+            startTimestamp = 30_000L,
+            endTimestamp = 31_000L,
+            activityType = ActivityType.MEDITATING,
+        )
+        val spec = composeEtegamiSpec(
+            walk = walk(),
+            routePoints = route,
+            sealSpec = emptySeal,
+            lightReading = null,
+            distanceMeters = 0.0,
+            durationMillis = 0L,
+            altitudeSamples = emptyList(),
+            activityIntervals = listOf(earlyMeditation, inRangeMeditation),
+            voiceRecordings = listOf(lateRecording),
+        )
+        assertEquals(1, spec.activityMarkers.size)
+        assertEquals(30_000L, spec.activityMarkers[0].timestampMs)
+    }
+
+    @Test
+    fun `activity markers dropped when route is empty`() {
+        // No GPS samples = no where to place markers; filter drops all.
         val spec = composeEtegamiSpec(
             walk = walk(),
             routePoints = emptyList(),
@@ -199,10 +253,47 @@ class EtegamiSpecTest {
             distanceMeters = 0.0,
             durationMillis = 0L,
             altitudeSamples = emptyList(),
-            activityIntervals = emptyList(),
+            activityIntervals = listOf(
+                ActivityInterval(
+                    walkId = 1L,
+                    startTimestamp = 5_000L,
+                    endTimestamp = 6_000L,
+                    activityType = ActivityType.MEDITATING,
+                ),
+            ),
             voiceRecordings = emptyList(),
         )
-        assertEquals(ZoneId.systemDefault(), spec.zoneId)
+        assertTrue(spec.activityMarkers.isEmpty())
+    }
+
+    @Test
+    fun `hourOfDay is precomputed from walk start + zoneId`() {
+        // 1_700_000_000_000 ms = 2023-11-14T22:13:20Z. In UTC that's
+        // hour 22; confirm the pre-computation lands there rather than
+        // leaking ZoneId into the spec.
+        val spec = composeEtegamiSpec(
+            walk = Walk(
+                id = 1L,
+                startTimestamp = 1_700_000_000_000L,
+                endTimestamp = 1_700_000_060_000L,
+                intention = null,
+                notes = null,
+            ),
+            routePoints = emptyList(),
+            sealSpec = emptySeal,
+            lightReading = null,
+            distanceMeters = 0.0,
+            durationMillis = 0L,
+            altitudeSamples = emptyList(),
+            activityIntervals = emptyList(),
+            voiceRecordings = emptyList(),
+            zoneId = ZoneId.of("UTC"),
+        )
+        val expected = Instant.ofEpochMilli(1_700_000_000_000L)
+            .atZone(ZoneId.of("UTC"))
+            .hour
+        assertEquals(expected, spec.hourOfDay)
+        assertTrue(spec.hourOfDay in 0..23)
     }
 
     @Test

@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.etegami
 
 import androidx.compose.runtime.Immutable
+import java.time.Instant
 import java.time.ZoneId
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
@@ -24,7 +25,15 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 data class EtegamiSpec(
     val walkUuid: String,
     val startedAtEpochMs: Long,
-    val zoneId: ZoneId,
+    /**
+     * Hour-of-day (`0..23`) at [startedAtEpochMs] in the walker's zone,
+     * pre-computed at composition so the renderer doesn't need a
+     * `ZoneId` field (JDK types aren't Compose-stable — the `@Immutable`
+     * annotation would be a lie with `ZoneId` sitting here and
+     * `EtegamiSpec` would fail to skip recompositions as a consequence.
+     * See Stage 4-C / 6-B cascade lessons).
+     */
+    val hourOfDay: Int,
     val routePoints: List<LocationPoint>,
     val sealSpec: SealSpec,
     val moonPhase: MoonPhase?,
@@ -66,29 +75,46 @@ internal fun composeEtegamiSpec(
     activityIntervals: List<ActivityInterval>,
     voiceRecordings: List<VoiceRecording>,
     zoneId: ZoneId = ZoneId.systemDefault(),
-): EtegamiSpec = EtegamiSpec(
-    walkUuid = walk.uuid,
-    startedAtEpochMs = walk.startTimestamp,
-    zoneId = zoneId,
-    routePoints = routePoints,
-    sealSpec = sealSpec,
-    moonPhase = lightReading?.moon,
-    distanceMeters = distanceMeters,
-    durationMillis = durationMillis,
-    elevationGainMeters = elevationGain(altitudeSamples),
-    topText = walk.intention?.takeIf { it.isNotBlank() }
-        ?: walk.notes?.takeIf { it.isNotBlank() },
-    activityMarkers = buildList {
-        // Meditation markers from MEDITATING intervals (start timestamps).
-        activityIntervals
-            .filter { it.activityType == ActivityType.MEDITATING }
-            .forEach { add(ActivityMarker(ActivityMarker.Kind.Meditation, it.startTimestamp)) }
-        // Voice markers from recording starts.
-        voiceRecordings.forEach {
-            add(ActivityMarker(ActivityMarker.Kind.Voice, it.startTimestamp))
+): EtegamiSpec {
+    val hourOfDay = Instant.ofEpochMilli(walk.startTimestamp).atZone(zoneId).hour
+    // Bound activity markers to the walk's GPS time range. Markers
+    // whose timestamp lies outside [firstSample, lastSample] would be
+    // clamped by `indexAtTimestamp` to the nearest route endpoint,
+    // producing a pile-up of glyphs on the start/end dot — common
+    // when users record a closing reflection after the walk's last
+    // GPS sample. Dropping them is cleaner than visually polluting
+    // the terminal marker.
+    val routeStart = routePoints.firstOrNull()?.timestamp
+    val routeEnd = routePoints.lastOrNull()?.timestamp
+    return EtegamiSpec(
+        walkUuid = walk.uuid,
+        startedAtEpochMs = walk.startTimestamp,
+        hourOfDay = hourOfDay,
+        routePoints = routePoints,
+        sealSpec = sealSpec,
+        moonPhase = lightReading?.moon,
+        distanceMeters = distanceMeters,
+        durationMillis = durationMillis,
+        elevationGainMeters = elevationGain(altitudeSamples),
+        topText = walk.intention?.takeIf { it.isNotBlank() }
+            ?: walk.notes?.takeIf { it.isNotBlank() },
+        activityMarkers = buildList {
+            // Meditation markers from MEDITATING intervals (start timestamps).
+            activityIntervals
+                .filter { it.activityType == ActivityType.MEDITATING }
+                .forEach { add(ActivityMarker(ActivityMarker.Kind.Meditation, it.startTimestamp)) }
+            // Voice markers from recording starts.
+            voiceRecordings.forEach {
+                add(ActivityMarker(ActivityMarker.Kind.Voice, it.startTimestamp))
+            }
         }
-    }.sortedBy { it.timestampMs },
-)
+            .filter { marker ->
+                if (routeStart == null || routeEnd == null) return@filter false
+                marker.timestampMs in routeStart..routeEnd
+            }
+            .sortedBy { it.timestampMs },
+    )
+}
 
 /**
  * Elevation gain = sum of positive deltas between consecutive samples.

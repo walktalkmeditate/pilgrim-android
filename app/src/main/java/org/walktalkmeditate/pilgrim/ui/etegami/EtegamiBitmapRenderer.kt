@@ -16,8 +16,6 @@ import android.text.TextUtils
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.res.ResourcesCompat
-import java.time.Instant
-import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.R
@@ -65,8 +63,7 @@ object EtegamiBitmapRenderer {
         withContext(Dispatchers.Default) {
             val bitmap = Bitmap.createBitmap(WIDTH_PX, HEIGHT_PX, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
-            val hour = hourOfDay(spec.startedAtEpochMs, spec.zoneId)
-            val palette = EtegamiPalettes.forHour(hour)
+            val palette = EtegamiPalettes.forHour(spec.hourOfDay)
             val smoothed = EtegamiRouteGeometry.smooth(spec.routePoints)
 
             drawPaper(canvas, palette)
@@ -415,9 +412,6 @@ object EtegamiBitmapRenderer {
     }
 
     // --- helpers --------------------------------------------------------
-
-    internal fun hourOfDay(epochMs: Long, zoneId: ZoneId): Int =
-        Instant.ofEpochMilli(epochMs).atZone(zoneId).hour
 
     private fun routeCenter(smoothed: List<SmoothedSegment>): Pair<Float, Float> {
         if (smoothed.isEmpty()) return WIDTH_PX / 2f to HEIGHT_PX / 2f

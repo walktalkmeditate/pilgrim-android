@@ -5,7 +5,6 @@ import android.app.Application
 import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.test.core.app.ApplicationProvider
-import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -39,10 +38,11 @@ class EtegamiBitmapRendererTest {
         topText: String? = null,
         activityMarkers: List<ActivityMarker> = emptyList(),
         startedAtEpochMs: Long = 1_700_000_000_000L,
+        hourOfDay: Int = 10,
     ) = EtegamiSpec(
         walkUuid = "w-uuid",
         startedAtEpochMs = startedAtEpochMs,
-        zoneId = ZoneId.of("UTC"),
+        hourOfDay = hourOfDay,
         routePoints = routePoints,
         sealSpec = emptySeal,
         moonPhase = moonPhase,
@@ -109,10 +109,9 @@ class EtegamiBitmapRendererTest {
 
     @Test
     fun `render with night hour uses inverted palette — no exception`() = runBlocking {
-        // UTC hour 3 falls in the night band.
-        val nightStart = 1_700_000_000_000L - 7 * 3600 * 1000L
+        // Hour 3 falls in the night band (outside 5..19).
         val bitmap = EtegamiBitmapRenderer.render(
-            spec = spec(startedAtEpochMs = nightStart),
+            spec = spec(hourOfDay = 3),
             context = context,
         )
         assertNotNull(bitmap)
@@ -131,14 +130,4 @@ class EtegamiBitmapRendererTest {
         assertNotNull(bitmap)
     }
 
-    @Test
-    fun `hourOfDay returns 0-23 range for any zone`() {
-        val epochMs = 1_700_000_000_000L
-        for (offsetH in -12..14) {
-            val zone = ZoneId.of("UTC").normalized()
-                .let { if (offsetH == 0) it else java.time.ZoneOffset.ofHours(offsetH) }
-            val h = EtegamiBitmapRenderer.hourOfDay(epochMs, zone)
-            assert(h in 0..23) { "hour $h out of range for zone $zone" }
-        }
-    }
 }
