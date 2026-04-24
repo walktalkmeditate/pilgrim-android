@@ -7,12 +7,12 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
-import android.graphics.Rect
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextUtils
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.res.ResourcesCompat
@@ -144,6 +144,11 @@ object EtegamiBitmapRenderer {
         illumination: Double,
         isWaxing: Boolean,
     ) {
+        // Skip the new-moon glyph — the degenerate path renders as an
+        // invisible sliver on the right edge, which just wastes a
+        // Path + 2 fills. Callers can still rely on drawMoonGlyph
+        // being safe to call at any illumination; this is a draw-no-op.
+        if (illumination < 0.02) return
         val path = EtegamiMoonGlyph.terminatorPath(
             illumination = illumination,
             isWaxing = isWaxing,
@@ -193,6 +198,9 @@ object EtegamiBitmapRenderer {
         palette: EtegamiPalette,
         smoothed: List<SmoothedSegment>,
     ) {
+        // Defensive: internal fun can be called by tests with sparse
+        // inputs. Caller in render() already guards size >= 2.
+        if (smoothed.isEmpty()) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
@@ -330,10 +338,17 @@ object EtegamiBitmapRenderer {
             color = palette.ink.copy(alpha = 0.85f).toArgb()
         }
         val width = 920
+        // Bound height so an unusually long intention/notes doesn't
+        // overflow into the stats whisper region (y=1700). iOS caps
+        // at a 360 px rect ≈ 6 lines of Cormorant Garamond at 46 px
+        // with 8 px line-spacing. Ellipsize the tail rather than
+        // crop mid-glyph.
         val layout = StaticLayout.Builder
             .obtain(text, 0, text.length, paint, width)
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
             .setLineSpacing(8f, 1f)
+            .setMaxLines(6)
+            .setEllipsize(TextUtils.TruncateAt.END)
             .build()
         canvas.save()
         canvas.translate(80f, 1320f)
@@ -418,6 +433,4 @@ object EtegamiBitmapRenderer {
             .coerceIn(0, smoothed.size - 1)
     }
 
-    @Suppress("unused")
-    private val unusedRect = Rect() // suppresses unused import warning
 }
