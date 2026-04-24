@@ -199,6 +199,11 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
 
+    // Stage 7-A: Coil for AsyncImage on the photo reliquary grid. Built-in
+    // content:// URI support; no network module needed (we only load
+    // local photo-picker URIs).
+    implementation(libs.coil.compose)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
