@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -47,6 +48,8 @@ object EtegamiBitmapRenderer {
     internal const val MOON_CX = 960f
     internal const val MOON_CY = 200f
     internal const val MOON_RADIUS = 28f
+    /** Synodic-period half — boundary between waxing and waning in days. */
+    internal const val SYNODIC_PERIOD_HALF_DAYS = 14.765294385288
 
     suspend fun render(spec: EtegamiSpec, context: Context): Bitmap =
         withContext(Dispatchers.Default) {
@@ -61,7 +64,12 @@ object EtegamiBitmapRenderer {
             drawGrain(canvas, palette)
             drawInnerBorder(canvas, palette)
             if (spec.moonPhase != null) {
-                drawMoonGlyph(canvas, palette, spec.moonPhase.illumination, isWaxing = spec.moonPhase.ageInDays < 14.77)
+                drawMoonGlyph(
+                    canvas = canvas,
+                    palette = palette,
+                    illumination = spec.moonPhase.illumination,
+                    isWaxing = spec.moonPhase.ageInDays < SYNODIC_PERIOD_HALF_DAYS,
+                )
             }
             if (smoothed.size >= 2) {
                 drawRouteGlow(canvas, palette, smoothed)
@@ -91,7 +99,7 @@ object EtegamiBitmapRenderer {
         smoothed: List<SmoothedSegment>,
     ) {
         val (cx, cy) = routeCenter(smoothed)
-        val radius = (WIDTH_PX.coerceAtLeast(HEIGHT_PX)) * 0.7f
+        val radius = max(WIDTH_PX, HEIGHT_PX) * 0.7f
         // Slightly lighter paper color at the center fading to paper
         // edges. Lighten by +0.03 on each RGB channel, clamped.
         val center = lightenedPaper(palette.paper, delta = 0.03f)
