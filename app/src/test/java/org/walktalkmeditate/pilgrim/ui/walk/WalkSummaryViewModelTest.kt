@@ -13,6 +13,7 @@ import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -68,8 +69,23 @@ class WalkSummaryViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         context = ApplicationProvider.getApplicationContext()
+        // Pipe Room's query + transaction executors through the test
+        // dispatcher so in-flight Room coroutines are drained by
+        // runTest's virtual-time scheduling before @After's db.close()
+        // runs — otherwise a transaction that was suspended on
+        // Room's default arch_disk_io pool wakes up after db.close()
+        // and throws `IllegalStateException: The database ':memory:'
+        // is not open.` The uncaught exception gets captured by
+        // kotlinx-coroutines-test and re-raised as
+        // UncaughtExceptionsBeforeTest in a LATER test (possibly a
+        // different class), with a misleading stack pointer. Fork-
+        // layout changes from adding Robolectric classes elsewhere
+        // in the tree can surface this; the dispatcher-piping fix
+        // resolves it for good.
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
+            .setQueryExecutor(dispatcher.asExecutor())
+            .setTransactionExecutor(dispatcher.asExecutor())
             .build()
         repository = WalkRepository(
             database = db,

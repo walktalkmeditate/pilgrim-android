@@ -72,8 +72,19 @@ fun WalkSummaryScreen(
     LaunchedEffect(viewModel) {
         viewModel.etegamiEvents.collect { ev ->
             when (ev) {
-                is WalkSummaryViewModel.EtegamiShareEvent.DispatchShare ->
-                    activity.startActivity(ev.chooser)
+                is WalkSummaryViewModel.EtegamiShareEvent.DispatchShare -> {
+                    // startActivity can throw ActivityNotFoundException
+                    // on edge-case devices with no share chooser
+                    // installed (rare but possible on stripped-down
+                    // ROMs). Catch to keep the collector alive and
+                    // surface a snackbar instead of tearing down the
+                    // whole event pipeline.
+                    try {
+                        activity.startActivity(ev.chooser)
+                    } catch (t: android.content.ActivityNotFoundException) {
+                        snackbarHostState.showSnackbar(msgShareFailed)
+                    }
+                }
                 WalkSummaryViewModel.EtegamiShareEvent.SaveSucceeded ->
                     snackbarHostState.showSnackbar(msgSaveSuccess)
                 WalkSummaryViewModel.EtegamiShareEvent.SaveFailed ->
