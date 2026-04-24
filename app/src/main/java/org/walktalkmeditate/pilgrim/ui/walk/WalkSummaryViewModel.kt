@@ -29,10 +29,10 @@ import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
-import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
+import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -213,8 +213,18 @@ class WalkSummaryViewModel @Inject constructor(
         // Stage 7-B: rendezvous any pending photo analysis. Cheap —
         // the scheduler's KEEP policy dedups if a worker is already
         // running, and the runner returns immediately when nothing is
-        // pending. Covers the process-death-mid-analysis path.
-        photoAnalysisScheduler.scheduleForWalk(walkId)
+        // pending. Covers the process-death-mid-analysis path. Wrapped
+        // to mirror the WalkViewModel + OrphanRecordingSweeper pattern
+        // so a future WorkRequest.build() regression (e.g., mistakenly
+        // adding an incompatible constraint) doesn't crash the
+        // LaunchedEffect that triggered the sweep.
+        try {
+            photoAnalysisScheduler.scheduleForWalk(walkId)
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "photo analysis schedule failed for walk $walkId", t)
+        }
     }
 
     fun playRecording(recording: VoiceRecording) = playback.play(recording)
@@ -331,7 +341,17 @@ class WalkSummaryViewModel @Inject constructor(
             // KEEP policy + the runner's pending filter make this a
             // no-op if a worker is already running for this walk.
             if (result.insertedIds.isNotEmpty()) {
-                photoAnalysisScheduler.scheduleForWalk(walkId)
+                try {
+                    photoAnalysisScheduler.scheduleForWalk(walkId)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    android.util.Log.w(
+                        TAG,
+                        "photo analysis schedule failed for walk $walkId",
+                        t,
+                    )
+                }
             }
         }
     }
