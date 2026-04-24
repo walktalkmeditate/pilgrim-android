@@ -57,6 +57,7 @@ class OrphanRecordingSweeperTest {
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
             voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
         )
         scheduler = FakeTranscriptionScheduler()
         sweeper = OrphanRecordingSweeper(context, repository, scheduler)
