@@ -117,7 +117,14 @@ fun WalkShareScreen(
         }
     }
 
-    val isShared = cached != null && cached?.isExpiredAt() == false
+    // Snapshot `cached` once per composition so the downstream
+    // reads see a consistent value — a second delegated-property
+    // read can observe a fresh DataStore emission (e.g.
+    // `clear(walkUuid)` from some future expiry-sweeper) and
+    // transition non-null → null between the `isShared` check and
+    // the `activeShare!!` unwrap, producing a NullPointerException.
+    val activeShare = cached?.takeIf { !it.isExpiredAt() }
+    val isShared = activeShare != null
 
     Scaffold(
         topBar = {
@@ -171,9 +178,9 @@ fun WalkShareScreen(
                     color = pilgrimColors.fog,
                 )
                 is WalkShareUiState.Loaded -> {
-                    if (isShared) {
+                    if (activeShare != null) {
                         SharedLayout(
-                            url = cached!!.url,
+                            url = activeShare.url,
                             onCopy = { copyUrl(context, it, copiedToast) },
                             onShare = { launchShareChooser(activity ?: context, it, chooserTitle) },
                         )
@@ -440,7 +447,15 @@ private fun SharedLayout(
 internal fun copyUrl(context: Context, url: String, toast: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     clipboard?.setPrimaryClip(ClipData.newPlainText("Pilgrim walk", url))
-    Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
+    // API 33+ shows a system-level clipboard confirmation badge
+    // automatically. Rendering our own Toast on top would
+    // double-confirm and also falsely-confirm on scenarios where
+    // the OS silently rejects the write (foreground-app policy).
+    // Retain the Toast only for pre-Tiramisu devices where no
+    // system confirmation exists.
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+        Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
+    }
 }
 
 internal fun launchShareChooser(context: Context, url: String, chooserTitle: String) {

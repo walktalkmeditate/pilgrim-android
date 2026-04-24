@@ -261,8 +261,16 @@ private fun watermarkOpacity(
     return 0.07f - (fraction * 0.045f)
 }
 
+/**
+ * Month name uses the user's locale (wire-visible user-facing
+ * content); day digit is forced to ASCII via `DecimalStyle.STANDARD`
+ * so Arabic / Persian / Hindi locales don't mix non-ASCII digits
+ * into the Latin-surround "Returns to the trail on …" copy
+ * (Stage 6-B lesson).
+ */
 private val expiryDateFormatter =
     DateTimeFormatter.ofPattern("MMMM d", Locale.getDefault())
+        .withDecimalStyle(java.time.format.DecimalStyle.STANDARD)
 
 private fun formatExpiryDate(epochMs: Long): String =
     expiryDateFormatter

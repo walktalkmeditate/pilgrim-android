@@ -284,11 +284,20 @@ class WalkShareViewModel @Inject constructor(
         _uiState.value = WalkShareUiState.Loaded(inputs = inputs)
     }
 
-    val toggledStatsCount: StateFlow<Int> = MutableStateFlow(0).also { counter ->
-        // Manual fan-in — the five toggle flows sum into this StateFlow.
-        // A `combine` chain would be cleaner but 5 args requires
-        // `combine(flow1, flow2, flow3, flow4, flow5)` which is fine.
+    // Backed by private MSFs + exposed as read-only StateFlow. The
+    // earlier `MutableStateFlow(0).also { }` pattern left the
+    // mutable instance reachable via `vm.toggledStatsCount as
+    // MutableStateFlow` — an encapsulation hole rather than a live
+    // bug, but easy to close.
+    private val _toggledStatsCount = MutableStateFlow(0)
+    val toggledStatsCount: StateFlow<Int> = _toggledStatsCount.asStateFlow()
+
+    private val _canShare = MutableStateFlow(false)
+    val canShare: StateFlow<Boolean> = _canShare.asStateFlow()
+
+    init {
         viewModelScope.launch {
+            // Fan five toggles into the count StateFlow.
             combine(
                 _includeDistance,
                 _includeDuration,
@@ -297,22 +306,21 @@ class WalkShareViewModel @Inject constructor(
                 _includeSteps,
             ) { d, du, e, a, s ->
                 listOf(d, du, e, a, s).count { it }
-            }.collect { counter.value = it }
+            }.collect { _toggledStatsCount.value = it }
         }
-    }
-
-    val canShare: StateFlow<Boolean> = MutableStateFlow(false).also { canShareFlow ->
         viewModelScope.launch {
+            // canShare: not already sharing, at least one stat
+            // toggle, and the loaded walk has ≥ 2 route points.
             combine(
                 _isSharing,
-                toggledStatsCount,
+                _toggledStatsCount,
                 _uiState,
             ) { sharing, toggles, state ->
                 !sharing &&
                     toggles > 0 &&
                     state is WalkShareUiState.Loaded &&
                     state.inputs.routePoints.size >= ShareConfig.ROUTE_MIN_POINTS
-            }.collect { canShareFlow.value = it }
+            }.collect { _canShare.value = it }
         }
     }
 

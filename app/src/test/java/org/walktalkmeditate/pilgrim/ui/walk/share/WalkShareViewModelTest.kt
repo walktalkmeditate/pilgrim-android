@@ -190,7 +190,7 @@ class WalkShareViewModelTest {
     }
 
     @Test
-    fun `share 429 emits RateLimited and does NOT cache`() = runTest(dispatcher) {
+    fun `share 429 emits RateLimited, does NOT cache, re-enables the Share button`() = runTest(dispatcher) {
         server.enqueue(MockResponse().setResponseCode(429).setBody("{}"))
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
@@ -206,7 +206,12 @@ class WalkShareViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
         // No cache entry written on rate-limit.
-        val cached = vm.cachedShare.value
-        assertEquals(null, cached)
+        assertEquals(null, vm.cachedShare.value)
+        // isSharing resets via the share() finally block so the user
+        // can retry tomorrow (iOS parity — no client-side lockout).
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(5_000L) { vm.isSharing.first { !it } }
+        }
+        assertEquals(false, vm.isSharing.value)
     }
 }
