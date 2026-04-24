@@ -58,9 +58,9 @@ fun WalkSummaryScreen(
 
     // Stage 7-D: etegami share + save wiring. The row is slotted
     // directly under WalkEtegamiCard below; VM events drive snackbar
-    // feedback + chooser-intent dispatch. Activity cast is safe here
-    // — MainActivity is a ComponentActivity and WalkSummaryScreen is
-    // always hosted there.
+    // feedback + chooser-intent dispatch. `LocalActivity.current` is
+    // non-null in practice — MainActivity hosts every screen —
+    // but we fall back to a snackbar on null rather than crashing.
     val snackbarHostState = remember { SnackbarHostState() }
     val etegamiBusy by viewModel.etegamiBusy.collectAsStateWithLifecycle()
     val activity = LocalActivity.current

@@ -14,11 +14,11 @@ import org.robolectric.annotation.Config
 
 /**
  * Robolectric's `MediaStore.Images.Media.EXTERNAL_CONTENT_URI`
- * provider is not wired, so `openOutputStream(insertUri)` always
- * throws `FileNotFoundException: No content provider`. We therefore
- * assert only what's portable to the test environment — the filename
- * guard and the error-path cancellation contract. The API 29+
- * happy-path is exercised on-device in Stage 7-D QA.
+ * provider is not wired, so `openFileDescriptor(insertUri, "w")`
+ * returns null (or throws). We therefore assert only what's
+ * portable to the test environment — the filename guard and the
+ * error-path cancellation contract. The API 29+ happy-path is
+ * exercised on-device in Stage 7-D QA.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)

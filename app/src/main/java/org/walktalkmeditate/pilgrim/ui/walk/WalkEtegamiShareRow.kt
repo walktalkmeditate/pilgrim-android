@@ -36,10 +36,12 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
  * Stage 7-D: Share + Save action row slotted below WalkEtegamiCard.
  *
  * Mirrors iOS `WalkSharingButtons` image-share row — two compact
- * outlined buttons, labeled text, disabled-during-work via
- * [busy]. Snackbar feedback is wired by the caller via a VM-level
- * event SharedFlow (see `WalkSummaryScreen`); this row just
- * renders the buttons.
+ * outlined buttons, labeled text. Only the button matching the
+ * in-flight [busyAction] shows a spinner; both buttons are
+ * `enabled = false` while either action runs so the user can't
+ * spawn a second action. Snackbar feedback is wired by the caller
+ * via a VM-level event SharedFlow (see `WalkSummaryScreen`); this
+ * row just renders the buttons.
  *
  * On API 28 only, Save-to-Photos requires WRITE_EXTERNAL_STORAGE.
  * The permission launcher is `remember`-pinned on its contract per
