@@ -72,6 +72,26 @@ class SharePayloadBuilderTest {
     }
 
     @Test
+    fun `distance and activeDuration are always sent regardless of toggle (iOS parity)`() {
+        // Toggle semantics are DISPLAY-level, not data-transmission level
+        // (iOS WalkShareViewModel.swift:261-262 parity). The
+        // toggled_stats list tells the server which fields to render
+        // on the generated HTML page; raw values for foundational
+        // walk metrics (distance, duration, meditate, talk) ALWAYS
+        // ride in the payload. This regression-guard test prevents a
+        // well-intentioned "privacy fix" from accidentally diverging
+        // from iOS by gating distance/duration on their toggles.
+        val payload = SharePayloadBuilder.build(
+            baseInputs(),
+            allOn().copy(includeDistance = false, includeDuration = false),
+        )
+        assertEquals(1_234.0, payload.stats.distance!!, 0.0)
+        assertEquals(600.0, payload.stats.activeDuration!!, 0.0)
+        assertEquals(false, payload.toggledStats.contains("distance"))
+        assertEquals(false, payload.toggledStats.contains("duration"))
+    }
+
+    @Test
     fun `toggled_stats list reflects toggles, elevation and steps drop when off`() {
         val partial = SharePayloadBuilder.build(
             baseInputs(),

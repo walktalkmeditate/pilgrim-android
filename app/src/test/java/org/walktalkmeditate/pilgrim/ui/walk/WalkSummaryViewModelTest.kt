@@ -137,6 +137,14 @@ class WalkSummaryViewModelTest {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        // Stage 8-A: WalkSummaryViewModel.cachedShareFlow opens the
+        // share_cache DataStore eagerly via SharingStarted.Eagerly.
+        // Without this cleanup, cached entries from one test would
+        // leak into another's `cachedShare` observer (Stage 7-A
+        // Robolectric+Eagerly cross-test pollution lesson). Matches
+        // the cleanup already in WalkShareViewModelTest +
+        // CachedShareStoreTest.
+        java.io.File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
         Dispatchers.resetMain()
     }
 

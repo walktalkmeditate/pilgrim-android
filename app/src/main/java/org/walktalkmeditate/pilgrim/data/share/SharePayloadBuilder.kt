@@ -102,6 +102,20 @@ internal object SharePayloadBuilder {
             if (options.includeSteps) add("steps")
         }
 
+        // Toggle semantics — DISPLAY level, not data-transmission level
+        // (iOS `WalkShareViewModel.swift:261-262` parity). The
+        // `toggled_stats` list tells the server which fields to render
+        // on the generated HTML page; the raw values still ride in the
+        // payload regardless of toggle state. This is intentional for
+        // distance / activeDuration / meditateDuration / talkDuration —
+        // they're foundational walk metrics. `elevationAscent /
+        // elevationDescent / steps` are nulled when their toggles are
+        // off because they were always optional in the wire format
+        // (the JSON encoder will omit them via `explicitNulls = false`)
+        // and there's no display-only path on the server for them.
+        // Future stages that add a "raw data" privacy toggle should
+        // implement it as a separate flag, not by repurposing these
+        // display toggles.
         val stats = SharePayload.Stats(
             distance = inputs.distanceMeters.takeIf { it > 0.0 },
             activeDuration = inputs.activeDurationSeconds.takeIf { it > 0.0 },
