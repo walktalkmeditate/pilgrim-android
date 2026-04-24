@@ -74,6 +74,7 @@ class HomeViewModelTest {
             activityIntervalDao = db.activityIntervalDao(),
             waypointDao = db.waypointDao(),
             voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
         )
         clock = FakeHomeClock(initial = 10_000_000L)
         // Hemisphere setup — start clean each test so a prior Southern
