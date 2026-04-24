@@ -146,6 +146,52 @@ class WalkPhotoDataLayerTest {
     }
 
     @Test
+    fun `pinPhotos clips the batch to the cap when the walk is already near the limit`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        // Seed 18 pins of a 20-cap walk.
+        repository.pinPhotos(
+            walkId = walk.id,
+            refs = (1..18).map { PhotoPinRef("content://x/$it", takenAt = null) },
+            pinnedAt = 1_000L,
+            cap = 20,
+        )
+        assertEquals(18, repository.countPhotosFor(walk.id))
+
+        // Try to add 5 more under a 20 cap — only 2 should land.
+        val returnedIds = repository.pinPhotos(
+            walkId = walk.id,
+            refs = (100..104).map { PhotoPinRef("content://y/$it", takenAt = null) },
+            pinnedAt = 2_000L,
+            cap = 20,
+        )
+
+        assertEquals(2, returnedIds.size)
+        assertEquals(20, repository.countPhotosFor(walk.id))
+    }
+
+    @Test
+    fun `pinPhotos returns empty when the walk is already at the cap`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.pinPhotos(
+            walkId = walk.id,
+            refs = (1..5).map { PhotoPinRef("content://x/$it", takenAt = null) },
+            pinnedAt = 1_000L,
+            cap = 5,
+        )
+        assertEquals(5, repository.countPhotosFor(walk.id))
+
+        val returnedIds = repository.pinPhotos(
+            walkId = walk.id,
+            refs = listOf(PhotoPinRef("content://y/1", takenAt = null)),
+            pinnedAt = 2_000L,
+            cap = 5,
+        )
+
+        assertTrue(returnedIds.isEmpty())
+        assertEquals(5, repository.countPhotosFor(walk.id))
+    }
+
+    @Test
     fun `deleting a walk cascades to its pinned photos`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
         repository.pinPhoto(

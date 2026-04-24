@@ -150,20 +150,34 @@ class WalkRepository @Inject constructor(
     )
 
     /**
-     * Insert a batch of picked photos under a single Room transaction so
-     * a mid-batch failure leaves none committed. All rows share the same
-     * [pinnedAt] so they sort together and the grid sees one diff rather
-     * than N.
+     * Insert a batch of picked photos under a single Room transaction.
+     * Count, clip to remaining slots, and insert all happen under the
+     * same lock so concurrent [pinPhotos] calls cannot collectively
+     * exceed [cap] — the double-pick race (user backs out of the first
+     * picker and opens a second before the first batch's StateFlow
+     * emission lands) could otherwise push the walk over the cap by
+     * reading a stale size in the VM.
+     *
+     * All committed rows share the same [pinnedAt] so they sort
+     * together and the grid sees one diff rather than N. Returns the
+     * ids of rows actually inserted — may be shorter than [refs] if
+     * capping clipped the batch (or empty if the walk was already at
+     * the cap by the time the transaction opened).
      */
     suspend fun pinPhotos(
         walkId: Long,
         refs: List<PhotoPinRef>,
         pinnedAt: Long,
+        cap: Int = Int.MAX_VALUE,
     ): List<Long> {
         if (refs.isEmpty()) return emptyList()
         return database.withTransaction {
+            val remaining = (cap - walkPhotoDao.countForWalk(walkId))
+                .coerceAtLeast(0)
+            if (remaining == 0) return@withTransaction emptyList()
+            val clipped = if (remaining < refs.size) refs.take(remaining) else refs
             walkPhotoDao.insertAll(
-                refs.map { ref ->
+                clipped.map { ref ->
                     WalkPhoto(
                         walkId = walkId,
                         photoUri = ref.uri,
