@@ -20,16 +20,25 @@ class PhotoAnalysisWorker @AssistedInject constructor(
             ?: return Result.failure()
         return runner.analyzePending(walkId).fold(
             onSuccess = { Result.success() },
-            // ML Kit / DB failures are plausibly transient (low memory,
-            // SD card remount, WorkManager constraint change). Ask for
-            // a retry rather than marking analysis permanently failed;
-            // per-photo failures inside the runner are already
-            // tombstoned without bubbling.
-            onFailure = { Result.retry() },
+            // ML Kit / DB failures bubble up here only for catastrophic
+            // cases — the runner already tombstones per-photo failures
+            // internally. Retry a bounded number of times to cover
+            // transient issues (low memory, WorkManager constraint
+            // flip, SD remount) without queueing unbounded retries
+            // forever against a permanently broken state. After
+            // [MAX_RETRY_ATTEMPTS], fall back to success so WorkManager
+            // drops the request — runStartupSweep re-schedules on next
+            // WalkSummary entry anyway, which is the right user-visible
+            // recovery point.
+            onFailure = {
+                if (runAttemptCount >= MAX_RETRY_ATTEMPTS) Result.success()
+                else Result.retry()
+            },
         )
     }
 
     companion object {
         const val KEY_WALK_ID = "walk_id"
+        private const val MAX_RETRY_ATTEMPTS = 3
     }
 }
