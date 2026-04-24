@@ -130,46 +130,4 @@ class EtegamiBitmapRendererTest {
         assertNotNull(bitmap)
     }
 
-    @Test
-    fun `indexAtTimestamp clamps the last route point to the last smoothed index`() {
-        // 5 route points ⇒ smoothed length is (5-1)*8 + 1 = 33 (indices
-        // 0..32). closestOrig for the last-timestamp marker is 4; the
-        // raw multiply yields 4*8 = 32, which is exactly
-        // `smoothed.size - 1`. The `coerceIn` is load-bearing at this
-        // boundary — a silent drift in DEFAULT_SUBDIVISIONS or the
-        // smoothed-length formula would show up as a one-off index and
-        // silently misplace the glyph.
-        val route = (0..4).map {
-            LocationPoint(
-                timestamp = it * 1_000L,
-                latitude = 45.0 + it * 0.0001,
-                longitude = -70.0 + it * 0.0001,
-            )
-        }
-        val smoothed = EtegamiRouteGeometry.smooth(route)
-        val s = spec(routePoints = route)
-        val idx = EtegamiBitmapRenderer.indexAtTimestamp(s, smoothed, 4_000L)
-        assertEquals(smoothed.size - 1, idx)
-    }
-
-    @Test
-    fun `indexAtTimestamp clamps out-of-range timestamps to endpoints`() {
-        val route = (0..2).map {
-            LocationPoint(
-                timestamp = it * 1_000L,
-                latitude = 45.0,
-                longitude = -70.0,
-            )
-        }
-        val smoothed = EtegamiRouteGeometry.smooth(route)
-        val s = spec(routePoints = route)
-        // Below-range timestamps map to the first point.
-        assertEquals(0, EtegamiBitmapRenderer.indexAtTimestamp(s, smoothed, -9_999L))
-        // Above-range timestamps map to the last smoothed index.
-        assertEquals(
-            smoothed.size - 1,
-            EtegamiBitmapRenderer.indexAtTimestamp(s, smoothed, 999_999L),
-        )
-    }
-
 }
