@@ -117,6 +117,15 @@ fun WalkSummaryScreen(
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         WalkLightReadingCard(reading = reading)
                     }
+                    // Stage 7-C: etegami preview card. Null when the
+                    // VM's composeEtegamiSpec throws (shouldn't happen
+                    // in production; guarded for log-and-skip). Slotted
+                    // between Light Reading (contemplative) and Voice
+                    // Recordings (conversational tail).
+                    s.summary.etegamiSpec?.let { etegami ->
+                        Spacer(Modifier.height(PilgrimSpacing.big))
+                        WalkEtegamiCard(spec = etegami)
+                    }
                     if (recordings.isNotEmpty()) {
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         VoiceRecordingsSection(
