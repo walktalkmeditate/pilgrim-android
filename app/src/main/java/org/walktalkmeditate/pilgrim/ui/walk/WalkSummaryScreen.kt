@@ -17,6 +17,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,6 +55,50 @@ fun WalkSummaryScreen(
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
+
+    // Stage 7-D: etegami share + save wiring. The row is slotted
+    // directly under WalkEtegamiCard below; VM events drive snackbar
+    // feedback + chooser-intent dispatch. `LocalActivity.current` is
+    // non-null in practice — MainActivity hosts every screen —
+    // but we fall back to a snackbar on null rather than crashing.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val etegamiBusy by viewModel.etegamiBusy.collectAsStateWithLifecycle()
+    val activity = LocalActivity.current
+    val msgSaveSuccess = stringResource(R.string.etegami_save_success)
+    val msgSaveFailed = stringResource(R.string.etegami_save_failed)
+    val msgShareFailed = stringResource(R.string.etegami_share_failed)
+    val msgNeedsPermission = stringResource(R.string.etegami_save_needs_permission)
+    LaunchedEffect(viewModel) {
+        viewModel.etegamiEvents.collect { ev ->
+            when (ev) {
+                is WalkSummaryViewModel.EtegamiShareEvent.DispatchShare -> {
+                    // startActivity can throw ActivityNotFoundException
+                    // on edge-case devices with no share chooser
+                    // installed (rare but possible on stripped-down
+                    // ROMs). Catch to keep the collector alive and
+                    // surface a snackbar instead of tearing down the
+                    // whole event pipeline. `activity` is null if
+                    // WalkSummaryScreen is hosted outside a real
+                    // Activity — unreachable in Pilgrim (MainActivity
+                    // hosts every screen) but handled defensively.
+                    try {
+                        activity?.startActivity(ev.chooser)
+                            ?: snackbarHostState.showSnackbar(msgShareFailed)
+                    } catch (t: android.content.ActivityNotFoundException) {
+                        snackbarHostState.showSnackbar(msgShareFailed)
+                    }
+                }
+                WalkSummaryViewModel.EtegamiShareEvent.SaveSucceeded ->
+                    snackbarHostState.showSnackbar(msgSaveSuccess)
+                WalkSummaryViewModel.EtegamiShareEvent.SaveFailed ->
+                    snackbarHostState.showSnackbar(msgSaveFailed)
+                WalkSummaryViewModel.EtegamiShareEvent.ShareFailed ->
+                    snackbarHostState.showSnackbar(msgShareFailed)
+                WalkSummaryViewModel.EtegamiShareEvent.SaveNeedsPermission ->
+                    snackbarHostState.showSnackbar(msgNeedsPermission)
+            }
+        }
+    }
 
     // Stage 4-B: the reveal plays on this entry to WalkSummaryScreen.
     // After the overlay calls onDismiss (auto-dismiss at 2.5s or
@@ -125,6 +172,20 @@ fun WalkSummaryScreen(
                     s.summary.etegamiSpec?.let { etegami ->
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         WalkEtegamiCard(spec = etegami)
+                        // Stage 7-D: share / save action row slotted
+                        // under the preview card. iOS WalkSharingButtons
+                        // pairs these affordances with the image itself.
+                        WalkEtegamiShareRow(
+                            busyAction = etegamiBusy,
+                            onShare = { viewModel.shareEtegami(etegami) },
+                            onSave = { viewModel.saveEtegamiToGallery(etegami) },
+                            onSavePermissionDenied = {
+                                // Route denial through the same
+                                // snackbar as the in-saver check, so
+                                // the user gets consistent feedback.
+                                viewModel.notifyEtegamiSaveNeedsPermission()
+                            },
+                        )
                     }
                     if (recordings.isNotEmpty()) {
                         Spacer(Modifier.height(PilgrimSpacing.big))
@@ -179,6 +240,14 @@ fun WalkSummaryScreen(
                 isMilestone = loaded.summary.milestone != null,
             )
         }
+
+        // Stage 7-D: snackbar anchored to the bottom of the screen so
+        // Save/Share feedback doesn't collide with the SealReveal
+        // overlay (which lives above the summary column).
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 

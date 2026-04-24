@@ -15,6 +15,7 @@ import app.cash.turbine.test
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.emptyFlow
@@ -82,8 +83,19 @@ class WalkViewModelTest {
         Dispatchers.setMain(dispatcher)
         context = ApplicationProvider.getApplicationContext()
         shadowOf(context as Application).grantPermissions(Manifest.permission.RECORD_AUDIO)
+        // Pipe Room's query + transaction executors through the test
+        // dispatcher so in-flight Room coroutines are drained before
+        // @After's db.close() runs — otherwise a suspended
+        // withTransaction wakes up after db.close() and throws
+        // `IllegalStateException: The database ':memory:' is not open`
+        // on `arch_disk_io_2`, which kotlinx-coroutines-test re-raises
+        // as UncaughtExceptionsBeforeTest in a subsequent test (often
+        // in a DIFFERENT class with misleading stack pointer). See
+        // Stage 7-C and 7-D CI-flake incidents.
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
+            .setQueryExecutor(dispatcher.asExecutor())
+            .setTransactionExecutor(dispatcher.asExecutor())
             .build()
         repository = WalkRepository(
             database = db,

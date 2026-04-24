@@ -25,6 +25,13 @@
     <!-- Mapbox tile downloads. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Stage 7-D: save-etegami-to-Photos legacy write path. On API 29+
+         MediaStore scoped-storage insert doesn't need this permission;
+         `maxSdkVersion=28` scopes the grant to devices that actually
+         need it and avoids Play Store's enhanced-storage review. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:name=".PilgrimApp"
@@ -68,6 +75,21 @@
                 android:name="androidx.work.WorkManagerInitializer"
                 android:value="androidx.startup"
                 tools:node="remove" />
+        </provider>
+
+        <!-- Stage 7-D: FileProvider for sharing etegami PNG postcards via
+             ACTION_SEND. Authority = "${applicationId}.fileprovider"
+             (must be stable — any receiving-app content URI grants key
+             on this string). Backed by cache-path config in
+             res/xml/file_paths.xml. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
         </provider>
 
         <!-- Stage 7-A: No Play Services Photo Picker backport is wired
