@@ -125,4 +125,15 @@
     <string name="soundscape_delete_message">%1$s will be removed from this device. You can download it again later.</string>
     <string name="soundscape_delete_confirm">Delete</string>
     <string name="soundscape_delete_cancel">Cancel</string>
+
+    <!-- Stage 7-D: etegami share + save-to-gallery -->
+    <string name="etegami_share_button">Share</string>
+    <string name="etegami_save_button">Save</string>
+    <string name="etegami_share_chooser_title">Share etegami</string>
+    <string name="etegami_save_success">Saved to Photos</string>
+    <string name="etegami_save_failed">Couldn\'t save etegami</string>
+    <string name="etegami_share_failed">Couldn\'t prepare etegami</string>
+    <string name="etegami_save_needs_permission">Allow Photos access to save</string>
+    <string name="etegami_share_button_content_description">Share the etegami postcard</string>
+    <string name="etegami_save_button_content_description">Save the etegami postcard to Photos</string>
 </resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stage 7-D: FileProvider root for shared etegami PNG postcards.
+  Files live under context.cacheDir/etegami/ and are swept by
+  EtegamiCacheSweeper after 24h; Android also auto-clears
+  cacheDir on storage pressure.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="etegami_cache" path="etegami/" />
+</paths>
