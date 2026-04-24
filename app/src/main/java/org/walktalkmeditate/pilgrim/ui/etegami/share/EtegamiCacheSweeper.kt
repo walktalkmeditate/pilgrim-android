@@ -34,7 +34,15 @@ internal object EtegamiCacheSweeper {
         var deleted = 0
         root.listFiles()?.forEach { file ->
             try {
-                if (file.lastModified() < cutoff && file.delete()) {
+                // `.tmp` files are crash orphans from an interrupted
+                // writeToCache — always safe to delete regardless of
+                // age. Regular PNG files age out on the [olderThan]
+                // cutoff (default 24h) so share intents initiated
+                // mid-walk still have their content available when
+                // the user finishes sending.
+                val isTempOrphan = file.name.endsWith(".tmp")
+                val expired = file.lastModified() < cutoff
+                if ((isTempOrphan || expired) && file.delete()) {
                     deleted++
                 }
             } catch (ce: CancellationException) {

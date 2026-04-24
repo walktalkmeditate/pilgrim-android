@@ -91,11 +91,22 @@ internal object EtegamiGallerySaver {
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: return SaveResult.Failed(IllegalStateException("insert returned null"))
         try {
-            resolver.openOutputStream(uri, "w")?.use { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                    error("compress returned false")
+            // Use openFileDescriptor instead of openOutputStream so we
+            // can explicitly flush + fsync before flipping IS_PENDING.
+            // Otherwise the MediaProvider transaction that publishes
+            // the record can race the kernel pagecache writeback and
+            // the user sees a partially-written / zero-padded image
+            // in Photos — same failure mode the legacy path avoids
+            // via `os.flush()` + `os.fd.sync()`.
+            resolver.openFileDescriptor(uri, "w")?.use { pfd ->
+                FileOutputStream(pfd.fileDescriptor).use { out ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                        error("compress returned false")
+                    }
+                    out.flush()
+                    out.fd.sync()
                 }
-            } ?: error("openOutputStream returned null")
+            } ?: error("openFileDescriptor returned null")
             val clear = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
             // resolver.update returns the number of rows affected.
             // If 0, the record wasn't published — the image is on

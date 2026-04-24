@@ -5,6 +5,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EtegamiFilenameTest {
@@ -40,15 +41,20 @@ class EtegamiFilenameTest {
     }
 
     @Test
-    fun `forWalk is ASCII-digit stable across locales`() {
-        // Regression guard: Stage 6-B lesson — DateTimeFormatter
+    fun `forWalk year-month-day chars are all ASCII digits`() {
+        // Regression guard for the Stage 6-B lesson: DateTimeFormatter
         // without Locale.ROOT can emit non-ASCII digits on Arabic /
-        // Persian / Hindi locales. Verify first char after "pilgrim-
-        // etegami-" is ASCII digit.
+        // Persian / Hindi locales (`١٩٧٠` instead of `1970`). A
+        // tautological assertEquals('1', ...) wouldn't catch that —
+        // test every digit position with `isAsciiDigit` so a Locale
+        // regression fails loudly rather than by accident.
         val epoch = 0L
         val fn = EtegamiFilename.forWalk(epoch, ZoneId.of("UTC"))
-        val prefix = "pilgrim-etegami-"
-        val firstDigit = fn[prefix.length]
-        assertEquals('1', if (firstDigit == '1') '1' else firstDigit) // year starts with 1970
+        val stampStart = "pilgrim-etegami-".length
+        // Year digits: positions [stampStart..stampStart+3].
+        for (i in stampStart until stampStart + 4) {
+            val c = fn[i]
+            assertTrue("non-ASCII digit at $i in '$fn'", c.code in '0'.code..'9'.code)
+        }
     }
 }

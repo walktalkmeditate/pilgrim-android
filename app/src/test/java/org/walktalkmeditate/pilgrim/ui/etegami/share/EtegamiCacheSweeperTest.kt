@@ -53,6 +53,27 @@ class EtegamiCacheSweeperTest {
     }
 
     @Test
+    fun `sweepStale removes tmp crash-orphans regardless of age`() = runBlocking {
+        val root = EtegamiPngWriter.cacheRoot(context)
+        val now = 1_700_000_000_000L
+        // Fresh .tmp orphan — under the 24h cutoff but should still
+        // be deleted because it's unambiguous crash debris.
+        val tmpOrphan = File(root, "pilgrim-etegami-2026-04-24-0932.png.tmp").apply {
+            writeText("half-written")
+            setLastModified(now - 60_000L)
+        }
+        // Fresh .png — under cutoff, should NOT be deleted.
+        val freshPng = File(root, "pilgrim-etegami-2026-04-24-0933.png").apply {
+            writeText("fine")
+            setLastModified(now - 60_000L)
+        }
+        val deleted = EtegamiCacheSweeper.sweepStale(context, olderThan = 24.hours, now = { now })
+        assertEquals(1, deleted)
+        assertFalse(tmpOrphan.exists())
+        assertTrue(freshPng.exists())
+    }
+
+    @Test
     fun `sweepStale with zero duration deletes everything without throwing`() = runBlocking {
         val root = EtegamiPngWriter.cacheRoot(context)
         val now = 1_700_000_000_000L
