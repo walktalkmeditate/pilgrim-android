@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -91,7 +92,7 @@ class PhotoReliquarySectionTest {
             }
         }
         // Each tile carries a fixed content description; count them.
-        composeRule.onAllNodesWithContentDescription("Photo from this walk")
+        composeRule.onAllNodes(tileMatcher())
             .assertCountEquals(5)
     }
 
@@ -109,7 +110,7 @@ class PhotoReliquarySectionTest {
                 }
             }
         }
-        composeRule.onAllNodesWithContentDescription("Photo from this walk")[0]
+        composeRule.onAllNodes(tileMatcher())[0]
             .performTouchInput { longClick() }
 
         composeRule.onNodeWithText("Remove from walk?").assertIsDisplayed()
@@ -133,7 +134,7 @@ class PhotoReliquarySectionTest {
             }
         }
 
-        composeRule.onAllNodesWithContentDescription("Photo from this walk")[0]
+        composeRule.onAllNodes(tileMatcher())[0]
             .performTouchInput { longClick() }
         composeRule.onNodeWithText("Remove").performClick()
 
@@ -158,12 +159,38 @@ class PhotoReliquarySectionTest {
             }
         }
 
-        composeRule.onAllNodesWithContentDescription("Photo from this walk")[0]
+        composeRule.onAllNodes(tileMatcher())[0]
             .performTouchInput { longClick() }
         composeRule.onNodeWithText("Keep").performClick()
 
         assertNull(removed)
         composeRule.onNodeWithText("Remove from walk?").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tombstone caption is announced when the image fails to load`() {
+        // Under Robolectric, Coil can't resolve content:// URIs — every
+        // SubcomposeAsyncImage fires onError synchronously. The outer
+        // Box's contentDescription flips to the tombstone hint and the
+        // error slot renders the "Photo unavailable" caption. In
+        // production this only fires for genuinely broken pins; device
+        // QA covers the happy-path contentDescription.
+        val photos = listOf(photo(1L))
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    PhotoReliquarySection(
+                        photos = photos,
+                        onPinPhotos = {},
+                        onUnpinPhoto = {},
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithText("Photo unavailable").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription(
+            "Photo unavailable — long press to remove",
+        ).assertCountEquals(1)
     }
 
     // Picker-launch paths are not driven from a unit test: ActivityResult
@@ -172,4 +199,17 @@ class PhotoReliquarySectionTest {
     // assembleDebug compiling the ActivityResult contracts against Coil
     // + Photo Picker, plus the VM tests that exercise pinPhotos end-to-end
     // when the launcher callback fires with a hand-constructed Uri list.
+
+    /**
+     * Coil's ImageLoader is a process-wide singleton; state can leak
+     * across test invocations under Robolectric (first test fails to
+     * load → cache records failure → subsequent tests see fail state;
+     * but ordering isn't guaranteed). Match EITHER content description
+     * so the layout assertions are robust to either load outcome. The
+     * specific tombstone caption ("Photo unavailable") is still
+     * asserted by the dedicated tombstone test.
+     */
+    private fun tileMatcher() =
+        hasContentDescription("Photo from this walk")
+            .or(hasContentDescription("Photo unavailable — long press to remove"))
 }
