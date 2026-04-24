@@ -106,6 +106,16 @@ data class WalkSummary(
      * When null, the card simply doesn't render.
      */
     val lightReading: LightReading? = null,
+    /**
+     * Stage 7-C: pre-composed inputs for the etegami postcard
+     * renderer — route, seal, moon phase, stats, intention/notes
+     * text, activity markers. Null iff `composeEtegamiSpec` threw
+     * (not expected today but guarded via `runCatching` for
+     * defensive logging). Renderer lives in `WalkEtegamiCard` which
+     * calls `EtegamiBitmapRenderer.render(spec, context)` inside a
+     * `produceState` on first composition.
+     */
+    val etegamiSpec: org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec? = null,
 )
 
 @HiltViewModel
@@ -518,6 +528,32 @@ class WalkSummaryViewModel @Inject constructor(
             android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
         }.getOrNull()
 
+        // Stage 7-C: compose the etegami spec. Pulls altitude samples
+        // + activity intervals + voice recordings from the repo to
+        // assemble elevation gain + activity markers. Sealed behind
+        // runCatching so any unexpected data-shape issue (e.g. a
+        // future schema change) degrades to "no etegami" rather than
+        // breaking Walk Summary entirely.
+        val etegamiSpec = runCatching {
+            val altitudeSamples = repository.altitudeSamplesFor(walkId)
+            val activityIntervals = repository.activityIntervalsFor(walkId)
+            val voiceRecordings = repository.voiceRecordingsFor(walkId)
+            org.walktalkmeditate.pilgrim.ui.etegami.composeEtegamiSpec(
+                walk = walk,
+                routePoints = points,
+                sealSpec = sealSpec,
+                lightReading = lightReading,
+                distanceMeters = distance,
+                durationMillis = totalElapsed,
+                altitudeSamples = altitudeSamples,
+                activityIntervals = activityIntervals,
+                voiceRecordings = voiceRecordings,
+                zoneId = ZoneId.systemDefault(),
+            )
+        }.onFailure {
+            android.util.Log.w(TAG, "composeEtegamiSpec failed for walk $walkId", it)
+        }.getOrNull()
+
         return WalkSummaryUiState.Loaded(
             WalkSummary(
                 walk = walk,
@@ -532,6 +568,7 @@ class WalkSummaryViewModel @Inject constructor(
                 sealSpec = sealSpec,
                 milestone = milestone,
                 lightReading = lightReading,
+                etegamiSpec = etegamiSpec,
             ),
         )
     }
