@@ -676,14 +676,17 @@ class WalkSummaryViewModelTest {
         // Before any action: null.
         assertNull(vm.etegamiBusy.value)
 
-        // Fire save, wait for the event to show the action completed,
-        // then confirm busy is null again.
-        vm.etegamiEvents.test {
-            vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
-            withContext(Dispatchers.Default.limitedParallelism(1)) {
-                withTimeout(10_000L) { awaitItem() }
-            }
-            cancelAndIgnoreRemainingEvents()
+        // Fire save. The VM's inner `finally { bitmap.recycle() }` and
+        // outer `finally { _etegamiBusy.value = null; mutex.unlock() }`
+        // both run AFTER the event is emitted — and all three live on
+        // `Dispatchers.Default`, not the test dispatcher. Reading
+        // `etegamiBusy.value` immediately after awaiting the event
+        // races the finally blocks. Instead, await the StateFlow
+        // predicate explicitly so we're observing actual completion,
+        // not a race-window snapshot.
+        vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(10_000L) { vm.etegamiBusy.first { it == null } }
         }
         assertNull(vm.etegamiBusy.value)
     }

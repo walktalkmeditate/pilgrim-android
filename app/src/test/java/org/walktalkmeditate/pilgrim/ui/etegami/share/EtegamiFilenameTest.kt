@@ -41,20 +41,17 @@ class EtegamiFilenameTest {
     }
 
     @Test
-    fun `forWalk year-month-day chars are all ASCII digits`() {
+    fun `forWalk yyyy-MM-dd-HHmm digits are all ASCII`() {
         // Regression guard for the Stage 6-B lesson: DateTimeFormatter
         // without Locale.ROOT can emit non-ASCII digits on Arabic /
-        // Persian / Hindi locales (`١٩٧٠` instead of `1970`). A
-        // tautological assertEquals('1', ...) wouldn't catch that —
-        // test every digit position with `isAsciiDigit` so a Locale
-        // regression fails loudly rather than by accident.
+        // Persian / Hindi locales (`١٩٧٠` instead of `1970`). Validate
+        // EVERY digit position (year, month, day, hour, minute) with
+        // a regex, not just the year — a partial guard would let a
+        // refactor that drops Locale.ROOT on one sub-format slip by.
         val epoch = 0L
         val fn = EtegamiFilename.forWalk(epoch, ZoneId.of("UTC"))
-        val stampStart = "pilgrim-etegami-".length
-        // Year digits: positions [stampStart..stampStart+3].
-        for (i in stampStart until stampStart + 4) {
-            val c = fn[i]
-            assertTrue("non-ASCII digit at $i in '$fn'", c.code in '0'.code..'9'.code)
-        }
+        // Full filename is `pilgrim-etegami-yyyy-MM-dd-HHmm.png`.
+        val pattern = Regex("""^pilgrim-etegami-\d{4}-\d{2}-\d{2}-\d{4}\.png$""")
+        assertTrue("filename '$fn' has non-ASCII digits or wrong shape", pattern.matches(fn))
     }
 }
