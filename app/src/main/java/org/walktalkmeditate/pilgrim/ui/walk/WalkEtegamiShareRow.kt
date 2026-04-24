@@ -60,6 +60,11 @@ fun WalkEtegamiShareRow(
     val anyBusy = busyAction != null
     val sharing = busyAction == WalkSummaryViewModel.EtegamiBusyAction.Share
     val saving = busyAction == WalkSummaryViewModel.EtegamiBusyAction.Save
+    // Hoisted stringResource reads — lint's LocalContextGetResourceValueCall
+    // fires when context.getString is called from inside a Modifier
+    // lambda (which isn't a Composable context).
+    val shareDesc = stringResource(R.string.etegami_share_button_content_description)
+    val saveDesc = stringResource(R.string.etegami_save_button_content_description)
 
     val legacyPermissionContract = remember { ActivityResultContracts.RequestPermission() }
     val legacyPermissionLauncher = rememberLauncherForActivityResult(
@@ -86,11 +91,7 @@ fun WalkEtegamiShareRow(
             enabled = !anyBusy,
             modifier = Modifier
                 .weight(1f)
-                .semantics {
-                    contentDescription = context.getString(
-                        R.string.etegami_share_button_content_description,
-                    )
-                },
+                .semantics { contentDescription = shareDesc },
         ) {
             if (sharing) {
                 CircularProgressIndicator(
@@ -123,11 +124,7 @@ fun WalkEtegamiShareRow(
             enabled = !anyBusy,
             modifier = Modifier
                 .weight(1f)
-                .semantics {
-                    contentDescription = context.getString(
-                        R.string.etegami_save_button_content_description,
-                    )
-                },
+                .semantics { contentDescription = saveDesc },
         ) {
             if (saving) {
                 CircularProgressIndicator(

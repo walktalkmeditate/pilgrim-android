@@ -28,10 +28,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.activity.ComponentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
@@ -64,7 +63,7 @@ fun WalkSummaryScreen(
     // always hosted there.
     val snackbarHostState = remember { SnackbarHostState() }
     val etegamiBusy by viewModel.etegamiBusy.collectAsStateWithLifecycle()
-    val activity = LocalContext.current as ComponentActivity
+    val activity = LocalActivity.current
     val msgSaveSuccess = stringResource(R.string.etegami_save_success)
     val msgSaveFailed = stringResource(R.string.etegami_save_failed)
     val msgShareFailed = stringResource(R.string.etegami_share_failed)
@@ -78,9 +77,13 @@ fun WalkSummaryScreen(
                     // installed (rare but possible on stripped-down
                     // ROMs). Catch to keep the collector alive and
                     // surface a snackbar instead of tearing down the
-                    // whole event pipeline.
+                    // whole event pipeline. `activity` is null if
+                    // WalkSummaryScreen is hosted outside a real
+                    // Activity — unreachable in Pilgrim (MainActivity
+                    // hosts every screen) but handled defensively.
                     try {
-                        activity.startActivity(ev.chooser)
+                        activity?.startActivity(ev.chooser)
+                            ?: snackbarHostState.showSnackbar(msgShareFailed)
                     } catch (t: android.content.ActivityNotFoundException) {
                         snackbarHostState.showSnackbar(msgShareFailed)
                     }
