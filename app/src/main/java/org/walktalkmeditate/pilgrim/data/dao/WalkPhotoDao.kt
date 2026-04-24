@@ -47,4 +47,35 @@ interface WalkPhotoDao {
      */
     @Query("SELECT COUNT(*) FROM walk_photos WHERE photo_uri = :photoUri")
     suspend fun countByPhotoUri(photoUri: String): Int
+
+    /**
+     * Stage 7-B: write ML Kit analysis result back to a row. Per-id
+     * `@Query` rather than `@Update` on the full row so a concurrent
+     * writer updating other columns can't be clobbered.
+     */
+    @Query(
+        "UPDATE walk_photos SET " +
+            "top_label = :label, " +
+            "top_label_confidence = :confidence, " +
+            "analyzed_at = :analyzedAt " +
+            "WHERE id = :id",
+    )
+    suspend fun updateAnalysis(
+        id: Long,
+        label: String?,
+        confidence: Double?,
+        analyzedAt: Long,
+    )
+
+    /**
+     * Stage 7-B: rows still awaiting analysis for a walk, ordered the
+     * same way the grid reads so the analyzer processes photos in
+     * pin-order. [PhotoAnalysisRunner] drives the batch off this.
+     */
+    @Query(
+        "SELECT * FROM walk_photos " +
+            "WHERE walk_id = :walkId AND analyzed_at IS NULL " +
+            "ORDER BY pinned_at ASC, id ASC",
+    )
+    suspend fun getPendingAnalysisForWalk(walkId: Long): List<WalkPhoto>
 }

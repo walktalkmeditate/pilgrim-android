@@ -50,6 +50,29 @@ data class WalkPhoto(
     val pinnedAt: Long,
     @ColumnInfo(name = "taken_at")
     val takenAt: Long? = null,
+    /**
+     * Stage 7-B: top-confidence ML Kit image label (e.g. "Plant",
+     * "Building"), or null when the labeler returned no result above
+     * the confidence threshold, or the photo couldn't be read. Null
+     * before the analysis worker has run for this row.
+     */
+    @ColumnInfo(name = "top_label")
+    val topLabel: String? = null,
+    /**
+     * Stage 7-B: confidence for [topLabel] in [0.0, 1.0]. Null when
+     * [topLabel] is null.
+     */
+    @ColumnInfo(name = "top_label_confidence")
+    val topLabelConfidence: Double? = null,
+    /**
+     * Stage 7-B: epoch ms when the analysis worker committed for this
+     * row. Null means analysis is pending. Set to the attempt time
+     * even on labeler failure / unreadable URI so the worker doesn't
+     * retry the same broken photo forever — the UI tombstone takes
+     * over when [topLabel] is null post-analysis.
+     */
+    @ColumnInfo(name = "analyzed_at")
+    val analyzedAt: Long? = null,
 ) {
     init {
         // walkId must be a real FK target. Room's autoGenerate starts at 1

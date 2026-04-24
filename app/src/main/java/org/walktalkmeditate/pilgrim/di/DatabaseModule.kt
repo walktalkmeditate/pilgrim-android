@@ -33,7 +33,10 @@ object DatabaseModule {
         PilgrimDatabase::class.java,
         PilgrimDatabase.DATABASE_NAME,
     )
-        .addMigrations(PilgrimDatabase.MIGRATION_2_3)
+        .addMigrations(
+            PilgrimDatabase.MIGRATION_2_3,
+            PilgrimDatabase.MIGRATION_3_4,
+        )
         .build()
 
     @Provides
