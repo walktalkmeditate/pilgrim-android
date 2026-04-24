@@ -29,6 +29,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
@@ -113,6 +114,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val playback: VoicePlaybackController,
     private val sweeper: OrphanRecordingSweeper,
+    private val photoAnalysisScheduler: PhotoAnalysisScheduler,
     hemisphereRepository: HemisphereRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -208,6 +210,11 @@ class WalkSummaryViewModel @Inject constructor(
                 android.util.Log.w(TAG, "runStartupSweep failed for walk $walkId", t)
             }
         }
+        // Stage 7-B: rendezvous any pending photo analysis. Cheap —
+        // the scheduler's KEEP policy dedups if a worker is already
+        // running, and the runner returns immediately when nothing is
+        // pending. Covers the process-death-mid-analysis path.
+        photoAnalysisScheduler.scheduleForWalk(walkId)
     }
 
     fun playRecording(recording: VoiceRecording) = playback.play(recording)
@@ -316,6 +323,15 @@ class WalkSummaryViewModel @Inject constructor(
                         it,
                     )
                 }
+            }
+            // Stage 7-B: kick off on-device ML Kit labeling for the
+            // freshly inserted rows. Per-walk batch (not per-photo) —
+            // the runner iterates the pending list, so one call
+            // covers the whole batch even when N > 1 photos landed.
+            // KEEP policy + the runner's pending filter make this a
+            // no-op if a worker is already running for this walk.
+            if (result.insertedIds.isNotEmpty()) {
+                photoAnalysisScheduler.scheduleForWalk(walkId)
             }
         }
     }

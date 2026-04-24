@@ -94,14 +94,20 @@ class WalkSummaryViewModelTest {
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, hemisphereLocation, hemisphereScope)
     }
 
-    private fun newViewModel(walkId: Long) = WalkSummaryViewModel(
-        context = context,
-        repository = repository,
-        playback = playback,
-        sweeper = sweeper,
-        hemisphereRepository = hemisphereRepo,
-        savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
-    )
+    private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
+
+    private fun newViewModel(walkId: Long): WalkSummaryViewModel {
+        photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
+        return WalkSummaryViewModel(
+            context = context,
+            repository = repository,
+            playback = playback,
+            sweeper = sweeper,
+            photoAnalysisScheduler = photoAnalysisScheduler,
+            hemisphereRepository = hemisphereRepo,
+            savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
+        )
+    }
 
     @After
     fun tearDown() {
@@ -469,6 +475,59 @@ class WalkSummaryViewModelTest {
             repository.countPhotosFor(walk.id),
         )
         observer.cancel()
+    }
+
+    @Test
+    fun `pinPhotos schedules photo analysis for the walk after insertion`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.pinPhotos(
+            listOf(
+                android.net.Uri.parse("content://media/picker/0/com.example/1"),
+                android.net.Uri.parse("content://media/picker/0/com.example/2"),
+            ),
+        )
+        // Give the IO launch a beat to hit the scheduler.
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                while (photoAnalysisScheduler.scheduleForWalkCalls.isEmpty()) {
+                    kotlinx.coroutines.delay(10)
+                }
+            }
+        }
+
+        assertEquals(listOf(walk.id), photoAnalysisScheduler.scheduleForWalkCalls)
+    }
+
+    @Test
+    fun `pinPhotos with empty list does not schedule analysis`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.pinPhotos(emptyList())
+
+        assertTrue(photoAnalysisScheduler.scheduleForWalkCalls.isEmpty())
+    }
+
+    @Test
+    fun `runStartupSweep schedules photo analysis for the walk`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.runStartupSweep()
+
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                while (photoAnalysisScheduler.scheduleForWalkCalls.isEmpty()) {
+                    kotlinx.coroutines.delay(10)
+                }
+            }
+        }
+        assertTrue(walk.id in photoAnalysisScheduler.scheduleForWalkCalls)
     }
 
     @Test

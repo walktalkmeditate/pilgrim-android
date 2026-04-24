@@ -43,6 +43,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import coil3.compose.SubcomposeAsyncImage
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
@@ -204,12 +207,18 @@ private fun PhotoTile(
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Stable key for the gesture so the composable re-uses the pointer
-    // input handler when a different photo slides into this slot. The
-    // semantics action wraps the same onLongPress so TalkBack users
-    // reach parity with touch users (pointerInput is invisible to the
-    // accessibility tree — Stage 6-B lesson).
-    //
+    // Stage 7-B: track Coil's load state so we can swap the
+    // contentDescription to an actionable tombstone hint when the
+    // image fails to load. Keyed by photo.id so a new tile sliding
+    // into this slot resets the flag — otherwise a fresh live photo
+    // would inherit the previous photo's broken state for a frame.
+    var loadFailed by remember(photo.id) { mutableStateOf(false) }
+    val contentDesc = if (loadFailed) {
+        "Photo unavailable — long press to remove"
+    } else {
+        "Photo from this walk"
+    }
+
     // `contentDescription` lives on this outer Box rather than on
     // SubcomposeAsyncImage because Coil only stamps the description
     // into the semantics tree once the image loads — during the
@@ -226,7 +235,7 @@ private fun PhotoTile(
                 detectTapGestures(onLongPress = { onLongPress() })
             }
             .semantics {
-                contentDescription = "Photo from this walk"
+                contentDescription = contentDesc
                 customActions = listOf(
                     CustomAccessibilityAction(label = "Remove from walk") {
                         onLongPress()
@@ -243,27 +252,43 @@ private fun PhotoTile(
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
-            error = { ReliquaryErrorTile() },
+            onError = { loadFailed = true },
+            onSuccess = { loadFailed = false },
+            error = { ReliquaryTombstone() },
             loading = { /* transparent; parchment background shows through */ },
         )
     }
 }
 
 @Composable
-private fun ReliquaryErrorTile() {
-    // Minimal fallback when a pinned photo is no longer readable
-    // (user deleted from library, unmounted SD card, SAF grant
-    // expired on a restart). Shows a muted broken-image glyph on the
-    // existing tile background. A true tombstone UX with an "unpin
-    // broken" action lives in Stage 7-B.
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
+private fun ReliquaryTombstone() {
+    // Stage 7-B: a legible fallback when Coil can't load the pinned
+    // photo (user deleted it from the library, SD card unmounted, SAF
+    // grant expired on API 28-29). The icon alone is ambiguous — "is
+    // this loading, or broken?" — so we add a caption that names the
+    // state. The tile's long-press gesture is unchanged; tapping an
+    // accessibility tile announces the "Photo unavailable — long
+    // press to remove" hint set on the outer Box.
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(PilgrimSpacing.xs),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
             imageVector = Icons.Default.BrokenImage,
             contentDescription = null,
             tint = pilgrimColors.fog,
+        )
+        Spacer(Modifier.height(PilgrimSpacing.xs))
+        Text(
+            text = "Photo unavailable",
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
