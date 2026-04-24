@@ -117,9 +117,13 @@ internal fun composeEtegamiSpec(
 }
 
 /**
- * Elevation gain = sum of positive deltas between consecutive samples.
- * Ordering is timestamp-asc; if samples are unsorted we sort them
- * once to avoid negative deltas from reordering.
+ * Elevation gain = sum of positive finite deltas between consecutive
+ * samples. Ordering is timestamp-asc; if samples are unsorted we sort
+ * them once to avoid negative deltas from reordering. Non-finite
+ * samples (NaN / ±Infinity) poison the accumulator and blow up the
+ * downstream `roundToInt()` in the stats whisper — filter them out at
+ * the source so sensor-pathology on any one chipset can't silently
+ * erase the whole postcard.
  */
 private fun elevationGain(samples: List<AltitudeSample>): Double {
     if (samples.size < 2) return 0.0
@@ -127,7 +131,7 @@ private fun elevationGain(samples: List<AltitudeSample>): Double {
     var gain = 0.0
     for (i in 1 until sorted.size) {
         val delta = sorted[i].altitudeMeters - sorted[i - 1].altitudeMeters
-        if (delta > 0) gain += delta
+        if (delta > 0 && delta.isFinite()) gain += delta
     }
     return gain
 }

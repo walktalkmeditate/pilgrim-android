@@ -390,7 +390,12 @@ object EtegamiBitmapRenderer {
         val parts = buildList {
             add(WalkFormat.distance(spec.distanceMeters))
             add(WalkFormat.duration(spec.durationMillis))
-            if (spec.elevationGainMeters > 1.0) {
+            // `isFinite()` guard is redundant with `elevationGain()`'s
+            // source-side NaN filter, but cheap defense-in-depth —
+            // `Double.roundToInt()` throws on NaN / ±∞, and a throw
+            // here silently erases the whole postcard via
+            // WalkEtegamiCard's Throwable catch.
+            if (spec.elevationGainMeters > 1.0 && spec.elevationGainMeters.isFinite()) {
                 add("${spec.elevationGainMeters.roundToInt()}m ↑")
             }
         }
@@ -432,8 +437,13 @@ object EtegamiBitmapRenderer {
      * along the walk's route. iOS uses `closestIndex(timestamp,
      * routeTimestamps) × 8` — we mirror that, mapping the original
      * route index to the 8×-expanded smoothed index.
+     *
+     * `internal` so the last-point clamp boundary can be asserted
+     * directly in unit tests (the `coerceIn` is doing real work for
+     * the last route index, and a silent drift here would only surface
+     * as misplaced activity glyphs at scale).
      */
-    private fun indexAtTimestamp(
+    internal fun indexAtTimestamp(
         spec: EtegamiSpec,
         smoothed: List<SmoothedSegment>,
         timestampMs: Long,

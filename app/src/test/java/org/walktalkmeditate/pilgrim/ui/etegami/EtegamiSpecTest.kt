@@ -128,6 +128,57 @@ class EtegamiSpecTest {
     }
 
     @Test
+    fun `elevation gain drops non-finite deltas so NaN samples do not poison the sum`() {
+        // Sensor pathology: a single NaN altitude sample in the middle
+        // of an otherwise-clean series. Without the `isFinite()` guard
+        // in elevationGain, the accumulator becomes NaN and propagates
+        // through EtegamiSpec.elevationGainMeters into the stats
+        // whisper's roundToInt(), which throws — silently erasing the
+        // whole postcard via WalkEtegamiCard's Throwable catch.
+        val samples = listOf(
+            AltitudeSample(walkId = 1L, timestamp = 1L, altitudeMeters = 100.0),
+            AltitudeSample(walkId = 1L, timestamp = 2L, altitudeMeters = 110.0), // +10
+            AltitudeSample(walkId = 1L, timestamp = 3L, altitudeMeters = Double.NaN), // skip
+            AltitudeSample(walkId = 1L, timestamp = 4L, altitudeMeters = 120.0), // NaN→120 is NaN, skipped
+            AltitudeSample(walkId = 1L, timestamp = 5L, altitudeMeters = 130.0), // +10
+        )
+        val spec = composeEtegamiSpec(
+            walk = walk(),
+            routePoints = emptyList(),
+            sealSpec = emptySeal,
+            lightReading = null,
+            distanceMeters = 0.0,
+            durationMillis = 0L,
+            altitudeSamples = samples,
+            activityIntervals = emptyList(),
+            voiceRecordings = emptyList(),
+        )
+        assertEquals(20.0, spec.elevationGainMeters, 0.001)
+        assertTrue(spec.elevationGainMeters.isFinite())
+    }
+
+    @Test
+    fun `elevation gain stays finite when every delta involves infinity`() {
+        val samples = listOf(
+            AltitudeSample(walkId = 1L, timestamp = 1L, altitudeMeters = 100.0),
+            AltitudeSample(walkId = 1L, timestamp = 2L, altitudeMeters = Double.POSITIVE_INFINITY),
+            AltitudeSample(walkId = 1L, timestamp = 3L, altitudeMeters = 200.0),
+        )
+        val spec = composeEtegamiSpec(
+            walk = walk(),
+            routePoints = emptyList(),
+            sealSpec = emptySeal,
+            lightReading = null,
+            distanceMeters = 0.0,
+            durationMillis = 0L,
+            altitudeSamples = samples,
+            activityIntervals = emptyList(),
+            voiceRecordings = emptyList(),
+        )
+        assertTrue(spec.elevationGainMeters.isFinite())
+    }
+
+    @Test
     fun `elevation gain handles unsorted samples by sorting first`() {
         val samples = listOf(
             AltitudeSample(walkId = 1L, timestamp = 5L, altitudeMeters = 125.0),
