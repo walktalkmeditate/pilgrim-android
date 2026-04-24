@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -150,15 +151,19 @@ internal object EtegamiGallerySaver {
             os.flush()
             os.fd.sync()
         }
-        // Notify MediaScanner so the file appears in Photos.
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DATA, out.absolutePath)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-        }
-        val uri = context.contentResolver.insert(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            values,
-        ) ?: Uri.fromFile(out)
-        return SaveResult.Success(uri)
+        // Notify MediaScanner so the file appears in Photos. Using
+        // `MediaScannerConnection.scanFile` is the canonical API on
+        // pre-Q devices — more reliable than a `resolver.insert`
+        // with `_DATA`, which historically failed to trigger the
+        // scanner on a handful of OEM devices. Fire-and-forget with
+        // a null callback; worst case the user waits a few seconds
+        // for the gallery's own periodic scan to pick it up.
+        MediaScannerConnection.scanFile(
+            context,
+            arrayOf(out.absolutePath),
+            arrayOf("image/png"),
+            null,
+        )
+        return SaveResult.Success(Uri.fromFile(out))
     }
 }

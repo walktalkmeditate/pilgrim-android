@@ -28,6 +28,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -583,6 +584,122 @@ class WalkSummaryViewModelTest {
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val loaded = item as WalkSummaryUiState.Loaded
             assertEquals(GoshuinMilestone.FirstWalk, loaded.summary.milestone)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // --- Stage 7-D: share + save events ------------------------------
+
+    private fun fixtureEtegamiSpec(walkUuid: String = "test-walk-uuid"): org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec {
+        val seal = org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec(
+            uuid = walkUuid,
+            startMillis = 1_700_000_000_000L,
+            distanceMeters = 1_000.0,
+            durationSeconds = 600.0,
+            displayDistance = "1.0",
+            unitLabel = "km",
+            ink = androidx.compose.ui.graphics.Color.Black,
+        )
+        return org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec(
+            walkUuid = walkUuid,
+            startedAtEpochMs = 1_700_000_000_000L,
+            hourOfDay = 10,
+            routePoints = listOf(
+                org.walktalkmeditate.pilgrim.domain.LocationPoint(
+                    timestamp = 1_700_000_000_000L, latitude = 45.0, longitude = -70.0,
+                ),
+                org.walktalkmeditate.pilgrim.domain.LocationPoint(
+                    timestamp = 1_700_000_060_000L, latitude = 45.0001, longitude = -70.0001,
+                ),
+            ),
+            sealSpec = seal,
+            moonPhase = null,
+            distanceMeters = 1_000.0,
+            durationMillis = 600_000L,
+            elevationGainMeters = 0.0,
+            topText = null,
+            activityMarkers = emptyList(),
+        )
+    }
+
+    @Test
+    fun `shareEtegami emits DispatchShare with an image-png chooser Intent`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.etegamiEvents.test {
+            vm.shareEtegami(fixtureEtegamiSpec(walk.uuid))
+            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(10_000L) { awaitItem() }
+            }
+            assertTrue(
+                "expected DispatchShare, got $ev",
+                ev is WalkSummaryViewModel.EtegamiShareEvent.DispatchShare,
+            )
+            val chooser = (ev as WalkSummaryViewModel.EtegamiShareEvent.DispatchShare).chooser
+            assertEquals(android.content.Intent.ACTION_CHOOSER, chooser.action)
+            val inner = chooser.getParcelableExtra<android.content.Intent>(
+                android.content.Intent.EXTRA_INTENT,
+            )!!
+            assertEquals("image/png", inner.type)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `saveEtegamiToGallery emits SaveFailed under Robolectric MediaStore`() = runTest(dispatcher) {
+        // Robolectric's MediaStore provider is unwired — openFileDescriptor
+        // fails, the saver rollbacks the IS_PENDING row, and the VM
+        // emits SaveFailed. Validates the VM's end-to-end error path
+        // without depending on a real device gallery.
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.etegamiEvents.test {
+            vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
+            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(10_000L) { awaitItem() }
+            }
+            assertEquals(WalkSummaryViewModel.EtegamiShareEvent.SaveFailed, ev)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `etegamiBusy tracks the in-flight action and resets to null on completion`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        // Before any action: null.
+        assertNull(vm.etegamiBusy.value)
+
+        // Fire save, wait for the event to show the action completed,
+        // then confirm busy is null again.
+        vm.etegamiEvents.test {
+            vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
+            withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(10_000L) { awaitItem() }
+            }
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertNull(vm.etegamiBusy.value)
+    }
+
+    @Test
+    fun `notifyEtegamiSaveNeedsPermission emits SaveNeedsPermission without rendering`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.etegamiEvents.test {
+            vm.notifyEtegamiSaveNeedsPermission()
+            assertEquals(
+                WalkSummaryViewModel.EtegamiShareEvent.SaveNeedsPermission,
+                awaitItem(),
+            )
             cancelAndIgnoreRemainingEvents()
         }
     }
