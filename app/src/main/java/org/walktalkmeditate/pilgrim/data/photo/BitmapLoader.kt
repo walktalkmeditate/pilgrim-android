@@ -13,8 +13,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Loads a `content://` URI into a Bitmap, downsampled to at most
- * [MAX_EDGE_PX] on the long edge.
+ * Loads a `content://` URI into a Bitmap, downsampled with a
+ * power-of-two `inSampleSize` targeting approximately [MAX_EDGE_PX]
+ * on the long edge. Because `BitmapFactory.Options.inSampleSize` only
+ * accepts powers of two, the actual long edge can be up to roughly
+ * 2× [MAX_EDGE_PX] for inputs whose long edge doesn't sit at a
+ * power-of-two boundary — matches Android's standard downsampling
+ * idiom (see the "Loading Large Bitmaps Efficiently" training guide).
+ * Memory ceiling stays bounded: a 2000×1500 ARGB_8888 is ~12 MB, fine
+ * for one-at-a-time recycled iteration inside [PhotoAnalysisRunner].
  *
  * Interface-at-the-boundary so tests can fake it without touching
  * ContentResolver / BitmapFactory. Production uses [ContentResolverBitmapLoader].
