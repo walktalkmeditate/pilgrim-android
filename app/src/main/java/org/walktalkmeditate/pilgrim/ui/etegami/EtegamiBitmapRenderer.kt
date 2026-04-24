@@ -50,6 +50,16 @@ object EtegamiBitmapRenderer {
     internal const val MOON_RADIUS = 28f
     /** Synodic-period half — boundary between waxing and waning in days. */
     internal const val SYNODIC_PERIOD_HALF_DAYS = 14.765294385288
+    /**
+     * Cormorant Garamond ships as a variable-weight TTF. Paint's default
+     * instance renders at the font's built-in default (~400 on this
+     * build), so variable fonts need an explicit wght-axis pin. The
+     * etegami design mandates weight 300 for the austere aesthetic — per
+     * the Stage 3-B lesson, apply this via
+     * `paint.fontVariationSettings = CORMORANT_WGHT_300` on every
+     * Cormorant paint (seal distance + top text).
+     */
+    internal const val CORMORANT_WGHT_300 = "'wght' 300"
 
     suspend fun render(spec: EtegamiSpec, context: Context): Bitmap =
         withContext(Dispatchers.Default) {
@@ -341,6 +351,7 @@ object EtegamiBitmapRenderer {
             ?: Typeface.DEFAULT
         val paint = TextPaint().apply {
             typeface = cormorant
+            fontVariationSettings = CORMORANT_WGHT_300
             isAntiAlias = true
             textSize = 46f
             color = palette.ink.copy(alpha = 0.85f).toArgb()

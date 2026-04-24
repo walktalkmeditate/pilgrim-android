@@ -208,6 +208,10 @@ internal object EtegamiSealBitmapRenderer {
             ?: Typeface.DEFAULT
         val distancePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = cormorant
+            // Pin the variable font's wght axis to 300 — see
+            // EtegamiBitmapRenderer.CORMORANT_WGHT_300 for the
+            // rationale and Stage 3-B lesson context.
+            fontVariationSettings = EtegamiBitmapRenderer.CORMORANT_WGHT_300
             textAlign = Paint.Align.CENTER
             textSize = sizePx * 0.09f
             color = ink.toArgb()
