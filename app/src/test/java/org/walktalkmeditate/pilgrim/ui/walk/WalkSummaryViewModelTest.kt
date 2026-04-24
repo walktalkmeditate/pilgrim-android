@@ -406,6 +406,54 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
+    fun `pinPhotos dedups duplicate URIs within a single batch`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val vm = newViewModel(walkId = walk.id)
+
+        val uri = android.net.Uri.parse("content://media/picker/0/com.example/1")
+        vm.pinPhotos(listOf(uri, uri, uri))
+
+        val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                vm.pinnedPhotos.first { it.isNotEmpty() }
+            }
+        }
+        assertEquals(1, rows.size)
+        assertEquals(uri.toString(), rows.first().photoUri)
+    }
+
+    @Test
+    fun `pinPhotos skips URIs already pinned to this walk`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val existing = "content://media/picker/0/com.example/existing"
+        repository.pinPhoto(
+            walkId = walk.id,
+            photoUri = existing,
+            takenAt = null,
+            pinnedAt = 1_000L,
+        )
+        val vm = newViewModel(walkId = walk.id)
+        // Let the observer pick up the initial row before we re-pin.
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) { vm.pinnedPhotos.first { it.isNotEmpty() } }
+        }
+
+        vm.pinPhotos(
+            listOf(
+                android.net.Uri.parse(existing),
+                android.net.Uri.parse("content://media/picker/0/com.example/new"),
+            ),
+        )
+
+        val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) { vm.pinnedPhotos.first { it.size == 2 } }
+        }
+        assertEquals(2, rows.size)
+    }
+
+    @Test
     fun `unpinPhoto removes the pinned row`() = runTest(dispatcher) {
         val walk = repository.startWalk(startTimestamp = 1_000L)
         repository.finishWalk(walk, endTimestamp = 60_000L)
