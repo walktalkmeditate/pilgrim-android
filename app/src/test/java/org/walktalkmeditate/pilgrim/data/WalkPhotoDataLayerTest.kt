@@ -272,6 +272,47 @@ class WalkPhotoDataLayerTest {
         assertEquals(1, repository.countPhotosFor(walkB.id))
     }
 
+    // --- Stage 7-B: analysis ------------------------------------------
+
+    @Test
+    fun `updatePhotoAnalysis writes label confidence and analyzedAt`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        val id = repository.pinPhoto(
+            walkId = walk.id,
+            photoUri = "content://x/1",
+            takenAt = null,
+            pinnedAt = 2_000L,
+        )
+
+        repository.updatePhotoAnalysis(
+            photoId = id,
+            label = "Mountain",
+            confidence = 0.74,
+            analyzedAt = 5_000L,
+        )
+
+        repository.observePhotosFor(walk.id).test {
+            val r = awaitItem()
+            assertEquals(1, r.size)
+            assertEquals("Mountain", r.first().topLabel)
+            assertEquals(0.74, r.first().topLabelConfidence ?: 0.0, 0.0001)
+            assertEquals(5_000L, r.first().analyzedAt)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pendingAnalysisPhotosFor returns only rows with analyzedAt null`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        val id1 = repository.pinPhoto(walk.id, "content://x/1", null, 1_000L)
+        val id2 = repository.pinPhoto(walk.id, "content://x/2", null, 2_000L)
+        repository.updatePhotoAnalysis(id1, "A", 0.8, 3_000L)
+
+        val pending = repository.pendingAnalysisPhotosFor(walk.id)
+
+        assertEquals(listOf(id2), pending.map { it.id })
+    }
+
     @Test
     fun `deleting a walk cascades to its pinned photos`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)

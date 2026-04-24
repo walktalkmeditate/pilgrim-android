@@ -217,4 +217,71 @@ class WalkPhotoDaoTest {
             // expected
         }
     }
+
+    // --- Stage 7-B: analysis fields --------------------------------------
+
+    @Test
+    fun `updateAnalysis writes label confidence and analyzedAt`() = runTest {
+        val w = newWalk()
+        val id = photoDao.insert(samplePhoto(w))
+
+        photoDao.updateAnalysis(
+            id = id,
+            label = "Plant",
+            confidence = 0.82,
+            analyzedAt = 7_777L,
+        )
+
+        val read = photoDao.getById(id)
+        assertEquals("Plant", read?.topLabel)
+        assertEquals(0.82, read?.topLabelConfidence ?: 0.0, 0.0001)
+        assertEquals(7_777L, read?.analyzedAt)
+    }
+
+    @Test
+    fun `updateAnalysis accepts null label and confidence with analyzedAt set`() = runTest {
+        // Tombstone path: a photo that was analyzed but produced no
+        // label (URI unreadable, or labeler returned no result above
+        // threshold) must still be markable as analyzed so the worker
+        // doesn't retry forever.
+        val w = newWalk()
+        val id = photoDao.insert(samplePhoto(w))
+
+        photoDao.updateAnalysis(
+            id = id,
+            label = null,
+            confidence = null,
+            analyzedAt = 9_999L,
+        )
+
+        val read = photoDao.getById(id)
+        assertNull(read?.topLabel)
+        assertNull(read?.topLabelConfidence)
+        assertEquals(9_999L, read?.analyzedAt)
+    }
+
+    @Test
+    fun `getPendingAnalysisForWalk returns only analyzed_at IS NULL rows in pin order`() = runTest {
+        val w = newWalk()
+        val id1 = photoDao.insert(samplePhoto(w, uri = "content://x/1", pinnedAt = 1_000L))
+        val id2 = photoDao.insert(samplePhoto(w, uri = "content://x/2", pinnedAt = 2_000L))
+        val id3 = photoDao.insert(samplePhoto(w, uri = "content://x/3", pinnedAt = 3_000L))
+
+        // Mark the middle one as analyzed.
+        photoDao.updateAnalysis(id2, label = "Wall", confidence = 0.7, analyzedAt = 4_000L)
+
+        val pending = photoDao.getPendingAnalysisForWalk(w)
+
+        assertEquals(listOf(id1, id3), pending.map { it.id })
+        assertTrue(pending.all { it.analyzedAt == null })
+    }
+
+    @Test
+    fun `getPendingAnalysisForWalk returns empty when all rows are analyzed`() = runTest {
+        val w = newWalk()
+        val id = photoDao.insert(samplePhoto(w))
+        photoDao.updateAnalysis(id, label = null, confidence = null, analyzedAt = 10L)
+
+        assertTrue(photoDao.getPendingAnalysisForWalk(w).isEmpty())
+    }
 }
