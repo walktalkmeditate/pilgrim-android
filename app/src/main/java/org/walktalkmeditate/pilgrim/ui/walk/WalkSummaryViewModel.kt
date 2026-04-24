@@ -16,12 +16,18 @@ import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
@@ -36,8 +42,16 @@ import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
+import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
+import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiCacheSweeper
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiFilename
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiGallerySaver
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiPngWriter
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiShareIntentFactory
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestone
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones
 import org.walktalkmeditate.pilgrim.ui.goshuin.WalkMilestoneInput
@@ -613,6 +627,100 @@ class WalkSummaryViewModel @Inject constructor(
             allFinished = inputs,
             hemisphere = hemisphere.value,
         )
+    }
+
+    // --- Stage 7-D: etegami share + save ---------------------------------
+
+    /**
+     * Guards share+save concurrency via a single mutex. A double-tap
+     * on Share while a save is in-flight (or vice versa) becomes a
+     * no-op — whichever action is currently running finishes first.
+     */
+    private val etegamiShareMutex = Mutex()
+
+    private val _etegamiBusy = MutableStateFlow(false)
+    val etegamiBusy: StateFlow<Boolean> = _etegamiBusy.asStateFlow()
+
+    private val _etegamiEvents = MutableSharedFlow<EtegamiShareEvent>(
+        replay = 0,
+        extraBufferCapacity = 1,
+    )
+    val etegamiEvents: SharedFlow<EtegamiShareEvent> = _etegamiEvents.asSharedFlow()
+
+    sealed interface EtegamiShareEvent {
+        data class DispatchShare(val chooser: Intent) : EtegamiShareEvent
+        data object SaveSucceeded : EtegamiShareEvent
+        data object SaveFailed : EtegamiShareEvent
+        data object ShareFailed : EtegamiShareEvent
+        data object SaveNeedsPermission : EtegamiShareEvent
+    }
+
+    fun shareEtegami(spec: EtegamiSpec) {
+        viewModelScope.launch(Dispatchers.Default) {
+            if (!etegamiShareMutex.tryLock()) return@launch
+            _etegamiBusy.value = true
+            try {
+                EtegamiCacheSweeper.sweepStale(context)
+                val filename = EtegamiFilename.forWalk(spec.startedAtEpochMs)
+                val bitmap = EtegamiBitmapRenderer.render(spec, context)
+                try {
+                    val file = EtegamiPngWriter.writeToCache(bitmap, filename, context)
+                    val chooser = EtegamiShareIntentFactory.buildFromFile(
+                        context,
+                        file,
+                        context.getString(R.string.etegami_share_chooser_title),
+                    )
+                    _etegamiEvents.tryEmit(EtegamiShareEvent.DispatchShare(chooser))
+                } finally {
+                    // Recycle after the writer completed its compress
+                    // read (Stage 7-B Bitmap-lifecycle pattern). On a
+                    // cancellation between render and writer return, the
+                    // bitmap is abandoned to GC rather than recycled
+                    // while compress may still hold a ref.
+                    bitmap.recycle()
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "shareEtegami failed", t)
+                _etegamiEvents.tryEmit(EtegamiShareEvent.ShareFailed)
+            } finally {
+                _etegamiBusy.value = false
+                etegamiShareMutex.unlock()
+            }
+        }
+    }
+
+    fun saveEtegamiToGallery(spec: EtegamiSpec) {
+        viewModelScope.launch(Dispatchers.Default) {
+            if (!etegamiShareMutex.tryLock()) return@launch
+            _etegamiBusy.value = true
+            try {
+                val filename = EtegamiFilename.forWalk(spec.startedAtEpochMs)
+                val bitmap = EtegamiBitmapRenderer.render(spec, context)
+                try {
+                    val ev = when (val result = EtegamiGallerySaver.saveToGallery(bitmap, filename, context)) {
+                        is EtegamiGallerySaver.SaveResult.Success -> EtegamiShareEvent.SaveSucceeded
+                        is EtegamiGallerySaver.SaveResult.NeedsPermission -> EtegamiShareEvent.SaveNeedsPermission
+                        is EtegamiGallerySaver.SaveResult.Failed -> {
+                            android.util.Log.w(TAG, "saveEtegamiToGallery failed", result.cause)
+                            EtegamiShareEvent.SaveFailed
+                        }
+                    }
+                    _etegamiEvents.tryEmit(ev)
+                } finally {
+                    bitmap.recycle()
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "saveEtegamiToGallery failed", t)
+                _etegamiEvents.tryEmit(EtegamiShareEvent.SaveFailed)
+            } finally {
+                _etegamiBusy.value = false
+                etegamiShareMutex.unlock()
+            }
+        }
     }
 
     companion object {
