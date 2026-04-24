@@ -39,6 +39,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -193,11 +194,19 @@ private fun PhotoTile(
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Stable key for the gesture so composable re-uses the pointer
+    // Stable key for the gesture so the composable re-uses the pointer
     // input handler when a different photo slides into this slot. The
     // semantics action wraps the same onLongPress so TalkBack users
     // reach parity with touch users (pointerInput is invisible to the
     // accessibility tree — Stage 6-B lesson).
+    //
+    // `contentDescription` lives on this outer Box rather than on
+    // SubcomposeAsyncImage because Coil only stamps the description
+    // into the semantics tree once the image loads — during the
+    // loading / error sub-compositions the description is absent,
+    // which breaks both accessibility and the UI tests that rely on
+    // it. Owning the description here keeps the semantics stable
+    // across image load states.
     Box(
         modifier = modifier
             .aspectRatio(1f)
@@ -207,6 +216,7 @@ private fun PhotoTile(
                 detectTapGestures(onLongPress = { onLongPress() })
             }
             .semantics {
+                contentDescription = "Photo from this walk"
                 customActions = listOf(
                     CustomAccessibilityAction(label = "Remove from walk") {
                         onLongPress()
@@ -217,7 +227,7 @@ private fun PhotoTile(
     ) {
         SubcomposeAsyncImage(
             model = Uri.parse(photo.photoUri),
-            contentDescription = "Photo from this walk",
+            contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
             error = { ReliquaryErrorTile() },
