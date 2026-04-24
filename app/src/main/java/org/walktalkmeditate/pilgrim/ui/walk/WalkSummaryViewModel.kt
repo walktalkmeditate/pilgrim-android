@@ -691,6 +691,16 @@ class WalkSummaryViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Surface the "Save needs permission" snackbar after the user
+     * denies the API-28-only WRITE_EXTERNAL_STORAGE prompt. Called
+     * from the Composable row — keeps the VM as the single source of
+     * truth for etegami UI events.
+     */
+    fun notifyEtegamiSaveNeedsPermission() {
+        _etegamiEvents.tryEmit(EtegamiShareEvent.SaveNeedsPermission)
+    }
+
     fun saveEtegamiToGallery(spec: EtegamiSpec) {
         viewModelScope.launch(Dispatchers.Default) {
             if (!etegamiShareMutex.tryLock()) return@launch

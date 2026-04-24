@@ -176,6 +176,12 @@ fun WalkSummaryScreen(
                             busy = etegamiBusy,
                             onShare = { viewModel.shareEtegami(etegami) },
                             onSave = { viewModel.saveEtegamiToGallery(etegami) },
+                            onSavePermissionDenied = {
+                                // Route denial through the same
+                                // snackbar as the in-saver check, so
+                                // the user gets consistent feedback.
+                                viewModel.notifyEtegamiSaveNeedsPermission()
+                            },
                         )
                     }
                     if (recordings.isNotEmpty()) {

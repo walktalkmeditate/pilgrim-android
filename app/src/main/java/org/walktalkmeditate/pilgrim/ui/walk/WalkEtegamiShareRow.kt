@@ -53,6 +53,7 @@ fun WalkEtegamiShareRow(
     busy: Boolean,
     onShare: () -> Unit,
     onSave: () -> Unit,
+    onSavePermissionDenied: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -60,7 +61,12 @@ fun WalkEtegamiShareRow(
     val legacyPermissionContract = remember { ActivityResultContracts.RequestPermission() }
     val legacyPermissionLauncher = rememberLauncherForActivityResult(
         contract = legacyPermissionContract,
-    ) { granted -> if (granted) onSave() }
+    ) { granted ->
+        // API 28 only: if the user denies the WRITE_EXTERNAL_STORAGE
+        // request, surface a snackbar via [onSavePermissionDenied]
+        // rather than silently dropping the tap.
+        if (granted) onSave() else onSavePermissionDenied()
+    }
 
     Row(
         modifier = modifier
@@ -116,13 +122,20 @@ fun WalkEtegamiShareRow(
                     )
                 },
         ) {
-            Icon(
-                Icons.Outlined.BookmarkBorder,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(PilgrimSpacing.small))
-            Text(stringResource(R.string.etegami_save_button))
+            if (busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Icon(
+                    Icons.Outlined.BookmarkBorder,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(PilgrimSpacing.small))
+                Text(stringResource(R.string.etegami_save_button))
+            }
         }
     }
 }

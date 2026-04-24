@@ -28,7 +28,7 @@ internal object EtegamiCacheSweeper {
         context: Context,
         olderThan: Duration = 24.hours,
         now: () -> Long = System::currentTimeMillis,
-    ): Int = withContext(Dispatchers.Default) {
+    ): Int = withContext(Dispatchers.IO) {
         val root = EtegamiPngWriter.cacheRoot(context)
         val cutoff = now() - olderThan.inWholeMilliseconds
         var deleted = 0

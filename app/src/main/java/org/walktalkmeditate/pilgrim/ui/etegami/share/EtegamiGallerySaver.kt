@@ -97,7 +97,16 @@ internal object EtegamiGallerySaver {
                 }
             } ?: error("openOutputStream returned null")
             val clear = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
-            resolver.update(uri, clear, null, null)
+            // resolver.update returns the number of rows affected.
+            // If 0, the record wasn't published — the image is on
+            // disk but stays IS_PENDING=1 forever and is invisible
+            // to Photos. User would see a "Saved" snackbar but no
+            // file in their gallery. Rollback + fail rather than
+            // produce a phantom record.
+            val updated = resolver.update(uri, clear, null, null)
+            if (updated == 0) {
+                error("IS_PENDING clear updated 0 rows — record unpublished")
+            }
             return SaveResult.Success(uri)
         } catch (t: Throwable) {
             // Rollback the pending insert so it doesn't linger as a

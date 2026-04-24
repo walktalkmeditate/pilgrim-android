@@ -11,9 +11,11 @@ import kotlinx.coroutines.withContext
 /**
  * Stage 7-D: writes an etegami [Bitmap] to the app's cacheDir under
  * `etegami/<filename>` with atomic-rename semantics. Runs on
- * [Dispatchers.Default] — `Bitmap.compress` is CPU-bound (pixel walk
- * + deflate), not disk-IO bound; the OutputStream's write to
- * cacheDir is fast enough that a single Default hop covers both.
+ * [Dispatchers.IO] — the `compress` call is mixed CPU + disk I/O,
+ * and under StrictMode (debug/QA builds) writing to cacheDir from
+ * a Default-pool thread trips `DiskWriteViolation`. IO dispatcher
+ * is sized for blocking writes, handles `fd.sync()` latency
+ * gracefully, and keeps CPU cores available for rendering.
  *
  * Atomic semantics: writes to `<filename>.tmp` then `renameTo` the
  * final name. A crash mid-write leaves an orphan `.tmp` for
@@ -39,7 +41,7 @@ internal object EtegamiPngWriter {
         bitmap: Bitmap,
         filename: String,
         context: Context,
-    ): File = withContext(Dispatchers.Default) {
+    ): File = withContext(Dispatchers.IO) {
         require(filename.endsWith(".png")) { "filename must end with .png (got $filename)" }
         val dir = cacheRoot(context)
         val tmp = File(dir, "$filename.tmp")
