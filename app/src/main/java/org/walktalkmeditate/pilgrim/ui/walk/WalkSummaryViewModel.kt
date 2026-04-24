@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.ZoneId
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
@@ -19,9 +26,11 @@ import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
+import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -98,6 +107,7 @@ data class WalkSummary(
 
 @HiltViewModel
 class WalkSummaryViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: WalkRepository,
     private val playback: VoicePlaybackController,
     private val sweeper: OrphanRecordingSweeper,
@@ -151,6 +161,21 @@ class WalkSummaryViewModel @Inject constructor(
         )
 
     /**
+     * Stage 7-A: live list of photos pinned to this walk. Mirrors
+     * [recordings] — `WhileSubscribed` so unit tests that don't observe
+     * don't strand a collector. Compose UI subscribes via
+     * `collectAsStateWithLifecycle`; there is no nav-observer path that
+     * needs `Eagerly` here (the nav-ping-pong risk from Stage 5-F
+     * applies only to flows driving nav decisions).
+     */
+    val pinnedPhotos: StateFlow<List<WalkPhoto>> =
+        repository.observePhotosFor(walkId).stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
+
+    /**
      * Best-effort cleanup for the displayed walk: handles orphan WAVs,
      * dangling rows, zombie rows from mid-capture kills, and late-
      * arriving auto-stop rows that need transcription rescheduling.
@@ -186,6 +211,90 @@ class WalkSummaryViewModel @Inject constructor(
     fun playRecording(recording: VoiceRecording) = playback.play(recording)
     fun pausePlayback() = playback.pause()
     fun stopPlayback() = playback.stop()
+
+    /**
+     * Stage 7-A: commit a batch of photo-picker URIs as pins for this
+     * walk. Runs on [Dispatchers.IO] because it touches ContentResolver
+     * (persistable URI grant + `DATE_TAKEN` cursor) and Room. All rows
+     * share the same `pinnedAt` wall-clock so they sort together and
+     * arrive as a single grid diff.
+     */
+    fun pinPhotos(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val pinnedAt = System.currentTimeMillis()
+            val refs = uris.map { uri ->
+                // Hold a persistable read grant so the URI survives
+                // process death. Safe to swallow SecurityException here:
+                // some OEM pickers (or SAF-fallback on API 28-29 without
+                // Play Services) reject the call; the ephemeral grant
+                // still works for the current process, and the row
+                // will insert either way. We simply lose cross-boot
+                // durability on those devices — a documented
+                // limitation.
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }.onFailure {
+                    android.util.Log.w(
+                        TAG,
+                        "takePersistableUriPermission failed for $uri",
+                        it,
+                    )
+                }
+                PhotoPinRef(uri = uri.toString(), takenAt = readDateTaken(uri))
+            }
+            try {
+                repository.pinPhotos(walkId, refs, pinnedAt = pinnedAt)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "pinPhotos failed for walk $walkId", t)
+            }
+        }
+    }
+
+    /**
+     * Stage 7-A: drop a pin. Idempotent on the repo side — calling with
+     * an already-deleted id is a no-op that returns false.
+     */
+    fun unpinPhoto(photo: WalkPhoto) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.unpinPhoto(photo.id)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "unpinPhoto failed id=${photo.id}", t)
+            }
+        }
+    }
+
+    /**
+     * Best-effort `DATE_TAKEN` read off a picker URI. Returns null when
+     * the query yields no row, the column is missing, or the URI scheme
+     * doesn't support metadata queries (SAF-fallback URIs on older
+     * devices). The caller stores the result as [WalkPhoto.takenAt] —
+     * nullability is a first-class outcome, not an error.
+     */
+    private fun readDateTaken(uri: Uri): Long? = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.MediaColumns.DATE_TAKEN),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val col = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+                if (col >= 0 && !cursor.isNull(col)) cursor.getLong(col) else null
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
 
     override fun onCleared() {
         // Stop, don't release: VoicePlaybackController is @Singleton and
