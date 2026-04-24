@@ -44,12 +44,18 @@ class EtegamiGallerySaverTest {
         // graceful `SaveResult.Failed` rather than propagating an
         // unchecked throw. Real-device successful path is out of scope
         // for unit tests.
+        //
+        // IMPORTANT: assert `Failed` strictly (not `Failed || Success`).
+        // Accepting Success as a passing outcome would turn this test
+        // vacuous — a future Robolectric version that stubs MediaStore
+        // enough to return a ghost URI would pass here silently, and
+        // we'd lose this as a regression guard for the real-device IO
+        // failure path.
         val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
         val result = EtegamiGallerySaver.saveToGallery(bitmap, "ok.png", context)
         assertTrue(
-            "Robolectric MediaStore is unwired; saver should gracefully Failed, got $result",
-            result is EtegamiGallerySaver.SaveResult.Failed ||
-                result is EtegamiGallerySaver.SaveResult.Success,
+            "saver should convert Robolectric MediaStore IO failure to Failed, got $result",
+            result is EtegamiGallerySaver.SaveResult.Failed,
         )
     }
 }
