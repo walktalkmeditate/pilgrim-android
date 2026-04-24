@@ -178,6 +178,96 @@ class PilgrimDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun `migration 3 to 4 adds analysis columns, all nullable`() {
+        // Walk through 2→3 first so we have a walk_photos table, then
+        // apply 3→4 and assert the three new columns landed nullable.
+        val db = openV2Shape()
+        try {
+            PilgrimDatabase.MIGRATION_2_3.migrate(db)
+            PilgrimDatabase.MIGRATION_3_4.migrate(db)
+
+            db.query("PRAGMA table_info(`walk_photos`)").use { cursor ->
+                val columns = mutableMapOf<String, Pair<String, Int>>()
+                val nameIdx = cursor.getColumnIndexOrThrow("name")
+                val typeIdx = cursor.getColumnIndexOrThrow("type")
+                val notNullIdx = cursor.getColumnIndexOrThrow("notnull")
+                while (cursor.moveToNext()) {
+                    columns[cursor.getString(nameIdx)] =
+                        cursor.getString(typeIdx) to cursor.getInt(notNullIdx)
+                }
+                assertEquals(
+                    "expected v4 columns to be a superset of v3",
+                    setOf(
+                        "id", "uuid", "walk_id", "photo_uri", "pinned_at", "taken_at",
+                        "top_label", "top_label_confidence", "analyzed_at",
+                    ),
+                    columns.keys,
+                )
+                assertEquals("TEXT" to 0, columns["top_label"])
+                assertEquals("REAL" to 0, columns["top_label_confidence"])
+                assertEquals("INTEGER" to 0, columns["analyzed_at"])
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `migrated v4 walk_photos accepts an update-analysis write`() {
+        // Prove the new columns are writable with the expected types —
+        // catches a typo in MIGRATION_3_4 SQL that would otherwise only
+        // surface at app-start on a real device.
+        val db = openV2Shape()
+        try {
+            PilgrimDatabase.MIGRATION_2_3.migrate(db)
+            PilgrimDatabase.MIGRATION_3_4.migrate(db)
+            db.execSQL("PRAGMA foreign_keys = ON")
+
+            val walkId = db.insert(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("uuid", "w-uuid")
+                    put("start_timestamp", 1_000L)
+                },
+            )
+            val photoId = db.insert(
+                "walk_photos",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("uuid", "p-uuid")
+                    put("walk_id", walkId)
+                    put("photo_uri", "content://x/1")
+                    put("pinned_at", 2_000L)
+                },
+            )
+            db.update(
+                "walk_photos",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("top_label", "Plant")
+                    put("top_label_confidence", 0.91)
+                    put("analyzed_at", 3_000L)
+                },
+                "id = ?",
+                arrayOf<Any>(photoId),
+            )
+            db.query(
+                "SELECT top_label, top_label_confidence, analyzed_at " +
+                    "FROM walk_photos WHERE id = ?",
+                arrayOf<Any>(photoId),
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                assertEquals("Plant", c.getString(0))
+                assertEquals(0.91, c.getDouble(1), 0.0001)
+                assertEquals(3_000L, c.getLong(2))
+            }
+        } finally {
+            db.close()
+        }
+    }
+
     private companion object {
         private const val V2_VERSION = 2
     }
