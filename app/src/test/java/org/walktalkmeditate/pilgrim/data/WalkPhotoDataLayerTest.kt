@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -103,12 +104,12 @@ class WalkPhotoDataLayerTest {
     }
 
     @Test
-    fun `unpinPhoto returns false for non-existent id`() = runTest {
-        assertFalse(repository.unpinPhoto(photoId = 99_999L))
+    fun `unpinPhoto returns NotFound for non-existent id`() = runTest {
+        assertSame(UnpinPhotoResult.NotFound, repository.unpinPhoto(photoId = 99_999L))
     }
 
     @Test
-    fun `unpinPhoto removes the row and returns true`() = runTest {
+    fun `unpinPhoto returns Removed with wasLastReference=true for a solo pin`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
         val id = repository.pinPhoto(
             walkId = walk.id,
@@ -117,10 +118,44 @@ class WalkPhotoDataLayerTest {
             pinnedAt = 2_000L,
         )
 
-        val removed = repository.unpinPhoto(id)
+        val result = repository.unpinPhoto(id) as UnpinPhotoResult.Removed
 
-        assertTrue(removed)
+        assertEquals("content://x/1", result.photoUri)
+        assertTrue(result.wasLastReference)
         assertEquals(0, repository.countPhotosFor(walk.id))
+    }
+
+    @Test
+    fun `unpinPhoto returns wasLastReference=false when another walk still pins the same URI`() = runTest {
+        // The persistable URI grant is shared app-wide; releasing while
+        // another walk still references the URI would tombstone that
+        // walk's tile. The repo reports the reference count so the VM
+        // can decide whether to call releasePersistableUriPermission.
+        val walkA = repository.startWalk(startTimestamp = 1_000L)
+        val walkB = repository.startWalk(startTimestamp = 2_000L)
+        val sharedUri = "content://media/picker/0/shared"
+        val idA = repository.pinPhoto(
+            walkId = walkA.id,
+            photoUri = sharedUri,
+            takenAt = null,
+            pinnedAt = 3_000L,
+        )
+        repository.pinPhoto(
+            walkId = walkB.id,
+            photoUri = sharedUri,
+            takenAt = null,
+            pinnedAt = 4_000L,
+        )
+
+        val result = repository.unpinPhoto(idA) as UnpinPhotoResult.Removed
+
+        assertEquals(sharedUri, result.photoUri)
+        assertFalse(
+            "wasLastReference should be false when walk B still pins the URI",
+            result.wasLastReference,
+        )
+        assertEquals(0, repository.countPhotosFor(walkA.id))
+        assertEquals(1, repository.countPhotosFor(walkB.id))
     }
 
     @Test

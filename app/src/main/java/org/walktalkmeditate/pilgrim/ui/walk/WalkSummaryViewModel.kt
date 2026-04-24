@@ -27,6 +27,7 @@ import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
+import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -298,36 +299,45 @@ class WalkSummaryViewModel @Inject constructor(
 
     /**
      * Stage 7-A: drop a pin. Idempotent on the repo side — calling
-     * with an already-deleted id is a no-op that returns false.
+     * with an already-deleted id is a no-op.
      *
-     * Also releases the URI's persistable read grant so it doesn't
-     * count against the app-wide quota (~512 on current Android).
-     * `releasePersistableUriPermission` on a URI we never persisted —
-     * e.g. because `takePersistableUriPermission` threw at pin time —
-     * raises SecurityException; swallow via runCatching. The Room
-     * row deletes regardless; the worst case of a missed release is
-     * one grant leaked, not a user-visible failure.
+     * Releases the URI's persistable read grant ONLY when the deleted
+     * row was the last reference to that URI across all walks.
+     * `takePersistableUriPermission` is idempotent — pinning the same
+     * URI to walk A and walk B yields a single app-wide grant — so
+     * releasing on every unpin would tombstone the other walk's tile
+     * on cold start. The repo's [UnpinPhotoResult.wasLastReference]
+     * flag is computed inside the same transaction that deletes the
+     * row, so the reference count is consistent.
+     *
+     * `releasePersistableUriPermission` on a URI we never persisted
+     * (e.g. because `takePersistableUriPermission` threw at pin time)
+     * raises SecurityException; swallow via runCatching. The worst
+     * case of a missed release is one grant leaked, not user-visible.
      */
     fun unpinPhoto(photo: WalkPhoto) {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.releasePersistableUriPermission(
-                    Uri.parse(photo.photoUri),
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }.onFailure {
-                android.util.Log.w(
-                    TAG,
-                    "releasePersistableUriPermission failed for ${photo.photoUri}",
-                    it,
-                )
-            }
-            try {
+            val result = try {
                 repository.unpinPhoto(photo.id)
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "unpinPhoto failed id=${photo.id}", t)
+                return@launch
+            }
+            if (result is UnpinPhotoResult.Removed && result.wasLastReference) {
+                runCatching {
+                    context.contentResolver.releasePersistableUriPermission(
+                        Uri.parse(result.photoUri),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }.onFailure {
+                    android.util.Log.w(
+                        TAG,
+                        "releasePersistableUriPermission failed for ${result.photoUri}",
+                        it,
+                    )
+                }
             }
         }
     }

@@ -190,15 +190,43 @@ class WalkRepository @Inject constructor(
     }
 
     /**
-     * Remove a pin by id. Returns `true` if the row existed. Idempotent:
-     * calling with a non-existent id is a safe no-op (returns `false`).
+     * Remove a pin by id under a single transaction so the removal and
+     * the follow-up cross-walk reference count are consistent. Returns
+     * a [UnpinPhotoResult] describing what happened — the caller needs
+     * [UnpinPhotoResult.wasLastReference] to decide whether to release
+     * the URI's persistable read grant. Grants are shared app-wide, so
+     * releasing while another walk still pins the same URI would
+     * tombstone the other walk's tile.
      */
-    suspend fun unpinPhoto(photoId: Long): Boolean =
-        walkPhotoDao.deleteById(photoId) > 0
+    suspend fun unpinPhoto(photoId: Long): UnpinPhotoResult =
+        database.withTransaction {
+            val target = walkPhotoDao.getById(photoId)
+                ?: return@withTransaction UnpinPhotoResult.NotFound
+            val removed = walkPhotoDao.deleteById(photoId) > 0
+            if (!removed) return@withTransaction UnpinPhotoResult.NotFound
+            val remaining = walkPhotoDao.countByPhotoUri(target.photoUri)
+            UnpinPhotoResult.Removed(
+                photoUri = target.photoUri,
+                wasLastReference = remaining == 0,
+            )
+        }
 
     suspend fun countPhotosFor(walkId: Long): Int =
         walkPhotoDao.countForWalk(walkId)
 
     fun observePhotosFor(walkId: Long): Flow<List<WalkPhoto>> =
         walkPhotoDao.observeForWalk(walkId)
+}
+
+/**
+ * Outcome of [WalkRepository.unpinPhoto]. The VM reads
+ * [Removed.wasLastReference] to decide whether to release the
+ * persistable URI grant — see the repo method's doc for why.
+ */
+sealed class UnpinPhotoResult {
+    data object NotFound : UnpinPhotoResult()
+    data class Removed(
+        val photoUri: String,
+        val wasLastReference: Boolean,
+    ) : UnpinPhotoResult()
 }

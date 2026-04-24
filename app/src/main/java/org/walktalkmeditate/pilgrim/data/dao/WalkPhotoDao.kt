@@ -37,4 +37,14 @@ interface WalkPhotoDao {
 
     @Query("SELECT COUNT(*) FROM walk_photos WHERE walk_id = :walkId")
     suspend fun countForWalk(walkId: Long): Int
+
+    /**
+     * Count rows referencing [photoUri] across ALL walks. Used by
+     * `WalkRepository.unpinPhoto` to decide whether the persistable
+     * URI grant is safe to release: grants are shared app-wide, so
+     * releasing while another walk still pins the same URI would
+     * tombstone that walk's tile on cold start.
+     */
+    @Query("SELECT COUNT(*) FROM walk_photos WHERE photo_uri = :photoUri")
+    suspend fun countByPhotoUri(photoUri: String): Int
 }
