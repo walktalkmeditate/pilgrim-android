@@ -220,22 +220,18 @@ class WalkSummaryViewModel @Inject constructor(
      * share the same `pinnedAt` wall-clock so they sort together and
      * arrive as a single grid diff.
      *
-     * Clipping to remaining slots is done here, at commit time, against
-     * `pinnedPhotos.value` — the UI computes slots from its own
-     * snapshot, which can be stale if the user taps Add twice in quick
-     * succession before the first batch's Room write commits. Clipping
-     * on the IO side closes that race so the cap is the source of
-     * truth no matter how the UI raced ahead.
+     * Clipping to the cap is performed by the repo under the SAME Room
+     * transaction that inserts — so concurrent pinPhotos calls cannot
+     * collectively exceed [MAX_PINS_PER_WALK] (e.g., the double-pick
+     * race where the user backs out of one picker and opens another
+     * before the first batch's StateFlow emission lands). The VM's
+     * only job here is assembling the refs and stamping one pinnedAt.
      */
     fun pinPhotos(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val remainingBefore = (MAX_PINS_PER_WALK - pinnedPhotos.value.size)
-                .coerceAtLeast(0)
-            val clipped = uris.take(remainingBefore)
-            if (clipped.isEmpty()) return@launch
             val pinnedAt = System.currentTimeMillis()
-            val refs = clipped.map { uri ->
+            val refs = uris.map { uri ->
                 // Hold a persistable read grant so the URI survives
                 // process death. Safe to swallow SecurityException
                 // here: some OEM pickers (or SAF-fallback on API 28-29
@@ -259,7 +255,12 @@ class WalkSummaryViewModel @Inject constructor(
                 PhotoPinRef(uri = uri.toString(), takenAt = readDateTaken(uri))
             }
             try {
-                repository.pinPhotos(walkId, refs, pinnedAt = pinnedAt)
+                repository.pinPhotos(
+                    walkId = walkId,
+                    refs = refs,
+                    pinnedAt = pinnedAt,
+                    cap = MAX_PINS_PER_WALK,
+                )
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
