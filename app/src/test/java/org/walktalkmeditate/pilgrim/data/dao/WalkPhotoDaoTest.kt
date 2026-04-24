@@ -277,6 +277,47 @@ class WalkPhotoDaoTest {
     }
 
     @Test
+    fun `entity invariant rejects half-populated analysis pair`() {
+        try {
+            WalkPhoto(
+                walkId = 1L,
+                photoUri = "content://x",
+                pinnedAt = 1L,
+                topLabel = "Plant",
+                topLabelConfidence = null,
+            )
+            org.junit.Assert.fail("expected IllegalArgumentException for half-populated analysis")
+        } catch (_: IllegalArgumentException) { /* expected */ }
+    }
+
+    @Test
+    fun `entity invariant rejects confidence out of range`() {
+        try {
+            WalkPhoto(
+                walkId = 1L,
+                photoUri = "content://x",
+                pinnedAt = 1L,
+                topLabel = "Plant",
+                topLabelConfidence = 1.5,
+            )
+            org.junit.Assert.fail("expected IllegalArgumentException for confidence > 1.0")
+        } catch (_: IllegalArgumentException) { /* expected */ }
+    }
+
+    @Test
+    fun `entity invariant rejects zero analyzedAt`() {
+        try {
+            WalkPhoto(
+                walkId = 1L,
+                photoUri = "content://x",
+                pinnedAt = 1L,
+                analyzedAt = 0L,
+            )
+            org.junit.Assert.fail("expected IllegalArgumentException for analyzedAt == 0")
+        } catch (_: IllegalArgumentException) { /* expected */ }
+    }
+
+    @Test
     fun `getPendingAnalysisForWalk returns empty when all rows are analyzed`() = runTest {
         val w = newWalk()
         val id = photoDao.insert(samplePhoto(w))

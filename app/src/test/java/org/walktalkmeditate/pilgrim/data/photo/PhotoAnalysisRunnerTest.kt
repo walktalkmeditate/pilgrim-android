@@ -82,10 +82,7 @@ class PhotoAnalysisRunnerTest {
         val outcome = runner.analyzePending(walkId, clock = { 5_000L })
 
         assertEquals(2, outcome.getOrNull())
-        val photos = repository.observePhotosFor(walkId).let { flow ->
-            // Synchronous peek via first-run of the suspend list getter
-            db.walkPhotoDao().getForWalk(walkId)
-        }
+        val photos = db.walkPhotoDao().getForWalk(walkId)
         assertEquals(2, photos.size)
         photos.forEach { photo ->
             assertEquals("Plant", photo.topLabel)
