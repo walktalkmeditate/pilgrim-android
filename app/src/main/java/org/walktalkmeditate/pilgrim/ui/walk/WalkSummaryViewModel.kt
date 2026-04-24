@@ -230,16 +230,43 @@ class WalkSummaryViewModel @Inject constructor(
     fun pinPhotos(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
+            // Pre-clip optimistically against the current StateFlow
+            // snapshot so we only request a persistable grant on URIs
+            // likely to land. The repo's transactional clip is still
+            // authoritative — this pre-clip just keeps the per-app
+            // persistable-grant quota (~512 on current Android) from
+            // being chewed up by URIs the repo will drop.
+            //
+            // Also dedup by URI inside the batch: some OEM pickers
+            // (and SAF fallback) occasionally return the same URI
+            // twice when the user multi-selects from "recents". Our
+            // schema's unique index is on the auto-generated uuid,
+            // not (walk_id, photo_uri), so duplicates would land as
+            // distinct rows and waste cap slots.
+            val current = pinnedPhotos.value
+            val alreadyPinned = current.mapTo(mutableSetOf()) { it.photoUri }
+            val seenThisBatch = mutableSetOf<String>()
+            val remaining = (MAX_PINS_PER_WALK - current.size).coerceAtLeast(0)
+            val unique = uris.filter { candidate ->
+                val key = candidate.toString()
+                key !in alreadyPinned && seenThisBatch.add(key)
+            }
+            val optimistic = if (unique.size > remaining) {
+                unique.take(remaining)
+            } else {
+                unique
+            }
+            if (optimistic.isEmpty()) return@launch
             val pinnedAt = System.currentTimeMillis()
-            val refs = uris.map { uri ->
+            val refs = optimistic.map { uri ->
                 // Hold a persistable read grant so the URI survives
                 // process death. Safe to swallow SecurityException
-                // here: some OEM pickers (or SAF-fallback on API 28-29
-                // without Play Services) reject the call; the ephemeral
-                // grant still works for the current process, and the
-                // row will insert either way. We simply lose cross-boot
-                // durability on those devices — a documented
-                // limitation to verify during device QA.
+                // here: some OEM pickers (or SAF-fallback on API
+                // 28-29 without Play Services) reject the call; the
+                // ephemeral grant still works for the current
+                // process, and the row will insert either way. We
+                // simply lose cross-boot durability on those devices
+                // — verify during device QA.
                 runCatching {
                     context.contentResolver.takePersistableUriPermission(
                         uri,
@@ -270,11 +297,31 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
-     * Stage 7-A: drop a pin. Idempotent on the repo side — calling with
-     * an already-deleted id is a no-op that returns false.
+     * Stage 7-A: drop a pin. Idempotent on the repo side — calling
+     * with an already-deleted id is a no-op that returns false.
+     *
+     * Also releases the URI's persistable read grant so it doesn't
+     * count against the app-wide quota (~512 on current Android).
+     * `releasePersistableUriPermission` on a URI we never persisted —
+     * e.g. because `takePersistableUriPermission` threw at pin time —
+     * raises SecurityException; swallow via runCatching. The Room
+     * row deletes regardless; the worst case of a missed release is
+     * one grant leaked, not a user-visible failure.
      */
     fun unpinPhoto(photo: WalkPhoto) {
         viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(
+                    Uri.parse(photo.photoUri),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }.onFailure {
+                android.util.Log.w(
+                    TAG,
+                    "releasePersistableUriPermission failed for ${photo.photoUri}",
+                    it,
+                )
+            }
             try {
                 repository.unpinPhoto(photo.id)
             } catch (ce: CancellationException) {
