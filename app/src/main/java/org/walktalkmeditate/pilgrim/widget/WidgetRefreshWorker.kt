@@ -35,6 +35,16 @@ class WidgetRefreshWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
+        // Re-arm the next-midnight refresh FIRST so the self-perpetuating
+        // chain survives a failure in the data-work below. If we did
+        // this last (after the main work), a transient `WalkRepository`
+        // / DataStore / Glance error would kill the chain — the user
+        // who never opens the app would then see a stale widget for
+        // arbitrarily long. Re-scheduling first means the worst case
+        // is "today's update is missed" instead of "every future
+        // update is missed."
+        widgetRefreshScheduler.scheduleMidnightRefresh()
+
         // Find the most recent walk that meets the reportable threshold.
         // A simple "is the latest walk valid?" check would tombstone an
         // earlier valid walk if the user accidentally tapped Start/Finish
@@ -75,11 +85,6 @@ class WidgetRefreshWorker @AssistedInject constructor(
         // updateAll(context) — the canonical Glance API — instead of
         // enumerating GlanceIds manually.
         PilgrimWidget().updateAll(appContext)
-        // Re-arm the next-midnight refresh so the chain self-perpetuates
-        // even if the user never opens the app again. REPLACE policy in
-        // the scheduler ensures this is idempotent across multiple Worker
-        // runs in the same day.
-        widgetRefreshScheduler.scheduleMidnightRefresh()
         Result.success()
     } catch (ce: CancellationException) {
         // Stage 5-C / 8-A audit rule: kotlin's runCatching swallows CE.

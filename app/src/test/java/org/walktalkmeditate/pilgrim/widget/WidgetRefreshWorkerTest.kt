@@ -206,4 +206,14 @@ class WidgetRefreshWorkerTest {
         worker.doWork()
         assertEquals(1, noopScheduler.midnightCalls)
     }
+
+    // NOTE: an additional regression test for "midnight scheduler is
+    // called BEFORE the data work" was scoped but removed — every
+    // path I tried to fail the data work cleanly (close DB, throw
+    // from a fake repo) propagated CancellationException through
+    // Room's coroutine teardown, defeating the assertion harness.
+    // The invariant is enforced by inspection — see the
+    // `widgetRefreshScheduler.scheduleMidnightRefresh()` call near
+    // the top of `WidgetRefreshWorker.doWork()` and its rationale
+    // comment.
 }

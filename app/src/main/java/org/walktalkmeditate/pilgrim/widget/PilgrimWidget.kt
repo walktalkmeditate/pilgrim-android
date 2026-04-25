@@ -28,6 +28,8 @@ import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
+import androidx.glance.semantics.contentDescription
+import androidx.glance.semantics.semantics
 import androidx.glance.text.FontStyle
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
@@ -94,12 +96,23 @@ private fun Body(
     today: LocalDate,
 ) {
     val state by stateFlow.collectAsState(initial = initial)
+    val context = LocalContext.current
+    val description = when (val s = state) {
+        is WidgetState.LastWalk -> context.getString(
+            R.string.widget_a11y_last_walk,
+            formatDistance(s.distanceMeters),
+            formatDuration(s.activeDurationMs),
+            relativeDateLabel(context, s.endTimestampMs, today),
+        )
+        WidgetState.Empty -> context.getString(R.string.widget_a11y_mantra)
+    }
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(parchment)
             .cornerRadius(12.dp)
             .padding(12.dp)
+            .semantics { contentDescription = description }
             .clickable(onClickFor(state)),
         contentAlignment = Alignment.Center,
     ) {
@@ -130,6 +143,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
             ) {
                 Text(
                     text = distanceLabel,
+                    maxLines = 1,
                     style = TextStyle(
                         color = ink,
                         fontSize = 22.sp,
@@ -139,6 +153,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 Spacer(GlanceModifier.height(4.dp))
                 Text(
                     text = durationLabel,
+                    maxLines = 1,
                     style = TextStyle(
                         color = fog,
                         fontSize = 14.sp,
@@ -147,6 +162,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 Spacer(GlanceModifier.height(8.dp))
                 Text(
                     text = relativeLabel,
+                    maxLines = 1,
                     style = TextStyle(
                         color = fog,
                         fontSize = 12.sp,
@@ -163,6 +179,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
         ) {
             Text(
                 text = distanceLabel,
+                maxLines = 1,
                 style = TextStyle(
                     color = ink,
                     fontSize = 18.sp,
@@ -173,6 +190,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
             Spacer(GlanceModifier.height(2.dp))
             Text(
                 text = durationLabel,
+                maxLines = 1,
                 style = TextStyle(
                     color = fog,
                     fontSize = 12.sp,
@@ -182,6 +200,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
             Spacer(GlanceModifier.height(6.dp))
             Text(
                 text = relativeLabel,
+                maxLines = 1,
                 style = TextStyle(
                     color = fog,
                     fontSize = 11.sp,

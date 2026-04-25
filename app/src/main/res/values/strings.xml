@@ -178,6 +178,9 @@
     <string name="widget_relative_today">Today</string>
     <string name="widget_relative_yesterday">Yesterday</string>
     <string name="widget_relative_n_days_ago">%1$d days ago</string>
+    <!-- Stage 9-A: TalkBack content descriptions for the widget. -->
+    <string name="widget_a11y_last_walk">Last walk: %1$s, %2$s, %3$s. Tap to open walk summary.</string>
+    <string name="widget_a11y_mantra">Pilgrim mantra. Tap to open the app.</string>
     <!-- TRANSLATORS: 10 short walking-meditation phrases joined by `|`.
          Translate the contemplative tone, keep the count, keep the
          delimiter. Used in the home-screen widget when the user has not

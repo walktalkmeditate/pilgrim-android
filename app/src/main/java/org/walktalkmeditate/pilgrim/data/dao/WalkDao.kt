@@ -40,7 +40,7 @@ interface WalkDao {
 
     @Query(
         "SELECT * FROM walks WHERE end_timestamp IS NOT NULL " +
-            "ORDER BY end_timestamp DESC LIMIT :limit",
+            "ORDER BY end_timestamp DESC, id DESC LIMIT :limit",
     )
     suspend fun getRecentFinished(limit: Int): List<Walk>
 }
