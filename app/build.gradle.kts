@@ -172,6 +172,10 @@ dependencies {
 
     implementation(libs.androidx.navigation.compose)
 
+    // Stage 9-A: Jetpack Glance for the home-screen widget.
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
+
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.hilt.android)
