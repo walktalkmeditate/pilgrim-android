@@ -434,18 +434,24 @@ class WalkViewModel @Inject constructor(
 
     fun finishWalk() {
         viewModelScope.launch {
-            // Stage 8-B: snapshot the in-memory accumulator BEFORE
-            // controller.finishWalk() flushes + clears it. We need
-            // distance + meditation totals at the moment of finishing
-            // for the Collective Counter contribution. iOS captures
-            // these the same way (`TempWalk` in the share path).
-            val activeSnapshot = controller.state.value as? WalkState.Active
-            val snapshotWalkId = activeSnapshot?.walk?.walkId
-            val snapshotDistanceKm = (activeSnapshot?.walk?.distanceMeters ?: 0.0) / 1_000.0
-            val snapshotMeditateMin =
-                ((activeSnapshot?.walk?.totalMeditatedMillis ?: 0L) / 60_000L).toInt()
-
             controller.finishWalk()
+            // Stage 8-B: snapshot from Finished, NOT Active. The Finish
+            // button is enabled in Active, Paused, AND Meditating states
+            // (ActiveWalkScreen `enabled = walkState !is Finished &&
+            // walkState != Idle`); the reducer accepts Finish from all
+            // three. Reading `state.value as? WalkState.Active` BEFORE
+            // controller.finishWalk() would return null for Paused +
+            // Meditating finishes, silently dropping their collective
+            // contribution. Reading from Finished AFTER also picks up
+            // the in-progress meditation/pause interval that the
+            // reducer folds into the final accumulator on Finish (so a
+            // mid-meditation finish counts the partial meditation
+            // duration).
+            val finishedSnapshot = controller.state.value as? WalkState.Finished
+            val snapshotWalkId = finishedSnapshot?.walk?.walkId
+            val snapshotDistanceKm = (finishedSnapshot?.walk?.distanceMeters ?: 0.0) / 1_000.0
+            val snapshotMeditateMin =
+                ((finishedSnapshot?.walk?.totalMeditatedMillis ?: 0L) / 60_000L).toInt()
             // The init-block auto-stop collector launches an IO coroutine
             // to stop a still-active recording and INSERT its row. If we
             // schedule transcription before that INSERT commits, the

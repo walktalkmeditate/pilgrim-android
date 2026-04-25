@@ -83,8 +83,15 @@ class CollectiveRepository @Inject constructor(
      */
     fun recordWalk(snapshot: CollectiveWalkSnapshot) {
         scope.launch {
-            recordMutex.withLock {
-                if (!optIn.value) return@withLock
+            // Suspend-read DataStore (vs `optIn.value`) so a process
+            // cold-start race — Eagerly stateIn collector hasn't
+            // received its first DataStore emission yet — can't drop
+            // a contribution from a previously opted-in user. The read
+            // sits outside the mutex; an opt-in flip racing the read
+            // is a no-op or a one-walk-late contribution, both
+            // acceptable for a user-driven setting that changes rarely.
+            if (!cacheStore.optInFlow.first()) return@launch
+            val postOk = recordMutex.withLock {
                 val newDelta = CollectiveCounterDelta(
                     walks = 1,
                     distanceKm = snapshot.distanceKm,
@@ -94,8 +101,11 @@ class CollectiveRepository @Inject constructor(
                 val merged = cacheStore.mutatePending { it + newDelta }
                 if (merged.isEmpty()) {
                     // Defensive: backend rejects an all-zero payload
-                    // (counter.ts:43-45). Never POST an empty delta.
-                    return@withLock
+                    // (counter.ts:43-45). With newDelta.walks hardcoded
+                    // to 1 this branch is structurally unreachable
+                    // today, but the guard preserves correctness if
+                    // recordWalk ever takes a parameterized walk count.
+                    return@withLock false
                 }
                 val result = try {
                     service.post(merged)
@@ -107,22 +117,35 @@ class CollectiveRepository @Inject constructor(
                 when (result) {
                     PostResult.Success -> {
                         // iOS clamps walks <= 0 → clear (parity with
-                        // CollectiveCounterService.swift:114).
+                        // CollectiveCounterService.swift:114). The
+                        // Mutex makes the iOS race (concurrent
+                        // recordWalks adding to pending mid-POST)
+                        // impossible on Android, so this is purely
+                        // defensive — but keep it so a future refactor
+                        // that loosens the lock doesn't silently drift
+                        // pending negative.
                         cacheStore.mutatePending { current ->
                             val subtracted = current - merged
                             if (subtracted.walks <= 0) CollectiveCounterDelta()
                             else subtracted
                         }
-                        forceFetch()
+                        true
                     }
                     PostResult.RateLimited -> {
                         Log.i(TAG, "POST rate-limited; pending preserved for next walk")
+                        false
                     }
                     is PostResult.Failed -> {
                         Log.w(TAG, "POST failed; pending preserved for next walk", result.cause)
+                        false
                     }
                 }
             }
+            // forceFetch outside the mutex so a slow GET (up to 10s
+            // call timeout) doesn't block the next finishWalk's
+            // recordWalk. fetchIfStale is internally TTL-gated so
+            // concurrent callers are safe.
+            if (postOk) forceFetch()
         }
     }
 

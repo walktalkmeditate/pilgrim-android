@@ -26,12 +26,16 @@ open class CollectiveCounterService @Inject constructor(
             .url(baseUrl + CollectiveConfig.ENDPOINT)
             .get()
             .build()
+        // OkHttp's execute throws IOException on transport errors; we
+        // let CancellationException propagate naturally and wrap any
+        // other Throwable into IOException so callers (CollectiveRepo
+        // .fetchIfStale) only need to handle one error type.
         val response = try {
             client.newCall(request).execute()
         } catch (ce: CancellationException) {
             throw ce
-        } catch (io: IOException) {
-            throw io
+        } catch (t: Throwable) {
+            throw IOException("counter GET network error", t)
         }
         response.use { r ->
             val body = r.body?.string().orEmpty()

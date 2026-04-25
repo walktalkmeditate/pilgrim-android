@@ -300,6 +300,50 @@ class WalkViewModelTest {
     }
 
     @Test
+    fun `finishWalk from Meditating state contributes to collective`() = runTest(dispatcher) {
+        // Reviewer Bug #1: snapshot was reading WalkState.Active BEFORE
+        // controller.finishWalk(), which returned null when the user
+        // tapped Finish from Meditating (or Paused). Snapshot now
+        // reads from Finished AFTER finishWalk so all reachable
+        // pre-Finish states contribute.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+
+        viewModel.startWalk()
+        controller.state.first { it is WalkState.Active }
+        clock.advanceTo(1_000L)
+        controller.recordLocation(
+            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
+        )
+        controller.recordLocation(
+            LocationPoint(timestamp = 2_000L, latitude = 40.005, longitude = -74.005),
+        )
+        // Enter meditation and tap Finish without ending it first.
+        clock.advanceTo(2_000L)
+        controller.startMeditation()
+        controller.state.first { it is WalkState.Meditating }
+        clock.advanceTo(80_000L)
+
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+        val deadline = System.currentTimeMillis() + 2_000L
+        while (fakeCollectiveService.recordedPosts.isEmpty() &&
+            System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+            collectiveCacheStore.pendingFlow.first()
+        }
+
+        assertEquals(
+            "Finish-from-Meditating must contribute to collective",
+            1,
+            fakeCollectiveService.recordedPosts.size,
+        )
+        val posted = fakeCollectiveService.recordedPosts.single()
+        assertEquals(1, posted.walks)
+        assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
+    }
+
+    @Test
     fun `uiState emits Active while subscribed`() = runTest(dispatcher) {
         viewModel.uiState.test {
             assertTrue(awaitItem().walkState is WalkState.Idle)
