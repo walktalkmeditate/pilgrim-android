@@ -217,6 +217,39 @@ class CollectiveRepositoryTest {
     }
 
     @Test
+    fun `recordWalk preserves residual distance after walks-clamp drains walks to zero`() = runBlocking {
+        // Closing-review bug: iOS predicate `subtracted.walks <= 0`
+        // silently dropped distance/meditation/talk residuals when
+        // walks clamp drained all 9 walks but distance overflow
+        // (270km → clamp 200km → leaves 70km) was non-zero.
+        cacheStore.setOptIn(true)
+        cacheStore.mutatePending {
+            CollectiveCounterDelta(
+                walks = 9,
+                distanceKm = 270.0,
+                meditationMin = 0,
+                talkMin = 0,
+            )
+        }
+        fakeService.postResult = PostResult.Success
+        fakeService.fetchResult = sampleStats(99)
+        val repo = newRepo()
+        repo.optIn.first { it }
+
+        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 0.0, meditationMin = 0, talkMin = 0))
+        awaitPostCount(1)
+
+        // POST clamped to walks=10 (9 + 1 new = 10, at cap), distance=200 (270 capped).
+        assertEquals(10, fakeService.lastPosted!!.walks)
+        assertEquals(200.0, fakeService.lastPosted!!.distanceKm, 0.001)
+        // After Success: walks fully drained, but 70km residual must stay in pending.
+        // Filter for post-subtract specifically (walks==0) so we don't
+        // race the pre-subtract merge emission (walks=10, dist=270).
+        val residual = cacheStore.pendingFlow.first { it.walks == 0 }
+        assertEquals(70.0, residual.distanceKm, 0.001)
+    }
+
+    @Test
     fun `recordWalk clamps oversize pending to backend caps before POST`() = runBlocking {
         // Reviewer Bug #3: backend silently clamps walks > 10 + returns OK.
         // If we subtract the unclamped value from pending, the residual

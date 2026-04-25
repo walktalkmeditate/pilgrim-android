@@ -61,16 +61,36 @@ class CollectiveRepository @Inject constructor(
      * again on the next eligible call.
      */
     suspend fun fetchIfStale(now: () -> Long = System::currentTimeMillis) {
+        fetchInternal(now, bypassTtl = false)
+    }
+
+    /** Drop the TTL gate, fetch fresh. Used after a successful POST. */
+    suspend fun forceFetch(now: () -> Long = System::currentTimeMillis) {
+        // The TTL bypass MUST happen inside fetchMutex — otherwise a
+        // slow in-flight fetch can `writeStats(fresh, nowMs)` AFTER
+        // our invalidate but BEFORE we acquire the lock, causing our
+        // re-check to see a freshly-written lastFetchedAt and skip
+        // the bypass intent. The user's contribution would land on
+        // the server but the local UI would stay stale until the
+        // next 216s TTL expiry. Threading the bypass flag through
+        // the locked path solves it atomically.
+        fetchInternal(now, bypassTtl = true)
+    }
+
+    private suspend fun fetchInternal(now: () -> Long, bypassTtl: Boolean) {
         fetchMutex.withLock {
-            // Re-read inside the lock — a queued caller may find that
-            // a parallel fetch already wrote fresher stats while it
-            // was waiting, in which case the TTL gate now skips.
-            val lastFetched = cacheStore.lastFetchedAtFlow.first()
             val nowMs = now()
-            if (lastFetched != null &&
-                (nowMs - lastFetched) < CollectiveConfig.FETCH_TTL.inWholeMilliseconds
-            ) {
-                return@withLock
+            if (!bypassTtl) {
+                // Re-read inside the lock — a queued caller may find
+                // that a parallel fetch already wrote fresher stats
+                // while it was waiting, in which case the TTL gate
+                // now skips.
+                val lastFetched = cacheStore.lastFetchedAtFlow.first()
+                if (lastFetched != null &&
+                    (nowMs - lastFetched) < CollectiveConfig.FETCH_TTL.inWholeMilliseconds
+                ) {
+                    return@withLock
+                }
             }
             try {
                 val fresh = service.fetch()
@@ -78,15 +98,9 @@ class CollectiveRepository @Inject constructor(
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
-                Log.w(TAG, "fetchIfStale failed", t)
+                Log.w(TAG, "fetch failed", t)
             }
         }
-    }
-
-    /** Drop the TTL gate, fetch fresh. Used after a successful POST. */
-    suspend fun forceFetch(now: () -> Long = System::currentTimeMillis) {
-        cacheStore.invalidateLastFetched()
-        fetchIfStale(now)
     }
 
     /**
@@ -160,8 +174,26 @@ class CollectiveRepository @Inject constructor(
                         // pending negative.
                         cacheStore.mutatePending { current ->
                             val subtracted = current - payload
-                            if (subtracted.walks <= 0) CollectiveCounterDelta()
-                            else subtracted
+                            // Clear ONLY when every field has fully drained.
+                            // The clamp path can leave walks==0 with
+                            // residual distance/meditation/talk (e.g.,
+                            // 9 walks × 30km posted as walks=9,
+                            // distance=200km capped → subtract leaves
+                            // walks=0, distance=70km). iOS's predicate
+                            // (walks<=0) silently drops that residual;
+                            // we keep it so the next walk's POST
+                            // delivers it.
+                            if (subtracted.isEmpty()) CollectiveCounterDelta()
+                            // Also defend against any field going negative
+                            // (only reachable if a future refactor loosens
+                            // the mutex and concurrent recordWalks
+                            // double-subtract). Coerce to zero floor.
+                            else CollectiveCounterDelta(
+                                walks = subtracted.walks.coerceAtLeast(0),
+                                distanceKm = subtracted.distanceKm.coerceAtLeast(0.0),
+                                meditationMin = subtracted.meditationMin.coerceAtLeast(0),
+                                talkMin = subtracted.talkMin.coerceAtLeast(0),
+                            )
                         }
                         true
                     }

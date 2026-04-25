@@ -2,11 +2,13 @@
 package org.walktalkmeditate.pilgrim.di
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStoreFile
-import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -78,6 +80,16 @@ object CollectiveModule {
     fun provideCollectiveDataStore(
         @ApplicationContext context: Context,
     ): DataStore<Preferences> = PreferenceDataStoreFactory.create(
+        // Corrupt preferences_pb (truncated mid-write on OS kill) would
+        // otherwise throw CorruptionException to every reader and
+        // writer — Settings UI surfaces (`SettingsViewModel.fetchOnAppear`,
+        // `setOptIn`) launch DataStore work on `viewModelScope`, which
+        // has no exception handler installed, so an uncaught throw
+        // crashes the process on every Settings open. Replacing with
+        // empty preferences resets the cache (user loses the cached
+        // stats blob + opt-in flag, both forward-recoverable on next
+        // fetch) but keeps the app alive.
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
         produceFile = { context.preferencesDataStoreFile(CollectiveCacheStore.DATASTORE_NAME) },
     )
 

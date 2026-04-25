@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import java.text.NumberFormat
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
@@ -56,7 +55,9 @@ fun CollectiveStatsCard(
                 stats == null -> stringResource(R.string.collective_stats_loading)
                 stats.totalWalks == 0 -> stringResource(R.string.collective_stats_unavailable)
                 else -> {
-                    val walksFmt = ASCII_NUMBER_FORMAT.format(stats.totalWalks.toLong())
+                    // Locale.ROOT for both: ASCII digits + grouping
+                    // commas, no shared mutable NumberFormat instance.
+                    val walksFmt = String.format(Locale.ROOT, "%,d", stats.totalWalks)
                     val kmFmt = String.format(Locale.ROOT, "%.0f", stats.totalDistanceKm)
                     if (stats.totalWalks == 1) {
                         stringResource(R.string.collective_stats_one_walk, walksFmt, kmFmt)
@@ -73,5 +74,3 @@ fun CollectiveStatsCard(
         }
     }
 }
-
-private val ASCII_NUMBER_FORMAT: NumberFormat = NumberFormat.getNumberInstance(Locale.ROOT)
