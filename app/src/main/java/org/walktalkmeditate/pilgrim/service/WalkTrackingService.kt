@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,16 +30,21 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.widget.DeepLinkTarget
 
 /**
  * Foreground service that binds the physical location stream to the
- * [WalkController] and surfaces the walk as an ongoing notification.
+ * [WalkController] and surfaces the walk as an ongoing notification with
+ * media-style action buttons.
  *
  * Starts via [startIntent]. Stopping is state-driven only: the service
  * observes [WalkController.state] and calls `stopSelf()` once the
- * controller reaches [WalkState.Finished]. There is no external stop
- * intent — UI wanting to end a walk must call [WalkController.finishWalk]
- * so that in-memory state and the persisted Walk row stay consistent.
+ * controller reaches [WalkState.Finished].
+ *
+ * Action buttons (per state) deliver via `PendingIntent.getService(...)`
+ * directly back to this service — no BroadcastReceiver hop. Direct service
+ * delivery sidesteps the API 26+ implicit-broadcast filter and shaves the
+ * latency that an extra IPC would add to a tap from the lock screen.
  */
 @AndroidEntryPoint
 class WalkTrackingService : Service() {
@@ -51,14 +57,35 @@ class WalkTrackingService : Service() {
     private var locationJob: Job? = null
     private var notificationJob: Job? = null
 
+    private lateinit var notificationActions: WalkNotificationActions
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        notificationActions = WalkNotificationActions(
+            pause = actionPendingIntent(ACTION_PAUSE, REQUEST_CODE_PAUSE),
+            resume = actionPendingIntent(ACTION_RESUME, REQUEST_CODE_RESUME),
+            endMeditation = actionPendingIntent(ACTION_END_MEDITATION, REQUEST_CODE_END_MEDITATION),
+            markWaypoint = actionPendingIntent(ACTION_MARK_WAYPOINT, REQUEST_CODE_MARK_WAYPOINT),
+            finish = actionPendingIntent(ACTION_FINISH, REQUEST_CODE_FINISH),
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        when (val action = intent?.action) {
             ACTION_START -> startTracking()
+            ACTION_PAUSE,
+            ACTION_RESUME,
+            ACTION_END_MEDITATION,
+            ACTION_MARK_WAYPOINT,
+            ACTION_FINISH -> handleControllerAction(action)
+            null -> {
+                // We return START_NOT_STICKY, so the system shouldn't revive
+                // us with a null intent — but be defensive: if it ever does,
+                // we have no tracking pipeline and would crash on the API 31+
+                // ForegroundServiceDidNotStartInTimeException timer. Bail.
+                stopSelf()
+            }
         }
         // START_NOT_STICKY: if the OS kills the service mid-walk, the walk
         // row in Room remains unfinished. The app surfaces it on next open
@@ -71,6 +98,18 @@ class WalkTrackingService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        // Explicit teardown so the FGS notification is gone the moment
+        // the service stops, not whenever the OS gets around to clearing
+        // it. Closes the window where a finishWalk emission posts the
+        // "Walk complete." render and stopSelf() schedules teardown,
+        // leaving a tappable-but-dead notification visible for the
+        // milliseconds before destroy lands.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         super.onDestroy()
     }
 
@@ -91,7 +130,13 @@ class WalkTrackingService : Service() {
             return
         }
 
-        promoteToForeground(buildNotification(getString(R.string.walk_notification_starting)))
+        // Read the controller's current state synchronously so the
+        // initial promote matches reality. If the user resumed an
+        // already-Active walk (restoreActiveWalk ran on the way in),
+        // hard-coding Idle here would flash a zero-action "Preparing
+        // your walk…" notification for the sub-second window before
+        // the state collector delivers the first real emission.
+        promoteToForeground(buildNotification(controller.state.value))
 
         locationJob = scope.launch {
             try {
@@ -109,8 +154,61 @@ class WalkTrackingService : Service() {
 
         notificationJob = scope.launch {
             controller.state.collect { state ->
-                updateNotification(state)
-                if (state is WalkState.Finished) stopSelf()
+                if (state is WalkState.Finished) {
+                    // Skip the Finished render — onDestroy's
+                    // stopForeground(REMOVE) is about to clear the
+                    // notification anyway, and posting a "Walk
+                    // complete." rebuild here just lets the user
+                    // briefly see it flash on slower devices.
+                    stopSelf()
+                } else {
+                    updateNotification(state)
+                }
+            }
+        }
+    }
+
+    private fun handleControllerAction(action: String) {
+        // Defensive: action intents only make sense while tracking is live.
+        // If the notification persisted past stopSelf and a stale tap
+        // reached a fresh service instance, locationJob will be null —
+        // the controller has no in-memory walk to act on, and processing
+        // the action would be a no-op at best and inconsistent at worst
+        // (e.g., dispatching Pause against a controller that's still
+        // Idle from cold-start). Bail and clear any orphan notification.
+        // (Note: PendingIntent.getService delivers via startService(),
+        // NOT startForegroundService(), so the API 31+ FGS timeout
+        // doesn't apply here — bailing is correctness, not deadline
+        // avoidance.)
+        if (locationJob?.isActive != true) {
+            Log.w(TAG, "ignoring action $action — tracking not active")
+            // Clear any orphan notification posted by a prior process
+            // instance (FGS notifications are normally cleared on
+            // service-destroy, but a stale notification can outlive an
+            // abnormal process termination). Without this, every tap
+            // spawns a fresh service that bails — the notification
+            // appears tappable but does nothing.
+            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+            stopSelf()
+            return
+        }
+        scope.launch {
+            try {
+                when (action) {
+                    ACTION_PAUSE -> controller.pauseWalk()
+                    ACTION_RESUME -> controller.resumeWalk()
+                    ACTION_END_MEDITATION -> controller.endMeditation()
+                    ACTION_MARK_WAYPOINT -> controller.recordWaypoint()
+                    ACTION_FINISH -> controller.finishWalk()
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                // State-machine rejection (e.g. Pause from a transient Idle
+                // window after a stale tap) or a repository write failure
+                // must not crash the service scope. Sibling jobs (location
+                // collector + notification observer) survive.
+                Log.w(TAG, "controller action $action failed", t)
             }
         }
     }
@@ -158,47 +256,117 @@ class WalkTrackingService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun actionPendingIntent(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, WalkTrackingService::class.java).apply { this.action = action }
+        return PendingIntent.getService(
+            this,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
+    private fun buildNotification(state: WalkState): Notification {
         val activityIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_ACTIVE_WALK)
         }
         val contentPending = PendingIntent.getActivity(
             this,
-            /* requestCode = */ 0,
+            REQUEST_CODE_CONTENT,
             activityIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(text)
+            .setContentText(walkNotificationText(this, state))
             .setOngoing(true)
+            .setShowWhen(false)
+            .setOnlyAlertOnce(true)
             .setContentIntent(contentPending)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .build()
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(buildLockScreenNotification(state))
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+
+        addWalkActionsForState(builder, this, state, notificationActions)
+        return builder.build()
     }
 
+    private fun buildLockScreenNotification(state: WalkState): Notification {
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(getString(R.string.walk_notification_lock_screen_title))
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+        addWalkActionsForState(builder, this, state, notificationActions)
+        return builder.build()
+    }
+
+    /**
+     * State-class fingerprint + 5 m distance bucket. The notification
+     * text formats distance with `%.2f km` (HALF_UP rounding at the
+     * 0.005 km = 5 m boundary), so a 10 m bucket would skip every
+     * second display tick — visible as up to 5 m of stale km on the
+     * notification. 5 m alignment matches the rounding boundary
+     * exactly. Notify-rate stays in the ~100/walk range (vs the
+     * untrottled ~5400/walk), well below any vendor's update-
+     * suppression threshold.
+     */
+    private var lastNotifiedFingerprint: Long = -1L
+
     private fun updateNotification(state: WalkState) {
-        val text = when (state) {
-            WalkState.Idle -> getString(R.string.walk_notification_idle)
-            is WalkState.Active -> getString(
-                R.string.walk_notification_active,
-                state.walk.distanceMeters / 1_000.0,
-            )
-            is WalkState.Paused -> getString(R.string.walk_notification_paused)
-            is WalkState.Meditating -> getString(R.string.walk_notification_meditating)
-            is WalkState.Finished -> getString(R.string.walk_notification_finished)
-        }
+        val fingerprint = notificationFingerprint(state)
+        if (fingerprint == lastNotifiedFingerprint) return
+        lastNotifiedFingerprint = fingerprint
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
+        manager.notify(NOTIFICATION_ID, buildNotification(state))
+    }
+
+    private fun notificationFingerprint(state: WalkState): Long {
+        // Pack the state-class ordinal + 5m-bucketed distance into one
+        // Long. State-class change always re-renders (action set + text
+        // both depend on it); within a single state-class only crossing
+        // a 5m boundary re-renders, matching the displayed text's
+        // rounding granularity.
+        val classOrdinal = when (state) {
+            WalkState.Idle -> 0L
+            is WalkState.Active -> 1L
+            is WalkState.Paused -> 2L
+            is WalkState.Meditating -> 3L
+            is WalkState.Finished -> 4L
+        }
+        val distanceBucket = when (state) {
+            is WalkState.Active -> (state.walk.distanceMeters / 5.0).toLong()
+            is WalkState.Paused -> (state.walk.distanceMeters / 5.0).toLong()
+            is WalkState.Meditating -> (state.walk.distanceMeters / 5.0).toLong()
+            else -> 0L
+        }
+        return classOrdinal * 10_000_000L + distanceBucket
     }
 
     companion object {
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
+        const val ACTION_PAUSE = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.PAUSE"
+        const val ACTION_RESUME = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.RESUME"
+        const val ACTION_END_MEDITATION =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.END_MEDITATION"
+        const val ACTION_MARK_WAYPOINT =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.MARK_WAYPOINT"
+        const val ACTION_FINISH = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.FINISH"
 
         private const val TAG = "WalkTrackingService"
         private const val CHANNEL_ID = "walk_tracking"
         private const val NOTIFICATION_ID = 1
+        private const val REQUEST_CODE_CONTENT = 0
+        private const val REQUEST_CODE_PAUSE = 1
+        private const val REQUEST_CODE_RESUME = 2
+        private const val REQUEST_CODE_END_MEDITATION = 3
+        private const val REQUEST_CODE_MARK_WAYPOINT = 4
+        private const val REQUEST_CODE_FINISH = 5
 
         fun startIntent(context: Context): Intent =
             Intent(context, WalkTrackingService::class.java).apply { action = ACTION_START }

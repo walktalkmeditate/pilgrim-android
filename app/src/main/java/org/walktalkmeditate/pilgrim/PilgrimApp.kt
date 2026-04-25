@@ -19,6 +19,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
+import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
 
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
@@ -91,6 +92,17 @@ class PilgrimApp : Application(), Configuration.Provider {
      */
     @Inject lateinit var widgetRefreshScheduler: org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 
+    /**
+     * Stage 9-B: subscribes to `WalkController.state` and runs the
+     * post-finish side-effect bundle (transcription scheduling,
+     * hemisphere refresh, collective contribution, widget refresh) on
+     * every transition to Finished. Centralizing here means the
+     * notification-action Finish path gets the same finalize
+     * orchestration as the in-app Finish path. Eager `@Inject` so the
+     * `init { scope.launch { ... } }` block runs at app start.
+     */
+    @Inject lateinit var walkFinalizationObserver: WalkFinalizationObserver
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -158,6 +170,15 @@ class PilgrimApp : Application(), Configuration.Provider {
         // REPLACE policy in the scheduler de-dupes if a chain run is
         // already pending.
         widgetRefreshScheduler.scheduleMidnightRefresh()
+
+        // Force Hilt to instantiate the walk-finalization observer so
+        // its `init { scope.launch { ... } }` block subscribes to the
+        // controller state flow for the whole process. Without this
+        // reference the binding stays lazy and finalize side-effects
+        // would silently not fire — most consequentially, the
+        // collective counter would lose any walk finished from the
+        // notification's Finish button.
+        walkFinalizationObserver.hashCode()
     }
 
     private companion object {

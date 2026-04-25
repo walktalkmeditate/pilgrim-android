@@ -14,6 +14,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -97,6 +98,52 @@ class WalkController @Inject constructor(
     }
 
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))
+
+    /**
+     * Stage 9-B: insert a Waypoint at the current location for the
+     * in-progress walk. Allowed from Active / Paused / Meditating —
+     * the controller method is permissive so a future in-app waypoint
+     * button (Phase 10) can call it from any non-finished state. The
+     * notification UI hides the button during Meditating; that's a
+     * UI choice, not a controller constraint.
+     *
+     * No-op (silent) when:
+     *  - State is Idle / Finished — no walk in progress.
+     *  - Accumulator's `lastLocation` is null — no GPS fix yet.
+     *
+     * Held under [dispatchMutex] so a concurrent finishWalk()'s
+     * Finalize effect can't interleave and produce a Waypoint with
+     * timestamp > Walk.endTimestamp.
+     *
+     * Best-effort: any Throwable from the repository write is logged
+     * + swallowed. A failed waypoint must not crash the walk.
+     */
+    suspend fun recordWaypoint() {
+        dispatchMutex.withLock {
+            val accumulator = when (val s = _state.value) {
+                is WalkState.Active -> s.walk
+                is WalkState.Paused -> s.walk
+                is WalkState.Meditating -> s.walk
+                else -> return@withLock
+            }
+            val location = accumulator.lastLocation ?: return@withLock
+            try {
+                repository.addWaypoint(
+                    Waypoint(
+                        walkId = accumulator.walkId,
+                        timestamp = clock.now(),
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        label = null,
+                    ),
+                )
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "recordWaypoint failed", t)
+            }
+        }
+    }
 
     /**
      * After a process kill mid-walk, the Walk row is still in Room with

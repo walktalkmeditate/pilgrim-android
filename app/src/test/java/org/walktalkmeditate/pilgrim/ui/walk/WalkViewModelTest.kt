@@ -161,7 +161,7 @@ class WalkViewModelTest {
             scope = collectiveScope,
         )
         fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource())
     }
 
     @After
@@ -221,190 +221,12 @@ class WalkViewModelTest {
         }
     }
 
-    @Test
-    fun `finishWalk schedules transcription for the just-finished walkId`() = runTest(dispatcher) {
-        viewModel.startWalk()
-        val activeWalkId = controller.state.first { it is WalkState.Active }
-            .let { (it as WalkState.Active).walk.walkId }
-
-        clock.advanceTo(5_000L)
-        viewModel.finishWalk()
-
-        // viewModelScope's launch + Room hop may suspend across
-        // dispatchers. Await Finished (or, equivalently, await the
-        // first scheduler invocation) before asserting.
-        controller.state.first { it is WalkState.Finished }
-
-        assertEquals(listOf(activeWalkId), transcriptionScheduler.scheduledWalkIds)
-    }
-
-    @Test
-    fun `finishWalk schedules a widget refresh`() = runTest(dispatcher) {
-        viewModel.startWalk()
-        controller.state.first { it is WalkState.Active }
-        clock.advanceTo(5_000L)
-        viewModel.finishWalk()
-        controller.state.first { it is WalkState.Finished }
-
-        assertEquals(1, fakeWidgetRefreshScheduler.callCount.get())
-    }
-
-    @Test
-    fun `finishWalk does not contribute to collective when opt-in OFF`() = runTest(dispatcher) {
-        // Default opt-in is OFF.
-        viewModel.startWalk()
-        controller.state.first { it is WalkState.Active }
-        clock.advanceTo(5_000L)
-        viewModel.finishWalk()
-        controller.state.first { it is WalkState.Finished }
-        // Drain DataStore + repo's recordWalk launch.
-        collectiveCacheStore.pendingFlow.first()
-        assertTrue(
-            "collective should not POST when opt-in OFF; recorded=${fakeCollectiveService.recordedPosts}",
-            fakeCollectiveService.recordedPosts.isEmpty(),
-        )
-    }
-
-    @Test
-    fun `finishWalk contributes distance + meditate + talk to collective when opt-in ON`() = runTest(dispatcher) {
-        collectiveCacheStore.setOptIn(true)
-        collectiveRepository.optIn.first { it }
-
-        viewModel.startWalk()
-        val active = controller.state.first { it is WalkState.Active } as WalkState.Active
-        val activeWalkId = active.walk.walkId
-
-        // Seed a non-trivial accumulator + one voice recording so the
-        // snapshot has distance/meditate/talk to send.
-        controller.recordLocation(
-            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
-        )
-        controller.recordLocation(
-            LocationPoint(timestamp = 2_000L, latitude = 40.001, longitude = -74.001),
-        )
-        // Record a 90-second meditation interval.
-        clock.advanceTo(2_000L)
-        controller.startMeditation()
-        clock.advanceTo(92_000L)
-        controller.endMeditation()
-
-        // Inject a 60-second voice recording row directly so finishWalk's
-        // talk-total fallback (voiceRecordingsFor) sees something.
-        repository.recordVoice(
-            VoiceRecording(
-                walkId = activeWalkId,
-                startTimestamp = 3_000L,
-                endTimestamp = 63_000L,
-                durationMillis = 60_000L,
-                fileRelativePath = "fake.wav",
-            ),
-        )
-
-        clock.advanceTo(95_000L)
-        viewModel.finishWalk()
-        controller.state.first { it is WalkState.Finished }
-        // Wait for the launched recordWalk body to drain.
-        val deadline = System.currentTimeMillis() + 2_000L
-        while (fakeCollectiveService.recordedPosts.isEmpty() &&
-            System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.yield()
-            collectiveCacheStore.pendingFlow.first()
-        }
-
-        assertEquals(1, fakeCollectiveService.recordedPosts.size)
-        val posted = fakeCollectiveService.recordedPosts.single()
-        assertEquals(1, posted.walks)
-        assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
-        // 92s meditation → 1 minute (integer truncation).
-        assertEquals(1, posted.meditationMin)
-        // 60s recording → 1 minute.
-        assertEquals(1, posted.talkMin)
-    }
-
-    @Test
-    fun `double-tap finishWalk records exactly one collective contribution`() = runTest(dispatcher) {
-        // Reviewer Bug #1: the Finish button's enabled state derives
-        // from walkState, which only flips to Finished after the
-        // launched body completes. The user has a multi-frame window
-        // to tap twice. Without the AtomicBoolean dedup, both launched
-        // bodies fire recordWalk and the backend gets two +1 contributions
-        // for the same physical walk.
-        collectiveCacheStore.setOptIn(true)
-        collectiveRepository.optIn.first { it }
-
-        viewModel.startWalk()
-        controller.state.first { it is WalkState.Active }
-        controller.recordLocation(
-            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
-        )
-        controller.recordLocation(
-            LocationPoint(timestamp = 2_000L, latitude = 40.005, longitude = -74.005),
-        )
-        clock.advanceTo(5_000L)
-
-        // Double-tap: two synchronous calls. Only the first should
-        // schedule a viewModelScope.launch.
-        viewModel.finishWalk()
-        viewModel.finishWalk()
-        controller.state.first { it is WalkState.Finished }
-
-        val deadline = System.currentTimeMillis() + 2_000L
-        while (fakeCollectiveService.recordedPosts.isEmpty() &&
-            System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.yield()
-            collectiveCacheStore.pendingFlow.first()
-        }
-
-        assertEquals(
-            "double-tap Finish must record exactly one collective contribution; recorded=${fakeCollectiveService.recordedPosts}",
-            1,
-            fakeCollectiveService.recordedPosts.size,
-        )
-    }
-
-    @Test
-    fun `finishWalk from Meditating state contributes to collective`() = runTest(dispatcher) {
-        // Reviewer Bug #1: snapshot was reading WalkState.Active BEFORE
-        // controller.finishWalk(), which returned null when the user
-        // tapped Finish from Meditating (or Paused). Snapshot now
-        // reads from Finished AFTER finishWalk so all reachable
-        // pre-Finish states contribute.
-        collectiveCacheStore.setOptIn(true)
-        collectiveRepository.optIn.first { it }
-
-        viewModel.startWalk()
-        controller.state.first { it is WalkState.Active }
-        clock.advanceTo(1_000L)
-        controller.recordLocation(
-            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
-        )
-        controller.recordLocation(
-            LocationPoint(timestamp = 2_000L, latitude = 40.005, longitude = -74.005),
-        )
-        // Enter meditation and tap Finish without ending it first.
-        clock.advanceTo(2_000L)
-        controller.startMeditation()
-        controller.state.first { it is WalkState.Meditating }
-        clock.advanceTo(80_000L)
-
-        viewModel.finishWalk()
-        controller.state.first { it is WalkState.Finished }
-        val deadline = System.currentTimeMillis() + 2_000L
-        while (fakeCollectiveService.recordedPosts.isEmpty() &&
-            System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.yield()
-            collectiveCacheStore.pendingFlow.first()
-        }
-
-        assertEquals(
-            "Finish-from-Meditating must contribute to collective",
-            1,
-            fakeCollectiveService.recordedPosts.size,
-        )
-        val posted = fakeCollectiveService.recordedPosts.single()
-        assertEquals(1, posted.walks)
-        assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
-    }
+    // Stage 9-B: post-finish side-effects (transcription scheduling,
+    // widget refresh, collective contribution, hemisphere refresh) moved
+    // from WalkViewModel.finishWalk into the @Singleton
+    // WalkFinalizationObserver so the foreground-service notification's
+    // Finish button gets the same treatment as the in-app Finish button.
+    // The original behavior tests now live in WalkFinalizationObserverTest.
 
     @Test
     fun `uiState emits Active while subscribed`() = runTest(dispatcher) {
@@ -568,7 +390,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource())
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -597,7 +419,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource())
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -608,9 +430,14 @@ class WalkViewModelTest {
     }
 
     @Test
-    fun `WalkState transitioning to Finished while recording auto-stops`() = runTest(dispatcher) {
+    fun `WalkState transitioning to Finished mirrors voice UI state to Idle`() = runTest(dispatcher) {
+        // Stage 9-B: voice auto-stop + DB INSERT moved to
+        // WalkFinalizationObserver (covered by its own test). What
+        // the VM still owns is mirroring the UI state to Idle on
+        // Finished — without that, the mic icon would briefly show
+        // "Recording" on the Summary screen.
         controller.startWalk(intention = null)
-        val walkId = requireActiveWalkId()
+        requireActiveWalkId()
 
         viewModel.toggleRecording()
         viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
@@ -620,34 +447,7 @@ class WalkViewModelTest {
         controller.finishWalk()
 
         viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Idle }
-        assertEquals(1, repository.voiceRecordingsFor(walkId).size)
     }
-
-    @Test
-    fun `finishWalk while recording inserts row before scheduling transcription`() =
-        runTest(dispatcher) {
-            // Regression guard for the scheduler-vs-INSERT race that the
-            // .first { !is Recording } wait in finishWalk closes. The
-            // scheduler must observe the auto-stopped recording's row.
-            controller.startWalk(intention = null)
-            val walkId = requireActiveWalkId()
-
-            viewModel.toggleRecording()
-            viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
-            viewModel.audioLevel.first { it > 0f }
-
-            clock.advanceTo(3_000L)
-            viewModel.finishWalk()
-
-            controller.state.first { it is WalkState.Finished }
-            viewModel.voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
-
-            // Both must be true at the moment we observe the schedule
-            // call: the auto-stopped recording's row was committed AND
-            // the scheduler was invoked with the just-finished walkId.
-            assertEquals(1, repository.voiceRecordingsFor(walkId).size)
-            assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
-        }
 
     @Test
     fun `recordingsCount reflects rows for the active walk`() = runTest(dispatcher) {
@@ -702,8 +502,7 @@ class WalkViewModelTest {
         )
         val seededSource = FakeLocationSource(lastKnown = cachedFix)
         val vm = WalkViewModel(
-            context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, seededSource, hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler,
+            context, controller, repository, clock, voiceRecorder, seededSource,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -729,7 +528,7 @@ class WalkViewModelTest {
 
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(lastKnown = null), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler,
+            FakeLocationSource(lastKnown = null),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -783,8 +582,7 @@ class WalkViewModelTest {
         )
         val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
         val vm = WalkViewModel(
-            context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(), throwingRepo, collectiveRepository, fakeWidgetRefreshScheduler,
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's

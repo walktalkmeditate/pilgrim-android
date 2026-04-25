@@ -24,20 +24,15 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
-import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
-import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
-import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -45,7 +40,6 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -72,11 +66,7 @@ class WalkViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val clock: Clock,
     private val voiceRecorder: VoiceRecorder,
-    private val transcriptionScheduler: TranscriptionScheduler,
     private val locationSource: LocationSource,
-    private val hemisphereRepository: HemisphereRepository,
-    private val collectiveRepository: CollectiveRepository,
-    private val widgetRefreshScheduler: WidgetRefreshScheduler,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -364,17 +354,19 @@ class WalkViewModel @Inject constructor(
     }
 
     init {
-        // Auto-stop when the walk finalizes mid-recording. Runs in
-        // viewModelScope; toggleRecording dispatches to IO so this
-        // collector doesn't block on VoiceRecorder.stop(). Placed
-        // after property declarations so _voiceRecorderState is
-        // already initialized when this runs.
+        // The actual voice-recorder auto-stop on Finished now lives in
+        // WalkFinalizationObserver (app-lifetime scope, can't be
+        // cancelled by nav-pop). Here we only mirror the UI state to
+        // Idle when the walk finishes — keeping the previous in-VM
+        // toggleRecording() call would race the observer's stop and
+        // re-introduce the cancellation bug the observer was added to
+        // eliminate (see Stage 9-B's WalkFinalizationObserver kdoc).
         viewModelScope.launch {
             controller.state.collect { state ->
                 if (state is WalkState.Finished &&
                     _voiceRecorderState.value is VoiceRecorderUiState.Recording
                 ) {
-                    toggleRecording()
+                    _voiceRecorderState.value = VoiceRecorderUiState.Idle
                 }
             }
         }
@@ -440,122 +432,27 @@ class WalkViewModel @Inject constructor(
      * state derives from `walkState`, which only flips to Finished
      * after `controller.finishWalk()` dispatches + Room finalizes —
      * the user has a multi-frame window to tap twice. Without this
-     * guard, the second tap re-runs the entire finishWalk body
-     * (transcription scheduler is KEEP-policy idempotent, hemisphere
-     * refresh is read-only — both safe). The collective-counter
-     * `recordWalk` is NOT idempotent: a second call would add a
-     * second walks=+1 contribution for the same physical walk. CAS
-     * to true on entry; reset to false on path completion only if
-     * needed (we don't reset — finished is finished, viewModel is
-     * scoped to nav, double-tap dedup lives for the screen).
+     * guard, the second tap re-runs the entire finishWalk body. The
+     * post-finish side-effects themselves now live in
+     * [WalkFinalizationObserver], which has its own per-walkId dedup
+     * — this CAS is purely about saving the second click from
+     * needlessly going through the controller mutex + voice settle
+     * wait. CAS to true on entry; we don't reset — finished is
+     * finished, viewModel is scoped to nav, double-tap dedup lives
+     * for the screen.
      */
     private val finishInFlight = AtomicBoolean(false)
 
     fun finishWalk() {
         if (!finishInFlight.compareAndSet(false, true)) return
         viewModelScope.launch {
+            // Voice auto-stop + finalize side-effects all live in
+            // WalkFinalizationObserver, which subscribes to
+            // controller.state on an app-lifetime scope (so neither
+            // VM cancellation from the nav-pop nor the user closing
+            // the app can wedge them). All this VM has to do is hand
+            // off to the controller and let the observer take over.
             controller.finishWalk()
-            // Stage 8-B: snapshot from Finished, NOT Active. The Finish
-            // button is enabled in Active, Paused, AND Meditating states
-            // (ActiveWalkScreen `enabled = walkState !is Finished &&
-            // walkState != Idle`); the reducer accepts Finish from all
-            // three. Reading `state.value as? WalkState.Active` BEFORE
-            // controller.finishWalk() would return null for Paused +
-            // Meditating finishes, silently dropping their collective
-            // contribution. Reading from Finished AFTER also picks up
-            // the in-progress meditation/pause interval that the
-            // reducer folds into the final accumulator on Finish (so a
-            // mid-meditation finish counts the partial meditation
-            // duration).
-            val finishedSnapshot = controller.state.value as? WalkState.Finished
-            val snapshotWalkId = finishedSnapshot?.walk?.walkId
-            val snapshotDistanceKm = (finishedSnapshot?.walk?.distanceMeters ?: 0.0) / 1_000.0
-            val snapshotMeditateMin =
-                ((finishedSnapshot?.walk?.totalMeditatedMillis ?: 0L) / 60_000L).toInt()
-            // The init-block auto-stop collector launches an IO coroutine
-            // to stop a still-active recording and INSERT its row. If we
-            // schedule transcription before that INSERT commits, the
-            // worker's `voiceRecordingsFor(walkId)` would miss the last
-            // recording and KEEP policy means we never retry. Wait for
-            // _voiceRecorderState to settle (Idle on success, Error on
-            // stop failure — both mean no more pending IO write).
-            //
-            // Bounded wait: VoiceRecorder.stop()'s internal CountDownLatch
-            // has no timeout, and on some OEM AudioRecord impls the
-            // capture loop's read() can block indefinitely. The user
-            // tapping Finish must always exit the walk; if state is
-            // still Recording after FINISH_STOP_TIMEOUT_MS, give up on
-            // graceful auto-stop and schedule transcription anyway. The
-            // potentially-orphaned WAV is recoverable by Stage 2-E's
-            // sweeper.
-            val settled = withTimeoutOrNull(FINISH_STOP_TIMEOUT_MS) {
-                _voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
-            }
-            if (settled == null) {
-                Log.w(TAG, "voice recorder did not settle within ${FINISH_STOP_TIMEOUT_MS}ms; scheduling anyway")
-            }
-            // Stage 3-E: cache the device hemisphere from the fresh-off-
-            // walk location before Home re-observes. Repository already
-            // try/catches SecurityException internally; the outer catch
-            // here is paranoia so any other throwable (cancellation
-            // aside) doesn't break the finish path.
-            try {
-                hemisphereRepository.refreshFromLocationIfNeeded()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (t: Throwable) {
-                Log.w(TAG, "hemisphere refresh on finishWalk failed", t)
-            }
-            walkIdOrNull(controller.state.value)?.let { walkId ->
-                try {
-                    transcriptionScheduler.scheduleForWalk(walkId)
-                } catch (cancel: CancellationException) {
-                    throw cancel
-                } catch (t: Throwable) {
-                    // A scheduler misconfiguration (e.g., illegal
-                    // WorkManager constraint combo) must not crash the
-                    // user out of finishWalk. The walk row is already
-                    // persisted; the sweeper's case (d) picks up
-                    // un-transcribed rows on next summary-screen open.
-                    Log.w(TAG, "scheduleForWalk($walkId) failed", t)
-                }
-            }
-            // Stage 8-B: contribute to the Collective Counter (no-op
-            // when opt-in is OFF — gated inside the repo). Talk total
-            // is derived from voiceRecordingsFor since WalkAccumulator
-            // doesn't track voice duration directly. Failures are
-            // swallowed: a counter-POST hiccup must not crash finish.
-            snapshotWalkId?.let { walkId ->
-                try {
-                    val talkMin = (
-                        repository.voiceRecordingsFor(walkId)
-                            .sumOf { it.durationMillis } / 60_000L
-                        ).toInt()
-                    collectiveRepository.recordWalk(
-                        CollectiveWalkSnapshot(
-                            distanceKm = snapshotDistanceKm,
-                            meditationMin = snapshotMeditateMin,
-                            talkMin = talkMin,
-                        ),
-                    )
-                } catch (cancel: CancellationException) {
-                    throw cancel
-                } catch (t: Throwable) {
-                    Log.w(TAG, "collective recordWalk failed", t)
-                }
-            }
-            // Stage 9-A: refresh the home-screen widget so the just-
-            // finished walk appears on the user's home screen within
-            // the success-criteria 1-min budget. Worker reads "most
-            // recent" itself — no walkId arg. KEEP policy + unique work
-            // name handle dedup if user double-taps Finish.
-            try {
-                widgetRefreshScheduler.scheduleRefresh()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (t: Throwable) {
-                Log.w(TAG, "widget refresh scheduling failed", t)
-            }
         }
     }
 
@@ -576,10 +473,6 @@ class WalkViewModel @Inject constructor(
     private companion object {
         const val TICK_INTERVAL_MS = 1_000L
         const val SUBSCRIBER_GRACE_MS = 5_000L
-        // 5 s comfortably exceeds the typical 100 ms capture-loop drain
-        // while still letting the user out of the walk if AudioRecord
-        // hangs (some MediaTek devices, mic-seized scenarios).
-        const val FINISH_STOP_TIMEOUT_MS = 5_000L
         const val TAG = "WalkViewModel"
     }
 }
