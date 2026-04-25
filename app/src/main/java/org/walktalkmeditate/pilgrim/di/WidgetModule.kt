@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -15,7 +16,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.widget.WidgetDataStore
+import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 import org.walktalkmeditate.pilgrim.widget.WidgetStateRepository
+import org.walktalkmeditate.pilgrim.widget.WorkManagerWidgetRefreshScheduler
 
 /**
  * Stage 9-A: DI wiring for the home-screen widget. DataStore factory
@@ -36,4 +39,14 @@ object WidgetModule {
         corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
         produceFile = { context.preferencesDataStoreFile(WidgetStateRepository.DATASTORE_NAME) },
     )
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class WidgetSchedulerModule {
+    @Binds
+    @Singleton
+    abstract fun bindWidgetRefreshScheduler(
+        impl: WorkManagerWidgetRefreshScheduler,
+    ): WidgetRefreshScheduler
 }
