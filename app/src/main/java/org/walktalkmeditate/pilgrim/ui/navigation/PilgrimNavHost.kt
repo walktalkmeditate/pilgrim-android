@@ -59,6 +59,8 @@ fun PilgrimNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     permissionsViewModel: PermissionsViewModel = hiltViewModel(),
+    pendingDeepLink: org.walktalkmeditate.pilgrim.widget.DeepLinkTarget? = null,
+    onDeepLinkConsumed: () -> Unit = {},
 ) {
     // Always start at PERMISSIONS; auto-navigate to HOME when onboarding
     // state arrives. See the polish-pass comment below for why we don't
@@ -252,5 +254,31 @@ fun PilgrimNavHost(
                 popUpTo(Routes.PERMISSIONS) { inclusive = true }
             }
         }
+    }
+
+    // Stage 9-A: handle widget deep links. Fires once permissions are
+    // cleared (so the user always lands on a usable surface) AND the
+    // current destination is no longer PERMISSIONS (so we don't try to
+    // navigate while the auto-PERMISSIONS→HOME nav above is mid-
+    // transition). popUpTo(HOME) keeps the back stack as
+    // [HOME, WalkSummary] so back press lands on the journal scroll
+    // regardless of where the user was before the widget tap.
+    LaunchedEffect(pendingDeepLink, currentEntry?.destination?.route) {
+        val link = pendingDeepLink ?: return@LaunchedEffect
+        val currentRoute = currentEntry?.destination?.route ?: return@LaunchedEffect
+        if (currentRoute == Routes.PERMISSIONS) return@LaunchedEffect
+        when (link) {
+            is org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.WalkSummary -> {
+                navController.navigate(Routes.walkSummary(link.walkId)) {
+                    popUpTo(Routes.HOME) { saveState = false }
+                    launchSingleTop = true
+                }
+            }
+            org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.Home -> {
+                // Already at HOME (or nav-to-HOME is in flight) — no
+                // additional nav needed; just consume the deep link.
+            }
+        }
+        onDeepLinkConsumed()
     }
 }
