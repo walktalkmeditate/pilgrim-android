@@ -1,22 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.widget
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
-import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -98,52 +91,18 @@ class WidgetRefreshWorker @AssistedInject constructor(
         Result.failure()
     }
 
-    /**
-     * Required only when the system upgrades the request to expedited
-     * (which may happen with `RUN_AS_NON_EXPEDITED_WORK_REQUEST`
-     * fallback on API 31+ devices with quota). Lint requires the
-     * override; production rarely runs in this path because the worker
-     * finishes in well under the 10-second expedited budget.
-     */
-    override suspend fun getForegroundInfo(): ForegroundInfo {
-        ensureChannel()
-        // IMPORTANCE_MIN means the user practically never sees this
-        // notification (only on the very rare expedited-quota fallback
-        // path). The title uses the localized app name; the channel
-        // name (also localized) doubles as the user-readable label
-        // for what's happening.
-        val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle(appContext.getString(R.string.app_name))
-            .setContentText(appContext.getString(R.string.widget_refresh_channel_name))
-            .setOngoing(true)
-            .setSilent(true)
-            .build()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            @Suppress("DEPRECATION")
-            ForegroundInfo(NOTIFICATION_ID, notification)
-        }
-    }
-
-    private fun ensureChannel() {
-        val nm = ContextCompat.getSystemService(appContext, NotificationManager::class.java) ?: return
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    appContext.getString(R.string.widget_refresh_channel_name),
-                    NotificationManager.IMPORTANCE_MIN,
-                ).apply { setShowBadge(false) },
-            )
-        }
-    }
+    // No `getForegroundInfo()` override. With
+    // `setExpedited(RUN_AS_NON_EXPEDITED_WORK_REQUEST)` in the
+    // scheduler, the work falls back to non-expedited on API 34+
+    // devices where the OS requires a declared `foregroundServiceType`
+    // for expedited execution — which we don't have (and getting one
+    // requires a Play Store permission justification that's overkill
+    // for a sub-second widget refresh). The widget's 1-min success
+    // criterion is comfortably met by normal-priority scheduling
+    // either way.
 
     companion object {
         private const val TAG = "WidgetRefreshWorker"
-        private const val CHANNEL_ID = "widget_refresh"
-        private const val NOTIFICATION_ID = 0xCA77 // arbitrary; non-zero
         private const val MIN_REPORTABLE_WALK_MS = 60_000L // 1 minute
         // How many recent walks to scan for the most-recent reportable.
         // Caps the worst case (a user with 20+ accidental short walks
