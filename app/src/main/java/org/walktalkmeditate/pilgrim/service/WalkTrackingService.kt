@@ -57,22 +57,18 @@ class WalkTrackingService : Service() {
     private var locationJob: Job? = null
     private var notificationJob: Job? = null
 
-    private lateinit var pausePendingIntent: PendingIntent
-    private lateinit var resumePendingIntent: PendingIntent
-    private lateinit var endMeditationPendingIntent: PendingIntent
-    private lateinit var markWaypointPendingIntent: PendingIntent
-    private lateinit var finishPendingIntent: PendingIntent
+    private lateinit var notificationActions: WalkNotificationActions
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        pausePendingIntent = actionPendingIntent(ACTION_PAUSE, REQUEST_CODE_PAUSE)
-        resumePendingIntent = actionPendingIntent(ACTION_RESUME, REQUEST_CODE_RESUME)
-        endMeditationPendingIntent =
-            actionPendingIntent(ACTION_END_MEDITATION, REQUEST_CODE_END_MEDITATION)
-        markWaypointPendingIntent =
-            actionPendingIntent(ACTION_MARK_WAYPOINT, REQUEST_CODE_MARK_WAYPOINT)
-        finishPendingIntent = actionPendingIntent(ACTION_FINISH, REQUEST_CODE_FINISH)
+        notificationActions = WalkNotificationActions(
+            pause = actionPendingIntent(ACTION_PAUSE, REQUEST_CODE_PAUSE),
+            resume = actionPendingIntent(ACTION_RESUME, REQUEST_CODE_RESUME),
+            endMeditation = actionPendingIntent(ACTION_END_MEDITATION, REQUEST_CODE_END_MEDITATION),
+            markWaypoint = actionPendingIntent(ACTION_MARK_WAYPOINT, REQUEST_CODE_MARK_WAYPOINT),
+            finish = actionPendingIntent(ACTION_FINISH, REQUEST_CODE_FINISH),
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -246,7 +242,7 @@ class WalkTrackingService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(notificationText(state))
+            .setContentText(walkNotificationText(this, state))
             .setOngoing(true)
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
@@ -256,7 +252,7 @@ class WalkTrackingService : Service() {
             .setPublicVersion(buildLockScreenNotification(state))
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
-        addActionsForState(builder, state)
+        addWalkActionsForState(builder, this, state, notificationActions)
         return builder.build()
     }
 
@@ -267,75 +263,8 @@ class WalkTrackingService : Service() {
             .setOngoing(true)
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-        addActionsForState(builder, state)
+        addWalkActionsForState(builder, this, state, notificationActions)
         return builder.build()
-    }
-
-    private fun addActionsForState(builder: NotificationCompat.Builder, state: WalkState) {
-        when (state) {
-            is WalkState.Active -> {
-                builder.addAction(
-                    R.drawable.ic_notification_pause,
-                    getString(R.string.walk_notification_action_pause),
-                    pausePendingIntent,
-                )
-                builder.addAction(
-                    R.drawable.ic_notification_waypoint,
-                    getString(R.string.walk_notification_action_mark_waypoint),
-                    markWaypointPendingIntent,
-                )
-                builder.addAction(
-                    R.drawable.ic_notification_stop,
-                    getString(R.string.walk_notification_action_finish),
-                    finishPendingIntent,
-                )
-            }
-            is WalkState.Paused -> {
-                builder.addAction(
-                    R.drawable.ic_notification_resume,
-                    getString(R.string.walk_notification_action_resume),
-                    resumePendingIntent,
-                )
-                builder.addAction(
-                    R.drawable.ic_notification_waypoint,
-                    getString(R.string.walk_notification_action_mark_waypoint),
-                    markWaypointPendingIntent,
-                )
-                builder.addAction(
-                    R.drawable.ic_notification_stop,
-                    getString(R.string.walk_notification_action_finish),
-                    finishPendingIntent,
-                )
-            }
-            is WalkState.Meditating -> {
-                builder.addAction(
-                    R.drawable.ic_notification_end_meditation,
-                    getString(R.string.walk_notification_action_end_meditation),
-                    endMeditationPendingIntent,
-                )
-                builder.addAction(
-                    R.drawable.ic_notification_stop,
-                    getString(R.string.walk_notification_action_finish),
-                    finishPendingIntent,
-                )
-            }
-            WalkState.Idle, is WalkState.Finished -> {
-                // No actions: Idle is the brief startTracking promote-window
-                // before the controller emits Active; Finished triggers
-                // stopSelf in the observer above.
-            }
-        }
-    }
-
-    private fun notificationText(state: WalkState): String = when (state) {
-        WalkState.Idle -> getString(R.string.walk_notification_starting)
-        is WalkState.Active -> getString(
-            R.string.walk_notification_active,
-            state.walk.distanceMeters / 1_000.0,
-        )
-        is WalkState.Paused -> getString(R.string.walk_notification_paused)
-        is WalkState.Meditating -> getString(R.string.walk_notification_meditating)
-        is WalkState.Finished -> getString(R.string.walk_notification_finished)
     }
 
     private fun updateNotification(state: WalkState) {
