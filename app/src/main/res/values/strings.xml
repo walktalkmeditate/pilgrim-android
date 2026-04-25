@@ -10,6 +10,12 @@
     <string name="walk_notification_paused">Walk paused.</string>
     <string name="walk_notification_meditating">Meditating.</string>
     <string name="walk_notification_finished">Walk complete.</string>
+    <string name="walk_notification_action_pause">Pause</string>
+    <string name="walk_notification_action_resume">Resume</string>
+    <string name="walk_notification_action_finish">Finish</string>
+    <string name="walk_notification_action_mark_waypoint">Waypoint</string>
+    <string name="walk_notification_action_end_meditation">End</string>
+    <string name="walk_notification_lock_screen_title">Walk in progress</string>
 
     <string name="onboarding_title">A few doors to open</string>
     <string name="onboarding_subtitle">Pilgrim needs a small set of permissions before you walk. Nothing you grant leaves this device.</string>
