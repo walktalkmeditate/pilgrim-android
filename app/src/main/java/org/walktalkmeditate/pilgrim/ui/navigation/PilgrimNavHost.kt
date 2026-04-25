@@ -256,25 +256,44 @@ fun PilgrimNavHost(
         }
     }
 
-    // Stage 9-A: handle widget deep links. Block ONLY active-session
-    // routes so the widget never yanks the user out of an in-progress
-    // walk or meditation. All passive surfaces (HOME, WALK_SUMMARY,
-    // GOSHUIN, SETTINGS, VOICE_GUIDE_PICKER/DETAIL, SOUNDSCAPE_PICKER,
-    // WALK_SHARE) accept the deep link.
+    // Stage 9-A/B: handle widget + notification deep links.
     //
-    // popUpTo(HOME) on the navigate keeps the back stack as
-    // [HOME, WalkSummary] so back press lands on the journal scroll
-    // regardless of the entry point.
+    // ActiveWalk fires UNCONDITIONALLY (the target IS an active-session
+    // route, so there's nothing to "disrupt"). If the user is already on
+    // ACTIVE_WALK or MEDITATION, we no-op the navigate and consume the
+    // link — pulling someone out of meditation to land on the active
+    // walk screen is the wrong UX even though both are active-session
+    // routes.
+    //
+    // WalkSummary + Home are passive deep-links (Stage 9-A widget). They
+    // sit BELOW the isActiveSession early-return so a widget tap never
+    // yanks the user out of an in-progress walk or meditation.
+    //
+    // popUpTo(HOME) on the navigate keeps the back stack consistent:
+    // [HOME, ACTIVE_WALK] or [HOME, WalkSummary] so back press lands on
+    // the journal scroll regardless of the entry point.
     LaunchedEffect(pendingDeepLink, currentEntry?.destination?.route) {
         val link = pendingDeepLink ?: return@LaunchedEffect
         val currentRoute = currentEntry?.destination?.route ?: return@LaunchedEffect
-        val isActiveSession = currentRoute == Routes.ACTIVE_WALK ||
-            currentRoute == Routes.MEDITATION
         if (currentRoute == Routes.PERMISSIONS) {
             // Auto-nav to HOME is in flight; wait for it to land
             // before consuming the deep link.
             return@LaunchedEffect
         }
+        if (link is org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.ActiveWalk) {
+            val alreadyInSession = currentRoute == Routes.ACTIVE_WALK ||
+                currentRoute == Routes.MEDITATION
+            if (!alreadyInSession) {
+                navController.navigate(Routes.ACTIVE_WALK) {
+                    popUpTo(Routes.HOME) { saveState = false }
+                    launchSingleTop = true
+                }
+            }
+            onDeepLinkConsumed()
+            return@LaunchedEffect
+        }
+        val isActiveSession = currentRoute == Routes.ACTIVE_WALK ||
+            currentRoute == Routes.MEDITATION
         if (isActiveSession) {
             // Drop the deep link silently — never disrupt an in-
             // progress walk or meditation for a widget tap.
@@ -296,10 +315,7 @@ fun PilgrimNavHost(
                 }
             }
             org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.ActiveWalk -> {
-                // Stage 9-B Task 8 implements the real ActiveWalk branch
-                // (restructure required so it fires BEFORE the
-                // isActiveSession early-return). This stub keeps the
-                // when() exhaustive in the meantime.
+                // Handled above; unreachable (kept for exhaustiveness).
             }
         }
         onDeepLinkConsumed()
