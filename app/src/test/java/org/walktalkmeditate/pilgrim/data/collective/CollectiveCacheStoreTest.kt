@@ -2,17 +2,20 @@
 package org.walktalkmeditate.pilgrim.data.collective
 
 import android.app.Application
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.test.core.app.ApplicationProvider
-import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -24,11 +27,18 @@ class CollectiveCacheStoreTest {
 
     private val context = ApplicationProvider.getApplicationContext<Application>()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
-    private val store = CollectiveCacheStore(context, json)
+    private lateinit var dataStore: DataStore<Preferences>
+    private lateinit var store: CollectiveCacheStore
 
-    @After
-    fun cleanup() {
-        File(context.filesDir, "datastore/collective_counter.preferences_pb").delete()
+    @Before
+    fun setUp() {
+        // Fresh DataStore per test (unique file under filesDir/datastore/<uuid>.preferences_pb)
+        // so cached in-memory state from a previous test never bleeds in.
+        val uniqueName = "test_${UUID.randomUUID()}"
+        dataStore = PreferenceDataStoreFactory.create(
+            produceFile = { java.io.File(context.filesDir, "datastore/$uniqueName.preferences_pb") },
+        )
+        store = CollectiveCacheStore(dataStore, json)
     }
 
     private fun sampleStats() = CollectiveStats(

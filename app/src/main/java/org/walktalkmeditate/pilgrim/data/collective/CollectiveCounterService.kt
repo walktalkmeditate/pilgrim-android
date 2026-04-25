@@ -15,13 +15,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 
 @Singleton
-class CollectiveCounterService @Inject constructor(
+open class CollectiveCounterService @Inject constructor(
     @CounterHttpClient private val client: OkHttpClient,
     private val json: Json,
     private val deviceTokenStore: DeviceTokenStore,
     @CounterBaseUrl private val baseUrl: String,
 ) {
-    suspend fun fetch(): CollectiveStats = withContext(Dispatchers.IO) {
+    open suspend fun fetch(): CollectiveStats = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(baseUrl + CollectiveConfig.ENDPOINT)
             .get()
@@ -48,7 +48,7 @@ class CollectiveCounterService @Inject constructor(
         }
     }
 
-    suspend fun post(delta: CollectiveCounterDelta): PostResult = withContext(Dispatchers.IO) {
+    open suspend fun post(delta: CollectiveCounterDelta): PostResult = withContext(Dispatchers.IO) {
         val body = try {
             json.encodeToString(CollectiveCounterDelta.serializer(), delta)
         } catch (ce: CancellationException) {

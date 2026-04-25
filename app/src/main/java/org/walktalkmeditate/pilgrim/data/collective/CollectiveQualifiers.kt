@@ -14,3 +14,7 @@ annotation class CounterBaseUrl
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class CollectiveRepoScope
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class CollectiveDataStore

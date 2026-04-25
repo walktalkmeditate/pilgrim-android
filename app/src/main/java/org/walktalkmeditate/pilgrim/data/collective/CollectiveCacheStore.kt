@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.collective
 
-import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -20,26 +17,26 @@ import kotlinx.serialization.json.Json
 
 @Singleton
 class CollectiveCacheStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @CollectiveDataStore private val dataStore: DataStore<Preferences>,
     private val json: Json,
 ) {
     val statsFlow: Flow<CollectiveStats?> =
-        context.collectiveDataStore.data
+        dataStore.data
             .map { prefs -> prefs[KEY_STATS_JSON]?.let(::decodeStats) }
             .distinctUntilChanged()
 
     val lastFetchedAtFlow: Flow<Long?> =
-        context.collectiveDataStore.data
+        dataStore.data
             .map { it[KEY_LAST_FETCHED_AT] }
             .distinctUntilChanged()
 
     val optInFlow: Flow<Boolean> =
-        context.collectiveDataStore.data
+        dataStore.data
             .map { it[KEY_OPT_IN] ?: false }
             .distinctUntilChanged()
 
     val pendingFlow: Flow<CollectiveCounterDelta> =
-        context.collectiveDataStore.data
+        dataStore.data
             .map { prefs ->
                 prefs[KEY_PENDING_JSON]?.let(::decodeDelta) ?: CollectiveCounterDelta()
             }
@@ -47,25 +44,25 @@ class CollectiveCacheStore @Inject constructor(
 
     suspend fun writeStats(stats: CollectiveStats, fetchedAtMs: Long) {
         val blob = json.encodeToString(CollectiveStats.serializer(), stats)
-        context.collectiveDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[KEY_STATS_JSON] = blob
             prefs[KEY_LAST_FETCHED_AT] = fetchedAtMs
         }
     }
 
     suspend fun invalidateLastFetched() {
-        context.collectiveDataStore.edit { prefs -> prefs.remove(KEY_LAST_FETCHED_AT) }
+        dataStore.edit { prefs -> prefs.remove(KEY_LAST_FETCHED_AT) }
     }
 
     suspend fun setOptIn(value: Boolean) {
-        context.collectiveDataStore.edit { prefs -> prefs[KEY_OPT_IN] = value }
+        dataStore.edit { prefs -> prefs[KEY_OPT_IN] = value }
     }
 
     suspend fun mutatePending(
         mutate: (CollectiveCounterDelta) -> CollectiveCounterDelta,
     ): CollectiveCounterDelta {
         var result = CollectiveCounterDelta()
-        context.collectiveDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             val current = prefs[KEY_PENDING_JSON]?.let(::decodeDelta) ?: CollectiveCounterDelta()
             val next = mutate(current)
             result = next
@@ -97,14 +94,11 @@ class CollectiveCacheStore @Inject constructor(
         null
     }
 
-    private companion object {
+    internal companion object {
+        const val DATASTORE_NAME = "collective_counter"
         val KEY_STATS_JSON = stringPreferencesKey("cached_stats_json")
         val KEY_LAST_FETCHED_AT = longPreferencesKey("last_fetched_at_ms")
         val KEY_OPT_IN = booleanPreferencesKey("opt_in")
         val KEY_PENDING_JSON = stringPreferencesKey("pending_delta_json")
     }
 }
-
-private val Context.collectiveDataStore: DataStore<Preferences> by preferencesDataStore(
-    name = "collective_counter",
-)
