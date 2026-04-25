@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.walk
 
+import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.media.AudioManager
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
@@ -26,8 +28,13 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
+import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
+import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
@@ -72,11 +79,18 @@ class WalkFinalizationObserverTest {
     private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
+    private lateinit var voiceRecorder: VoiceRecorder
+    private lateinit var fakeAudioCapture: FakeAudioCapture
     private lateinit var observer: WalkFinalizationObserver
+    private val testClock = object : Clock {
+        @Volatile var current: Long = 0L
+        override fun now(): Long = current
+    }
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        shadowOf(context as Application).grantPermissions(Manifest.permission.RECORD_AUDIO)
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -115,6 +129,9 @@ class WalkFinalizationObserverTest {
             scope = collectiveScope,
         )
         widgetRefreshScheduler = CountingWidgetRefreshScheduler()
+        fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
+        val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
+        voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, testClock)
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -126,6 +143,7 @@ class WalkFinalizationObserverTest {
             hemisphereRepository = hemisphereRepo,
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
+            voiceRecorder = voiceRecorder,
         )
         // The observer's `init { scope.launch { walkState.collect } }`
         // attaches asynchronously on Dispatchers.IO. If a test mutates
@@ -240,6 +258,53 @@ class WalkFinalizationObserverTest {
     }
 
     @Test
+    fun `observer auto-stops a live recording before computing collective talkMin`() = runBlocking {
+        // Regression: the previous design relied on WalkViewModel's
+        // auto-stop init block (in viewModelScope) to commit the
+        // recording row before the observer queried voiceRecordingsFor.
+        // On nav-pop from Finished, viewModelScope is cancelled before
+        // the in-flight INSERT commits, leaving an orphan WAV with no
+        // row and a collective POST that under-reports talkMin. This
+        // test exercises the no-VM path (notification Finish): voice
+        // recorder is recording, state flips to Finished, observer
+        // must auto-stop + INSERT + count the recording.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        // Start a live recording on the @Singleton VoiceRecorder.
+        // FakeAudioCapture's burst is 1600 samples (one buffer). The
+        // capture loop will exhaust it then idle until stop().
+        testClock.current = 0L
+        voiceRecorder.start(walkId = walkId, walkUuid = java.util.UUID.randomUUID().toString()).getOrThrow()
+        // Drain the burst so duration is computed against a real
+        // capture window. testClock advances after stop is requested.
+        Thread.sleep(150L)
+        testClock.current = 90_000L // 90 s recording → talkMin = 1
+
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 800.0),
+            endedAt = 100_000L,
+        )
+
+        val deadline = System.currentTimeMillis() + 3_000L
+        while (fakeCollectiveService.recordedPosts.isEmpty() &&
+            System.currentTimeMillis() < deadline
+        ) {
+            Thread.sleep(50L)
+        }
+        assertEquals(
+            "observer must auto-stop the recording and POST collective with talkMin=1",
+            1,
+            fakeCollectiveService.recordedPosts.size,
+        )
+        val posted = fakeCollectiveService.recordedPosts.single()
+        assertEquals(1, posted.talkMin)
+        // Recording row must exist in Room (proves observer's INSERT ran).
+        assertEquals(1, repository.voiceRecordingsFor(walkId).size)
+    }
+
+    @Test
     fun `collective is not POSTed when opt-in is OFF`() = runBlocking {
         // Default opt-in is OFF — the repo gates the actual POST.
         val walkId = 17L
@@ -259,9 +324,14 @@ class WalkFinalizationObserverTest {
 
     private companion object {
         const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize"
-        // Slightly longer than FINALIZE_GRACE_MS (1 s) plus a margin
-        // for collective-repo's launched POST coroutine to land.
-        const val WAIT_FOR_GRACE_MS = 2_500L
+        // Cushion for VOICE_INSERT_GRACE_MS (200 ms) + collective-repo's
+        // launched POST coroutine + any CI thread contention.
+        const val WAIT_FOR_GRACE_MS = 1_500L
+        // The observer's collector attaches asynchronously on
+        // Dispatchers.IO. Removing this delay (or shortening it
+        // significantly) WILL break tests on CI as the collector
+        // misses its first emission via StateFlow conflation. Verified
+        // against the regression — do not lower without re-testing.
         const val COLLECTOR_ATTACH_WAIT_MS = 300L
     }
 }
