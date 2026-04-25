@@ -34,6 +34,8 @@ import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -71,6 +73,7 @@ class WalkViewModel @Inject constructor(
     private val transcriptionScheduler: TranscriptionScheduler,
     private val locationSource: LocationSource,
     private val hemisphereRepository: HemisphereRepository,
+    private val collectiveRepository: CollectiveRepository,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -431,6 +434,17 @@ class WalkViewModel @Inject constructor(
 
     fun finishWalk() {
         viewModelScope.launch {
+            // Stage 8-B: snapshot the in-memory accumulator BEFORE
+            // controller.finishWalk() flushes + clears it. We need
+            // distance + meditation totals at the moment of finishing
+            // for the Collective Counter contribution. iOS captures
+            // these the same way (`TempWalk` in the share path).
+            val activeSnapshot = controller.state.value as? WalkState.Active
+            val snapshotWalkId = activeSnapshot?.walk?.walkId
+            val snapshotDistanceKm = (activeSnapshot?.walk?.distanceMeters ?: 0.0) / 1_000.0
+            val snapshotMeditateMin =
+                ((activeSnapshot?.walk?.totalMeditatedMillis ?: 0L) / 60_000L).toInt()
+
             controller.finishWalk()
             // The init-block auto-stop collector launches an IO coroutine
             // to stop a still-active recording and INSERT its row. If we
@@ -478,6 +492,30 @@ class WalkViewModel @Inject constructor(
                     // persisted; the sweeper's case (d) picks up
                     // un-transcribed rows on next summary-screen open.
                     Log.w(TAG, "scheduleForWalk($walkId) failed", t)
+                }
+            }
+            // Stage 8-B: contribute to the Collective Counter (no-op
+            // when opt-in is OFF — gated inside the repo). Talk total
+            // is derived from voiceRecordingsFor since WalkAccumulator
+            // doesn't track voice duration directly. Failures are
+            // swallowed: a counter-POST hiccup must not crash finish.
+            snapshotWalkId?.let { walkId ->
+                try {
+                    val talkMin = (
+                        repository.voiceRecordingsFor(walkId)
+                            .sumOf { it.durationMillis } / 60_000L
+                        ).toInt()
+                    collectiveRepository.recordWalk(
+                        CollectiveWalkSnapshot(
+                            distanceKm = snapshotDistanceKm,
+                            meditationMin = snapshotMeditateMin,
+                            talkMin = talkMin,
+                        ),
+                    )
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    Log.w(TAG, "collective recordWalk failed", t)
                 }
             }
         }
