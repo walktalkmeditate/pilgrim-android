@@ -11,12 +11,14 @@ import android.content.Intent
 sealed interface DeepLinkTarget {
     data class WalkSummary(val walkId: Long) : DeepLinkTarget
     data object Home : DeepLinkTarget
+    data object ActiveWalk : DeepLinkTarget
 
     companion object {
         const val EXTRA_DEEP_LINK = "org.walktalkmeditate.pilgrim.widget.EXTRA_DEEP_LINK"
         const val EXTRA_WALK_ID = "org.walktalkmeditate.pilgrim.widget.EXTRA_WALK_ID"
         const val DEEP_LINK_WALK_SUMMARY = "walk_summary"
         const val DEEP_LINK_HOME = "home"
+        const val DEEP_LINK_ACTIVE_WALK = "active_walk"
 
         fun parse(intent: Intent?): DeepLinkTarget? {
             if (intent == null) return null
@@ -26,6 +28,7 @@ sealed interface DeepLinkTarget {
                     if (id > 0) WalkSummary(id) else null
                 }
                 DEEP_LINK_HOME -> Home
+                DEEP_LINK_ACTIVE_WALK -> ActiveWalk
                 else -> null
             }
         }

@@ -295,6 +295,12 @@ fun PilgrimNavHost(
                     }
                 }
             }
+            org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.ActiveWalk -> {
+                // Stage 9-B Task 8 implements the real ActiveWalk branch
+                // (restructure required so it fires BEFORE the
+                // isActiveSession early-return). This stub keeps the
+                // when() exhaustive in the meantime.
+            }
         }
         onDeepLinkConsumed()
     }
