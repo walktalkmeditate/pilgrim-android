@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
@@ -47,6 +48,8 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec
+import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiCacheSweeper
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiFilename
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiGallerySaver
@@ -140,6 +143,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val sweeper: OrphanRecordingSweeper,
     private val photoAnalysisScheduler: PhotoAnalysisScheduler,
     hemisphereRepository: HemisphereRepository,
+    private val cachedShareStore: CachedShareStore,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -162,6 +166,29 @@ class WalkSummaryViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = WalkSummaryUiState.Loading,
     )
+
+    /**
+     * Stage 8-A: observer for the per-walk cached journey-share. Drives
+     * the Fresh / Active / Expired state of [WalkShareJourneyRow] on
+     * the summary. `flatMapLatest` re-opens the DataStore observer
+     * only when the Loaded state first arrives (one-shot
+     * transition). `Eagerly` is safe here because the flow is
+     * trivially cheap and the UI always subscribes when on summary.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val cachedShareFlow: StateFlow<CachedShare?> = state
+        .flatMapLatest { s ->
+            if (s is WalkSummaryUiState.Loaded) {
+                cachedShareStore.observe(s.summary.walk.uuid)
+            } else {
+                kotlinx.coroutines.flow.flowOf(null)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null,
+        )
 
     /**
      * Live list of voice recordings for this walk. Backed by a Room

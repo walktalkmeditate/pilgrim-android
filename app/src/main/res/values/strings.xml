@@ -136,4 +136,39 @@
     <string name="etegami_save_needs_permission">Allow Photos access to save</string>
     <string name="etegami_share_button_content_description">Share the etegami postcard</string>
     <string name="etegami_save_button_content_description">Save the etegami postcard to Photos</string>
+
+    <!-- Stage 8-A: share-journey flow -->
+    <string name="share_journey_action">Share Journey</string>
+    <string name="share_journey_create_web_page">Create a web page</string>
+    <string name="share_journey_returns_on">Returns to the trail on %1$s</string>
+    <string name="share_journey_returned">This walk has returned to the trail</string>
+    <string name="share_journey_shared_for">Shared for %1$s</string>
+    <string name="share_journey_share_again">Share again</string>
+    <string name="share_journey_copy">Copy</string>
+    <string name="share_journey_copied">Copied</string>
+    <string name="share_journey_share">Share</string>
+    <!-- Share modal -->
+    <string name="share_modal_title">Share Walk</string>
+    <string name="share_modal_shared_title">Walk Shared</string>
+    <string name="share_modal_cancel">Cancel</string>
+    <string name="share_modal_done">Done</string>
+    <string name="share_modal_stats_header">What to share</string>
+    <string name="share_modal_stat_distance">Distance</string>
+    <string name="share_modal_stat_duration">Duration</string>
+    <string name="share_modal_stat_elevation">Elevation</string>
+    <string name="share_modal_stat_activity">Activity breakdown</string>
+    <string name="share_modal_stat_steps">Steps</string>
+    <string name="share_modal_journal_header">Journal (optional)</string>
+    <string name="share_modal_journal_placeholder">A line or two to remember this walk by</string>
+    <string name="share_modal_journal_counter">%1$d / %2$d</string>
+    <string name="share_modal_expiry_header">Returns to the trail after</string>
+    <string name="share_modal_include_waypoints">Include waypoints (%1$d)</string>
+    <string name="share_modal_share_button">Share</string>
+    <string name="share_modal_toggle_at_least_one">Toggle at least one stat to share</string>
+    <string name="share_modal_error_network">Network error. Check your connection.</string>
+    <string name="share_modal_error_rate_limited">You\'ve shared too many walks today. Try again tomorrow.</string>
+    <string name="share_modal_error_unknown">Couldn\'t share the walk. Try again.</string>
+    <string name="share_modal_success_label">Your walk has been carried to the trail.</string>
+    <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
+    <string name="share_modal_chooser_title">Share walk</string>
 </resources>
