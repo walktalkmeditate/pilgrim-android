@@ -40,6 +40,16 @@ class WalkRepository @Inject constructor(
 
     suspend fun mostRecentFinishedWalk(): Walk? = walkDao.getMostRecentFinished()
 
+    /**
+     * The N most-recent finished walks, ordered by end_timestamp
+     * descending. Used by the home-screen widget refresh worker to
+     * find the most recent walk that meets a reportable threshold —
+     * skipping accidental sub-minute walks that would otherwise
+     * tombstone an earlier valid record.
+     */
+    suspend fun recentFinishedWalks(limit: Int): List<Walk> =
+        walkDao.getRecentFinished(limit)
+
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
     suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)

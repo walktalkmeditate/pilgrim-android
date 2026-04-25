@@ -59,6 +59,8 @@ fun PilgrimNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     permissionsViewModel: PermissionsViewModel = hiltViewModel(),
+    pendingDeepLink: org.walktalkmeditate.pilgrim.widget.DeepLinkTarget? = null,
+    onDeepLinkConsumed: () -> Unit = {},
 ) {
     // Always start at PERMISSIONS; auto-navigate to HOME when onboarding
     // state arrives. See the polish-pass comment below for why we don't
@@ -252,5 +254,48 @@ fun PilgrimNavHost(
                 popUpTo(Routes.PERMISSIONS) { inclusive = true }
             }
         }
+    }
+
+    // Stage 9-A: handle widget deep links. Block ONLY active-session
+    // routes so the widget never yanks the user out of an in-progress
+    // walk or meditation. All passive surfaces (HOME, WALK_SUMMARY,
+    // GOSHUIN, SETTINGS, VOICE_GUIDE_PICKER/DETAIL, SOUNDSCAPE_PICKER,
+    // WALK_SHARE) accept the deep link.
+    //
+    // popUpTo(HOME) on the navigate keeps the back stack as
+    // [HOME, WalkSummary] so back press lands on the journal scroll
+    // regardless of the entry point.
+    LaunchedEffect(pendingDeepLink, currentEntry?.destination?.route) {
+        val link = pendingDeepLink ?: return@LaunchedEffect
+        val currentRoute = currentEntry?.destination?.route ?: return@LaunchedEffect
+        val isActiveSession = currentRoute == Routes.ACTIVE_WALK ||
+            currentRoute == Routes.MEDITATION
+        if (currentRoute == Routes.PERMISSIONS) {
+            // Auto-nav to HOME is in flight; wait for it to land
+            // before consuming the deep link.
+            return@LaunchedEffect
+        }
+        if (isActiveSession) {
+            // Drop the deep link silently — never disrupt an in-
+            // progress walk or meditation for a widget tap.
+            onDeepLinkConsumed()
+            return@LaunchedEffect
+        }
+        when (link) {
+            is org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.WalkSummary -> {
+                navController.navigate(Routes.walkSummary(link.walkId)) {
+                    popUpTo(Routes.HOME) { saveState = false }
+                    launchSingleTop = true
+                }
+            }
+            org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.Home -> {
+                if (currentRoute != Routes.HOME) {
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.HOME) { inclusive = true }
+                    }
+                }
+            }
+        }
+        onDeepLinkConsumed()
     }
 }

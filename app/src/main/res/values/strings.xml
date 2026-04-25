@@ -172,6 +172,21 @@
     <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
     <string name="share_modal_chooser_title">Share walk</string>
 
+    <!-- Stage 9-A: Glance widget strings. -->
+    <string name="widget_display_name">Pilgrim</string>
+    <string name="widget_description">A quiet mantra for your walk.</string>
+    <string name="widget_relative_today">Today</string>
+    <string name="widget_relative_yesterday">Yesterday</string>
+    <string name="widget_relative_n_days_ago">%1$d days ago</string>
+    <!-- Stage 9-A: TalkBack content descriptions for the widget. -->
+    <string name="widget_a11y_last_walk">Last walk: %1$s, %2$s, %3$s. Tap to open walk summary.</string>
+    <string name="widget_a11y_mantra">Pilgrim mantra. Tap to open the app.</string>
+    <!-- TRANSLATORS: 10 short walking-meditation phrases joined by `|`.
+         Translate the contemplative tone, keep the count, keep the
+         delimiter. Used in the home-screen widget when the user has not
+         yet completed any walks (one phrase per day, indexed by day-of-year). -->
+    <string name="widget_mantras">Walk well.|Every step is enough.|Begin where you are.|Slow is a speed.|Breathe with your feet.|Presence, step by step.|The path is the way.|Nowhere to arrive.|Solvitur ambulando.|One step is plenty.</string>
+
     <!-- Stage 8-B: collective counter -->
     <string name="collective_opt_in_label">Walk with the collective</string>
     <string name="collective_opt_in_description">Add your footsteps to the path</string>
