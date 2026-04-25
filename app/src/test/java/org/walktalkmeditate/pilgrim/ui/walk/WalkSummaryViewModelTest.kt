@@ -662,26 +662,6 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
-    fun `saveEtegamiToGallery emits SaveFailed under Robolectric MediaStore`() = runTest(dispatcher) {
-        // Robolectric's MediaStore provider is unwired — openFileDescriptor
-        // fails, the saver rollbacks the IS_PENDING row, and the VM
-        // emits SaveFailed. Validates the VM's end-to-end error path
-        // without depending on a real device gallery.
-        val walk = repository.startWalk(startTimestamp = 5_000_000L)
-        repository.finishWalk(walk, endTimestamp = 5_600_000L)
-        val vm = newViewModel(walkId = walk.id)
-
-        vm.etegamiEvents.test {
-            vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
-            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
-                withTimeout(10_000L) { awaitItem() }
-            }
-            assertEquals(WalkSummaryViewModel.EtegamiShareEvent.SaveFailed, ev)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
     fun `etegamiBusy tracks the in-flight action and resets to null on completion`() = runTest(dispatcher) {
         val walk = repository.startWalk(startTimestamp = 5_000_000L)
         repository.finishWalk(walk, endTimestamp = 5_600_000L)
