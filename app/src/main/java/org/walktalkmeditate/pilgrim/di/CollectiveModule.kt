@@ -6,6 +6,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -13,6 +14,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,8 +57,20 @@ object CollectiveModule {
     @Provides
     @Singleton
     @CollectiveRepoScope
-    fun provideCollectiveRepoScope(): CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    fun provideCollectiveRepoScope(): CoroutineScope {
+        // CoroutineExceptionHandler is mandatory: recordWalk + boot
+        // fetch make DataStore reads/writes (optInFlow.first(),
+        // mutatePending, invalidateLastFetched) outside the local
+        // try/catch in service.post. A corrupted preferences_pb file
+        // throws IOException uncaught — without this handler the
+        // throw escapes to Thread.UncaughtExceptionHandler and
+        // crashes the process. Logging + swallowing is acceptable:
+        // the caller's pending stays intact for the next walk.
+        val handler = CoroutineExceptionHandler { _, t ->
+            Log.w("CollectiveRepoScope", "uncaught in collective scope", t)
+        }
+        return CoroutineScope(SupervisorJob() + Dispatchers.IO + handler)
+    }
 
     @Provides
     @Singleton

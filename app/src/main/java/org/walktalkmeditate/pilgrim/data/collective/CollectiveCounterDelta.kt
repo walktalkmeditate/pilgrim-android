@@ -29,6 +29,22 @@ data class CollectiveCounterDelta(
         meditationMin = meditationMin - other.meditationMin,
         talkMin = talkMin - other.talkMin,
     )
+
+    /**
+     * Clamp to the backend's per-POST caps (counter.ts:38-41). The
+     * worker silently clamps any oversize value to its cap and
+     * returns OK regardless. If the client subtracted the unclamped
+     * value from pending on Success, the residual would silently
+     * vanish. Always POST the clamped value and subtract the
+     * clamped value from pending — leaves the overflow in pending
+     * for the next walk.
+     */
+    fun clampToBackendCaps() = CollectiveCounterDelta(
+        walks = walks.coerceIn(0, CollectiveConfig.MAX_WALKS_PER_POST),
+        distanceKm = distanceKm.coerceIn(0.0, CollectiveConfig.MAX_DISTANCE_KM_PER_POST),
+        meditationMin = meditationMin.coerceIn(0, CollectiveConfig.MAX_DURATION_MIN_PER_POST),
+        talkMin = talkMin.coerceIn(0, CollectiveConfig.MAX_DURATION_MIN_PER_POST),
+    )
 }
 
 data class CollectiveWalkSnapshot(

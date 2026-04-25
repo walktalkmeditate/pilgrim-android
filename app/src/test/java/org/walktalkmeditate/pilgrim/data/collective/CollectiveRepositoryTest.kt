@@ -216,6 +216,37 @@ class CollectiveRepositoryTest {
         Unit
     }
 
+    @Test
+    fun `recordWalk clamps oversize pending to backend caps before POST`() = runBlocking {
+        // Reviewer Bug #3: backend silently clamps walks > 10 + returns OK.
+        // If we subtract the unclamped value from pending, the residual
+        // disappears. Seed pending past the cap and verify (a) POST
+        // payload is clamped, (b) overflow stays in pending after Success.
+        cacheStore.setOptIn(true)
+        // Pre-load pending past the cap (12 walks, well over MAX_WALKS_PER_POST=10).
+        cacheStore.mutatePending {
+            CollectiveCounterDelta(
+                walks = 11,
+                distanceKm = 5.0,
+                meditationMin = 0,
+                talkMin = 0,
+            )
+        }
+        fakeService.postResult = PostResult.Success
+        fakeService.fetchResult = sampleStats(99)
+        val repo = newRepo()
+        repo.optIn.first { it }
+
+        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.0, meditationMin = 0, talkMin = 0))
+        awaitPostCount(1)
+
+        // POST payload was clamped to MAX_WALKS_PER_POST (10).
+        assertEquals(10, fakeService.lastPosted!!.walks)
+        // After Success: pending = (12 - 10) = 2 walks remaining for the next POST.
+        cacheStore.pendingFlow.first { it.walks == 2 }
+        Unit
+    }
+
     private suspend fun awaitPostCount(expected: Int) {
         // recordWalk launches on Unconfined; the body suspends through
         // DataStore's IO actor before reaching service.post(). Poll

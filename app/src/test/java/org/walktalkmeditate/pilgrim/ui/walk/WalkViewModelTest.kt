@@ -300,6 +300,47 @@ class WalkViewModelTest {
     }
 
     @Test
+    fun `double-tap finishWalk records exactly one collective contribution`() = runTest(dispatcher) {
+        // Reviewer Bug #1: the Finish button's enabled state derives
+        // from walkState, which only flips to Finished after the
+        // launched body completes. The user has a multi-frame window
+        // to tap twice. Without the AtomicBoolean dedup, both launched
+        // bodies fire recordWalk and the backend gets two +1 contributions
+        // for the same physical walk.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+
+        viewModel.startWalk()
+        controller.state.first { it is WalkState.Active }
+        controller.recordLocation(
+            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
+        )
+        controller.recordLocation(
+            LocationPoint(timestamp = 2_000L, latitude = 40.005, longitude = -74.005),
+        )
+        clock.advanceTo(5_000L)
+
+        // Double-tap: two synchronous calls. Only the first should
+        // schedule a viewModelScope.launch.
+        viewModel.finishWalk()
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+
+        val deadline = System.currentTimeMillis() + 2_000L
+        while (fakeCollectiveService.recordedPosts.isEmpty() &&
+            System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+            collectiveCacheStore.pendingFlow.first()
+        }
+
+        assertEquals(
+            "double-tap Finish must record exactly one collective contribution; recorded=${fakeCollectiveService.recordedPosts}",
+            1,
+            fakeCollectiveService.recordedPosts.size,
+        )
+    }
+
+    @Test
     fun `finishWalk from Meditating state contributes to collective`() = runTest(dispatcher) {
         // Reviewer Bug #1: snapshot was reading WalkState.Active BEFORE
         // controller.finishWalk(), which returned null when the user

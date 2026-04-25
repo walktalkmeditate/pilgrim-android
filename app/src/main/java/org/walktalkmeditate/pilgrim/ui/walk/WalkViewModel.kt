@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -432,7 +433,24 @@ class WalkViewModel @Inject constructor(
         viewModelScope.launch { controller.endMeditation() }
     }
 
+    /**
+     * CAS guard for double-tap dedup. The Finish button's enabled
+     * state derives from `walkState`, which only flips to Finished
+     * after `controller.finishWalk()` dispatches + Room finalizes —
+     * the user has a multi-frame window to tap twice. Without this
+     * guard, the second tap re-runs the entire finishWalk body
+     * (transcription scheduler is KEEP-policy idempotent, hemisphere
+     * refresh is read-only — both safe). The collective-counter
+     * `recordWalk` is NOT idempotent: a second call would add a
+     * second walks=+1 contribution for the same physical walk. CAS
+     * to true on entry; reset to false on path completion only if
+     * needed (we don't reset — finished is finished, viewModel is
+     * scoped to nav, double-tap dedup lives for the screen).
+     */
+    private val finishInFlight = AtomicBoolean(false)
+
     fun finishWalk() {
+        if (!finishInFlight.compareAndSet(false, true)) return
         viewModelScope.launch {
             controller.finishWalk()
             // Stage 8-B: snapshot from Finished, NOT Active. The Finish

@@ -29,6 +29,16 @@ class CollectiveRepository @Inject constructor(
 ) {
     private val recordMutex = Mutex()
 
+    /**
+     * Single-flight gate on `fetchIfStale` so a slow boot fetch and
+     * a post-finishWalk forceFetch can't race each other and have
+     * the slower (and thus stale-r) response overwrite the fresher
+     * one. Inside the lock we re-check the TTL — if a newer fetch
+     * already landed while this caller was queued, the second
+     * fetcher's TTL gate skips.
+     */
+    private val fetchMutex = Mutex()
+
     val stats: StateFlow<CollectiveStats?> =
         cacheStore.statsFlow.stateIn(
             scope = scope,
@@ -51,20 +61,25 @@ class CollectiveRepository @Inject constructor(
      * again on the next eligible call.
      */
     suspend fun fetchIfStale(now: () -> Long = System::currentTimeMillis) {
-        val lastFetched = cacheStore.lastFetchedAtFlow.first()
-        val nowMs = now()
-        if (lastFetched != null &&
-            (nowMs - lastFetched) < CollectiveConfig.FETCH_TTL.inWholeMilliseconds
-        ) {
-            return
-        }
-        try {
-            val fresh = service.fetch()
-            cacheStore.writeStats(fresh, nowMs)
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (t: Throwable) {
-            Log.w(TAG, "fetchIfStale failed", t)
+        fetchMutex.withLock {
+            // Re-read inside the lock — a queued caller may find that
+            // a parallel fetch already wrote fresher stats while it
+            // was waiting, in which case the TTL gate now skips.
+            val lastFetched = cacheStore.lastFetchedAtFlow.first()
+            val nowMs = now()
+            if (lastFetched != null &&
+                (nowMs - lastFetched) < CollectiveConfig.FETCH_TTL.inWholeMilliseconds
+            ) {
+                return@withLock
+            }
+            try {
+                val fresh = service.fetch()
+                cacheStore.writeStats(fresh, nowMs)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "fetchIfStale failed", t)
+            }
         }
     }
 
@@ -80,6 +95,16 @@ class CollectiveRepository @Inject constructor(
      * and POSTs the running total. On Success, subtracts the merged
      * total back to (typically) zero and triggers a forceFetch so the
      * UI sees the increment without waiting for the 216s TTL.
+     *
+     * Known iOS-parity limitation: process death between POST send
+     * and response read leaves pending non-zero. On next launch the
+     * NEXT walk's POST sends pending+1, double-counting that one
+     * walk on the backend. Server-side request_id dedup is the
+     * proper fix (separate ticket); for now we accept the rare
+     * double-count to match iOS's behavior. Do NOT add a "clear
+     * pending before POST" optimization without server-side dedup —
+     * that would silently lose contributions on transient network
+     * failures.
      */
     fun recordWalk(snapshot: CollectiveWalkSnapshot) {
         scope.launch {
@@ -107,8 +132,17 @@ class CollectiveRepository @Inject constructor(
                     // recordWalk ever takes a parameterized walk count.
                     return@withLock false
                 }
+                // Clamp against the backend's per-POST caps
+                // (counter.ts:38-41 silently clamps + returns OK).
+                // POST the clamped delta; subtract the SAME clamped
+                // value from pending on Success so any overflow stays
+                // in pending for the next walk. This unblocks heavy
+                // walkers from silently losing contributions when
+                // pending >10 walks accumulates (e.g., extended
+                // offline period followed by reconnect).
+                val payload = merged.clampToBackendCaps()
                 val result = try {
-                    service.post(merged)
+                    service.post(payload)
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
@@ -125,7 +159,7 @@ class CollectiveRepository @Inject constructor(
                         // that loosens the lock doesn't silently drift
                         // pending negative.
                         cacheStore.mutatePending { current ->
-                            val subtracted = current - merged
+                            val subtracted = current - payload
                             if (subtracted.walks <= 0) CollectiveCounterDelta()
                             else subtracted
                         }
