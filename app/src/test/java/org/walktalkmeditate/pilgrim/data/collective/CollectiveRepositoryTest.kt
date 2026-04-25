@@ -34,6 +34,7 @@ class CollectiveRepositoryTest {
 
     private val context = ApplicationProvider.getApplicationContext<Application>()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    private lateinit var dataStoreScope: CoroutineScope
     private lateinit var dataStore: DataStore<Preferences>
     private lateinit var cacheStore: CollectiveCacheStore
     private lateinit var fakeService: FakeCounterService
@@ -42,7 +43,9 @@ class CollectiveRepositoryTest {
     @Before
     fun setUp() {
         val unique = "test_${UUID.randomUUID()}"
+        dataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         dataStore = PreferenceDataStoreFactory.create(
+            scope = dataStoreScope,
             produceFile = { File(context.filesDir, "datastore/$unique.preferences_pb") },
         )
         cacheStore = CollectiveCacheStore(dataStore, json)
@@ -53,6 +56,7 @@ class CollectiveRepositoryTest {
     @After
     fun tearDown() {
         scope.cancel()
+        dataStoreScope.cancel()
         File(context.filesDir, "datastore/share_device_token.preferences_pb").delete()
     }
 
@@ -154,9 +158,22 @@ class CollectiveRepositoryTest {
 
         repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.0, meditationMin = 1, talkMin = 0))
         awaitPostCount(1)
-        cacheStore.pendingFlow.first { it.isEmpty() }
-        cacheStore.statsFlow.first { it == sampleStats(99) }
-        Unit
+        // Bounded poll instead of `flow.first { predicate }` — the latter
+        // hangs in multi-class run ordering due to a Robolectric main-Looper
+        // / runBlocking interaction with DataStore actor resumes that
+        // doesn't manifest standalone. Poll covers both the success
+        // path AND surfaces a useful diagnostic if it ever times out.
+        val deadline = System.currentTimeMillis() + 2_000L
+        while ((!cacheStore.pendingFlow.first().isEmpty() ||
+                cacheStore.statsFlow.first() != sampleStats(99)) &&
+            System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+        }
+        assertTrue(
+            "pending should be empty after Success",
+            cacheStore.pendingFlow.first().isEmpty(),
+        )
+        assertEquals(sampleStats(99), cacheStore.statsFlow.first())
     }
 
     @Test
@@ -212,7 +229,7 @@ class CollectiveRepositoryTest {
         assertEquals(3.0, posted.distanceKm, 0.001)
         assertEquals(4, posted.meditationMin)
         assertEquals(1, posted.talkMin)
-        cacheStore.pendingFlow.first { it.isEmpty() }
+        awaitPending { it.isEmpty() }
         Unit
     }
 
@@ -245,7 +262,7 @@ class CollectiveRepositoryTest {
         // After Success: walks fully drained, but 70km residual must stay in pending.
         // Filter for post-subtract specifically (walks==0) so we don't
         // race the pre-subtract merge emission (walks=10, dist=270).
-        val residual = cacheStore.pendingFlow.first { it.walks == 0 }
+        val residual = awaitPending { it.walks == 0 }
         assertEquals(70.0, residual.distanceKm, 0.001)
     }
 
@@ -276,8 +293,29 @@ class CollectiveRepositoryTest {
         // POST payload was clamped to MAX_WALKS_PER_POST (10).
         assertEquals(10, fakeService.lastPosted!!.walks)
         // After Success: pending = (12 - 10) = 2 walks remaining for the next POST.
-        cacheStore.pendingFlow.first { it.walks == 2 }
+        awaitPending { it.walks == 2 }
         Unit
+    }
+
+    /**
+     * Bounded poll on pendingFlow until the predicate matches. Used
+     * instead of `flow.first { predicate }` because the latter
+     * deadlocks under multi-class run ordering — Robolectric main
+     * Looper x runBlocking x DataStore-actor-resume issue. Returns
+     * the matching value; throws AssertionError on timeout for
+     * useful diagnostics.
+     */
+    private suspend fun awaitPending(predicate: (CollectiveCounterDelta) -> Boolean): CollectiveCounterDelta {
+        val deadline = System.currentTimeMillis() + 2_000L
+        var last: CollectiveCounterDelta = cacheStore.pendingFlow.first()
+        while (!predicate(last) && System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+            last = cacheStore.pendingFlow.first()
+        }
+        if (!predicate(last)) {
+            throw AssertionError("awaitPending predicate didn't match within 2s; last=$last")
+        }
+        return last
     }
 
     private suspend fun awaitPostCount(expected: Int) {

@@ -7,9 +7,14 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.test.core.app.ApplicationProvider
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -27,18 +32,28 @@ class CollectiveCacheStoreTest {
 
     private val context = ApplicationProvider.getApplicationContext<Application>()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    private lateinit var dataStoreScope: CoroutineScope
     private lateinit var dataStore: DataStore<Preferences>
     private lateinit var store: CollectiveCacheStore
 
     @Before
     fun setUp() {
-        // Fresh DataStore per test (unique file under filesDir/datastore/<uuid>.preferences_pb)
-        // so cached in-memory state from a previous test never bleeds in.
+        // Fresh DataStore per test (unique file) + explicit scope so we
+        // can cancel it in @After. Without that, every PreferenceDataStoreFactory.create()
+        // spawns a SupervisorJob+IO scope that never dies — across ~10 tests
+        // per class * many classes that's significant GC pressure on CI.
         val uniqueName = "test_${UUID.randomUUID()}"
+        dataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         dataStore = PreferenceDataStoreFactory.create(
+            scope = dataStoreScope,
             produceFile = { java.io.File(context.filesDir, "datastore/$uniqueName.preferences_pb") },
         )
         store = CollectiveCacheStore(dataStore, json)
+    }
+
+    @After
+    fun tearDown() {
+        dataStoreScope.cancel()
     }
 
     private fun sampleStats() = CollectiveStats(

@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -87,6 +88,7 @@ class WalkViewModelTest {
     private lateinit var hemisphereScope: CoroutineScope
     private lateinit var viewModel: WalkViewModel
     private lateinit var fakeCollectiveService: FakeCollectiveCounterService
+    private lateinit var collectiveDataStoreScope: CoroutineScope
     private lateinit var collectiveDataStore: DataStore<Preferences>
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
@@ -138,8 +140,13 @@ class WalkViewModelTest {
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, hemisphereLocation, hemisphereScope)
         // Stage 8-B: collective-counter wiring. Fresh DataStore per test
         // (UUID-named) so opt-in / pending state never bleeds across tests.
+        // Explicit scope so we can cancel it in @After (otherwise each test
+        // leaks a SupervisorJob+IO scope, and the per-test compounding adds
+        // measurable CI memory pressure).
         val unique = "test_collective_${java.util.UUID.randomUUID()}"
+        collectiveDataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         collectiveDataStore = PreferenceDataStoreFactory.create(
+            scope = collectiveDataStoreScope,
             produceFile = { context.preferencesDataStoreFile(unique) },
         )
         val collectiveJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -159,6 +166,7 @@ class WalkViewModelTest {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         collectiveScope.coroutineContext[Job]?.cancel()
+        collectiveDataStoreScope.cancel()
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
         Dispatchers.resetMain()
     }
