@@ -70,10 +70,9 @@ Extend the existing `WalkTrackingService`'s ongoing notification with state-awar
   - Current shape: PERMISSIONS early-return → isActiveSession early-return (drops link) → `when (link)` for WalkSummary / Home.
   - New shape: PERMISSIONS early-return → **`when (link)` FIRST** (with ActiveWalk handled before any source-route gating, since the target IS an active-session route — there's nothing to "disrupt") → THEN isActiveSession early-return for non-ActiveWalk targets (preserves Stage 9-A's widget-protection guarantee).
   - ActiveWalk branch logic:
-    - From any non-PERMISSIONS route (including currently-on-ACTIVE_WALK or currently-on-MEDITATION): navigate to `Routes.ACTIVE_WALK` with `launchSingleTop = true` + `popUpTo(Routes.HOME) { saveState = false }`. The popUpTo collapses any intermediate destinations (e.g., journal scroll → Settings → ACTIVE_WALK becomes [HOME, ACTIVE_WALK]).
-    - launchSingleTop ensures currently-on-ACTIVE_WALK is a no-op (re-uses the existing destination instance).
-    - **MEDITATION-source decision**: navigate to ACTIVE_WALK and back the user out of meditation. Rationale: notification body tap is an explicit "show me my walk view" gesture; if the user wanted to stay in meditation they wouldn't have tapped. The alternative (do-nothing-when-already-in-session) was Stage 9-A's pattern for widget taps, but notification taps are different intent.
-    - Always call `onDeepLinkConsumed()` after the navigate.
+    - From any non-PERMISSIONS, non-active-session route: navigate to `Routes.ACTIVE_WALK` with `launchSingleTop = true` + `popUpTo(Routes.HOME) { saveState = false }`. The popUpTo collapses any intermediate destinations (e.g., journal scroll → Settings → ACTIVE_WALK becomes [HOME, ACTIVE_WALK]).
+    - From currently-on-ACTIVE_WALK or currently-on-MEDITATION: no-op the navigate (still call `onDeepLinkConsumed()` to clear the pending link). Rationale: pulling someone out of meditation by tapping a notification feels like a UI hijack — even though both screens are technically active-session routes, MEDITATION holds timer + voice-guide state that disrupting would be sad. The ACTIVE_WALK case is also a no-op (singleTop would handle that one regardless).
+    - Always call `onDeepLinkConsumed()` after handling the link, whether navigated or no-op'd.
   - WalkSummary / Home branches keep existing behavior (gated by isActiveSession early-return).
 
 ### 5. Strings
@@ -123,7 +122,7 @@ Extend the existing `WalkTrackingService`'s ongoing notification with state-awar
 4. Tap Mark Waypoint while Active or Paused → a `Waypoint` row is inserted in Room with current `lastLocation` + walkId + timestamp. Notification stays visible.
 5. From Active → meditation flow → notification shows End Meditation + Finish only (no Pause / Mark Waypoint).
 6. Tap Finish from any non-Idle state → controller transitions to Finished, service stops, notification disappears.
-7. Tap notification body → MainActivity opens (or re-enters via singleTop) → NavHost navigates to ACTIVE_WALK regardless of starting route (HOME, SETTINGS, journal scroll, etc.).
+7. Tap notification body → MainActivity opens (or re-enters via singleTop) → NavHost navigates to ACTIVE_WALK from any non-active-session route. From within ACTIVE_WALK or MEDITATION the navigate is a no-op (deep-link still consumed).
 8. Notification controls work from the lock screen (system-default lock-screen visibility per `VISIBILITY_PUBLIC`).
 9. Action taps require deliberate gesture (lock screen → expand → tap, or notification shade → tap action). No accidental tap from notification dismiss.
 10. Existing tests continue passing; new tests cover: notification action set per state, recordWaypoint inserts a Waypoint with correct fields, ActiveWalk deep-link parse + nav.

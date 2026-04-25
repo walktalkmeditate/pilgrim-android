@@ -98,6 +98,18 @@ class WalkTrackingService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        // Explicit teardown so the FGS notification is gone the moment
+        // the service stops, not whenever the OS gets around to clearing
+        // it. Closes the window where a finishWalk emission posts the
+        // "Walk complete." render and stopSelf() schedules teardown,
+        // leaving a tappable-but-dead notification visible for the
+        // milliseconds before destroy lands.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         super.onDestroy()
     }
 
@@ -118,7 +130,13 @@ class WalkTrackingService : Service() {
             return
         }
 
-        promoteToForeground(buildNotification(WalkState.Idle))
+        // Read the controller's current state synchronously so the
+        // initial promote matches reality. If the user resumed an
+        // already-Active walk (restoreActiveWalk ran on the way in),
+        // hard-coding Idle here would flash a zero-action "Preparing
+        // your walk…" notification for the sub-second window before
+        // the state collector delivers the first real emission.
+        promoteToForeground(buildNotification(controller.state.value))
 
         locationJob = scope.launch {
             try {
