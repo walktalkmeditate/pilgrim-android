@@ -19,6 +19,7 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
+import androidx.glance.color.ColorProvider as DayNightColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
@@ -27,13 +28,11 @@ import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
-import androidx.glance.layout.width
 import androidx.glance.text.FontStyle
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.first
 import java.time.Instant
@@ -132,7 +131,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 Text(
                     text = distanceLabel,
                     style = TextStyle(
-                        color = ColorProvider(ink),
+                        color = ink,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Medium,
                     ),
@@ -141,7 +140,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 Text(
                     text = durationLabel,
                     style = TextStyle(
-                        color = ColorProvider(fog),
+                        color = fog,
                         fontSize = 14.sp,
                     ),
                 )
@@ -149,7 +148,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 Text(
                     text = relativeLabel,
                     style = TextStyle(
-                        color = ColorProvider(fog),
+                        color = fog,
                         fontSize = 12.sp,
                         fontStyle = FontStyle.Italic,
                     ),
@@ -165,7 +164,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
             Text(
                 text = distanceLabel,
                 style = TextStyle(
-                    color = ColorProvider(ink),
+                    color = ink,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
@@ -175,7 +174,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
             Text(
                 text = durationLabel,
                 style = TextStyle(
-                    color = ColorProvider(fog),
+                    color = fog,
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center,
                 ),
@@ -184,7 +183,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
             Text(
                 text = relativeLabel,
                 style = TextStyle(
-                    color = ColorProvider(fog),
+                    color = fog,
                     fontSize = 11.sp,
                     fontStyle = FontStyle.Italic,
                     textAlign = TextAlign.Center,
@@ -201,7 +200,7 @@ private fun MantraContent(mantras: String, today: LocalDate) {
     Text(
         text = phrase,
         style = TextStyle(
-            color = ColorProvider(fog),
+            color = fog,
             fontSize = if (isMedium) 16.sp else 13.sp,
             fontStyle = FontStyle.Italic,
             textAlign = TextAlign.Center,
@@ -266,7 +265,20 @@ internal fun formatDuration(durationMs: Long): String {
 }
 
 // --- Theme palette (matches PilgrimColors/iOS PilgrimWidget) ---
+//
+// Light + dark variants match the values in
+// `app/src/main/java/org/walktalkmeditate/pilgrim/ui/theme/Color.kt` so
+// the widget aesthetic stays in sync with the in-app theme. Glance's
+// two-arg ColorProvider switches automatically based on the system's
+// uiMode at render time — we don't need a uiMode listener.
 
-private val parchment = androidx.compose.ui.graphics.Color(0xFFF5F0E8)
-private val ink = androidx.compose.ui.graphics.Color(0xFF2C2416)
-private val fog = androidx.compose.ui.graphics.Color(0xFFB8AFA2)
+private val parchmentLight = androidx.compose.ui.graphics.Color(0xFFF5F0E8)
+private val parchmentDark = androidx.compose.ui.graphics.Color(0xFF1C1914)
+private val inkLight = androidx.compose.ui.graphics.Color(0xFF2C2416)
+private val inkDark = androidx.compose.ui.graphics.Color(0xFFF0EBE1)
+private val fogLight = androidx.compose.ui.graphics.Color(0xFFB8AFA2)
+private val fogDark = androidx.compose.ui.graphics.Color(0xFF6B6359)
+
+private val parchment = DayNightColorProvider(day = parchmentLight, night = parchmentDark)
+private val ink = DayNightColorProvider(day = inkLight, night = inkDark)
+private val fog = DayNightColorProvider(day = fogLight, night = fogDark)

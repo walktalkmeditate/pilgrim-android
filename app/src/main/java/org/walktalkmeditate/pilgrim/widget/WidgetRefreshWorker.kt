@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.widget
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -101,10 +100,15 @@ class WidgetRefreshWorker @AssistedInject constructor(
      */
     override suspend fun getForegroundInfo(): ForegroundInfo {
         ensureChannel()
+        // IMPORTANCE_MIN means the user practically never sees this
+        // notification (only on the very rare expedited-quota fallback
+        // path). The title uses the localized app name; the channel
+        // name (also localized) doubles as the user-readable label
+        // for what's happening.
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("Pilgrim")
-            .setContentText("Updating widget")
+            .setContentTitle(appContext.getString(R.string.app_name))
+            .setContentText(appContext.getString(R.string.widget_refresh_channel_name))
             .setOngoing(true)
             .setSilent(true)
             .build()

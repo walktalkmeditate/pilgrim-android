@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import dagger.hilt.android.AndroidEntryPoint
@@ -28,7 +27,7 @@ class MainActivity : ComponentActivity() {
      * cleared. Hoisted out of `setContent` so onNewIntent can update it
      * without triggering a full recomposition rebuild.
      */
-    private var pendingDeepLink = mutableStateOf<DeepLinkTarget?>(null)
+    private val pendingDeepLink = mutableStateOf<DeepLinkTarget?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

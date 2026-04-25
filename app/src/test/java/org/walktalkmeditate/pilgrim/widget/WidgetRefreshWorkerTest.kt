@@ -32,7 +32,6 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
-import org.walktalkmeditate.pilgrim.data.entity.Walk
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
