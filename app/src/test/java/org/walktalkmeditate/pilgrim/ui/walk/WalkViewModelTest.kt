@@ -543,8 +543,13 @@ class WalkViewModelTest {
         // finishWalk's refresh call writes to DataStore on a real
         // Dispatchers.Default scope. Bridge to wall-clock so the
         // runTest virtual dispatcher doesn't race the DataStore edit.
+        // Timeout bumped to 10s — the 3s ceiling was too tight under
+        // GitHub Actions Ubuntu runner contention (the test flaked
+        // on main post-7-D-merge); 10s gives the DataStore actor +
+        // observer chain plenty of headroom while still failing
+        // fast on a real bug.
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 hemisphereRepo.hemisphere.first { it == Hemisphere.Southern }
             }
         }
