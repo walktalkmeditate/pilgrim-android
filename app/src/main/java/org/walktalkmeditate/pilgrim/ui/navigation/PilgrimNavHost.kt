@@ -256,28 +256,30 @@ fun PilgrimNavHost(
         }
     }
 
-    // Stage 9-A: handle widget deep links. Only fires when the user is
-    // ALREADY on HOME — a contemplative walking app must never yank
-    // the user out of an active walk just because a widget tap raced
-    // the foreground service. If the user taps the widget mid-walk,
-    // singleTop launchMode delivers the intent to MainActivity but we
-    // silently drop it (consumed without navigating). The next time
-    // they're on HOME and tap the widget, the deep link works as
-    // expected.
+    // Stage 9-A: handle widget deep links. Allowlist:
+    // - HOME (journal scroll) — primary case.
+    // - WALK_SUMMARY — user is browsing one summary; allowing nav from
+    //   here lets a multi-instance widget setup (e.g., widget A on
+    //   home screen + widget B on lockscreen) work as expected: tap
+    //   widget A → summary 7, tap widget B → summary 11, both work.
+    //
+    // Active sessions (ACTIVE_WALK / MEDITATION / GOSHUIN /
+    // SOUNDSCAPE_PICKER / VOICE_GUIDE_PICKER / WALK_SHARE) drop the
+    // deep link silently — never yank the user out of an active
+    // session for a widget tap.
     //
     // popUpTo(HOME) on the navigate keeps the back stack as
-    // [HOME, WalkSummary] so back press lands on the journal scroll.
+    // [HOME, WalkSummary] so back press lands on the journal scroll
+    // regardless of the entry point.
     LaunchedEffect(pendingDeepLink, currentEntry?.destination?.route) {
         val link = pendingDeepLink ?: return@LaunchedEffect
         val currentRoute = currentEntry?.destination?.route ?: return@LaunchedEffect
-        if (currentRoute != Routes.HOME) {
-            // Not at HOME — either still in PERMISSIONS, or in an
-            // active-session surface (ACTIVE_WALK / MEDITATION /
-            // WALK_SUMMARY etc). Drop the deep link rather than
-            // disrupting the user's current context.
+        val allowedToNavigate = currentRoute == Routes.HOME ||
+            currentRoute == Routes.WALK_SUMMARY_PATTERN
+        if (!allowedToNavigate) {
             if (currentRoute != Routes.PERMISSIONS) {
                 // PERMISSIONS will auto-nav to HOME via the effect
-                // above; don't consume yet. Other non-HOME routes
+                // above; don't consume yet. Other non-allowed routes
                 // are user-driven sessions; drop the deep link.
                 onDeepLinkConsumed()
             }
@@ -291,7 +293,11 @@ fun PilgrimNavHost(
                 }
             }
             org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.Home -> {
-                // Already at HOME — nothing to do.
+                if (currentRoute != Routes.HOME) {
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.HOME) { inclusive = true }
+                    }
+                }
             }
         }
         onDeepLinkConsumed()

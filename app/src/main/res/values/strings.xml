@@ -178,6 +178,7 @@
     <string name="widget_relative_today">Today</string>
     <string name="widget_relative_yesterday">Yesterday</string>
     <string name="widget_relative_n_days_ago">%1$d days ago</string>
+    <string name="widget_refresh_channel_name">Widget refresh</string>
     <!-- TRANSLATORS: 10 short walking-meditation phrases joined by `|`.
          Translate the contemplative tone, keep the count, keep the
          delimiter. Used in the home-screen widget when the user has not

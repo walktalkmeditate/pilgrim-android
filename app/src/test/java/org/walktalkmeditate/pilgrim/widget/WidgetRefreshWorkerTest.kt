@@ -137,10 +137,12 @@ class WidgetRefreshWorkerTest {
 
     @Test
     fun `most recent finished wins over older finished walks`() = runBlocking {
+        // Both walks comfortably exceed the worker's 1-min instant-finish
+        // filter so they exercise the LastWalk path, not the Empty fallback.
         val older = walkRepository.startWalk(startTimestamp = 1_000L)
-        walkRepository.finishWalk(older, 2_000L)
-        val newer = walkRepository.startWalk(startTimestamp = 10_000L)
-        walkRepository.finishWalk(newer, 20_000L)
+        walkRepository.finishWalk(older, 1_000L + 5 * 60 * 1000L) // 5min
+        val newer = walkRepository.startWalk(startTimestamp = 10 * 60 * 1000L)
+        walkRepository.finishWalk(newer, 10 * 60 * 1000L + 5 * 60 * 1000L) // 5min, started 9 min later
 
         val worker = buildWorker()
         worker.doWork()
@@ -148,5 +150,19 @@ class WidgetRefreshWorkerTest {
         val state = widgetStateRepository.stateFlow.first()
         assertTrue(state is WidgetState.LastWalk)
         assertEquals(newer.id, (state as WidgetState.LastWalk).walkId)
+    }
+
+    @Test
+    fun `instant-finish walk under 1 minute writes Empty fallback`() = runBlocking {
+        // User accidentally taps Start then immediately Finish: 500ms walk.
+        // Widget should not display "0.00 km · 0m · Today" — render the
+        // mantra instead (Empty state, render layer picks the daily phrase).
+        val walk = walkRepository.startWalk(startTimestamp = 1_000L)
+        walkRepository.finishWalk(walk, 1_500L)
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertEquals(WidgetState.Empty, widgetStateRepository.stateFlow.first())
     }
 }

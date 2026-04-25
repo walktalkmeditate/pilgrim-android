@@ -17,6 +17,7 @@ import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -45,26 +46,35 @@ class WidgetRefreshWorker @AssistedInject constructor(
         val nextState: WidgetState = if (walk?.endTimestamp == null) {
             WidgetState.Empty
         } else {
-            val samples = walkRepository.locationSamplesFor(walk.id)
-            val points = samples.map { sample ->
-                LocationPoint(
-                    timestamp = sample.timestamp,
-                    latitude = sample.latitude,
-                    longitude = sample.longitude,
+            val totalElapsed = (walk.endTimestamp - walk.startTimestamp).coerceAtLeast(0)
+            // Filter out instant-finish walks (accidental tap, debug
+            // session). The widget should not display "0.00 km · 0m"
+            // in place of yesterday's mantra. Threshold matches the
+            // implicit one users intuit: anything under a minute is
+            // not a real walk.
+            if (totalElapsed < MIN_REPORTABLE_WALK_MS) {
+                WidgetState.Empty
+            } else {
+                val samples = walkRepository.locationSamplesFor(walk.id)
+                val points = samples.map { sample ->
+                    LocationPoint(
+                        timestamp = sample.timestamp,
+                        latitude = sample.latitude,
+                        longitude = sample.longitude,
+                    )
+                }
+                val distance = walkDistanceMeters(points)
+                val events = walkRepository.eventsFor(walk.id)
+                val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
+                val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
+                    .coerceAtLeast(0)
+                WidgetState.LastWalk(
+                    walkId = walk.id,
+                    endTimestampMs = walk.endTimestamp,
+                    distanceMeters = distance,
+                    activeDurationMs = activeWalking,
                 )
             }
-            val distance = walkDistanceMeters(points)
-            val events = walkRepository.eventsFor(walk.id)
-            val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
-            val totalElapsed = (walk.endTimestamp - walk.startTimestamp).coerceAtLeast(0)
-            val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
-                .coerceAtLeast(0)
-            WidgetState.LastWalk(
-                walkId = walk.id,
-                endTimestampMs = walk.endTimestamp,
-                distanceMeters = distance,
-                activeDurationMs = activeWalking,
-            )
         }
         widgetStateRepository.write(nextState)
         // Trigger Glance re-render of all PilgrimWidget instances. Use
@@ -112,7 +122,7 @@ class WidgetRefreshWorker @AssistedInject constructor(
             nm.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "Widget refresh",
+                    appContext.getString(R.string.widget_refresh_channel_name),
                     NotificationManager.IMPORTANCE_MIN,
                 ).apply { setShowBadge(false) },
             )
@@ -123,5 +133,6 @@ class WidgetRefreshWorker @AssistedInject constructor(
         private const val TAG = "WidgetRefreshWorker"
         private const val CHANNEL_ID = "widget_refresh"
         private const val NOTIFICATION_ID = 0xCA77 // arbitrary; non-zero
+        private const val MIN_REPORTABLE_WALK_MS = 60_000L // 1 minute
     }
 }
