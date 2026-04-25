@@ -857,4 +857,9 @@ private class FakeWidgetRefreshScheduler : WidgetRefreshScheduler {
     override fun scheduleRefresh() {
         callCount.incrementAndGet()
     }
+
+    override fun scheduleMidnightRefresh() {
+        // No-op for VM tests — we don't exercise the daily-rotate path
+        // through the VM. WorkManagerWidgetRefreshSchedulerTest covers it.
+    }
 }

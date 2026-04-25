@@ -38,48 +38,55 @@ class WidgetRefreshWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val walkRepository: WalkRepository,
     private val widgetStateRepository: WidgetStateRepository,
+    private val widgetRefreshScheduler: WidgetRefreshScheduler,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
-        val walk = walkRepository.mostRecentFinishedWalk()
-        val nextState: WidgetState = if (walk?.endTimestamp == null) {
+        // Find the most recent walk that meets the reportable threshold.
+        // A simple "is the latest walk valid?" check would tombstone an
+        // earlier valid walk if the user accidentally tapped Start/Finish
+        // (creating a sub-minute walk that beats the real one). Walking
+        // the list lets the widget keep displaying the last meaningful
+        // walk despite junk records intervening.
+        val reportable = walkRepository.recentFinishedWalks(SEARCH_WINDOW)
+            .firstOrNull { walk ->
+                val end = walk.endTimestamp ?: return@firstOrNull false
+                (end - walk.startTimestamp).coerceAtLeast(0) >= MIN_REPORTABLE_WALK_MS
+            }
+        val nextState: WidgetState = if (reportable?.endTimestamp == null) {
             WidgetState.Empty
         } else {
-            val totalElapsed = (walk.endTimestamp - walk.startTimestamp).coerceAtLeast(0)
-            // Filter out instant-finish walks (accidental tap, debug
-            // session). The widget should not display "0.00 km · 0m"
-            // in place of yesterday's mantra. Threshold matches the
-            // implicit one users intuit: anything under a minute is
-            // not a real walk.
-            if (totalElapsed < MIN_REPORTABLE_WALK_MS) {
-                WidgetState.Empty
-            } else {
-                val samples = walkRepository.locationSamplesFor(walk.id)
-                val points = samples.map { sample ->
-                    LocationPoint(
-                        timestamp = sample.timestamp,
-                        latitude = sample.latitude,
-                        longitude = sample.longitude,
-                    )
-                }
-                val distance = walkDistanceMeters(points)
-                val events = walkRepository.eventsFor(walk.id)
-                val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
-                val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
-                    .coerceAtLeast(0)
-                WidgetState.LastWalk(
-                    walkId = walk.id,
-                    endTimestampMs = walk.endTimestamp,
-                    distanceMeters = distance,
-                    activeDurationMs = activeWalking,
+            val totalElapsed = (reportable.endTimestamp - reportable.startTimestamp).coerceAtLeast(0)
+            val samples = walkRepository.locationSamplesFor(reportable.id)
+            val points = samples.map { sample ->
+                LocationPoint(
+                    timestamp = sample.timestamp,
+                    latitude = sample.latitude,
+                    longitude = sample.longitude,
                 )
             }
+            val distance = walkDistanceMeters(points)
+            val events = walkRepository.eventsFor(reportable.id)
+            val totals = replayWalkEventTotals(events = events, closeAt = reportable.endTimestamp)
+            val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
+                .coerceAtLeast(0)
+            WidgetState.LastWalk(
+                walkId = reportable.id,
+                endTimestampMs = reportable.endTimestamp,
+                distanceMeters = distance,
+                activeDurationMs = activeWalking,
+            )
         }
         widgetStateRepository.write(nextState)
         // Trigger Glance re-render of all PilgrimWidget instances. Use
         // updateAll(context) — the canonical Glance API — instead of
         // enumerating GlanceIds manually.
         PilgrimWidget().updateAll(appContext)
+        // Re-arm the next-midnight refresh so the chain self-perpetuates
+        // even if the user never opens the app again. REPLACE policy in
+        // the scheduler ensures this is idempotent across multiple Worker
+        // runs in the same day.
+        widgetRefreshScheduler.scheduleMidnightRefresh()
         Result.success()
     } catch (ce: CancellationException) {
         // Stage 5-C / 8-A audit rule: kotlin's runCatching swallows CE.
@@ -87,7 +94,7 @@ class WidgetRefreshWorker @AssistedInject constructor(
     } catch (t: Throwable) {
         Log.w(TAG, "WidgetRefreshWorker.doWork failed", t)
         // Don't infinite-retry on logic bugs; widget will refresh on
-        // the next finishWalk or the daily updatePeriodMillis tick.
+        // the next finishWalk or the next midnight tick.
         Result.failure()
     }
 
@@ -138,5 +145,11 @@ class WidgetRefreshWorker @AssistedInject constructor(
         private const val CHANNEL_ID = "widget_refresh"
         private const val NOTIFICATION_ID = 0xCA77 // arbitrary; non-zero
         private const val MIN_REPORTABLE_WALK_MS = 60_000L // 1 minute
+        // How many recent walks to scan for the most-recent reportable.
+        // Caps the worst case (a user with 20+ accidental short walks
+        // burying their last real one) at a bounded query — users that
+        // exceed this will see the mantra until their next real walk,
+        // an acceptable degraded mode.
+        private const val SEARCH_WINDOW = 10
     }
 }

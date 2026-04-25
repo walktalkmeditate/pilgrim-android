@@ -76,18 +76,15 @@
                 android:resource="@xml/pilgrim_widget_info" />
         </receiver>
 
-        <!-- Stage 9-A: day-rollover trigger so the widget refreshes
-             at midnight without waiting for the 24h declarative
-             updatePeriodMillis tick to align with the new day. -->
-        <receiver
-            android:name=".widget.DateRolloverReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.DATE_CHANGED" />
-                <action android:name="android.intent.action.TIME_SET" />
-                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
-            </intent-filter>
-        </receiver>
+        <!-- Stage 9-A: day-rollover refresh is handled by a midnight-
+             aligned WorkManager OneTimeWorkRequest that re-schedules
+             itself on each run (see WidgetRefreshScheduler.scheduleMidnightRefresh).
+             Manifest-registered ACTION_DATE_CHANGED / ACTION_TIME_SET
+             receivers do NOT fire on API 26+ apps (implicit-broadcast
+             blocklist). The Worker's persistence in WorkManager's
+             database survives reboots. -->
+
+
 
         <service
             android:name=".service.WalkTrackingService"

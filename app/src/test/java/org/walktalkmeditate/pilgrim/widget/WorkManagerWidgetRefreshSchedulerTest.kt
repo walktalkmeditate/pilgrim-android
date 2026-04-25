@@ -66,4 +66,32 @@ class WorkManagerWidgetRefreshSchedulerTest {
             .get()
         assertEquals(1, workInfos.size)
     }
+
+    @Test
+    fun `scheduleMidnightRefresh enqueues a delayed work request`() {
+        val scheduler = WorkManagerWidgetRefreshScheduler(context)
+
+        scheduler.scheduleMidnightRefresh()
+
+        val workInfos = WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(WorkManagerWidgetRefreshScheduler.MIDNIGHT_WORK_NAME)
+            .get()
+        assertEquals(1, workInfos.size)
+    }
+
+    @Test
+    fun `scheduleMidnightRefresh REPLACE policy keeps exactly one pending`() {
+        val scheduler = WorkManagerWidgetRefreshScheduler(context)
+
+        // Three rapid arms — REPLACE means the latest wins; the queue
+        // still contains exactly one pending midnight worker.
+        scheduler.scheduleMidnightRefresh()
+        scheduler.scheduleMidnightRefresh()
+        scheduler.scheduleMidnightRefresh()
+
+        val workInfos = WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(WorkManagerWidgetRefreshScheduler.MIDNIGHT_WORK_NAME)
+            .get()
+        assertEquals(1, workInfos.size)
+    }
 }

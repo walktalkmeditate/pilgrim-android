@@ -77,6 +77,14 @@ class WidgetRefreshWorkerTest {
         db.close()
     }
 
+    private val noopScheduler = object : WidgetRefreshScheduler {
+        var midnightCalls = 0
+        override fun scheduleRefresh() {}
+        override fun scheduleMidnightRefresh() {
+            midnightCalls++
+        }
+    }
+
     private fun buildWorker(): WidgetRefreshWorker {
         val factory = object : WorkerFactory() {
             override fun createWorker(
@@ -88,6 +96,7 @@ class WidgetRefreshWorkerTest {
                 params = workerParameters,
                 walkRepository = walkRepository,
                 widgetStateRepository = widgetStateRepository,
+                widgetRefreshScheduler = noopScheduler,
             )
         }
         return TestListenableWorkerBuilder<WidgetRefreshWorker>(context)
@@ -163,5 +172,38 @@ class WidgetRefreshWorkerTest {
         val result = worker.doWork()
         assertEquals(ListenableWorker.Result.success(), result)
         assertEquals(WidgetState.Empty, widgetStateRepository.stateFlow.first())
+    }
+
+    @Test
+    fun `short walk does not tombstone an earlier valid walk`() = runBlocking {
+        // Gemini-flagged regression: user walks 5km on Mon, then on Tue
+        // accidentally taps Start/Finish (creating a sub-minute walk).
+        // Widget MUST keep showing the Mon walk — not write Empty and
+        // hide the user's real walking history.
+        val realWalk = walkRepository.startWalk(startTimestamp = 1_000L)
+        walkRepository.finishWalk(realWalk, 1_000L + 30 * 60 * 1000L) // 30min real walk
+        walkRepository.recordLocation(
+            RouteDataSample(walkId = realWalk.id, timestamp = 2_000L, latitude = 0.0, longitude = 0.0),
+        )
+        walkRepository.recordLocation(
+            RouteDataSample(walkId = realWalk.id, timestamp = 3_000L, latitude = 0.0, longitude = 0.001),
+        )
+        // Newer accidental walk that should be skipped.
+        val accidental = walkRepository.startWalk(startTimestamp = 5 * 60 * 60 * 1000L)
+        walkRepository.finishWalk(accidental, 5 * 60 * 60 * 1000L + 500L) // 500ms
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertEquals(ListenableWorker.Result.success(), result)
+        val state = widgetStateRepository.stateFlow.first()
+        assertTrue("expected LastWalk, got $state", state is WidgetState.LastWalk)
+        assertEquals(realWalk.id, (state as WidgetState.LastWalk).walkId)
+    }
+
+    @Test
+    fun `worker re-arms midnight refresh on success`() = runBlocking {
+        val worker = buildWorker()
+        worker.doWork()
+        assertEquals(1, noopScheduler.midnightCalls)
     }
 }
