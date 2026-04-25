@@ -118,7 +118,11 @@ class VoiceRecorderTest {
 
         assertTrue(second.isFailure)
         assertEquals(VoiceRecorderError.ConcurrentRecording, second.exceptionOrNull())
-        // First recording still active; stop for clean teardown.
+        // First recording still active; let the capture loop write at
+        // least one buffer before stop, otherwise the cleanup returns
+        // EmptyRecording on slow CI runners (race between start and the
+        // first AudioCapture.read).
+        waitForCaptureProgress()
         recorder.stop().getOrThrow()
     }
 
