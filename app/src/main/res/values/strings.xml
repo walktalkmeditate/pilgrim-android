@@ -171,4 +171,12 @@
     <string name="share_modal_success_label">Your walk has been carried to the trail.</string>
     <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
     <string name="share_modal_chooser_title">Share walk</string>
+
+    <!-- Stage 8-B: collective counter -->
+    <string name="collective_opt_in_label">Walk with the collective</string>
+    <string name="collective_opt_in_description">Add your footsteps to the path</string>
+    <string name="collective_stats_walks_distance">%1$s walks · %2$s km</string>
+    <string name="collective_stats_one_walk">%1$s walk · %2$s km</string>
+    <string name="collective_stats_loading">Loading the collective…</string>
+    <string name="collective_stats_unavailable">The collective is resting.</string>
 </resources>
