@@ -170,10 +170,16 @@ class WalkTrackingService : Service() {
 
     private fun handleControllerAction(action: String) {
         // Defensive: action intents only make sense while tracking is live.
-        // If the notification persisted past stopSelf and a stale tap reached
-        // a fresh service instance, locationJob will be null — we never
-        // called startForeground, so on API 31+ the system would kill us
-        // with ForegroundServiceDidNotStartInTimeException 5s later.
+        // If the notification persisted past stopSelf and a stale tap
+        // reached a fresh service instance, locationJob will be null —
+        // the controller has no in-memory walk to act on, and processing
+        // the action would be a no-op at best and inconsistent at worst
+        // (e.g., dispatching Pause against a controller that's still
+        // Idle from cold-start). Bail and clear any orphan notification.
+        // (Note: PendingIntent.getService delivers via startService(),
+        // NOT startForegroundService(), so the API 31+ FGS timeout
+        // doesn't apply here — bailing is correctness, not deadline
+        // avoidance.)
         if (locationJob?.isActive != true) {
             Log.w(TAG, "ignoring action $action — tracking not active")
             // Clear any orphan notification posted by a prior process
@@ -301,11 +307,14 @@ class WalkTrackingService : Service() {
     }
 
     /**
-     * State-class fingerprint + 10 m distance bucket. The notification
-     * text quantizes distance to 0.01 km (10 m), so anything finer is a
-     * byte-identical rebuild. Skipping those cuts a 90-min walk's
-     * `notify()` calls from ~5400 to ~50, well below Samsung One UI's
-     * undocumented update-suppression threshold.
+     * State-class fingerprint + 5 m distance bucket. The notification
+     * text formats distance with `%.2f km` (HALF_UP rounding at the
+     * 0.005 km = 5 m boundary), so a 10 m bucket would skip every
+     * second display tick — visible as up to 5 m of stale km on the
+     * notification. 5 m alignment matches the rounding boundary
+     * exactly. Notify-rate stays in the ~100/walk range (vs the
+     * untrottled ~5400/walk), well below any vendor's update-
+     * suppression threshold.
      */
     private var lastNotifiedFingerprint: Long = -1L
 
@@ -318,10 +327,11 @@ class WalkTrackingService : Service() {
     }
 
     private fun notificationFingerprint(state: WalkState): Long {
-        // Pack the state-class ordinal + 10m-bucketed distance into one
+        // Pack the state-class ordinal + 5m-bucketed distance into one
         // Long. State-class change always re-renders (action set + text
         // both depend on it); within a single state-class only crossing
-        // a 10m boundary re-renders.
+        // a 5m boundary re-renders, matching the displayed text's
+        // rounding granularity.
         val classOrdinal = when (state) {
             WalkState.Idle -> 0L
             is WalkState.Active -> 1L
@@ -330,9 +340,9 @@ class WalkTrackingService : Service() {
             is WalkState.Finished -> 4L
         }
         val distanceBucket = when (state) {
-            is WalkState.Active -> (state.walk.distanceMeters / 10.0).toLong()
-            is WalkState.Paused -> (state.walk.distanceMeters / 10.0).toLong()
-            is WalkState.Meditating -> (state.walk.distanceMeters / 10.0).toLong()
+            is WalkState.Active -> (state.walk.distanceMeters / 5.0).toLong()
+            is WalkState.Paused -> (state.walk.distanceMeters / 5.0).toLong()
+            is WalkState.Meditating -> (state.walk.distanceMeters / 5.0).toLong()
             else -> 0L
         }
         return classOrdinal * 10_000_000L + distanceBucket
