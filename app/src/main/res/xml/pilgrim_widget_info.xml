@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stage 9-A: Glance widget descriptor.
+
+  updatePeriodMillis = 86400000 (24h) is the OS-level declarative
+  refresh that picks up day-rollover for the relative-date label
+  ("Today" → "Yesterday") and the daily-rotating mantra. The
+  WidgetRefreshScheduler also fires explicit one-shot refreshes from
+  WalkViewModel.finishWalk so walk-completion lands within the 1-min
+  success criterion.
+
+  systemSmall (≈ 110×110dp) + systemMedium (≈ 250×110dp) parity with iOS.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="86400000"
+    android:initialLayout="@layout/pilgrim_widget_initial"
+    android:previewLayout="@layout/pilgrim_widget_preview"
+    android:description="@string/widget_description" />

@@ -172,6 +172,12 @@
     <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
     <string name="share_modal_chooser_title">Share walk</string>
 
+    <!-- Stage 9-A: Glance widget. Full set of strings lands in Task 10;
+         these two are referenced by the widget descriptor + preview
+         layout so they need to exist as soon as the descriptor compiles. -->
+    <string name="widget_display_name">Pilgrim</string>
+    <string name="widget_description">A quiet mantra for your walk.</string>
+
     <!-- Stage 8-B: collective counter -->
     <string name="collective_opt_in_label">Walk with the collective</string>
     <string name="collective_opt_in_description">Add your footsteps to the path</string>

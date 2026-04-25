@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stage 9-A: preview shown in the system widget picker. Parchment
+     background + a centered "Pilgrim" label so users recognize the
+     brand without committing to add the widget. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/pilgrim_widget_preview">
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="@string/widget_display_name"
+        android:textColor="#2C2416"
+        android:textSize="18sp" />
+</FrameLayout>
