@@ -1,26 +1,127 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.widget
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.glance.appwidget.updateAll
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
+import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
+import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 
 /**
- * Stage 9-A Task 6 stub — full implementation lands in Task 7.
- * Refreshes the widget state by reading the most-recent finished walk,
- * summing route samples, and writing to [WidgetStateRepository].
+ * Reads the most-recent finished walk, computes distance + active
+ * duration, persists to [WidgetStateRepository], then triggers a Glance
+ * re-render of all widget instances.
+ *
+ * Distance: haversine-summed from RouteDataSamples via the shared
+ * `walkDistanceMeters` helper. Active duration: total elapsed minus
+ * paused + meditated, replayed from WalkEvents via `replayWalkEventTotals`
+ * (same logic as `WalkSummaryViewModel.buildState`).
  */
 @HiltWorker
 class WidgetRefreshWorker @AssistedInject constructor(
-    @Assisted appContext: Context,
+    @Assisted private val appContext: Context,
     @Assisted params: WorkerParameters,
+    private val walkRepository: WalkRepository,
+    private val widgetStateRepository: WidgetStateRepository,
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result {
-        // TODO(Task 7): real implementation.
-        return Result.success()
+    override suspend fun doWork(): Result = try {
+        val walk = walkRepository.mostRecentFinishedWalk()
+        val nextState: WidgetState = if (walk?.endTimestamp == null) {
+            WidgetState.Empty
+        } else {
+            val samples = walkRepository.locationSamplesFor(walk.id)
+            val points = samples.map { sample ->
+                LocationPoint(
+                    timestamp = sample.timestamp,
+                    latitude = sample.latitude,
+                    longitude = sample.longitude,
+                )
+            }
+            val distance = walkDistanceMeters(points)
+            val events = walkRepository.eventsFor(walk.id)
+            val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
+            val totalElapsed = (walk.endTimestamp - walk.startTimestamp).coerceAtLeast(0)
+            val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
+                .coerceAtLeast(0)
+            WidgetState.LastWalk(
+                walkId = walk.id,
+                endTimestampMs = walk.endTimestamp,
+                distanceMeters = distance,
+                activeDurationMs = activeWalking,
+            )
+        }
+        widgetStateRepository.write(nextState)
+        // Trigger Glance re-render of all PilgrimWidget instances. Use
+        // updateAll(context) — the canonical Glance API — instead of
+        // enumerating GlanceIds manually.
+        PilgrimWidget().updateAll(appContext)
+        Result.success()
+    } catch (ce: CancellationException) {
+        // Stage 5-C / 8-A audit rule: kotlin's runCatching swallows CE.
+        throw ce
+    } catch (t: Throwable) {
+        Log.w(TAG, "WidgetRefreshWorker.doWork failed", t)
+        // Don't infinite-retry on logic bugs; widget will refresh on
+        // the next finishWalk or the daily updatePeriodMillis tick.
+        Result.failure()
+    }
+
+    /**
+     * Required only when the system upgrades the request to expedited
+     * (which may happen with `RUN_AS_NON_EXPEDITED_WORK_REQUEST`
+     * fallback on API 31+ devices with quota). Lint requires the
+     * override; production rarely runs in this path because the worker
+     * finishes in well under the 10-second expedited budget.
+     */
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        ensureChannel()
+        val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("Pilgrim")
+            .setContentText("Updating widget")
+            .setOngoing(true)
+            .setSilent(true)
+            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            @Suppress("DEPRECATION")
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun ensureChannel() {
+        val nm = ContextCompat.getSystemService(appContext, NotificationManager::class.java) ?: return
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Widget refresh",
+                    NotificationManager.IMPORTANCE_MIN,
+                ).apply { setShowBadge(false) },
+            )
+        }
+    }
+
+    companion object {
+        private const val TAG = "WidgetRefreshWorker"
+        private const val CHANNEL_ID = "widget_refresh"
+        private const val NOTIFICATION_ID = 0xCA77 // arbitrary; non-zero
     }
 }
