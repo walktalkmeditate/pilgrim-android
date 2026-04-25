@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -16,15 +17,21 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
@@ -40,7 +47,11 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenVoiceGuides: () -> Unit,
     onOpenSoundscapes: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val optIn by viewModel.optIn.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.fetchOnAppear() }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -70,6 +81,8 @@ fun SettingsScreen(
                 .padding(padding)
                 .padding(top = 8.dp),
         ) {
+            CollectiveStatsCard(stats = stats)
+            CollectiveOptInRow(checked = optIn, onCheckedChange = viewModel::setOptIn)
             SettingsRow(
                 icon = Icons.Default.GraphicEq,
                 title = stringResource(R.string.settings_voice_guides_row),
@@ -84,6 +97,36 @@ fun SettingsScreen(
             )
         }
     }
+}
+
+@Composable
+private fun CollectiveOptInRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(stringResource(R.string.collective_opt_in_label)) },
+        supportingContent = { Text(stringResource(R.string.collective_opt_in_description)) },
+        leadingContent = { Icon(Icons.Default.People, contentDescription = null) },
+        trailingContent = {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = pilgrimColors.parchment,
+                    checkedTrackColor = pilgrimColors.moss,
+                    uncheckedThumbColor = pilgrimColors.fog,
+                    uncheckedTrackColor = pilgrimColors.parchmentTertiary,
+                ),
+            )
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = Color.Transparent,
+            headlineColor = pilgrimColors.ink,
+            supportingColor = pilgrimColors.fog,
+            leadingIconColor = pilgrimColors.ink,
+        ),
+    )
 }
 
 @Composable

@@ -8,10 +8,15 @@ import androidx.work.Configuration
 import com.mapbox.common.MapboxOptions
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
 import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 
@@ -65,6 +70,17 @@ class PilgrimApp : Application(), Configuration.Provider {
      */
     @Inject lateinit var soundscapeAutoDownloadObserver: SoundscapeAutoDownloadObserver
 
+    /**
+     * Stage 8-B: collective counter. Boot-time fetch warms the cached
+     * stats blob so Settings renders aggregates instantly on first
+     * navigation. The 216s in-memory TTL inside the repo prevents a
+     * config-change re-fetch storm — Application.onCreate fires once
+     * per process so this is the right hook (matches iOS AppDelegate).
+     */
+    @Inject lateinit var collectiveRepository: CollectiveRepository
+
+    @Inject @CollectiveRepoScope lateinit var collectiveScope: CoroutineScope
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -111,5 +127,22 @@ class PilgrimApp : Application(), Configuration.Provider {
         // manifest sync and enqueues background downloads for any
         // soundscape assets not already on disk (iOS parity).
         soundscapeAutoDownloadObserver.start()
+
+        // Stage 8-B: warm the collective-counter cache once per
+        // process. fetchIfStale is TTL-gated so a re-launch within
+        // 216s is a no-op.
+        collectiveScope.launch {
+            try {
+                collectiveRepository.fetchIfStale()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "boot fetchIfStale failed", t)
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "PilgrimApp"
     }
 }

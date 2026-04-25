@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -43,6 +44,16 @@ import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
+import org.walktalkmeditate.pilgrim.data.collective.PostResult
+import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -76,6 +87,12 @@ class WalkViewModelTest {
     private lateinit var hemisphereRepo: HemisphereRepository
     private lateinit var hemisphereScope: CoroutineScope
     private lateinit var viewModel: WalkViewModel
+    private lateinit var fakeCollectiveService: FakeCollectiveCounterService
+    private lateinit var collectiveDataStoreScope: CoroutineScope
+    private lateinit var collectiveDataStore: DataStore<Preferences>
+    private lateinit var collectiveCacheStore: CollectiveCacheStore
+    private lateinit var collectiveScope: CoroutineScope
+    private lateinit var collectiveRepository: CollectiveRepository
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -121,13 +138,35 @@ class WalkViewModelTest {
         hemisphereLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, hemisphereLocation, hemisphereScope)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo)
+        // Stage 8-B: collective-counter wiring. Fresh DataStore per test
+        // (UUID-named) so opt-in / pending state never bleeds across tests.
+        // Explicit scope so we can cancel it in @After (otherwise each test
+        // leaks a SupervisorJob+IO scope, and the per-test compounding adds
+        // measurable CI memory pressure).
+        val unique = "test_collective_${java.util.UUID.randomUUID()}"
+        collectiveDataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        collectiveDataStore = PreferenceDataStoreFactory.create(
+            scope = collectiveDataStoreScope,
+            produceFile = { context.preferencesDataStoreFile(unique) },
+        )
+        val collectiveJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        collectiveCacheStore = CollectiveCacheStore(collectiveDataStore, collectiveJson)
+        fakeCollectiveService = FakeCollectiveCounterService(context, collectiveJson)
+        collectiveScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        collectiveRepository = CollectiveRepository(
+            cacheStore = collectiveCacheStore,
+            service = fakeCollectiveService,
+            scope = collectiveScope,
+        )
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository)
     }
 
     @After
     fun tearDown() {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
+        collectiveScope.coroutineContext[Job]?.cancel()
+        collectiveDataStoreScope.cancel()
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
         Dispatchers.resetMain()
     }
@@ -194,6 +233,163 @@ class WalkViewModelTest {
         controller.state.first { it is WalkState.Finished }
 
         assertEquals(listOf(activeWalkId), transcriptionScheduler.scheduledWalkIds)
+    }
+
+    @Test
+    fun `finishWalk does not contribute to collective when opt-in OFF`() = runTest(dispatcher) {
+        // Default opt-in is OFF.
+        viewModel.startWalk()
+        controller.state.first { it is WalkState.Active }
+        clock.advanceTo(5_000L)
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+        // Drain DataStore + repo's recordWalk launch.
+        collectiveCacheStore.pendingFlow.first()
+        assertTrue(
+            "collective should not POST when opt-in OFF; recorded=${fakeCollectiveService.recordedPosts}",
+            fakeCollectiveService.recordedPosts.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `finishWalk contributes distance + meditate + talk to collective when opt-in ON`() = runTest(dispatcher) {
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+
+        viewModel.startWalk()
+        val active = controller.state.first { it is WalkState.Active } as WalkState.Active
+        val activeWalkId = active.walk.walkId
+
+        // Seed a non-trivial accumulator + one voice recording so the
+        // snapshot has distance/meditate/talk to send.
+        controller.recordLocation(
+            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
+        )
+        controller.recordLocation(
+            LocationPoint(timestamp = 2_000L, latitude = 40.001, longitude = -74.001),
+        )
+        // Record a 90-second meditation interval.
+        clock.advanceTo(2_000L)
+        controller.startMeditation()
+        clock.advanceTo(92_000L)
+        controller.endMeditation()
+
+        // Inject a 60-second voice recording row directly so finishWalk's
+        // talk-total fallback (voiceRecordingsFor) sees something.
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = activeWalkId,
+                startTimestamp = 3_000L,
+                endTimestamp = 63_000L,
+                durationMillis = 60_000L,
+                fileRelativePath = "fake.wav",
+            ),
+        )
+
+        clock.advanceTo(95_000L)
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+        // Wait for the launched recordWalk body to drain.
+        val deadline = System.currentTimeMillis() + 2_000L
+        while (fakeCollectiveService.recordedPosts.isEmpty() &&
+            System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+            collectiveCacheStore.pendingFlow.first()
+        }
+
+        assertEquals(1, fakeCollectiveService.recordedPosts.size)
+        val posted = fakeCollectiveService.recordedPosts.single()
+        assertEquals(1, posted.walks)
+        assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
+        // 92s meditation → 1 minute (integer truncation).
+        assertEquals(1, posted.meditationMin)
+        // 60s recording → 1 minute.
+        assertEquals(1, posted.talkMin)
+    }
+
+    @Test
+    fun `double-tap finishWalk records exactly one collective contribution`() = runTest(dispatcher) {
+        // Reviewer Bug #1: the Finish button's enabled state derives
+        // from walkState, which only flips to Finished after the
+        // launched body completes. The user has a multi-frame window
+        // to tap twice. Without the AtomicBoolean dedup, both launched
+        // bodies fire recordWalk and the backend gets two +1 contributions
+        // for the same physical walk.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+
+        viewModel.startWalk()
+        controller.state.first { it is WalkState.Active }
+        controller.recordLocation(
+            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
+        )
+        controller.recordLocation(
+            LocationPoint(timestamp = 2_000L, latitude = 40.005, longitude = -74.005),
+        )
+        clock.advanceTo(5_000L)
+
+        // Double-tap: two synchronous calls. Only the first should
+        // schedule a viewModelScope.launch.
+        viewModel.finishWalk()
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+
+        val deadline = System.currentTimeMillis() + 2_000L
+        while (fakeCollectiveService.recordedPosts.isEmpty() &&
+            System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+            collectiveCacheStore.pendingFlow.first()
+        }
+
+        assertEquals(
+            "double-tap Finish must record exactly one collective contribution; recorded=${fakeCollectiveService.recordedPosts}",
+            1,
+            fakeCollectiveService.recordedPosts.size,
+        )
+    }
+
+    @Test
+    fun `finishWalk from Meditating state contributes to collective`() = runTest(dispatcher) {
+        // Reviewer Bug #1: snapshot was reading WalkState.Active BEFORE
+        // controller.finishWalk(), which returned null when the user
+        // tapped Finish from Meditating (or Paused). Snapshot now
+        // reads from Finished AFTER finishWalk so all reachable
+        // pre-Finish states contribute.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+
+        viewModel.startWalk()
+        controller.state.first { it is WalkState.Active }
+        clock.advanceTo(1_000L)
+        controller.recordLocation(
+            LocationPoint(timestamp = 1_000L, latitude = 40.0, longitude = -74.0),
+        )
+        controller.recordLocation(
+            LocationPoint(timestamp = 2_000L, latitude = 40.005, longitude = -74.005),
+        )
+        // Enter meditation and tap Finish without ending it first.
+        clock.advanceTo(2_000L)
+        controller.startMeditation()
+        controller.state.first { it is WalkState.Meditating }
+        clock.advanceTo(80_000L)
+
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+        val deadline = System.currentTimeMillis() + 2_000L
+        while (fakeCollectiveService.recordedPosts.isEmpty() &&
+            System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.yield()
+            collectiveCacheStore.pendingFlow.first()
+        }
+
+        assertEquals(
+            "Finish-from-Meditating must contribute to collective",
+            1,
+            fakeCollectiveService.recordedPosts.size,
+        )
+        val posted = fakeCollectiveService.recordedPosts.single()
+        assertEquals(1, posted.walks)
+        assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
     }
 
     @Test
@@ -358,7 +554,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository)
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -387,7 +583,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository)
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -493,7 +689,7 @@ class WalkViewModelTest {
         val seededSource = FakeLocationSource(lastKnown = cachedFix)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, seededSource, hemisphereRepo,
+            transcriptionScheduler, seededSource, hemisphereRepo, collectiveRepository,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -519,7 +715,7 @@ class WalkViewModelTest {
 
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(lastKnown = null), hemisphereRepo,
+            transcriptionScheduler, FakeLocationSource(lastKnown = null), hemisphereRepo, collectiveRepository,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -574,7 +770,7 @@ class WalkViewModelTest {
         val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(), throwingRepo,
+            transcriptionScheduler, FakeLocationSource(), throwingRepo, collectiveRepository,
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -608,5 +804,31 @@ private class FakeClock(initial: Long) : Clock {
     override fun now(): Long = current
     fun advanceTo(millis: Long) {
         current = millis
+    }
+}
+
+/**
+ * Stage 8-B: spy that records the snapshots fed into the collective
+ * counter so finishWalk-hook regression tests can verify what was
+ * sent without standing up real HTTP. opt-in is OFF by default —
+ * the no-op path is what 99% of users will exercise.
+ */
+private class FakeCollectiveCounterService(
+    context: Context,
+    json: Json,
+) : CollectiveCounterService(
+    client = OkHttpClient(),
+    json = json,
+    deviceTokenStore = DeviceTokenStore(context),
+    baseUrl = "http://localhost",
+) {
+    var fetchResult: CollectiveStats = CollectiveStats(0, 0.0, 0, 0)
+    var postResult: PostResult = PostResult.Success
+    val recordedPosts = mutableListOf<CollectiveCounterDelta>()
+
+    override suspend fun fetch(): CollectiveStats = fetchResult
+    override suspend fun post(delta: CollectiveCounterDelta): PostResult {
+        recordedPosts += delta
+        return postResult
     }
 }
