@@ -115,6 +115,11 @@ class WalkSummaryViewModelTest {
 
     private fun newViewModel(walkId: Long): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
+        val json = kotlinx.serialization.json.Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
+        val cachedShareStore = org.walktalkmeditate.pilgrim.data.share.CachedShareStore(context, json)
         return WalkSummaryViewModel(
             context = context,
             repository = repository,
@@ -122,6 +127,7 @@ class WalkSummaryViewModelTest {
             sweeper = sweeper,
             photoAnalysisScheduler = photoAnalysisScheduler,
             hemisphereRepository = hemisphereRepo,
+            cachedShareStore = cachedShareStore,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
     }
@@ -131,6 +137,14 @@ class WalkSummaryViewModelTest {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        // Stage 8-A: WalkSummaryViewModel.cachedShareFlow opens the
+        // share_cache DataStore eagerly via SharingStarted.Eagerly.
+        // Without this cleanup, cached entries from one test would
+        // leak into another's `cachedShare` observer (Stage 7-A
+        // Robolectric+Eagerly cross-test pollution lesson). Matches
+        // the cleanup already in WalkShareViewModelTest +
+        // CachedShareStoreTest.
+        java.io.File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
         Dispatchers.resetMain()
     }
 

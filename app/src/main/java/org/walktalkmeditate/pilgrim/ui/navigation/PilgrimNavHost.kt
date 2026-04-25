@@ -48,6 +48,10 @@ object Routes {
     fun voiceGuideDetail(packId: String): String = "$VOICE_GUIDE_DETAIL_PREFIX/$packId"
 
     const val SOUNDSCAPE_PICKER = "soundscapes"
+
+    private const val WALK_SHARE_PREFIX = "walk_share"
+    const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
+    fun walkShare(walkId: Long): String = "$WALK_SHARE_PREFIX/$walkId"
 }
 
 @Composable
@@ -185,11 +189,29 @@ fun PilgrimNavHost(
             arguments = listOf(
                 navArgument(WalkSummaryViewModel.ARG_WALK_ID) { type = NavType.LongType },
             ),
-        ) {
+        ) { entry ->
+            val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
             WalkSummaryScreen(
                 onDone = {
                     navController.popBackStack(Routes.HOME, inclusive = false)
                 },
+                onShareJourney = {
+                    navController.navigate(Routes.walkShare(walkId)) {
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(
+            route = Routes.WALK_SHARE_PATTERN,
+            arguments = listOf(
+                navArgument(org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID) {
+                    type = NavType.LongType
+                },
+            ),
+        ) {
+            org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareScreen(
+                onDone = { navController.popBackStack() },
             )
         }
         composable(Routes.GOSHUIN) {
