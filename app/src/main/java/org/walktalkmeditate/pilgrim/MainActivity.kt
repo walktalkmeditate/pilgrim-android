@@ -42,7 +42,19 @@ class MainActivity : ComponentActivity() {
                     PilgrimNavHost(
                         modifier = Modifier.padding(innerPadding),
                         pendingDeepLink = deepLink,
-                        onDeepLinkConsumed = { pendingDeepLink.value = null },
+                        onDeepLinkConsumed = {
+                            pendingDeepLink.value = null
+                            // Strip the deep-link extras from the
+                            // attached intent so a config change
+                            // (rotation, locale) doesn't re-parse +
+                            // re-navigate them. setIntent persists the
+                            // mutation across activity recreation.
+                            val cleared = intent.apply {
+                                removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
+                                removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
+                            }
+                            setIntent(cleared)
+                        },
                     )
                 }
             }

@@ -8,6 +8,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.LocalContext
@@ -18,7 +19,6 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
-import androidx.glance.color.ColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
@@ -35,6 +35,7 @@ import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.flow.first
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -69,10 +70,16 @@ class PilgrimWidget : GlanceAppWidget() {
         )
         val repository = entryPoint.widgetStateRepository()
         val mantras = context.getString(R.string.widget_mantras)
+        // Pre-read the first DataStore emission BEFORE provideContent so
+        // the composable's `collectAsState(initial = ...)` snapshots the
+        // real state on first render — avoids a flash-of-Empty for the
+        // user when last-walk content is what should appear.
+        val initial = repository.stateFlow.first()
 
         provideContent {
             Body(
                 stateFlow = repository.stateFlow,
+                initial = initial,
                 mantras = mantras,
                 today = remember { LocalDate.now() },
             )
@@ -83,10 +90,11 @@ class PilgrimWidget : GlanceAppWidget() {
 @Composable
 private fun Body(
     stateFlow: kotlinx.coroutines.flow.Flow<WidgetState>,
+    initial: WidgetState,
     mantras: String,
     today: LocalDate,
 ) {
-    val state by stateFlow.collectAsState(initial = WidgetState.Empty)
+    val state by stateFlow.collectAsState(initial = initial)
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -125,7 +133,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                     text = distanceLabel,
                     style = TextStyle(
                         color = ColorProvider(ink),
-                        fontSize = 22.sp_glance,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Medium,
                     ),
                 )
@@ -134,7 +142,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                     text = durationLabel,
                     style = TextStyle(
                         color = ColorProvider(fog),
-                        fontSize = 14.sp_glance,
+                        fontSize = 14.sp,
                     ),
                 )
                 Spacer(GlanceModifier.height(8.dp))
@@ -142,7 +150,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                     text = relativeLabel,
                     style = TextStyle(
                         color = ColorProvider(fog),
-                        fontSize = 12.sp_glance,
+                        fontSize = 12.sp,
                         fontStyle = FontStyle.Italic,
                     ),
                 )
@@ -158,7 +166,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 text = distanceLabel,
                 style = TextStyle(
                     color = ColorProvider(ink),
-                    fontSize = 18.sp_glance,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                 ),
@@ -168,7 +176,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 text = durationLabel,
                 style = TextStyle(
                     color = ColorProvider(fog),
-                    fontSize = 12.sp_glance,
+                    fontSize = 12.sp,
                     textAlign = TextAlign.Center,
                 ),
             )
@@ -177,7 +185,7 @@ private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
                 text = relativeLabel,
                 style = TextStyle(
                     color = ColorProvider(fog),
-                    fontSize = 11.sp_glance,
+                    fontSize = 11.sp,
                     fontStyle = FontStyle.Italic,
                     textAlign = TextAlign.Center,
                 ),
@@ -194,7 +202,7 @@ private fun MantraContent(mantras: String, today: LocalDate) {
         text = phrase,
         style = TextStyle(
             color = ColorProvider(fog),
-            fontSize = if (isMedium) 16.sp_glance else 13.sp_glance,
+            fontSize = if (isMedium) 16.sp else 13.sp,
             fontStyle = FontStyle.Italic,
             textAlign = TextAlign.Center,
         ),
@@ -262,7 +270,3 @@ internal fun formatDuration(durationMs: Long): String {
 private val parchment = androidx.compose.ui.graphics.Color(0xFFF5F0E8)
 private val ink = androidx.compose.ui.graphics.Color(0xFF2C2416)
 private val fog = androidx.compose.ui.graphics.Color(0xFFB8AFA2)
-
-// Glance uses TextUnit from compose.ui.unit; rebind for clarity.
-private val Int.sp_glance: androidx.compose.ui.unit.TextUnit
-    get() = androidx.compose.ui.unit.TextUnit(this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp)

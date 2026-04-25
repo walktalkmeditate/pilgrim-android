@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.widget
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -18,6 +19,7 @@ import kotlinx.serialization.Serializable
 sealed interface WidgetState {
 
     @Serializable
+    @SerialName("LastWalk")
     data class LastWalk(
         val walkId: Long,
         val endTimestampMs: Long,
@@ -26,5 +28,6 @@ sealed interface WidgetState {
     ) : WidgetState
 
     @Serializable
+    @SerialName("Empty")
     data object Empty : WidgetState
 }
