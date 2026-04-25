@@ -81,6 +81,16 @@ class PilgrimApp : Application(), Configuration.Provider {
 
     @Inject @CollectiveRepoScope lateinit var collectiveScope: CoroutineScope
 
+    /**
+     * Stage 9-A: home-screen widget refresh scheduler. PilgrimApp.onCreate
+     * arms the next-midnight refresh so the widget's relative-date label
+     * and daily-rotating mantra stay current even when the user never
+     * opens the app. The Worker self-reschedules on each run, so this
+     * boot-time enqueue is only needed when WorkManager's queue is empty
+     * (fresh install, "Clear data", or rare WorkManager DB corruption).
+     */
+    @Inject lateinit var widgetRefreshScheduler: org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -140,6 +150,14 @@ class PilgrimApp : Application(), Configuration.Provider {
                 Log.w(TAG, "boot fetchIfStale failed", t)
             }
         }
+
+        // Stage 9-A: ensure the widget's midnight refresh is enqueued.
+        // Worker self-reschedules on each run; this boot-time call
+        // covers the empty-queue case (fresh install, after "Clear
+        // data", or after a long stretch where the chain ran out).
+        // REPLACE policy in the scheduler de-dupes if a chain run is
+        // already pending.
+        widgetRefreshScheduler.scheduleMidnightRefresh()
     }
 
     private companion object {

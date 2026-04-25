@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stage 9-A: minimal widget preview drawable. Parchment background;
+     the real Glance content overrides this immediately on attach. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="12dp" />
+    <solid android:color="#F5F0E8" />
+</shape>
