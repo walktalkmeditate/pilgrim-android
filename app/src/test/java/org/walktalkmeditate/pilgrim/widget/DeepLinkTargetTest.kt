@@ -58,4 +58,10 @@ class DeepLinkTargetTest {
         val intent = Intent().putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_HOME)
         assertEquals(DeepLinkTarget.Home, DeepLinkTarget.parse(intent))
     }
+
+    @Test
+    fun `parse returns ActiveWalk for active_walk deep link`() {
+        val intent = Intent().putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_ACTIVE_WALK)
+        assertEquals(DeepLinkTarget.ActiveWalk, DeepLinkTarget.parse(intent))
+    }
 }
