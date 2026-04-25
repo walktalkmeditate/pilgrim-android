@@ -2,23 +2,28 @@
 package org.walktalkmeditate.pilgrim.ui.etegami.share
 
 import android.app.Application
+import android.content.ContentProvider
+import android.content.ContentValues
+import android.content.Context
+import android.database.Cursor
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowContentResolver
 
 /**
- * Robolectric's `MediaStore.Images.Media.EXTERNAL_CONTENT_URI`
- * provider is not wired, so `openFileDescriptor(insertUri, "w")`
- * returns null (or throws). We therefore assert only what's
- * portable to the test environment — the filename guard and the
- * error-path cancellation contract. The API 29+ happy-path is
- * exercised on-device in Stage 7-D QA.
+ * Asserts the saver's invariants that are portable to a Robolectric
+ * test environment — the filename guard and the error-path
+ * conversion. The API 29+ happy-path is exercised on-device in
+ * Stage 7-D QA.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -38,24 +43,37 @@ class EtegamiGallerySaverTest {
     }
 
     @Test
-    fun `saveToGallery returns Failed not throws on MediaStore IO failure`() = runBlocking {
-        // Robolectric's insert returns a content URI but openOutputStream
-        // rejects it — this test proves the saver converts that to a
-        // graceful `SaveResult.Failed` rather than propagating an
-        // unchecked throw. Real-device successful path is out of scope
-        // for unit tests.
-        //
-        // IMPORTANT: assert `Failed` strictly (not `Failed || Success`).
-        // Accepting Success as a passing outcome would turn this test
-        // vacuous — a future Robolectric version that stubs MediaStore
-        // enough to return a ghost URI would pass here silently, and
-        // we'd lose this as a regression guard for the real-device IO
-        // failure path.
+    fun `saveToGallery returns Failed not throws when MediaStore insert returns null`() = runBlocking {
+        // Override Robolectric's default `media` provider with one
+        // whose insert returns null — the real-device failure mode
+        // when the system MediaProvider rejects the row (e.g.,
+        // out-of-disk, locked storage volume). The saver must map
+        // null insert to SaveResult.Failed, not NPE.
+        val nullProvider = Robolectric.buildContentProvider(NullInsertProvider::class.java)
+            .create("media")
+            .get()
+        ShadowContentResolver.registerProviderInternal("media", nullProvider)
+
         val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
         val result = EtegamiGallerySaver.saveToGallery(bitmap, "ok.png", context)
         assertTrue(
-            "saver should convert Robolectric MediaStore IO failure to Failed, got $result",
+            "saver should convert null-insert to Failed, got $result",
             result is EtegamiGallerySaver.SaveResult.Failed,
         )
+    }
+
+    class NullInsertProvider : ContentProvider() {
+        override fun onCreate(): Boolean = true
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+        override fun query(
+            uri: Uri, projection: Array<out String>?, selection: String?,
+            selectionArgs: Array<out String>?, sortOrder: String?,
+        ): Cursor? = null
+        override fun update(
+            uri: Uri, values: ContentValues?, selection: String?,
+            selectionArgs: Array<out String>?,
+        ): Int = 0
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+        override fun getType(uri: Uri): String? = null
     }
 }
