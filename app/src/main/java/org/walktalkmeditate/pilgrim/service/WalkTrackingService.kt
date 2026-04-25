@@ -154,8 +154,16 @@ class WalkTrackingService : Service() {
 
         notificationJob = scope.launch {
             controller.state.collect { state ->
-                updateNotification(state)
-                if (state is WalkState.Finished) stopSelf()
+                if (state is WalkState.Finished) {
+                    // Skip the Finished render — onDestroy's
+                    // stopForeground(REMOVE) is about to clear the
+                    // notification anyway, and posting a "Walk
+                    // complete." rebuild here just lets the user
+                    // briefly see it flash on slower devices.
+                    stopSelf()
+                } else {
+                    updateNotification(state)
+                }
             }
         }
     }
@@ -292,9 +300,42 @@ class WalkTrackingService : Service() {
         return builder.build()
     }
 
+    /**
+     * State-class fingerprint + 10 m distance bucket. The notification
+     * text quantizes distance to 0.01 km (10 m), so anything finer is a
+     * byte-identical rebuild. Skipping those cuts a 90-min walk's
+     * `notify()` calls from ~5400 to ~50, well below Samsung One UI's
+     * undocumented update-suppression threshold.
+     */
+    private var lastNotifiedFingerprint: Long = -1L
+
     private fun updateNotification(state: WalkState) {
+        val fingerprint = notificationFingerprint(state)
+        if (fingerprint == lastNotifiedFingerprint) return
+        lastNotifiedFingerprint = fingerprint
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(state))
+    }
+
+    private fun notificationFingerprint(state: WalkState): Long {
+        // Pack the state-class ordinal + 10m-bucketed distance into one
+        // Long. State-class change always re-renders (action set + text
+        // both depend on it); within a single state-class only crossing
+        // a 10m boundary re-renders.
+        val classOrdinal = when (state) {
+            WalkState.Idle -> 0L
+            is WalkState.Active -> 1L
+            is WalkState.Paused -> 2L
+            is WalkState.Meditating -> 3L
+            is WalkState.Finished -> 4L
+        }
+        val distanceBucket = when (state) {
+            is WalkState.Active -> (state.walk.distanceMeters / 10.0).toLong()
+            is WalkState.Paused -> (state.walk.distanceMeters / 10.0).toLong()
+            is WalkState.Meditating -> (state.walk.distanceMeters / 10.0).toLong()
+            else -> 0L
+        }
+        return classOrdinal * 10_000_000L + distanceBucket
     }
 
     companion object {

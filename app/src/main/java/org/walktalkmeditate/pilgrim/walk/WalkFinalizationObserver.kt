@@ -7,7 +7,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
@@ -35,23 +34,15 @@ import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
  * contributions and stale the widget for users who don't promptly
  * return to the app.
  *
- * **Voice-INSERT race** — both this observer and `WalkViewModel.init`'s
- * auto-stop block see the same Finished emission. The VM's auto-stop
- * lives in `viewModelScope`, which is cancelled the moment the nav-pop
- * fires off Finished — on slow OEM devices the in-flight `voiceRecorder.stop()`
- * + Room INSERT can race the cancellation, leaving an orphan WAV with no
- * row. To eliminate the race entirely, **this observer also calls
- * `voiceRecorder.stop()` and writes the row itself** before computing
- * `talkMin`. Whoever wins the stop returns the recording; the loser
- * gets `NoActiveRecording` (idempotent — already-stopped recorders just
- * report no session). If we lost (someone else won the stop), we wait
- * [VOICE_INSERT_GRACE_MS] for that someone's INSERT to commit before
- * querying. If no recording was active at all, the wait is dead but
- * cheap (200 ms).
- *
- * For the notification-path Finish (where no VM exists), this observer
- * is the ONLY auto-stop. The recording is captured + INSERTed before
- * collective `talkMin` is computed.
+ * **Voice auto-stop ownership** — this observer is the canonical owner
+ * of `voiceRecorder.stop()` on Finished transitions. It runs in
+ * [WalkFinalizationScope] (app lifetime, SupervisorJob) so the
+ * stop+INSERT cannot be cancelled by VM nav-pop. The VM-side voice
+ * state is updated reactively in `WalkViewModel.init` to Idle on
+ * Finished, but it does NOT call stop — that would race this observer
+ * (the previous design had this race; see commit history). If no
+ * recording was active, `voiceRecorder.stop()` returns
+ * `NoActiveRecording` and we proceed immediately.
  *
  * Per-walkId dedup defends against any future code path that might call
  * a hypothetical `externalFinalize` directly, plus the (today
@@ -125,16 +116,13 @@ class WalkFinalizationObserver @Inject constructor(
                 }
             }
             stopResult.exceptionOrNull() is VoiceRecorderError.NoActiveRecording -> {
-                // Either nothing was recording, or VM's auto-stop won
-                // the race. The former case takes a 200 ms hit on the
-                // collective POST latency — acceptable. The latter
-                // gives VM's still-in-flight INSERT time to commit.
-                delay(VOICE_INSERT_GRACE_MS)
+                // Nothing was recording — common case for walks with
+                // no voice notes. Proceed immediately.
             }
             else -> {
                 // Unexpected stop failure (audio HAL throw, FS I/O).
-                // Log + proceed; caller's recording-on-disk is recoverable
-                // by OrphanRecordingSweeper.
+                // Log + proceed; the WAV-on-disk is recoverable by
+                // OrphanRecordingSweeper.
                 Log.w(TAG, "voice auto-stop failed", stopResult.exceptionOrNull())
             }
         }
@@ -184,12 +172,5 @@ class WalkFinalizationObserver @Inject constructor(
 
     private companion object {
         const val TAG = "WalkFinalizeObserver"
-
-        // Cushion for the case where someone else (typically
-        // WalkViewModel's auto-stop) won the voiceRecorder.stop()
-        // race and is still mid-INSERT. Single-row Room INSERTs are
-        // typically <100 ms; 200 ms covers slow OEM disk stalls
-        // without making the collective POST feel sluggish.
-        const val VOICE_INSERT_GRACE_MS = 200L
     }
 }

@@ -430,9 +430,14 @@ class WalkViewModelTest {
     }
 
     @Test
-    fun `WalkState transitioning to Finished while recording auto-stops`() = runTest(dispatcher) {
+    fun `WalkState transitioning to Finished mirrors voice UI state to Idle`() = runTest(dispatcher) {
+        // Stage 9-B: voice auto-stop + DB INSERT moved to
+        // WalkFinalizationObserver (covered by its own test). What
+        // the VM still owns is mirroring the UI state to Idle on
+        // Finished — without that, the mic icon would briefly show
+        // "Recording" on the Summary screen.
         controller.startWalk(intention = null)
-        val walkId = requireActiveWalkId()
+        requireActiveWalkId()
 
         viewModel.toggleRecording()
         viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
@@ -442,33 +447,7 @@ class WalkViewModelTest {
         controller.finishWalk()
 
         viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Idle }
-        assertEquals(1, repository.voiceRecordingsFor(walkId).size)
     }
-
-    @Test
-    fun `finishWalk while recording auto-stops and inserts the recording row`() =
-        runTest(dispatcher) {
-            // Stage 9-B: scheduler-vs-INSERT race coverage moved to
-            // WalkFinalizationObserverTest (the scheduler now lives in
-            // the observer). This test covers the VM's responsibility:
-            // finishWalk auto-stops the in-progress recording and
-            // commits its row before settling the voice-recorder UI
-            // state.
-            controller.startWalk(intention = null)
-            val walkId = requireActiveWalkId()
-
-            viewModel.toggleRecording()
-            viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
-            viewModel.audioLevel.first { it > 0f }
-
-            clock.advanceTo(3_000L)
-            viewModel.finishWalk()
-
-            controller.state.first { it is WalkState.Finished }
-            viewModel.voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
-
-            assertEquals(1, repository.voiceRecordingsFor(walkId).size)
-        }
 
     @Test
     fun `recordingsCount reflects rows for the active walk`() = runTest(dispatcher) {

@@ -56,8 +56,10 @@ import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
  * [org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel.finishWalk] so the
  * notification-Finish path gets the same treatment as the in-app path.
  *
- * Wall-clock timing: the observer's [WalkFinalizationObserver.FINALIZE_GRACE_MS]
- * is 1 s real time. Tests poll up to 3 s for the side-effects to land.
+ * Wall-clock timing: the observer runs side-effects synchronously on
+ * Finished (no fixed grace delay since I-1's removal of the VM-side
+ * auto-stop race). Tests poll up to 1.5 s for the launched coroutines
+ * to complete.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -276,9 +278,22 @@ class WalkFinalizationObserverTest {
         // capture loop will exhaust it then idle until stop().
         testClock.current = 0L
         voiceRecorder.start(walkId = walkId, walkUuid = java.util.UUID.randomUUID().toString()).getOrThrow()
-        // Drain the burst so duration is computed against a real
-        // capture window. testClock advances after stop is requested.
-        Thread.sleep(150L)
+        // Wait for the capture loop to actually drain the burst (the
+        // first non-zero audioLevel proves read() returned). A naive
+        // Thread.sleep is brittle on slow CI — the executor may not
+        // have started yet, in which case stop() returns
+        // EmptyRecording and talkMin collapses to 0. Polling
+        // audioLevel pins the test to the actual signal we care
+        // about.
+        val captureDeadline = System.currentTimeMillis() + 2_000L
+        while (voiceRecorder.audioLevel.value == 0f &&
+            System.currentTimeMillis() < captureDeadline
+        ) {
+            Thread.sleep(20L)
+        }
+        check(voiceRecorder.audioLevel.value > 0f) {
+            "FakeAudioCapture burst did not arrive within 2 s — test infra broken"
+        }
         testClock.current = 90_000L // 90 s recording → talkMin = 1
 
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))

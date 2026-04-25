@@ -354,17 +354,19 @@ class WalkViewModel @Inject constructor(
     }
 
     init {
-        // Auto-stop when the walk finalizes mid-recording. Runs in
-        // viewModelScope; toggleRecording dispatches to IO so this
-        // collector doesn't block on VoiceRecorder.stop(). Placed
-        // after property declarations so _voiceRecorderState is
-        // already initialized when this runs.
+        // The actual voice-recorder auto-stop on Finished now lives in
+        // WalkFinalizationObserver (app-lifetime scope, can't be
+        // cancelled by nav-pop). Here we only mirror the UI state to
+        // Idle when the walk finishes — keeping the previous in-VM
+        // toggleRecording() call would race the observer's stop and
+        // re-introduce the cancellation bug the observer was added to
+        // eliminate (see Stage 9-B's WalkFinalizationObserver kdoc).
         viewModelScope.launch {
             controller.state.collect { state ->
                 if (state is WalkState.Finished &&
                     _voiceRecorderState.value is VoiceRecorderUiState.Recording
                 ) {
-                    toggleRecording()
+                    _voiceRecorderState.value = VoiceRecorderUiState.Idle
                 }
             }
         }
