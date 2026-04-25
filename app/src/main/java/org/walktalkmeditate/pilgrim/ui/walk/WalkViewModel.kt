@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -34,6 +35,8 @@ import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -71,6 +74,7 @@ class WalkViewModel @Inject constructor(
     private val transcriptionScheduler: TranscriptionScheduler,
     private val locationSource: LocationSource,
     private val hemisphereRepository: HemisphereRepository,
+    private val collectiveRepository: CollectiveRepository,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -429,9 +433,43 @@ class WalkViewModel @Inject constructor(
         viewModelScope.launch { controller.endMeditation() }
     }
 
+    /**
+     * CAS guard for double-tap dedup. The Finish button's enabled
+     * state derives from `walkState`, which only flips to Finished
+     * after `controller.finishWalk()` dispatches + Room finalizes —
+     * the user has a multi-frame window to tap twice. Without this
+     * guard, the second tap re-runs the entire finishWalk body
+     * (transcription scheduler is KEEP-policy idempotent, hemisphere
+     * refresh is read-only — both safe). The collective-counter
+     * `recordWalk` is NOT idempotent: a second call would add a
+     * second walks=+1 contribution for the same physical walk. CAS
+     * to true on entry; reset to false on path completion only if
+     * needed (we don't reset — finished is finished, viewModel is
+     * scoped to nav, double-tap dedup lives for the screen).
+     */
+    private val finishInFlight = AtomicBoolean(false)
+
     fun finishWalk() {
+        if (!finishInFlight.compareAndSet(false, true)) return
         viewModelScope.launch {
             controller.finishWalk()
+            // Stage 8-B: snapshot from Finished, NOT Active. The Finish
+            // button is enabled in Active, Paused, AND Meditating states
+            // (ActiveWalkScreen `enabled = walkState !is Finished &&
+            // walkState != Idle`); the reducer accepts Finish from all
+            // three. Reading `state.value as? WalkState.Active` BEFORE
+            // controller.finishWalk() would return null for Paused +
+            // Meditating finishes, silently dropping their collective
+            // contribution. Reading from Finished AFTER also picks up
+            // the in-progress meditation/pause interval that the
+            // reducer folds into the final accumulator on Finish (so a
+            // mid-meditation finish counts the partial meditation
+            // duration).
+            val finishedSnapshot = controller.state.value as? WalkState.Finished
+            val snapshotWalkId = finishedSnapshot?.walk?.walkId
+            val snapshotDistanceKm = (finishedSnapshot?.walk?.distanceMeters ?: 0.0) / 1_000.0
+            val snapshotMeditateMin =
+                ((finishedSnapshot?.walk?.totalMeditatedMillis ?: 0L) / 60_000L).toInt()
             // The init-block auto-stop collector launches an IO coroutine
             // to stop a still-active recording and INSERT its row. If we
             // schedule transcription before that INSERT commits, the
@@ -478,6 +516,30 @@ class WalkViewModel @Inject constructor(
                     // persisted; the sweeper's case (d) picks up
                     // un-transcribed rows on next summary-screen open.
                     Log.w(TAG, "scheduleForWalk($walkId) failed", t)
+                }
+            }
+            // Stage 8-B: contribute to the Collective Counter (no-op
+            // when opt-in is OFF — gated inside the repo). Talk total
+            // is derived from voiceRecordingsFor since WalkAccumulator
+            // doesn't track voice duration directly. Failures are
+            // swallowed: a counter-POST hiccup must not crash finish.
+            snapshotWalkId?.let { walkId ->
+                try {
+                    val talkMin = (
+                        repository.voiceRecordingsFor(walkId)
+                            .sumOf { it.durationMillis } / 60_000L
+                        ).toInt()
+                    collectiveRepository.recordWalk(
+                        CollectiveWalkSnapshot(
+                            distanceKm = snapshotDistanceKm,
+                            meditationMin = snapshotMeditateMin,
+                            talkMin = talkMin,
+                        ),
+                    )
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    Log.w(TAG, "collective recordWalk failed", t)
                 }
             }
         }
