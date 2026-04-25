@@ -25,8 +25,6 @@ data class CollectiveStats(
             false
         }
     }
-
-    private companion object {
-        const val ONE_HOUR_MS = 3_600_000L
-    }
 }
+
+private const val ONE_HOUR_MS = 3_600_000L
