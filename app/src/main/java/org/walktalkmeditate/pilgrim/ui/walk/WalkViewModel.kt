@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
+import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -75,6 +76,7 @@ class WalkViewModel @Inject constructor(
     private val locationSource: LocationSource,
     private val hemisphereRepository: HemisphereRepository,
     private val collectiveRepository: CollectiveRepository,
+    private val widgetRefreshScheduler: WidgetRefreshScheduler,
 ) : ViewModel() {
 
     val uiState: StateFlow<WalkUiState> = combine(
@@ -541,6 +543,18 @@ class WalkViewModel @Inject constructor(
                 } catch (t: Throwable) {
                     Log.w(TAG, "collective recordWalk failed", t)
                 }
+            }
+            // Stage 9-A: refresh the home-screen widget so the just-
+            // finished walk appears on the user's home screen within
+            // the success-criteria 1-min budget. Worker reads "most
+            // recent" itself — no walkId arg. KEEP policy + unique work
+            // name handle dedup if user double-taps Finish.
+            try {
+                widgetRefreshScheduler.scheduleRefresh()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "widget refresh scheduling failed", t)
             }
         }
     }

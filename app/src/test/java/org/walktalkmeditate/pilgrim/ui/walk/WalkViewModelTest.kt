@@ -52,6 +52,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -93,6 +94,7 @@ class WalkViewModelTest {
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
     private lateinit var collectiveRepository: CollectiveRepository
+    private lateinit var fakeWidgetRefreshScheduler: FakeWidgetRefreshScheduler
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -158,7 +160,8 @@ class WalkViewModelTest {
             service = fakeCollectiveService,
             scope = collectiveScope,
         )
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository)
+        fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler)
     }
 
     @After
@@ -233,6 +236,17 @@ class WalkViewModelTest {
         controller.state.first { it is WalkState.Finished }
 
         assertEquals(listOf(activeWalkId), transcriptionScheduler.scheduledWalkIds)
+    }
+
+    @Test
+    fun `finishWalk schedules a widget refresh`() = runTest(dispatcher) {
+        viewModel.startWalk()
+        controller.state.first { it is WalkState.Active }
+        clock.advanceTo(5_000L)
+        viewModel.finishWalk()
+        controller.state.first { it is WalkState.Finished }
+
+        assertEquals(1, fakeWidgetRefreshScheduler.callCount.get())
     }
 
     @Test
@@ -554,7 +568,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler)
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -583,7 +597,7 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository)
+        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, transcriptionScheduler, FakeLocationSource(), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler)
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -689,7 +703,7 @@ class WalkViewModelTest {
         val seededSource = FakeLocationSource(lastKnown = cachedFix)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, seededSource, hemisphereRepo, collectiveRepository,
+            transcriptionScheduler, seededSource, hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -715,7 +729,7 @@ class WalkViewModelTest {
 
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(lastKnown = null), hemisphereRepo, collectiveRepository,
+            transcriptionScheduler, FakeLocationSource(lastKnown = null), hemisphereRepo, collectiveRepository, fakeWidgetRefreshScheduler,
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -770,7 +784,7 @@ class WalkViewModelTest {
         val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder,
-            transcriptionScheduler, FakeLocationSource(), throwingRepo, collectiveRepository,
+            transcriptionScheduler, FakeLocationSource(), throwingRepo, collectiveRepository, fakeWidgetRefreshScheduler,
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -830,5 +844,17 @@ private class FakeCollectiveCounterService(
     override suspend fun post(delta: CollectiveCounterDelta): PostResult {
         recordedPosts += delta
         return postResult
+    }
+}
+
+/**
+ * Stage 9-A spy for WidgetRefreshScheduler. Asserts call-count via
+ * AtomicInteger, no async state observation (avoids the
+ * Stage 8-B Robolectric+runBlocking deadlock pattern).
+ */
+private class FakeWidgetRefreshScheduler : WidgetRefreshScheduler {
+    val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+    override fun scheduleRefresh() {
+        callCount.incrementAndGet()
     }
 }
