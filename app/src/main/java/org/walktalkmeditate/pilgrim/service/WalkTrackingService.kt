@@ -150,6 +150,13 @@ class WalkTrackingService : Service() {
         // with ForegroundServiceDidNotStartInTimeException 5s later.
         if (locationJob?.isActive != true) {
             Log.w(TAG, "ignoring action $action — tracking not active")
+            // Clear any orphan notification posted by a prior process
+            // instance (FGS notifications are normally cleared on
+            // service-destroy, but a stale notification can outlive an
+            // abnormal process termination). Without this, every tap
+            // spawns a fresh service that bails — the notification
+            // appears tappable but does nothing.
+            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
             stopSelf()
             return
         }
