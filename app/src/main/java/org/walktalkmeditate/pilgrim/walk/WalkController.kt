@@ -281,6 +281,8 @@ class WalkController @Inject constructor(
                         "the database. The in-memory state and persisted walk have diverged."
                 }
             }
+
+            is WalkEffect.PurgeWalk -> Unit
         }
     }
 

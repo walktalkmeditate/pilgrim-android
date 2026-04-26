@@ -19,4 +19,8 @@ sealed class WalkEffect {
         val walkId: Long,
         val endTimestamp: Long,
     ) : WalkEffect()
+
+    data class PurgeWalk(
+        val walkId: Long,
+    ) : WalkEffect()
 }
