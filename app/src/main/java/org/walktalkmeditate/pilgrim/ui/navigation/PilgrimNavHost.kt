@@ -139,7 +139,6 @@ fun PilgrimNavHost(
         composable(Routes.HOME) {
             HomeScreen(
                 permissionsViewModel = permissionsViewModel,
-                onEnterActiveWalk = { navController.navigate(Routes.ACTIVE_WALK) },
                 onEnterWalkSummary = { walkId ->
                     // launchSingleTop: if the user double-taps a row
                     // faster than the first nav visually commits, the

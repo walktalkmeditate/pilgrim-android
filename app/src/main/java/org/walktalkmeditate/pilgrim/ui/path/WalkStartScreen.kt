@@ -73,7 +73,8 @@ fun WalkStartScreen(
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val walkState by walkViewModel.uiState.collectAsStateWithLifecycle()
+    val uiState by walkViewModel.uiState.collectAsStateWithLifecycle()
+    val isInProgress = uiState.walkState.isInProgress
 
     var selectedMode by rememberSaveable { mutableStateOf(WalkMode.Wander) }
     var currentQuote by rememberSaveable(selectedMode) {
@@ -88,7 +89,7 @@ fun WalkStartScreen(
     LaunchedEffect(Unit) {
         if (didCheck.value) return@LaunchedEffect
         didCheck.value = true
-        if (walkState.walkState.isInProgress) {
+        if (isInProgress) {
             onEnterActiveWalk()
             return@LaunchedEffect
         }
@@ -98,9 +99,10 @@ fun WalkStartScreen(
 
     // Post-tap redirect: when startWalk dispatches and state transitions
     // Idle → Active, route to ACTIVE_WALK. Gated on didCheck so the
-    // cold-launch path's redirect isn't double-fired.
-    LaunchedEffect(walkState.walkState.isInProgress) {
-        if (walkState.walkState.isInProgress && didCheck.value) {
+    // cold-launch path's redirect isn't double-fired before the latch
+    // is set on first composition.
+    LaunchedEffect(isInProgress) {
+        if (isInProgress && didCheck.value) {
             onEnterActiveWalk()
         }
     }

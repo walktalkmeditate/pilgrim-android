@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.home
 
-import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,7 +30,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
 import java.time.ZoneId
 import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPath
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyStrokeSpec
@@ -45,9 +41,6 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
-import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
-
-private const val TAG = "HomeScreen"
 
 // Approximate card-row stride (card ~116dp + PilgrimSpacing.normal 16dp
 // gap). Drives CalligraphyPath's internal dot-Y placement so the thread
@@ -75,31 +68,17 @@ private val JOURNAL_TOP_INSET = 24.dp
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
-    onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
     onEnterGoshuin: () -> Unit,
-    walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
-    val didResumeCheck = remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (didResumeCheck.value) return@LaunchedEffect
-        didResumeCheck.value = true
-        val current = walkViewModel.uiState.value.walkState
-        Log.i(TAG, "resume-check entry state=${current::class.simpleName}")
-        if (current.isInProgress) {
-            Log.i(TAG, "resume-check: already in progress, navigating to ActiveWalk")
-            onEnterActiveWalk()
-            return@LaunchedEffect
-        }
-        val restored = walkViewModel.restoreActiveWalk()
-        if (restored != null) {
-            Log.i(TAG, "resume-check: restored walk id=${restored.id}, navigating to ActiveWalk")
-            onEnterActiveWalk()
-        } else {
-            Log.i(TAG, "resume-check: nothing to restore, staying on Home")
-        }
-    }
+    // Stage 9.5-A: the resume-check moved to WalkStartScreen (Path tab,
+    // the new default destination post-permissions). With tab navigation,
+    // a user can deliberately navigate to Journal during an in-progress
+    // walk to view past walks; auto-redirecting from Home would yank
+    // them back to ACTIVE_WALK and break that flow. Path's resume-check
+    // + the FGS notification's body-tap deep-link cover the
+    // forgotten-walk recovery cases.
 
     val uiState by homeViewModel.uiState.collectAsStateWithLifecycle()
     val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
