@@ -44,26 +44,35 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
     onOpenVoiceGuides: () -> Unit,
     onOpenSoundscapes: () -> Unit,
+    onBack: (() -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.fetchOnAppear() }
     Scaffold(
+        // Stage 9.5-A: PilgrimNavHost's outer Scaffold already consumed
+        // the system bar insets; nesting this Scaffold with the default
+        // contentWindowInsets = WindowInsets.safeDrawing would re-apply
+        // them and add a visible gap above the bottom nav + below the
+        // status bar. Pass WindowInsets(0) so the inner Scaffold doesn't
+        // double-count.
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.Default.ArrowBack,
-                            contentDescription = stringResource(
-                                R.string.settings_back_content_description,
-                            ),
-                        )
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.Default.ArrowBack,
+                                contentDescription = stringResource(
+                                    R.string.settings_back_content_description,
+                                ),
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

@@ -49,6 +49,9 @@ fun VoiceGuidePackDetailScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
+        // Stage 9.5-A: outer PilgrimNavHost Scaffold already consumed
+        // system bar insets; pass WindowInsets(0) to avoid double-counting.
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.voice_guide_detail_title)) },
