@@ -102,11 +102,6 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
-                onEnterSettings = {
-                    navController.navigate(Routes.SETTINGS) {
-                        launchSingleTop = true
-                    }
-                },
             )
         }
         composable(Routes.SETTINGS) {

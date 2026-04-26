@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,14 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -81,7 +78,6 @@ fun HomeScreen(
     onEnterActiveWalk: () -> Unit,
     onEnterWalkSummary: (Long) -> Unit,
     onEnterGoshuin: () -> Unit,
-    onEnterSettings: () -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -108,61 +104,48 @@ fun HomeScreen(
     val uiState by homeViewModel.uiState.collectAsStateWithLifecycle()
     val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(PilgrimSpacing.big),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(PilgrimSpacing.big),
         ) {
             Text(
                 text = stringResource(R.string.home_title),
                 style = pilgrimType.displayMedium,
                 color = pilgrimColors.ink,
+                modifier = Modifier.fillMaxWidth(),
             )
-            IconButton(onClick = onEnterSettings) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.settings_title),
-                    tint = pilgrimColors.ink,
-                )
-            }
-        }
-        Spacer(Modifier.height(PilgrimSpacing.big))
+            Spacer(Modifier.height(PilgrimSpacing.big))
 
-        HomeListContent(
-            uiState = uiState,
-            hemisphere = hemisphere,
-            onRowClick = onEnterWalkSummary,
-        )
+            HomeListContent(
+                uiState = uiState,
+                hemisphere = hemisphere,
+                onRowClick = onEnterWalkSummary,
+            )
 
-        Spacer(Modifier.height(PilgrimSpacing.big))
-
-        Button(
-            onClick = {
-                walkViewModel.startWalk()
-                onEnterActiveWalk()
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.home_action_start_walk))
+            Spacer(Modifier.height(PilgrimSpacing.big))
+            BatteryExemptionCard(viewModel = permissionsViewModel)
         }
 
-        Spacer(Modifier.height(PilgrimSpacing.normal))
-
-        OutlinedButton(
+        // Goshuin compass FAB. Lives on Journal screen only (per spec).
+        // Scaffold's innerPadding (passed through PilgrimNavHost) already
+        // insets above the bottom bar; PilgrimSpacing.big adds breathing
+        // room from the corner.
+        FloatingActionButton(
             onClick = onEnterGoshuin,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(PilgrimSpacing.big),
+            containerColor = pilgrimColors.parchmentSecondary,
+            contentColor = pilgrimColors.stone,
         ) {
-            Text(stringResource(R.string.home_action_view_goshuin))
+            Icon(
+                imageVector = Icons.Outlined.Explore,
+                contentDescription = stringResource(R.string.home_action_view_goshuin),
+            )
         }
-
-        Spacer(Modifier.height(PilgrimSpacing.big))
-        BatteryExemptionCard(viewModel = permissionsViewModel)
     }
 }
 
