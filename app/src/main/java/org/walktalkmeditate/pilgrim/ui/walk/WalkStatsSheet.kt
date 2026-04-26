@@ -588,9 +588,10 @@ private fun CircularActionButton(
 }
 
 /**
- * Circular variant of the existing [RecordControl]. Reuses the same
- * permission launcher + Idle/Recording/Error protocol; visually framed
- * as a circular pill matching the other action buttons in the row.
+ * Circular mic-toggle button used inside the bottom sheet's action row.
+ * Owns the same permission launcher + Idle/Recording/Error protocol the
+ * standalone control used pre-9.5-B; visually framed as a circular pill
+ * matching the other action buttons in the row.
  */
 @Composable
 private fun MicActionButton(
