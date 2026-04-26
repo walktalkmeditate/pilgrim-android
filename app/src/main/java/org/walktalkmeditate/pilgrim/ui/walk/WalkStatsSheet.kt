@@ -232,7 +232,7 @@ private fun SheetContentSwitcher(
     // tapping the minimized row in an area that overlapped the expanded
     // Pause button silently fired Pause). Compose's `graphicsLayer { alpha }`
     // suppresses drawing but NOT pointer input.
-    Box {
+    Box(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .zIndex(if (showExpanded) 0f else 1f)
