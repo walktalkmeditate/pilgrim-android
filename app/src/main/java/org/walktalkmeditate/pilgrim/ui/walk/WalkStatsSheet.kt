@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -224,9 +225,16 @@ private fun SheetContentSwitcher(
     expandedContent: @Composable () -> Unit,
 ) {
     val showExpanded = state == SheetState.Expanded
+    // zIndex flips draw + hit-test order so the visible layer is always
+    // on top. Without this, the alpha=0 child still sits on top in z-order
+    // and intercepts touches via its inner clickables (Stage 9.5-B polish:
+    // tapping the minimized row in an area that overlapped the expanded
+    // Pause button silently fired Pause). Compose's `graphicsLayer { alpha }`
+    // suppresses drawing but NOT pointer input.
     Box {
         Box(
             modifier = Modifier
+                .zIndex(if (showExpanded) 0f else 1f)
                 .graphicsLayer { alpha = if (showExpanded) 0f else 1f }
                 .testTag(MINIMIZED_LAYER_TAG),
         ) {
@@ -234,6 +242,7 @@ private fun SheetContentSwitcher(
         }
         Box(
             modifier = Modifier
+                .zIndex(if (showExpanded) 1f else 0f)
                 .graphicsLayer { alpha = if (showExpanded) 1f else 0f }
                 .testTag(EXPANDED_LAYER_TAG),
         ) {
