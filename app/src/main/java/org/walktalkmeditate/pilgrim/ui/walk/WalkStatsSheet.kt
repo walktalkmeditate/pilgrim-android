@@ -38,9 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
@@ -113,6 +116,11 @@ fun WalkStatsSheet(
     // during the drag tick; animateTo runs on release.
     val dragOffset = remember { Animatable(0f) }
     val coroutineScope = rememberCoroutineScope()
+    // Cancel-before-launch the per-delta snapTo so at most one snap is
+    // ever queued behind Animatable's internal mutex. Without this, a
+    // fast flick gesture queues dozens of stale snapTo coroutines that
+    // would interrupt the onDragStopped spring-back animation.
+    var snapJob by remember { mutableStateOf<Job?>(null) }
 
     val currentState by rememberUpdatedState(state)
     val currentCanDrag by rememberUpdatedState(canDrag)
@@ -126,7 +134,8 @@ fun WalkStatsSheet(
             currentState == SheetState.Expanded && delta > 0 -> proposed
             else -> dragOffset.value
         }
-        coroutineScope.launch { dragOffset.snapTo(target) }
+        snapJob?.cancel()
+        snapJob = coroutineScope.launch { dragOffset.snapTo(target) }
     }
 
     val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
@@ -139,6 +148,9 @@ fun WalkStatsSheet(
                 state = draggableState,
                 orientation = Orientation.Vertical,
                 onDragStopped = { velocity ->
+                    // Cancel any in-flight snapTo from the drag tick so it
+                    // can't interrupt the spring-back animation below.
+                    snapJob?.cancel()
                     if (!currentCanDrag) {
                         dragOffset.animateTo(0f, SNAP_BACK_SPEC)
                         return@draggable
@@ -147,17 +159,19 @@ fun WalkStatsSheet(
                         (dragOffset.value < -thresholdPx || velocity < -flickPx)
                     val shouldCollapse = currentState == SheetState.Expanded &&
                         (dragOffset.value > thresholdPx || velocity > flickPx)
-                    when {
-                        shouldExpand -> {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            currentOnStateChange(SheetState.Expanded)
-                        }
-                        shouldCollapse -> {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            currentOnStateChange(SheetState.Minimized)
-                        }
+                    // Spring-back BEFORE state change so the new content
+                    // variant renders at offset 0. Otherwise the alpha
+                    // swap happens at a non-zero translation and the
+                    // sheet visibly jumps when the recomposition disposes
+                    // the in-flight animateTo.
+                    if (shouldExpand || shouldCollapse) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                     dragOffset.animateTo(0f, SNAP_BACK_SPEC)
+                    when {
+                        shouldExpand -> currentOnStateChange(SheetState.Expanded)
+                        shouldCollapse -> currentOnStateChange(SheetState.Minimized)
+                    }
                 },
             ),
     ) {
