@@ -7,6 +7,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +35,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +47,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -88,9 +98,60 @@ fun WalkStatsSheet(
     modifier: Modifier = Modifier,
 ) {
     val canDrag = walkState is WalkState.Active
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val thresholdPx = remember(density) { with(density) { DRAG_THRESHOLD_DP.toPx() } }
+    val flickPx = remember(density) { with(density) { DRAG_FLICK_VELOCITY_DP.toPx() } }
+    val clampPx = remember(density) { with(density) { DRAG_CLAMP_DP.toPx() } }
+
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+
+    val currentState by rememberUpdatedState(state)
+    val currentCanDrag by rememberUpdatedState(canDrag)
+    val currentOnStateChange by rememberUpdatedState(onStateChange)
+
+    val draggableState = rememberDraggableState { delta ->
+        if (!currentCanDrag) return@rememberDraggableState
+        val proposed = (dragOffset + delta).coerceIn(-clampPx, clampPx)
+        dragOffset = when {
+            currentState == SheetState.Minimized && delta < 0 -> proposed
+            currentState == SheetState.Expanded && delta > 0 -> proposed
+            else -> dragOffset
+        }
+    }
+
     val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 
-    Box(modifier = modifier.fillMaxWidth()) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer { translationY = dragOffset }
+            .draggable(
+                state = draggableState,
+                orientation = Orientation.Vertical,
+                onDragStopped = { velocity ->
+                    if (!currentCanDrag) {
+                        dragOffset = 0f
+                        return@draggable
+                    }
+                    val shouldExpand = currentState == SheetState.Minimized &&
+                        (dragOffset < -thresholdPx || velocity < -flickPx)
+                    val shouldCollapse = currentState == SheetState.Expanded &&
+                        (dragOffset > thresholdPx || velocity > flickPx)
+                    when {
+                        shouldExpand -> {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnStateChange(SheetState.Expanded)
+                        }
+                        shouldCollapse -> {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnStateChange(SheetState.Minimized)
+                        }
+                    }
+                    dragOffset = 0f
+                },
+            ),
+    ) {
         // Manual upward shadow: Compose Surface(elevation) casts shadow
         // downward; iOS uses y: -4 for an UPWARD shadow onto the map.
         // Soft gradient strip drawn just above the sheet's top edge.
@@ -604,6 +665,10 @@ private fun MicActionButton(
 }
 
 private const val MIC_ERROR_BANNER_MS = 4_000L
+
+private val DRAG_THRESHOLD_DP = 40.dp
+private val DRAG_FLICK_VELOCITY_DP = 300.dp
+private val DRAG_CLAMP_DP = 100.dp
 
 internal const val MINIMIZED_LAYER_TAG = "walk-sheet-minimized-layer"
 internal const val EXPANDED_LAYER_TAG = "walk-sheet-expanded-layer"
