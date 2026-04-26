@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -177,7 +176,11 @@ fun WalkStatsSheet(
                 .fillMaxWidth()
                 .clip(sheetShape)
                 .background(pilgrimColors.parchment)
-                .navigationBarsPadding()
+                // Stage 9.5-A trap: PilgrimNavHost's Scaffold already passes
+                // navigation-bar inset through `Modifier.padding(innerPadding)`.
+                // Adding `navigationBarsPadding()` here would double-count
+                // and push the action buttons ~34dp above the visible sheet
+                // bottom on gesture-nav devices.
                 .padding(bottom = PilgrimSpacing.normal),
         ) {
             DragHandle(canDrag = canDrag)
