@@ -3,8 +3,10 @@ package org.walktalkmeditate.pilgrim.ui.navigation
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -101,10 +103,16 @@ fun PilgrimNavHost(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
+            // Combine fade with vertical expand/shrink so the bar's
+            // measured height animates in lockstep with its alpha.
+            // Without expand/shrink, AnimatedVisibility flips height
+            // 0 → N instantly while the alpha fades over 150ms,
+            // causing screen content to snap up/down before the bar
+            // visibly appears/disappears.
             AnimatedVisibility(
                 visible = showBottomBar,
-                enter = fadeIn(animationSpec = tween(150)),
-                exit = fadeOut(animationSpec = tween(150)),
+                enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
+                exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
             ) {
                 PilgrimBottomBar(
                     currentRoute = currentRoute,
