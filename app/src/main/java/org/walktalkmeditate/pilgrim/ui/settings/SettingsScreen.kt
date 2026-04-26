@@ -44,9 +44,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
     onOpenVoiceGuides: () -> Unit,
     onOpenSoundscapes: () -> Unit,
+    onBack: (() -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
@@ -57,13 +57,15 @@ fun SettingsScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.Default.ArrowBack,
-                            contentDescription = stringResource(
-                                R.string.settings_back_content_description,
-                            ),
-                        )
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.Default.ArrowBack,
+                                contentDescription = stringResource(
+                                    R.string.settings_back_content_description,
+                                ),
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
