@@ -32,6 +32,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 
 object Routes {
     const val PERMISSIONS = "permissions"
+    const val PATH = "path"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
     const val GOSHUIN = "goshuin"
