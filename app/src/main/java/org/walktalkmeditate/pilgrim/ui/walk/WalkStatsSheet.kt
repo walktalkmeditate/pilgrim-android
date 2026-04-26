@@ -27,9 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -144,14 +144,14 @@ private fun SheetContentSwitcher(
     Box {
         Box(
             modifier = Modifier
-                .alpha(if (showExpanded) 0f else 1f)
+                .graphicsLayer { alpha = if (showExpanded) 0f else 1f }
                 .testTag(MINIMIZED_LAYER_TAG),
         ) {
             minimizedContent()
         }
         Box(
             modifier = Modifier
-                .alpha(if (showExpanded) 1f else 0f)
+                .graphicsLayer { alpha = if (showExpanded) 1f else 0f }
                 .testTag(EXPANDED_LAYER_TAG),
         ) {
             expandedContent()
