@@ -21,7 +21,13 @@ import kotlin.math.floor
  */
 internal object MoonCalc {
 
-    private const val SYNODIC_DAYS = 29.530588770576
+    /**
+     * Synodic month length in days. Promoted from `private` to
+     * `internal` so [MoonPhase.isWaxing] can derive the waxing/waning
+     * boundary from the same source-of-truth constant rather than
+     * duplicating the numeric literal.
+     */
+    internal const val SYNODIC_DAYS = 29.530588770576
 
     /** JD of the reference new moon: 2000-01-06 18:14 UTC. */
     private val EPOCH_JD: Double = julianDay(Instant.parse("2000-01-06T18:14:00Z"))
