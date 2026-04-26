@@ -196,9 +196,13 @@ fun WalkStartScreen(
             )
             Spacer(Modifier.height(PilgrimSpacing.normal))
             Button(
-                onClick = { walkViewModel.startWalk() },
+                // iOS parity: button navigates to the active-walk surface
+                // in its "ready" state. The walk does NOT start recording
+                // until the user taps the Start button on that screen.
+                onClick = { onEnterActiveWalk() },
                 enabled = selectedMode.isAvailable && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = pilgrimColors.stone,
                     contentColor = pilgrimColors.parchment,
