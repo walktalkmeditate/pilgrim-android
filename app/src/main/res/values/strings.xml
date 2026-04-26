@@ -199,4 +199,49 @@
     <string name="collective_stats_one_walk">%1$s walk · %2$s km</string>
     <string name="collective_stats_loading">Loading the collective…</string>
     <string name="collective_stats_unavailable">The collective is resting.</string>
+
+    <!-- Stage 9.5-A: Bottom-nav tab labels -->
+    <string name="tab_path">Path</string>
+    <string name="tab_journal">Journal</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Stage 9.5-A: WalkStartScreen (Path tab) -->
+    <string name="path_mode_wander">WANDER</string>
+    <string name="path_mode_together">TOGETHER</string>
+    <string name="path_mode_seek">SEEK</string>
+    <string name="path_mode_wander_subtitle">walk · talk · meditate</string>
+    <string name="path_mode_together_subtitle">walk with others nearby</string>
+    <string name="path_mode_seek_subtitle">follow the unknown</string>
+    <string name="path_mode_unavailable_subtitle">coming soon</string>
+    <string name="path_button_wander">Wander</string>
+    <string name="path_button_together">Walk Together</string>
+    <string name="path_button_seek">Seek</string>
+    <string name="path_start_a11y">Begin your journey</string>
+
+    <!-- TRANSLATORS: Stage 9.5-A quote corpora for the Path tab.
+         Pilgrim's voice is contemplative, slow, and aphoristic — like
+         a Zen koan or a walking-meditation manual, never a lifestyle
+         brand. Aim for that register in any translation. The `\n`
+         escapes are intentional line breaks for visual rhythm; preserve
+         them where they serve the cadence in your language. Each array
+         must contain at least one item — runtime defaults to "Walk
+         well." if empty, but you'd want something more poetic. -->
+    <string-array name="path_quotes_wander">
+        <item>Every journey begins\nwith a single step</item>
+        <item>The path is made\nby walking</item>
+        <item>Not all who wander\nare lost</item>
+        <item>Solvitur ambulando —\nit is solved by walking</item>
+        <item>Walk as if you are kissing\nthe earth with your feet</item>
+        <item>The journey of a thousand miles\nbegins beneath your feet</item>
+    </string-array>
+    <string-array name="path_quotes_together">
+        <item>We walk together,\nthough our paths differ</item>
+        <item>In good company,\nthe road seems shorter</item>
+        <item>Side by side,\nstep by step</item>
+    </string-array>
+    <string-array name="path_quotes_seek">
+        <item>What you seek\nis seeking you</item>
+        <item>Wander where\nthe wi-fi is weak</item>
+        <item>The real voyage of discovery\nis seeing with new eyes</item>
+    </string-array>
 </resources>

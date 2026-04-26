@@ -55,6 +55,9 @@ fun SoundscapePickerScreen(
     val soundscapes by viewModel.soundscapeStates.collectAsStateWithLifecycle()
 
     Scaffold(
+        // Stage 9.5-A: outer PilgrimNavHost Scaffold already consumed
+        // system bar insets; pass WindowInsets(0) to avoid double-counting.
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.soundscape_picker_title)) },

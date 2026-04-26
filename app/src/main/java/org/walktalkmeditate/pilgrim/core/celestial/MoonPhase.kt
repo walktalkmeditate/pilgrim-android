@@ -23,4 +23,15 @@ data class MoonPhase(
     val illumination: Double,
     /** Days since the last new moon, in [0.0, 29.530588770576). */
     val ageInDays: Double,
-)
+) {
+    /**
+     * True if the moon is in its waxing half (new → full). False if
+     * waning (full → new). Synodic month is split symmetrically at
+     * its midpoint; ageInDays at exactly the midpoint counts as
+     * already-waning (boundary inclusive on the waning side, matching
+     * astronomical convention that "first quarter" / "last quarter"
+     * are exact instants, not half-day windows).
+     */
+    val isWaxing: Boolean
+        get() = ageInDays < MoonCalc.SYNODIC_DAYS / 2.0
+}

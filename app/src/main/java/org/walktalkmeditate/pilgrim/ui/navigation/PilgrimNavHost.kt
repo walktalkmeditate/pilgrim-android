@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.navigation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +41,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 
 object Routes {
     const val PERMISSIONS = "permissions"
+    const val PATH = "path"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
     const val GOSHUIN = "goshuin"
@@ -54,36 +64,90 @@ object Routes {
     fun walkShare(walkId: Long): String = "$WALK_SHARE_PREFIX/$walkId"
 }
 
+/**
+ * Set of routes that show the bottom NavigationBar. All other routes
+ * (ACTIVE_WALK, MEDITATION, walkSummary, walkShare, GOSHUIN, voice-guide
+ * picker/detail, soundscape picker) hide the bar — accept this divergence
+ * from iOS, which keeps the tab bar visible during .sheet modals.
+ */
+internal val TAB_ROUTES = setOf(Routes.PATH, Routes.HOME, Routes.SETTINGS)
+
+/**
+ * Compose Nav's tab-switch idiom adapted for our PERMISSIONS-then-PATH
+ * graph. PATH is the *effective* root after the post-onboarding
+ * inclusive-pop of PERMISSIONS removes PERMISSIONS from the stack.
+ * Using `findStartDestination()` (= PERMISSIONS) here would no-op the
+ * popUpTo (PERMISSIONS isn't on the stack), making each tab tap PUSH
+ * a new entry → unbounded stack growth. Hard-coding PATH ensures the
+ * pop actually fires + saveState/restoreState do their work.
+ */
+internal fun NavHostController.navigateToTab(route: String) {
+    navigate(route) {
+        popUpTo(Routes.PATH) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
 @Composable
 fun PilgrimNavHost(
-    modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     permissionsViewModel: PermissionsViewModel = hiltViewModel(),
     pendingDeepLink: org.walktalkmeditate.pilgrim.widget.DeepLinkTarget? = null,
     onDeepLinkConsumed: () -> Unit = {},
 ) {
-    // Always start at PERMISSIONS; auto-navigate to HOME when onboarding
-    // state arrives. See the polish-pass comment below for why we don't
-    // read onboardingComplete into startDestination directly.
-    NavHost(
-        navController = navController,
-        startDestination = Routes.PERMISSIONS,
-        modifier = modifier,
-    ) {
+    val currentEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentEntry?.destination?.route
+    val showBottomBar = currentRoute in TAB_ROUTES
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        bottomBar = {
+            // Combine fade with vertical expand/shrink so the bar's
+            // measured height animates in lockstep with its alpha.
+            // Without expand/shrink, AnimatedVisibility flips height
+            // 0 → N instantly while the alpha fades over 150ms,
+            // causing screen content to snap up/down before the bar
+            // visibly appears/disappears.
+            AnimatedVisibility(
+                visible = showBottomBar,
+                enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
+                exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
+            ) {
+                PilgrimBottomBar(
+                    currentRoute = currentRoute,
+                    onSelectTab = { route -> navController.navigateToTab(route) },
+                )
+            }
+        },
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = Routes.PERMISSIONS,
+            modifier = Modifier.padding(innerPadding),
+        ) {
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 onComplete = {
-                    navController.navigate(Routes.HOME) {
+                    navController.navigate(Routes.PATH) {
                         popUpTo(Routes.PERMISSIONS) { inclusive = true }
                     }
                 },
                 viewModel = permissionsViewModel,
             )
         }
+        composable(Routes.PATH) {
+            org.walktalkmeditate.pilgrim.ui.path.WalkStartScreen(
+                onEnterActiveWalk = {
+                    navController.navigate(Routes.ACTIVE_WALK) {
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
         composable(Routes.HOME) {
             HomeScreen(
                 permissionsViewModel = permissionsViewModel,
-                onEnterActiveWalk = { navController.navigate(Routes.ACTIVE_WALK) },
                 onEnterWalkSummary = { walkId ->
                     // launchSingleTop: if the user double-taps a row
                     // faster than the first nav visually commits, the
@@ -101,16 +165,13 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
-                onEnterSettings = {
-                    navController.navigate(Routes.SETTINGS) {
-                        launchSingleTop = true
-                    }
-                },
             )
         }
         composable(Routes.SETTINGS) {
+            // Stage 9.5-A: Settings is now a tab destination. No back
+            // arrow when reached as a tab — onBack = null.
             SettingsScreen(
-                onBack = { navController.popBackStack() },
+                onBack = null,
                 onOpenVoiceGuides = {
                     navController.navigate(Routes.VOICE_GUIDE_PICKER) {
                         launchSingleTop = true
@@ -157,8 +218,15 @@ fun PilgrimNavHost(
         composable(Routes.ACTIVE_WALK) {
             ActiveWalkScreen(
                 onFinished = { walkId ->
+                    // Stage 9.5-A: a walk launched from Path leaves HOME
+                    // off the back stack. popUpTo(HOME) would no-op +
+                    // leave ACTIVE_WALK in the stack. Pop to PATH (the
+                    // effective root) so [PATH, walkSummary] is the
+                    // resulting stack — Done returns to PATH which is
+                    // adjacent to the Journal tab.
                     navController.navigate(Routes.walkSummary(walkId)) {
-                        popUpTo(Routes.HOME) { inclusive = false }
+                        popUpTo(Routes.PATH) { inclusive = false }
+                        launchSingleTop = true
                     }
                 },
                 onEnterMeditation = {
@@ -182,7 +250,16 @@ fun PilgrimNavHost(
                     // fire onFinished on its next composition, cleanly
                     // chaining to the summary screen — two hops but
                     // correct.
-                    navController.popBackStack(Routes.ACTIVE_WALK, inclusive = false)
+                    //
+                    // Defensive fallback: today MEDITATION can only be
+                    // reached FROM ACTIVE_WALK so popBackStack(ACTIVE_WALK)
+                    // always succeeds. A future code path that opens
+                    // MEDITATION via deep-link or a different surface
+                    // would silently no-op the back-out without this
+                    // single-pop fallback, leaving the user stranded.
+                    if (!navController.popBackStack(Routes.ACTIVE_WALK, inclusive = false)) {
+                        navController.popBackStack()
+                    }
                 },
             )
         }
@@ -195,7 +272,23 @@ fun PilgrimNavHost(
             val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
             WalkSummaryScreen(
                 onDone = {
-                    navController.popBackStack(Routes.HOME, inclusive = false)
+                    // Stage 9.5-A: Done always lands the user on the
+                    // Journal (HOME) tab, regardless of how walkSummary
+                    // was reached:
+                    //  - Path-launched walk: stack is [PATH, walkSummary].
+                    //    popBackStack(HOME) returns false → fall through
+                    //    to navigateToTab(HOME) → push HOME on Path.
+                    //  - HOME-launched: stack [PATH, HOME, walkSummary].
+                    //    popBackStack(HOME) pops walkSummary, lands on HOME.
+                    //  - Goshuin-launched: stack [PATH, HOME, GOSHUIN,
+                    //    walkSummary]. popBackStack(HOME) pops both
+                    //    walkSummary AND GOSHUIN — user lands on HOME, not
+                    //    Goshuin. This is intentional: "Done" is the user
+                    //    saying "I'm done; show me the Journal." Re-opening
+                    //    Goshuin is a one-FAB-tap away.
+                    if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                        navController.navigateToTab(Routes.HOME)
+                    }
                 },
                 onShareJourney = {
                     navController.navigate(Routes.walkShare(walkId)) {
@@ -238,10 +331,10 @@ fun PilgrimNavHost(
                 },
             )
         }
+        }
     }
 
     val onboardingComplete by permissionsViewModel.onboardingComplete.collectAsState()
-    val currentEntry by navController.currentBackStackEntryAsState()
     val context = LocalContext.current
 
     LaunchedEffect(onboardingComplete, currentEntry?.destination?.route) {
@@ -250,7 +343,10 @@ fun PilgrimNavHost(
             PermissionChecks.isMinimumGranted(context) &&
             currentEntry?.destination?.route == Routes.PERMISSIONS
         ) {
-            navController.navigate(Routes.HOME) {
+            // Stage 9.5-A: Path is now the default destination
+            // post-onboarding. Auto-nav to PATH lands the user on the
+            // contemplative pre-walk hub.
+            navController.navigate(Routes.PATH) {
                 popUpTo(Routes.PERMISSIONS) { inclusive = true }
             }
         }
@@ -276,7 +372,7 @@ fun PilgrimNavHost(
         val link = pendingDeepLink ?: return@LaunchedEffect
         val currentRoute = currentEntry?.destination?.route ?: return@LaunchedEffect
         if (currentRoute == Routes.PERMISSIONS) {
-            // Auto-nav to HOME is in flight; wait for it to land
+            // Auto-nav to PATH is in flight; wait for it to land
             // before consuming the deep link.
             return@LaunchedEffect
         }
@@ -284,8 +380,14 @@ fun PilgrimNavHost(
             val alreadyInSession = currentRoute == Routes.ACTIVE_WALK ||
                 currentRoute == Routes.MEDITATION
             if (!alreadyInSession) {
+                // Stage 9.5-A: popUpTo PATH (effective root). Back from
+                // a deep-linked ACTIVE_WALK is intercepted by
+                // ActiveWalkScreen's existing BackHandler (moveTaskToBack
+                // while in-progress), so we don't bounce back to PATH.
+                // launchSingleTop is the dedup mechanism for any
+                // accidental concurrent navigate(ACTIVE_WALK) calls.
                 navController.navigate(Routes.ACTIVE_WALK) {
-                    popUpTo(Routes.HOME) { saveState = false }
+                    popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true
                 }
             }
@@ -302,16 +404,18 @@ fun PilgrimNavHost(
         }
         when (link) {
             is org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.WalkSummary -> {
+                // popUpTo PATH (effective root). Back from a deep-linked
+                // summary lands on Path; Done navigates to HOME via
+                // navigateToTab. HOME may not be on the back stack
+                // (cold-launch with widget tap → only PATH is there).
                 navController.navigate(Routes.walkSummary(link.walkId)) {
-                    popUpTo(Routes.HOME) { saveState = false }
+                    popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true
                 }
             }
             org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.Home -> {
                 if (currentRoute != Routes.HOME) {
-                    navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.HOME) { inclusive = true }
-                    }
+                    navController.navigateToTab(Routes.HOME)
                 }
             }
             org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.ActiveWalk -> {
