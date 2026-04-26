@@ -244,4 +244,20 @@
         <item>Wander where\nthe wi-fi is weak</item>
         <item>The real voyage of discovery\nis seeing with new eyes</item>
     </string-array>
+
+    <!-- Stage 9.5-B: Active Walk layout rebuild — bottom sheet stats + chips + actions -->
+    <string name="walk_stat_time">Time</string>
+    <string name="walk_stat_steps">Steps</string>
+    <string name="walk_stat_ascent">Ascent</string>
+    <string name="walk_chip_walk">Walk</string>
+    <string name="walk_chip_talk">Talk</string>
+    <string name="walk_chip_meditate">Meditate</string>
+    <!-- TRANSLATORS: contemplative caption shown during an active walk.
+         Pilgrim's voice is contemplative + slow; aim for a short
+         aphoristic line. -->
+    <string name="walk_caption_every_step">every step is enough</string>
+    <string name="walk_action_start">Start</string>
+    <string name="walk_action_meditate_short">Meditate</string>
+    <string name="walk_action_end_meditation_short">End</string>
+    <string name="walk_action_finish_short">End</string>
 </resources>
