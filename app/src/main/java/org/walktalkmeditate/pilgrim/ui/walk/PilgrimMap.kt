@@ -33,6 +33,7 @@ import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManag
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
@@ -115,6 +116,9 @@ fun PilgrimMap(
             // GNSS stream. Future cleanup: implement a LocationProvider
             // backed by FusedLocationSource (turning it into a SharedFlow)
             // so the map + service share one subscription.
+            // iOS reference doesn't show a scale bar on the walk map and
+            // device QA flagged the "0—150m" indicator as visually noisy.
+            view.scalebar.enabled = false
             if (followLatest) {
                 view.location.updateSettings {
                     enabled = true

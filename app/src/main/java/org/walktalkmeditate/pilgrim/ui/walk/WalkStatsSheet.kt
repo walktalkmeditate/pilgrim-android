@@ -148,8 +148,8 @@ fun WalkStatsSheet(
                 state = draggableState,
                 orientation = Orientation.Vertical,
                 onDragStopped = { velocity ->
-                    // Cancel any in-flight snapTo from the drag tick so it
-                    // can't interrupt the spring-back animation below.
+                    // Cancel any in-flight snapTo from the drag tick so
+                    // it can't race with the cleanup below.
                     snapJob?.cancel()
                     if (!currentCanDrag) {
                         dragOffset.animateTo(0f, SNAP_BACK_SPEC)
@@ -159,18 +159,25 @@ fun WalkStatsSheet(
                         (dragOffset.value < -thresholdPx || velocity < -flickPx)
                     val shouldCollapse = currentState == SheetState.Expanded &&
                         (dragOffset.value > thresholdPx || velocity > flickPx)
-                    // Spring-back BEFORE state change so the new content
-                    // variant renders at offset 0. Otherwise the alpha
-                    // swap happens at a non-zero translation and the
-                    // sheet visibly jumps when the recomposition disposes
-                    // the in-flight animateTo.
-                    if (shouldExpand || shouldCollapse) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    }
-                    dragOffset.animateTo(0f, SNAP_BACK_SPEC)
                     when {
-                        shouldExpand -> currentOnStateChange(SheetState.Expanded)
-                        shouldCollapse -> currentOnStateChange(SheetState.Minimized)
+                        shouldExpand -> {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            // Instant snap so the state-change recomposition
+                            // (which grows the sheet from ~88dp → ~340dp)
+                            // is the only visible transition. Animating
+                            // the offset BEFORE state change makes the
+                            // user wait ~300ms before the sheet actually
+                            // commits — perceived as lag.
+                            dragOffset.snapTo(0f)
+                            currentOnStateChange(SheetState.Expanded)
+                        }
+                        shouldCollapse -> {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            dragOffset.snapTo(0f)
+                            currentOnStateChange(SheetState.Minimized)
+                        }
+                        // Below threshold: spring back smoothly (rubber-band).
+                        else -> dragOffset.animateTo(0f, SNAP_BACK_SPEC)
                     }
                 },
             ),
@@ -564,8 +571,19 @@ private fun CircularActionButton(
     enabled: Boolean = true,
 ) {
     val effectiveColor = if (enabled) color else pilgrimColors.fog.copy(alpha = 0.4f)
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
-        modifier = modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        // indication = null suppresses the default Material ripple,
+        // which would otherwise draw a bounded rectangle over the
+        // Column (button circle + label) — visually a square card
+        // around the circular button.
+        modifier = modifier.clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            enabled = enabled,
+            role = Role.Button,
+            onClick = onClick,
+        ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -643,8 +661,16 @@ private fun MicActionButton(
     // "Talk" label so the spatial association is obvious to the user.
     val label = if (isRecording) "REC" else stringResource(R.string.walk_chip_talk)
 
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
-        modifier = modifier.clickable(enabled = enabled, role = Role.Button) {
+        // indication = null: same rationale as CircularActionButton —
+        // suppress the bounded rectangle ripple over the circular pill.
+        modifier = modifier.clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            enabled = enabled,
+            role = Role.Button,
+        ) {
             if (isRecording || PermissionChecks.isMicrophoneGranted(context)) {
                 onToggle()
             } else {
