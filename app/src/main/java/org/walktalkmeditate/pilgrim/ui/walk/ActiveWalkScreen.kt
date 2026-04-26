@@ -78,7 +78,13 @@ fun ActiveWalkScreen(
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
-            walkState = ui.walkState,
+            // Stage 5-G stale-cache trap: `ui.walkState` is sourced from a
+            // WhileSubscribed(5s) flow. After a meditation > 5s, ui freezes
+            // at the pre-meditation Meditating snapshot for one frame on
+            // ActiveWalkScreen re-entry, rendering the wrong action buttons
+            // (e.g., End Meditation when the controller is already Active).
+            // navWalkState is the hot Singleton passthrough — always fresh.
+            walkState = navWalkState,
             totalElapsedMillis = ui.totalElapsedMillis,
             distanceMeters = ui.distanceMeters,
             walkMillis = ui.activeWalkingMillis,
