@@ -2,13 +2,14 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -59,11 +60,14 @@ class WalkStatsSheetExpandedTest {
         composeRule.onAllNodesWithText("Ascent")
             .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)))
             .assertExists()
-        // Three "—" placeholders total: 2 inside expanded (Steps, Ascent) +
-        // 1 inside minimized (Steps). Plus meditate chip placeholder for
-        // meditateMillis = 0L = "—" inside expanded → 4.
-        composeRule.onAllNodesWithText("—")
-            .assertCountEquals(4)
+        // Scope the em-dash count to the expanded layer so unrelated future
+        // additions of "—" elsewhere in the sheet don't break this test.
+        // Expected inside expanded: Steps stat + Ascent stat + Meditate chip
+        // value (meditateMillis = 0L renders as "—") = 3.
+        val expandedDashes = composeRule.onAllNodes(
+            hasText("—") and hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)),
+        ).fetchSemanticsNodes().size
+        assertEquals(3, expandedDashes)
         // Chip values via WalkFormat.shortDuration: walk=1:00, talk=1:30
         nodeInExpandedWithText("1:00").assertExists()
         nodeInExpandedWithText("1:30").assertExists()

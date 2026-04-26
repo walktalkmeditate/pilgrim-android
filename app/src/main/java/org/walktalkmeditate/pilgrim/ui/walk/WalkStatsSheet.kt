@@ -617,17 +617,26 @@ private fun MicActionButton(
     val enabled = walkState.isInProgress
     val isRecording = recorderState is VoiceRecorderUiState.Recording
 
+    // rememberLauncherForActivityResult's DisposableEffect keys on contract
+    // reference identity — inline `ActivityResultContracts.RequestPermission()`
+    // produces a new instance per recompose, causing unregister/re-register
+    // races that drop in-flight permission results (Stage 7-A precedent).
+    val permissionContract = remember { ActivityResultContracts.RequestPermission() }
     val permLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
+        contract = permissionContract,
     ) { granted ->
         if (granted) onToggle() else onPermissionDenied()
     }
 
+    // rememberUpdatedState mandatory for LaunchedEffect-scoped delayed callbacks
+    // (Stage 4-B precedent) — without it, the captured lambda goes stale on
+    // fresh-lambda recompose and the dismiss fires against an obsolete reference.
+    val currentOnDismissError by rememberUpdatedState(onDismissError)
     val err = recorderState as? VoiceRecorderUiState.Error
     LaunchedEffect(err) {
         if (err != null && err.kind != VoiceRecorderUiState.Kind.Cancelled) {
             delay(MIC_ERROR_BANNER_MS)
-            onDismissError()
+            currentOnDismissError()
         }
     }
 
