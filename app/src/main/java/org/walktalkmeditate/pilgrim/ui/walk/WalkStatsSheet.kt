@@ -2,12 +2,14 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -15,6 +17,11 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.outlined.SelfImprovement
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -24,6 +31,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -111,7 +119,15 @@ fun WalkStatsSheet(
                     )
                 },
                 expandedContent = {
-                    Box(modifier = Modifier.fillMaxWidth())
+                    ExpandedContent(
+                        walkState = walkState,
+                        totalElapsedMillis = totalElapsedMillis,
+                        distanceMeters = distanceMeters,
+                        walkMillis = walkMillis,
+                        talkMillis = talkMillis,
+                        meditateMillis = meditateMillis,
+                        recorderState = recorderState,
+                    )
                 },
             )
         }
@@ -216,6 +232,126 @@ private fun StatColumn(
             style = pilgrimType.statLabel,
             color = pilgrimColors.fog,
         )
+    }
+}
+
+@Composable
+private fun ExpandedContent(
+    walkState: WalkState,
+    totalElapsedMillis: Long,
+    distanceMeters: Double,
+    walkMillis: Long,
+    talkMillis: Long,
+    meditateMillis: Long,
+    recorderState: VoiceRecorderUiState,
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = PilgrimSpacing.big),
+        verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = WalkFormat.duration(totalElapsedMillis),
+                style = pilgrimType.timer,
+                color = pilgrimColors.ink,
+            )
+            Spacer(Modifier.height(PilgrimSpacing.xs))
+            Text(
+                text = stringResource(R.string.walk_caption_every_step),
+                style = pilgrimType.caption,
+                color = pilgrimColors.fog.copy(alpha = 0.6f),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            StatColumn(
+                value = WalkFormat.distance(distanceMeters),
+                label = stringResource(R.string.walk_stat_distance),
+                modifier = Modifier.weight(1f),
+            )
+            StatColumn(
+                value = "—",
+                label = stringResource(R.string.walk_stat_steps),
+                modifier = Modifier.weight(1f),
+            )
+            StatColumn(
+                value = "—",
+                label = stringResource(R.string.walk_stat_ascent),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+        ) {
+            TimeChip(
+                label = stringResource(R.string.walk_chip_walk),
+                icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                value = WalkFormat.shortDuration(walkMillis),
+                active = walkState is WalkState.Active,
+                modifier = Modifier.weight(1f),
+            )
+            TimeChip(
+                label = stringResource(R.string.walk_chip_talk),
+                icon = Icons.Filled.Mic,
+                value = WalkFormat.shortDuration(talkMillis),
+                active = recorderState is VoiceRecorderUiState.Recording,
+                modifier = Modifier.weight(1f),
+            )
+            TimeChip(
+                label = stringResource(R.string.walk_chip_meditate),
+                icon = Icons.Outlined.SelfImprovement,
+                value = WalkFormat.shortDuration(meditateMillis),
+                active = walkState is WalkState.Meditating,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // ActionButtonRow lands in Task 10.
+    }
+}
+
+@Composable
+private fun TimeChip(
+    label: String,
+    icon: ImageVector,
+    value: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val border = if (active) pilgrimColors.dawn else pilgrimColors.fog.copy(alpha = 0.4f)
+    val tint = if (active) pilgrimColors.ink else pilgrimColors.fog
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(pilgrimColors.parchmentSecondary)
+            .border(1.dp, border, RoundedCornerShape(percent = 50))
+            .padding(vertical = PilgrimSpacing.xs, horizontal = PilgrimSpacing.small),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(14.dp),
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = value,
+                style = pilgrimType.statValue,
+                color = pilgrimColors.ink,
+            )
+            Text(
+                text = label,
+                style = pilgrimType.caption,
+                color = pilgrimColors.fog,
+            )
+        }
     }
 }
 
