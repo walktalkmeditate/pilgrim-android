@@ -74,8 +74,16 @@ fun WalkStartScreen(
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val uiState by walkViewModel.uiState.collectAsStateWithLifecycle()
-    val isInProgress = uiState.walkState.isInProgress
+    // Stage 5G trap (memorized): WalkViewModel.uiState uses
+    // WhileSubscribed(5s); after Path disposes for >5s (e.g., during a
+    // walk on ACTIVE_WALK), its upstream unsubscribes and the StateFlow's
+    // value freezes at the last seen emission. Reading isInProgress from
+    // uiState on tab-return would yield STALE in-progress=true, kicking
+    // off a spurious onEnterActiveWalk() loop. Use the direct
+    // hot-Singleton passthrough WalkViewModel.walkState — exists for
+    // exactly this purpose (mirrors ActiveWalkScreen line 53).
+    val walkState by walkViewModel.walkState.collectAsStateWithLifecycle()
+    val isInProgress = walkState.isInProgress
 
     // Back from the Path tab (the effective root) should background
     // the app, not destroy it. Launcher re-tap then resumes here.
@@ -204,6 +212,8 @@ internal fun pickRandomQuote(
         WalkMode.Seek -> R.array.path_quotes_seek
     }
     val quotes = context.resources.getStringArray(arrayId)
+    if (quotes.isEmpty()) return ""  // defensive: a future translation
+    // could ship an empty array; random.nextInt(0) would throw IAE.
     return quotes[random.nextInt(quotes.size)]
 }
 
