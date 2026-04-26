@@ -96,8 +96,13 @@ fun WalkStartScreen(
     var currentQuote by rememberSaveable(selectedMode) {
         mutableStateOf(pickRandomQuote(context, selectedMode))
     }
-    // Key on the calendar day so a multi-day-foregrounded session
-    // refreshes the moon phase across midnight.
+    // Re-keyed on the calendar day so when the screen recomposes
+    // (e.g., on tab return or config change), the moon phase
+    // recomputes if the day rolled over since last composition.
+    // A foregrounded screen left untouched across midnight will NOT
+    // refresh — Compose recomposes only on state changes, not
+    // wall-clock ticks. Acceptable: the user will navigate
+    // somewhere within hours either way.
     val today = LocalDate.now()
     val lunarPhase = remember(today) { MoonCalc.moonPhase(Instant.now()) }
     // Local "starting" flag was a 1-shot guard that never reset; if

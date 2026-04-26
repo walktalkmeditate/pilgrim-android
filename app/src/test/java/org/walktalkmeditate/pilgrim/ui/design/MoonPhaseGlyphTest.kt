@@ -51,7 +51,9 @@ class MoonPhaseGlyphTest {
     fun `waxing first quarter renders right-half disc`() {
         // illumination = 0.5, waxing = true → lit half is the right
         // semicircle (sun-side from observer's POV). Path should
-        // occupy x ∈ [center, center + radius], full y range.
+        // occupy x ∈ [center, center + radius], full y range. ALL FOUR
+        // bounds asserted so a future refactor that mirrors the arc
+        // (waxing → arc on left) can't pass by accident.
         val path = moonPhasePath(
             illumination = 0.5,
             isWaxing = true,
@@ -60,7 +62,7 @@ class MoonPhaseGlyphTest {
         )
         val bounds = path.getBounds()
         assertFalse("expected non-empty bounds for half illumination", bounds.isEmpty)
-        // Right edge at center + radius, top/bottom at the disc edges.
+        assertEquals("left", 100f, bounds.left, 0.5f)
         assertEquals("right", 150f, bounds.right, 0.5f)
         assertEquals("top", 50f, bounds.top, 0.5f)
         assertEquals("bottom", 150f, bounds.bottom, 0.5f)

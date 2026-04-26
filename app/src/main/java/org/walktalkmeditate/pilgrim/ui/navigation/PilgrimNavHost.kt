@@ -242,7 +242,16 @@ fun PilgrimNavHost(
                     // fire onFinished on its next composition, cleanly
                     // chaining to the summary screen — two hops but
                     // correct.
-                    navController.popBackStack(Routes.ACTIVE_WALK, inclusive = false)
+                    //
+                    // Defensive fallback: today MEDITATION can only be
+                    // reached FROM ACTIVE_WALK so popBackStack(ACTIVE_WALK)
+                    // always succeeds. A future code path that opens
+                    // MEDITATION via deep-link or a different surface
+                    // would silently no-op the back-out without this
+                    // single-pop fallback, leaving the user stranded.
+                    if (!navController.popBackStack(Routes.ACTIVE_WALK, inclusive = false)) {
+                        navController.popBackStack()
+                    }
                 },
             )
         }
@@ -255,14 +264,20 @@ fun PilgrimNavHost(
             val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
             WalkSummaryScreen(
                 onDone = {
-                    // Stage 9.5-A: prefer popping back to the launcher
-                    // context if it's on the stack (e.g., Goshuin →
-                    // Summary → Done lands BACK on Goshuin grid;
-                    // HOME → Summary → Done lands on HOME). For a
-                    // Path-launched walk, HOME isn't on the stack —
-                    // popBackStack returns false → fall through to
-                    // navigateToTab(HOME) so Done always reaches the
-                    // Journal tab as a safety net.
+                    // Stage 9.5-A: Done always lands the user on the
+                    // Journal (HOME) tab, regardless of how walkSummary
+                    // was reached:
+                    //  - Path-launched walk: stack is [PATH, walkSummary].
+                    //    popBackStack(HOME) returns false → fall through
+                    //    to navigateToTab(HOME) → push HOME on Path.
+                    //  - HOME-launched: stack [PATH, HOME, walkSummary].
+                    //    popBackStack(HOME) pops walkSummary, lands on HOME.
+                    //  - Goshuin-launched: stack [PATH, HOME, GOSHUIN,
+                    //    walkSummary]. popBackStack(HOME) pops both
+                    //    walkSummary AND GOSHUIN — user lands on HOME, not
+                    //    Goshuin. This is intentional: "Done" is the user
+                    //    saying "I'm done; show me the Journal." Re-opening
+                    //    Goshuin is a one-FAB-tap away.
                     if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
                         navController.navigateToTab(Routes.HOME)
                     }
