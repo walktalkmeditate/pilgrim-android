@@ -45,7 +45,7 @@ class WalkStatsSheetActionRowTest {
                 recorderState = recorderState,
                 audioLevel = 0f,
                 recordingsCount = 0,
-                onPause = {}, onResume = {},
+                onPause = {}, onResume = {}, onStartWalk = {},
                 onStartMeditation = onStartMeditation, onEndMeditation = onEndMeditation,
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
                 onFinish = onFinish,

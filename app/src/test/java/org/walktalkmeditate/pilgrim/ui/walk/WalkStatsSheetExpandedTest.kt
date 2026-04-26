@@ -39,7 +39,7 @@ class WalkStatsSheetExpandedTest {
                 recorderState = VoiceRecorderUiState.Idle,
                 audioLevel = 0f,
                 recordingsCount = 0,
-                onPause = {}, onResume = {},
+                onPause = {}, onResume = {}, onStartWalk = {},
                 onStartMeditation = {}, onEndMeditation = {},
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
                 onFinish = {},

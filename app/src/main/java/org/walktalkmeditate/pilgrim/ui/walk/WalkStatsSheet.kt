@@ -96,6 +96,7 @@ fun WalkStatsSheet(
     recordingsCount: Int,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
     onToggleRecording: () -> Unit,
@@ -238,6 +239,7 @@ fun WalkStatsSheet(
                         recordingsCount = recordingsCount,
                         onPause = onPause,
                         onResume = onResume,
+                        onStartWalk = onStartWalk,
                         onStartMeditation = onStartMeditation,
                         onEndMeditation = onEndMeditation,
                         onToggleRecording = onToggleRecording,
@@ -370,6 +372,7 @@ private fun ExpandedContent(
     recordingsCount: Int,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
     onToggleRecording: () -> Unit,
@@ -448,6 +451,7 @@ private fun ExpandedContent(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
+            onStartWalk = onStartWalk,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
             onToggleRecording = onToggleRecording,
@@ -466,35 +470,33 @@ private fun TimeChip(
     active: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val border = if (active) pilgrimColors.dawn else pilgrimColors.fog.copy(alpha = 0.4f)
-    val tint = if (active) pilgrimColors.ink else pilgrimColors.fog
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(percent = 50))
-            .background(pilgrimColors.parchmentSecondary)
-            .border(1.dp, border, RoundedCornerShape(percent = 50))
-            .padding(vertical = PilgrimSpacing.xs, horizontal = PilgrimSpacing.small),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+    // Direct port of iOS TimeMetricItem (ActiveWalkSubviews.swift:3-27):
+    // VStack with icon on top, value middle, label bottom. NO background,
+    // NO border. Icon color flips rust/stone for active/inactive.
+    val iconTint = if (active) pilgrimColors.rust else pilgrimColors.stone
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(14.dp),
+            tint = iconTint,
+            modifier = Modifier.size(16.dp),
         )
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = value,
-                style = pilgrimType.statValue,
-                color = pilgrimColors.ink,
-            )
-            Text(
-                text = label,
-                style = pilgrimType.caption,
-                color = pilgrimColors.fog,
-            )
-        }
+        Text(
+            text = value,
+            style = pilgrimType.statValue,
+            color = pilgrimColors.ink,
+            maxLines = 1,
+        )
+        Text(
+            text = label,
+            style = pilgrimType.statLabel,
+            color = pilgrimColors.fog,
+            maxLines = 1,
+        )
     }
 }
 
@@ -504,6 +506,7 @@ private fun ActionButtonRow(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
     onToggleRecording: () -> Unit,
@@ -511,9 +514,29 @@ private fun ActionButtonRow(
     onDismissError: () -> Unit,
     onFinish: () -> Unit,
 ) {
-    // 3-button row matching iOS reference: Meditate / Mic / End.
-    // Manual Pause was removed — iOS relies on motion-based auto-pause
-    // which Android does not yet have. Auto-pause is a deferred stage.
+    // Two-mode action surface matching iOS reference:
+    //
+    // - Idle (walk hasn't started yet): single Start button. The user
+    //   navigated to ActiveWalk from the Path tab but hasn't tapped
+    //   Start to begin recording. iOS's `.ready` state.
+    // - Active/Paused/Meditating: 3-button row Meditate / Mic / End.
+    //   Manual Pause is dropped — iOS uses motion-based auto-pause we
+    //   don't have yet.
+    if (walkState == WalkState.Idle) {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularActionButton(
+                label = stringResource(R.string.walk_action_start),
+                icon = Icons.Filled.PlayArrow,
+                // iOS uses moss-green for the Start button.
+                color = pilgrimColors.moss,
+                onClick = onStartWalk,
+            )
+        }
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
@@ -572,43 +595,44 @@ private fun CircularActionButton(
 ) {
     val effectiveColor = if (enabled) color else pilgrimColors.fog.copy(alpha = 0.4f)
     val interactionSource = remember { MutableInteractionSource() }
-    Column(
-        // indication = null suppresses the default Material ripple,
-        // which would otherwise draw a bounded rectangle over the
-        // Column (button circle + label) — visually a square card
-        // around the circular button.
-        modifier = modifier.clickable(
-            interactionSource = interactionSource,
-            indication = null,
-            enabled = enabled,
-            role = Role.Button,
-            onClick = onClick,
-        ),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    // iOS structure (WalkStatsSheet.swift:518-541): icon + label live
+    // INSIDE the circle as a centered VStack. Background fill + stroke,
+    // both circular.
+    Box(
+        modifier = modifier
+            .size(80.dp)
+            .clip(CircleShape)
+            .background(
+                color = effectiveColor.copy(alpha = 0.06f),
+                shape = CircleShape,
+            )
+            .border(1.5.dp, effectiveColor, CircleShape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled,
+                role = Role.Button,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(80.dp)
-                .background(
-                    color = effectiveColor.copy(alpha = 0.06f),
-                    shape = CircleShape,
-                )
-                .border(1.5.dp, effectiveColor, CircleShape),
-            contentAlignment = Alignment.Center,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = effectiveColor,
+                modifier = Modifier.size(22.dp),
+            )
+            Text(
+                text = label,
+                style = pilgrimType.caption,
+                color = effectiveColor,
+                maxLines = 1,
             )
         }
-        Spacer(Modifier.height(PilgrimSpacing.xs))
-        Text(
-            text = label,
-            style = pilgrimType.caption,
-            color = effectiveColor,
-            maxLines = 1,
-        )
     }
 }
 
@@ -662,48 +686,50 @@ private fun MicActionButton(
     val label = if (isRecording) "REC" else stringResource(R.string.walk_chip_talk)
 
     val interactionSource = remember { MutableInteractionSource() }
-    Column(
-        // indication = null: same rationale as CircularActionButton —
-        // suppress the bounded rectangle ripple over the circular pill.
-        modifier = modifier.clickable(
-            interactionSource = interactionSource,
-            indication = null,
-            enabled = enabled,
-            role = Role.Button,
-        ) {
-            if (isRecording || PermissionChecks.isMicrophoneGranted(context)) {
-                onToggle()
-            } else {
-                permLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            }
-        },
-        horizontalAlignment = Alignment.CenterHorizontally,
+    // iOS structure (WalkStatsSheet.swift:518-541): icon + label INSIDE
+    // the circle as a centered VStack.
+    Box(
+        modifier = modifier
+            .size(80.dp)
+            .clip(CircleShape)
+            .background(
+                color = effectiveColor.copy(
+                    alpha = if (isRecording) 0.18f else 0.06f,
+                ),
+                shape = CircleShape,
+            )
+            .border(1.5.dp, effectiveColor, CircleShape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled,
+                role = Role.Button,
+            ) {
+                if (isRecording || PermissionChecks.isMicrophoneGranted(context)) {
+                    onToggle()
+                } else {
+                    permLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            },
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(80.dp)
-                .background(
-                    color = effectiveColor.copy(
-                        alpha = if (isRecording) 0.18f else 0.06f,
-                    ),
-                    shape = CircleShape,
-                )
-                .border(1.5.dp, effectiveColor, CircleShape),
-            contentAlignment = Alignment.Center,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Icon(
                 imageVector = if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
                 contentDescription = null,
                 tint = effectiveColor,
+                modifier = Modifier.size(22.dp),
+            )
+            Text(
+                text = label,
+                style = pilgrimType.caption,
+                color = effectiveColor,
+                maxLines = 1,
             )
         }
-        Spacer(Modifier.height(PilgrimSpacing.xs))
-        Text(
-            text = label,
-            style = pilgrimType.caption,
-            color = effectiveColor,
-            maxLines = 1,
-        )
     }
 }
 
