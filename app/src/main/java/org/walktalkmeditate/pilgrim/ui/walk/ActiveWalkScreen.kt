@@ -40,7 +40,14 @@ fun ActiveWalkScreen(
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
-    val meditateMillis = WalkStats.totalMeditatedMillis(ui.walkState, ui.nowMillis)
+    // Stage 5-G: read walkState from the hot passthrough, not the
+    // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
+    // at the pre-meditation Meditating snapshot for one frame on
+    // re-entry; computing from ui.walkState would over-count the meditate
+    // chip by a full meditation duration for that frame. nowMillis being
+    // one tick stale is harmless — for Active state, totalMeditatedMillis
+    // does not consult `now` at all.
+    val meditateMillis = WalkStats.totalMeditatedMillis(navWalkState, ui.nowMillis)
 
     val context = LocalContext.current
     BackHandler(enabled = ui.walkState.isInProgress) {
