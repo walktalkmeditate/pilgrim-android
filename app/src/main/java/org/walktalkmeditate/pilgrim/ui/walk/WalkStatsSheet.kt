@@ -250,29 +250,26 @@ private fun SheetContentSwitcher(
     minimizedContent: @Composable () -> Unit,
     expandedContent: @Composable () -> Unit,
 ) {
-    val showExpanded = state == SheetState.Expanded
-    // zIndex flips draw + hit-test order so the visible layer is always
-    // on top. Without this, the alpha=0 child still sits on top in z-order
-    // and intercepts touches via its inner clickables (Stage 9.5-B polish:
-    // tapping the minimized row in an area that overlapped the expanded
-    // Pause button silently fired Pause). Compose's `graphicsLayer { alpha }`
-    // suppresses drawing but NOT pointer input.
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .zIndex(if (showExpanded) 0f else 1f)
-                .graphicsLayer { alpha = if (showExpanded) 0f else 1f }
-                .testTag(MINIMIZED_LAYER_TAG),
-        ) {
-            minimizedContent()
-        }
-        Box(
-            modifier = Modifier
-                .zIndex(if (showExpanded) 1f else 0f)
-                .graphicsLayer { alpha = if (showExpanded) 1f else 0f }
-                .testTag(EXPANDED_LAYER_TAG),
-        ) {
+    // Conditional composition so the sheet's measured height matches the
+    // visible variant's natural height. The earlier always-mount + alpha
+    // design measured to MAX(minimized, expanded) ≈ 340dp regardless of
+    // state, leaving a large blank parchment block under the minimized
+    // row. Device QA rejected that trade-off.
+    //
+    // Tearing down ExpandedContent on collapse means the mic button's
+    // LaunchedEffect(err) timer and permission launcher are re-created
+    // when the sheet next expands. The actual recording state lives in
+    // VoiceRecorder + WalkViewModel and survives composition swaps —
+    // only ephemeral UI side-effects re-init, which is harmless.
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(if (state == SheetState.Expanded) EXPANDED_LAYER_TAG else MINIMIZED_LAYER_TAG),
+    ) {
+        if (state == SheetState.Expanded) {
             expandedContent()
+        } else {
+            minimizedContent()
         }
     }
 }
@@ -444,8 +441,6 @@ private fun ExpandedContent(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
-            onPause = onPause,
-            onResume = onResume,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
             onToggleRecording = onToggleRecording,
@@ -502,8 +497,6 @@ private fun ActionButtonRow(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
     onToggleRecording: () -> Unit,
@@ -511,34 +504,13 @@ private fun ActionButtonRow(
     onDismissError: () -> Unit,
     onFinish: () -> Unit,
 ) {
+    // 3-button row matching iOS reference: Meditate / Mic / End.
+    // Manual Pause was removed — iOS relies on motion-based auto-pause
+    // which Android does not yet have. Auto-pause is a deferred stage.
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
     ) {
-        when (walkState) {
-            is WalkState.Active -> CircularActionButton(
-                label = stringResource(R.string.walk_action_pause),
-                icon = Icons.Filled.Pause,
-                color = pilgrimColors.stone,
-                onClick = onPause,
-                modifier = Modifier.weight(1f),
-            )
-            is WalkState.Paused -> CircularActionButton(
-                label = stringResource(R.string.walk_action_resume),
-                icon = Icons.Filled.PlayArrow,
-                color = pilgrimColors.stone,
-                onClick = onResume,
-                modifier = Modifier.weight(1f),
-            )
-            else -> CircularActionButton(
-                label = stringResource(R.string.walk_action_pause),
-                icon = Icons.Filled.Pause,
-                color = pilgrimColors.fog,
-                enabled = false,
-                onClick = {},
-                modifier = Modifier.weight(1f),
-            )
-        }
         when (walkState) {
             is WalkState.Active -> CircularActionButton(
                 label = stringResource(R.string.walk_action_meditate_short),

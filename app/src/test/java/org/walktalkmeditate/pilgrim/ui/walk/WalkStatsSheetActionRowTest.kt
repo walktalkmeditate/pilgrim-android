@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.filterToOne
@@ -29,8 +30,6 @@ class WalkStatsSheetActionRowTest {
     private fun render(
         walkState: WalkState,
         recorderState: VoiceRecorderUiState = VoiceRecorderUiState.Idle,
-        onPause: () -> Unit = {},
-        onResume: () -> Unit = {},
         onStartMeditation: () -> Unit = {},
         onEndMeditation: () -> Unit = {},
         onFinish: () -> Unit = {},
@@ -46,7 +45,7 @@ class WalkStatsSheetActionRowTest {
                 recorderState = recorderState,
                 audioLevel = 0f,
                 recordingsCount = 0,
-                onPause = onPause, onResume = onResume,
+                onPause = {}, onResume = {},
                 onStartMeditation = onStartMeditation, onEndMeditation = onEndMeditation,
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
                 onFinish = onFinish,
@@ -66,53 +65,55 @@ class WalkStatsSheetActionRowTest {
             )
 
     @Test
-    fun `Active state — Pause and Meditate enabled`() {
+    fun `Active state — Meditate enabled, no Pause button`() {
         render(WalkState.Active(WalkAccumulator(1L, 0L)))
-        nodeInExpandedWithText("Pause").assertIsEnabled()
         nodeInExpandedWithText("Meditate").assertIsEnabled()
+        // Pause button was removed in Stage 9.5-B device-QA pass to
+        // match iOS reference. Verify no clickable "Pause" exists.
+        composeRule.onAllNodesWithText("Pause")
+            .assertCountEquals(0)
     }
 
     @Test
-    fun `Paused state — Resume enabled, Meditate disabled`() {
-        render(WalkState.Paused(WalkAccumulator(1L, 0L), pausedAt = 0L))
-        nodeInExpandedWithText("Resume").assertIsEnabled()
-        nodeInExpandedWithText("Meditate").assertIsNotEnabled()
-    }
-
-    @Test
-    fun `Meditating state — End enabled, Pause disabled`() {
+    fun `Meditating state — End enabled, Mic enabled`() {
         render(
             WalkState.Meditating(
                 walk = WalkAccumulator(1L, 0L),
                 meditationStartedAt = 1_000L,
             )
         )
-        nodeInExpandedWithText("Pause").assertIsNotEnabled()
-        composeRule.onAllNodesWithText("End").apply {
-            assertTrue(fetchSemanticsNodes().size == 2)
-            this[0].assertIsEnabled()
-            this[1].assertIsEnabled()
-        }
+        // Two "End" labels: end-meditation slot + finish-walk slot.
+        // Both should be clickable + enabled.
+        val endButtons = composeRule.onAllNodesWithText("End")
+        endButtons.assertCountEquals(2)
+        endButtons[0].assertIsEnabled()
+        endButtons[1].assertIsEnabled()
+        // Mic ("Talk") stays enabled during meditation per
+        // walkState.isInProgress contract.
+        composeRule.onAllNodesWithText("Talk")
+            .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)) and hasClickAction())
+            .assertIsEnabled()
     }
 
     @Test
-    fun `Pause click fires onPause`() {
+    fun `Meditate click fires onStartMeditation`() {
         var fired = false
-        render(WalkState.Active(WalkAccumulator(1L, 0L)), onPause = { fired = true })
-        nodeInExpandedWithText("Pause").performClick()
+        render(
+            WalkState.Active(WalkAccumulator(1L, 0L)),
+            onStartMeditation = { fired = true },
+        )
+        nodeInExpandedWithText("Meditate").performClick()
         assertTrue(fired)
     }
 
     @Test
-    fun `Meditating state — Mic still enabled to capture in-meditation thoughts`() {
+    fun `Finish click fires onFinish`() {
+        var fired = false
         render(
-            WalkState.Meditating(
-                walk = WalkAccumulator(1L, 0L),
-                meditationStartedAt = 1_000L,
-            ),
+            WalkState.Active(WalkAccumulator(1L, 0L)),
+            onFinish = { fired = true },
         )
-        composeRule.onAllNodesWithText("Talk")
-            .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)) and hasClickAction())
-            .assertIsEnabled()
+        nodeInExpandedWithText("End").performClick()
+        assertTrue(fired)
     }
 }

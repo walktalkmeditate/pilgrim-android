@@ -21,7 +21,8 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 
-private val SHEET_HEIGHT_DP = 340.dp
+private val SHEET_HEIGHT_EXPANDED_DP = 340.dp
+private val SHEET_HEIGHT_MINIMIZED_DP = 88.dp
 
 @Composable
 fun ActiveWalkScreen(
@@ -71,15 +72,19 @@ fun ActiveWalkScreen(
         onUpdateState = { sheetState = it },
     )
 
+    val sheetInsetDp = if (sheetState == SheetState.Expanded) {
+        SHEET_HEIGHT_EXPANDED_DP
+    } else {
+        SHEET_HEIGHT_MINIMIZED_DP
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
             points = routePoints,
             followLatest = true,
             initialCenter = initialCameraCenter,
-            // Sheet height is constant for 9.5-B (see WalkStatsSheet
-            // kdoc). Map's bottom-inset uses that constant so the user
-            // puck stays visible above the sheet in BOTH detents.
-            bottomInsetDp = SHEET_HEIGHT_DP,
+            // Match map bottom-inset to the visible sheet height so the
+            // user puck stays just above the sheet in BOTH detents.
+            bottomInsetDp = sheetInsetDp,
             modifier = Modifier.fillMaxSize(),
         )
         WalkStatsSheet(
