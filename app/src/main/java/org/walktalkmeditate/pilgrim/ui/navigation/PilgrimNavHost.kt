@@ -72,15 +72,17 @@ object Routes {
 internal val TAB_ROUTES = setOf(Routes.PATH, Routes.HOME, Routes.SETTINGS)
 
 /**
- * Compose Nav's canonical tab-switch idiom: pop to the graph's start
- * destination (PERMISSIONS, but saveState=true preserves each tab's
- * back stack), avoid stacking duplicate top-of-tab entries, and
- * restore the destination's saved state if we're returning to a tab
- * that was previously visited.
+ * Compose Nav's tab-switch idiom adapted for our PERMISSIONS-then-PATH
+ * graph. PATH is the *effective* root after the post-onboarding
+ * inclusive-pop of PERMISSIONS removes PERMISSIONS from the stack.
+ * Using `findStartDestination()` (= PERMISSIONS) here would no-op the
+ * popUpTo (PERMISSIONS isn't on the stack), making each tab tap PUSH
+ * a new entry → unbounded stack growth. Hard-coding PATH ensures the
+ * pop actually fires + saveState/restoreState do their work.
  */
 internal fun NavHostController.navigateToTab(route: String) {
     navigate(route) {
-        popUpTo(graph.findStartDestination().id) { saveState = true }
+        popUpTo(Routes.PATH) { saveState = true }
         launchSingleTop = true
         restoreState = true
     }
@@ -209,8 +211,15 @@ fun PilgrimNavHost(
         composable(Routes.ACTIVE_WALK) {
             ActiveWalkScreen(
                 onFinished = { walkId ->
+                    // Stage 9.5-A: a walk launched from Path leaves HOME
+                    // off the back stack. popUpTo(HOME) would no-op +
+                    // leave ACTIVE_WALK in the stack. Pop to PATH (the
+                    // effective root) so [PATH, walkSummary] is the
+                    // resulting stack — Done returns to PATH which is
+                    // adjacent to the Journal tab.
                     navController.navigate(Routes.walkSummary(walkId)) {
-                        popUpTo(Routes.HOME) { inclusive = false }
+                        popUpTo(Routes.PATH) { inclusive = false }
+                        launchSingleTop = true
                     }
                 },
                 onEnterMeditation = {
@@ -247,7 +256,11 @@ fun PilgrimNavHost(
             val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
             WalkSummaryScreen(
                 onDone = {
-                    navController.popBackStack(Routes.HOME, inclusive = false)
+                    // Stage 9.5-A: switch to the Journal tab via the
+                    // tab idiom (HOME may not be on the back stack
+                    // after a Path-launched walk; popBackStack(HOME)
+                    // would silently no-op).
+                    navController.navigateToTab(Routes.HOME)
                 },
                 onShareJourney = {
                     navController.navigate(Routes.walkShare(walkId)) {
@@ -339,10 +352,12 @@ fun PilgrimNavHost(
             val alreadyInSession = currentRoute == Routes.ACTIVE_WALK ||
                 currentRoute == Routes.MEDITATION
             if (!alreadyInSession) {
-                // Stage 9.5-A: popUpTo PATH (default destination).
-                // Back from a deep-linked ACTIVE_WALK lands on Path —
-                // Path's didCheck latch ensures the auto-redirect fires
-                // at most once, so no Back-loop.
+                // Stage 9.5-A: popUpTo PATH (effective root). Back from
+                // a deep-linked ACTIVE_WALK is intercepted by
+                // ActiveWalkScreen's existing BackHandler (moveTaskToBack
+                // while in-progress), so we don't bounce back to PATH.
+                // launchSingleTop is the dedup mechanism for any
+                // accidental concurrent navigate(ACTIVE_WALK) calls.
                 navController.navigate(Routes.ACTIVE_WALK) {
                     popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true
@@ -361,19 +376,18 @@ fun PilgrimNavHost(
         }
         when (link) {
             is org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.WalkSummary -> {
-                // popUpTo HOME — Back from a deep-linked summary lands
-                // in the journal context (where finished walks live),
-                // not on Path.
+                // popUpTo PATH (effective root). Back from a deep-linked
+                // summary lands on Path; Done navigates to HOME via
+                // navigateToTab. HOME may not be on the back stack
+                // (cold-launch with widget tap → only PATH is there).
                 navController.navigate(Routes.walkSummary(link.walkId)) {
-                    popUpTo(Routes.HOME) { saveState = false }
+                    popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true
                 }
             }
             org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.Home -> {
                 if (currentRoute != Routes.HOME) {
-                    navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.HOME) { inclusive = true }
-                    }
+                    navController.navigateToTab(Routes.HOME)
                 }
             }
             org.walktalkmeditate.pilgrim.widget.DeepLinkTarget.ActiveWalk -> {

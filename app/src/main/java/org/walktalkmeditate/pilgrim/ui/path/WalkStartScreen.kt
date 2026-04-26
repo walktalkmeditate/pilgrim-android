@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.path
 
+import android.app.Activity
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
@@ -15,8 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.random.Random
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
@@ -76,12 +77,27 @@ fun WalkStartScreen(
     val uiState by walkViewModel.uiState.collectAsStateWithLifecycle()
     val isInProgress = uiState.walkState.isInProgress
 
+    // Back from the Path tab (the effective root) should background
+    // the app, not destroy it. Launcher re-tap then resumes here.
+    // Matches the platform convention for tab-rooted apps.
+    BackHandler {
+        (context as? Activity)?.moveTaskToBack(true)
+    }
+
     var selectedMode by rememberSaveable { mutableStateOf(WalkMode.Wander) }
     var currentQuote by rememberSaveable(selectedMode) {
         mutableStateOf(pickRandomQuote(context, selectedMode))
     }
-    val lunarPhase = remember { MoonCalc.moonPhase(Instant.now()) }
-    var starting by remember { mutableStateOf(false) }
+    // Key on the calendar day so a multi-day-foregrounded session
+    // refreshes the moon phase across midnight.
+    val today = LocalDate.now()
+    val lunarPhase = remember(today) { MoonCalc.moonPhase(Instant.now()) }
+    // Local "starting" flag was a 1-shot guard that never reset; if
+    // startWalk silently fails (state-machine rejection, FGS denial),
+    // the button would stay disabled forever. Drive disabled state
+    // directly off isInProgress instead — safe because the auto-redirect
+    // below navigates AWAY from PATH the moment isInProgress flips
+    // true, so the user never sees the button after that point.
 
     // Cold-launch one-shot resume-check. didCheck is rememberSaveable
     // so a config change doesn't re-fire the redirect.
@@ -117,29 +133,32 @@ fun WalkStartScreen(
                 .fillMaxSize()
                 .padding(PilgrimSpacing.big),
         ) {
-            Box(
+            // Centered content. We use Modifier.weight(1f) to take all
+            // remaining vertical space, then Arrangement.Center inside
+            // a NON-scrolling Column to vertically center logo + quote
+            // + moon. Phone screens fit comfortably; if a future
+            // accessibility scale breaks the fit, ModeSelector +
+            // Button still pin to the bottom (not scrolled off-screen).
+            // No verticalScroll: nesting an infinite-height parent
+            // around a Column.fillMaxSize would throw on layout.
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    BreathingLogo(size = 100.dp)
-                    Spacer(Modifier.height(PilgrimSpacing.big))
-                    Text(
-                        text = currentQuote,
-                        style = pilgrimType.displayMedium,
-                        color = pilgrimColors.fog,
-                        textAlign = TextAlign.Center,
-                        maxLines = 4,
-                    )
-                    Spacer(Modifier.height(PilgrimSpacing.big))
-                    MoonPhaseGlyph(phase = lunarPhase, size = 44.dp)
-                }
+                BreathingLogo(size = 100.dp)
+                Spacer(Modifier.height(PilgrimSpacing.big))
+                Text(
+                    text = currentQuote,
+                    style = pilgrimType.displayMedium,
+                    color = pilgrimColors.fog,
+                    textAlign = TextAlign.Center,
+                    maxLines = 4,
+                )
+                Spacer(Modifier.height(PilgrimSpacing.big))
+                MoonPhaseGlyph(phase = lunarPhase, size = 44.dp)
             }
             ModeSelector(
                 selectedMode = selectedMode,
@@ -147,13 +166,8 @@ fun WalkStartScreen(
             )
             Spacer(Modifier.height(PilgrimSpacing.normal))
             Button(
-                onClick = {
-                    if (!starting) {
-                        starting = true
-                        walkViewModel.startWalk()
-                    }
-                },
-                enabled = selectedMode.isAvailable && !starting,
+                onClick = { walkViewModel.startWalk() },
+                enabled = selectedMode.isAvailable && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = pilgrimColors.stone,
