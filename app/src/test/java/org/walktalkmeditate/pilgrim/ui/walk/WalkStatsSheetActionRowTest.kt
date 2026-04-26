@@ -88,8 +88,11 @@ class WalkStatsSheetActionRowTest {
             )
         )
         nodeInExpandedWithText("Pause").assertIsNotEnabled()
-        // "End" appears twice (end-meditation slot + finish-walk slot) —
-        // both should be enabled. Use onAllNodesWithText filter.
+        composeRule.onAllNodesWithText("End").apply {
+            assertTrue(fetchSemanticsNodes().size == 2)
+            this[0].assertIsEnabled()
+            this[1].assertIsEnabled()
+        }
     }
 
     @Test
@@ -98,5 +101,18 @@ class WalkStatsSheetActionRowTest {
         render(WalkState.Active(WalkAccumulator(1L, 0L)), onPause = { fired = true })
         nodeInExpandedWithText("Pause").performClick()
         assertTrue(fired)
+    }
+
+    @Test
+    fun `Meditating state — Mic still enabled to capture in-meditation thoughts`() {
+        render(
+            WalkState.Meditating(
+                walk = WalkAccumulator(1L, 0L),
+                meditationStartedAt = 1_000L,
+            ),
+        )
+        composeRule.onAllNodesWithText("Talk")
+            .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)) and hasClickAction())
+            .assertIsEnabled()
     }
 }

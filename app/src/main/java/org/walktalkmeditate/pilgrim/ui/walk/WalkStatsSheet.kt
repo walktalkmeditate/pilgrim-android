@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -541,7 +542,7 @@ private fun MicActionButton(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val enabled = walkState is WalkState.Active || walkState is WalkState.Paused
+    val enabled = walkState.isInProgress
     val isRecording = recorderState is VoiceRecorderUiState.Recording
 
     val permLauncher = rememberLauncherForActivityResult(
