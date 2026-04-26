@@ -218,9 +218,14 @@
     <string name="path_button_seek">Seek</string>
     <string name="path_start_a11y">Begin your journey</string>
 
-    <!-- Stage 9.5-A: Quote corpora as string-arrays. The `\n` escapes
-         render as newlines via Android's resource compiler (\\n in XML
-         attributes is wrong here; \n inside element content is correct). -->
+    <!-- TRANSLATORS: Stage 9.5-A quote corpora for the Path tab.
+         Pilgrim's voice is contemplative, slow, and aphoristic — like
+         a Zen koan or a walking-meditation manual, never a lifestyle
+         brand. Aim for that register in any translation. The `\n`
+         escapes are intentional line breaks for visual rhythm; preserve
+         them where they serve the cadence in your language. Each array
+         must contain at least one item — runtime defaults to "Walk
+         well." if empty, but you'd want something more poetic. -->
     <string-array name="path_quotes_wander">
         <item>Every journey begins\nwith a single step</item>
         <item>The path is made\nby walking</item>
