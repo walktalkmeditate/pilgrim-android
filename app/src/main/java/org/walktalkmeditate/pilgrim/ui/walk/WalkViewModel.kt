@@ -35,6 +35,7 @@ import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -215,20 +216,46 @@ class WalkViewModel @Inject constructor(
     }
 
     /**
-     * Live count of VoiceRecording rows for the current walk. Swapped
-     * via flatMapLatest whenever walkIdOrNull changes so we don't leak
-     * a DAO subscription across walks.
+     * Single source for voice-recording rows. Both [recordingsCount] and
+     * [talkMillis] derive from this flow so we open ONE Room subscription
+     * even when both downstream consumers are active.
      */
-    val recordingsCount: StateFlow<Int> = controller.state
+    private val voiceRecordings: StateFlow<List<VoiceRecording>> = controller.state
         .map { walkIdOrNull(it) }
         .distinctUntilChanged()
         .flatMapLatest { walkId ->
-            if (walkId == null) flowOf(0)
-            else repository.observeVoiceRecordings(walkId).map { it.size }
+            if (walkId == null) flowOf(emptyList())
+            else repository.observeVoiceRecordings(walkId)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
+
+    /**
+     * Live count of VoiceRecording rows for the current walk. Derives
+     * from [voiceRecordings] to share the upstream subscription with
+     * [talkMillis].
+     */
+    val recordingsCount: StateFlow<Int> = voiceRecordings
+        .map { it.size }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = 0,
+        )
+
+    /**
+     * Live total voice-recording duration, summed across all rows for
+     * the current walk. Drives the Talk time chip in the active-walk
+     * sheet.
+     */
+    val talkMillis: StateFlow<Long> = voiceRecordings
+        .map { rows -> rows.sumOf { it.durationMillis } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = 0L,
         )
 
     /**
