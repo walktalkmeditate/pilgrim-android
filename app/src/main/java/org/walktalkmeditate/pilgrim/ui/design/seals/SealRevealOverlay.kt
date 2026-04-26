@@ -11,6 +11,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -176,8 +177,14 @@ fun SealRevealOverlay(
             modifier = Modifier
                 .size(sealSizeDp.dp)
                 .scale(scale)
+                // shape = CircleShape so the elevation shadow renders as
+                // a circular halo behind the seal. Without an explicit
+                // shape, Compose falls back to RectangleShape and draws
+                // an opaque white rect behind the (mostly-transparent)
+                // seal — visible as a square card on parchment.
                 .shadow(
                     elevation = SHADOW_ELEVATION_DP.dp,
+                    shape = CircleShape,
                     ambientColor = Color.Black.copy(alpha = shadowAlpha),
                     spotColor = Color.Black.copy(alpha = shadowAlpha),
                 ),

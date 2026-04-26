@@ -272,12 +272,11 @@ fun PilgrimNavHost(
             val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
             WalkSummaryScreen(
                 onDone = {
-                    // Stage 9.5-A: Done always lands the user on the
-                    // Journal (HOME) tab, regardless of how walkSummary
-                    // was reached:
+                    // Done always lands the user on the Journal (HOME)
+                    // tab, regardless of how walkSummary was reached:
                     //  - Path-launched walk: stack is [PATH, walkSummary].
                     //    popBackStack(HOME) returns false → fall through
-                    //    to navigateToTab(HOME) → push HOME on Path.
+                    //    to the Path-launch branch below.
                     //  - HOME-launched: stack [PATH, HOME, walkSummary].
                     //    popBackStack(HOME) pops walkSummary, lands on HOME.
                     //  - Goshuin-launched: stack [PATH, HOME, GOSHUIN,
@@ -286,7 +285,17 @@ fun PilgrimNavHost(
                     //    Goshuin. This is intentional: "Done" is the user
                     //    saying "I'm done; show me the Journal." Re-opening
                     //    Goshuin is a one-FAB-tap away.
+                    //
+                    // Stage 9.5-B device-QA fix: for Path-launched walks,
+                    // we MUST pop walkSummary off PATH's stack before
+                    // navigateToTab(HOME), otherwise navigateToTab's
+                    // `popUpTo(PATH){saveState=true}` captures walkSummary
+                    // as part of PATH's tab state. The next Path-tab tap
+                    // then restores [PATH, walkSummary] instead of the
+                    // bare [PATH] (WalkStartScreen) the user expects —
+                    // they get stuck in a Done → Path → walkSummary loop.
                     if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                        navController.popBackStack(Routes.PATH, inclusive = false)
                         navController.navigateToTab(Routes.HOME)
                     }
                 },

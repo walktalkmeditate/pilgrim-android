@@ -49,6 +49,23 @@ object WalkStats {
         return activeSec / distanceKm
     }
 
+    /**
+     * Total meditation time including the in-progress meditation if any.
+     * For Active/Paused/Finished, returns the accumulator's
+     * totalMeditatedMillis (the reducer adds the just-completed slice on
+     * MeditateEnd / Finish). For Meditating, adds (now - startedAt) on
+     * top, clamped at zero so clock-skew can't produce a negative running
+     * total.
+     */
+    fun totalMeditatedMillis(state: WalkState, now: Long): Long = when (state) {
+        is WalkState.Meditating -> state.walk.totalMeditatedMillis +
+            (now - state.meditationStartedAt).coerceAtLeast(0L)
+        is WalkState.Active -> state.walk.totalMeditatedMillis
+        is WalkState.Paused -> state.walk.totalMeditatedMillis
+        is WalkState.Finished -> state.walk.totalMeditatedMillis
+        WalkState.Idle -> 0L
+    }
+
     private fun accumulatorOrNull(state: WalkState): WalkAccumulator? = when (state) {
         WalkState.Idle -> null
         is WalkState.Active -> state.walk

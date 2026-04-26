@@ -54,6 +54,24 @@ object WalkFormat {
         val seconds = totalSec % 60
         return String.format(Locale.US, "%d:%02d /km", minutes, seconds)
     }
+
+    /**
+     * Compact duration for the time-chip pills. Returns "—" for ≤0,
+     * "M:SS" below one hour, and "H:MM" at one hour or more so the
+     * chip text fits the narrow pill width even on long walks.
+     */
+    fun shortDuration(millis: Long): String {
+        if (millis <= 0) return "—"
+        val totalSeconds = millis / 1_000L
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            String.format(Locale.US, "%d:%02d", hours, minutes)
+        } else {
+            String.format(Locale.US, "%d:%02d", minutes, seconds)
+        }
+    }
 }
 
 /**

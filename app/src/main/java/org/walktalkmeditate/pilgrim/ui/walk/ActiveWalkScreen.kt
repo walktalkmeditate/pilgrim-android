@@ -3,41 +3,47 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
-import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+
+private val SHEET_HEIGHT_EXPANDED_DP = 340.dp
+private val SHEET_HEIGHT_MINIMIZED_DP = 88.dp
 
 @Composable
 fun ActiveWalkScreen(
@@ -46,34 +52,30 @@ fun ActiveWalkScreen(
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
-    // Navigation observer reads this (not ui.walkState) — the latter
-    // is a WhileSubscribed(5s) stateIn and goes stale when ActiveWalk's
-    // composition is disposed during a long meditation. walkState is a
-    // passthrough of the Singleton controller.state — always fresh.
+    // Navigation observer reads the passthrough flow, NOT uiState's
+    // WhileSubscribed(5s) cache. Stage 5G stale-cache trap; see
+    // WalkViewModel.walkState kdoc.
     val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
+    val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
+    // Stage 5-G: read walkState from the hot passthrough, not the
+    // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
+    // at the pre-meditation Meditating snapshot for one frame on
+    // re-entry; computing from ui.walkState would over-count the meditate
+    // chip by a full meditation duration for that frame. nowMillis being
+    // one tick stale is harmless — for Active state, totalMeditatedMillis
+    // does not consult `now` at all.
+    val meditateMillis = WalkStats.totalMeditatedMillis(navWalkState, ui.nowMillis)
 
-    // Back press during a walk would otherwise pop us to Home with the
-    // controller still in Active (service still tracking, timer still
-    // ticking, no UI to finish it). Treat back like Home: move the task
-    // to background. The walk continues, notification stays visible, user
-    // can return from the launcher or the notification tap.
     val context = LocalContext.current
     BackHandler(enabled = ui.walkState.isInProgress) {
         (context as? Activity)?.moveTaskToBack(true)
     }
 
-    // Key on state *class* so navigation fires on transitions only,
-    // not on every location-sample-driven Active → Active recomposition.
-    // Stage 5-A adds the Meditating branch: when the user taps the
-    // Meditate control, the VM dispatches MeditateStart → state becomes
-    // Meditating → this observer forwards to the dedicated
-    // MeditationScreen. The Idle/Active/Paused cases no-op because
-    // ActiveWalk IS the right surface for those.
     LaunchedEffect(navWalkState::class) {
         when (val state = navWalkState) {
             is WalkState.Finished -> onFinished(state.walk.walkId)
@@ -82,146 +84,172 @@ fun ActiveWalkScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(PilgrimSpacing.big),
-    ) {
-        WalkMap(points = routePoints, initialCenter = initialCameraCenter)
-        Spacer(Modifier.height(PilgrimSpacing.big))
-        Timer(ui.totalElapsedMillis)
-        Spacer(Modifier.height(PilgrimSpacing.normal))
-        StatRow(
-            distanceLabel = stringResource(R.string.walk_stat_distance),
-            distanceValue = WalkFormat.distance(ui.distanceMeters),
-            paceLabel = stringResource(R.string.walk_stat_pace),
-            paceValue = WalkFormat.pace(ui.paceSecondsPerKm),
+    var sheetState by rememberSaveable { mutableStateOf(SheetState.Expanded) }
+    // Drive sheet auto-state from the PASSTHROUGH walkState so we don't
+    // act on a stale uiState during the brief window after returning
+    // from MeditationScreen (Stage 5G stale-cache trap, generalized).
+    SheetStateController(
+        walkState = navWalkState,
+        onUpdateState = { sheetState = it },
+    )
+
+    val sheetInsetDp = if (sheetState == SheetState.Expanded) {
+        SHEET_HEIGHT_EXPANDED_DP
+    } else {
+        SHEET_HEIGHT_MINIMIZED_DP
+    }
+    var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
+    Box(modifier = Modifier.fillMaxSize()) {
+        PilgrimMap(
+            points = routePoints,
+            followLatest = true,
+            initialCenter = initialCameraCenter,
+            // Match map bottom-inset to the visible sheet height so the
+            // user puck stays just above the sheet in BOTH detents.
+            bottomInsetDp = sheetInsetDp,
+            modifier = Modifier.fillMaxSize(),
         )
-        Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
-        RecordControl(
-            walkState = ui.walkState,
+        // iOS-parity overlay row at the top of the map: ellipsis (options)
+        // top-left, X (leave walk) top-right.
+        // ActiveWalkView.swift:530-567.
+        MapOverlayButtons(
+            // TODO Stage 9.5-C: ellipsis opens an options sheet
+            // (intention/waypoint/whisper/stone/soundscape/voice-guide).
+            // No-op for now — the underlying features aren't all ported.
+            onOptionsClick = {},
+            onLeaveClick = { showLeaveConfirm = true },
+            // Stage 9.5-A trap (already fixed for the bottom sheet): the
+            // PilgrimNavHost Scaffold already passes status-bar inset
+            // through `Modifier.padding(innerPadding)` on the NavHost,
+            // so calling `statusBarsPadding()` here would double-count
+            // and push the buttons ~48dp lower than iOS. Just align to
+            // top of the already-inset content area.
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+        if (showLeaveConfirm) {
+            LeaveWalkDialog(
+                onConfirm = {
+                    showLeaveConfirm = false
+                    // TODO Stage 9.5-C: replace with viewModel.discardWalk()
+                    // that cancels FGS + deletes the walk row + samples
+                    // + events without persisting endTimestamp. For now
+                    // this saves the walk and routes to summary, which is
+                    // NOT iOS-equivalent ("This walk will not be saved").
+                    viewModel.finishWalk()
+                },
+                onDismiss = { showLeaveConfirm = false },
+            )
+        }
+        WalkStatsSheet(
+            state = sheetState,
+            onStateChange = { sheetState = it },
+            // Stage 5-G stale-cache trap: `ui.walkState` is sourced from a
+            // WhileSubscribed(5s) flow. After a meditation > 5s, ui freezes
+            // at the pre-meditation Meditating snapshot for one frame on
+            // ActiveWalkScreen re-entry, rendering the wrong action buttons
+            // (e.g., End Meditation when the controller is already Active).
+            // navWalkState is the hot Singleton passthrough — always fresh.
+            walkState = navWalkState,
+            totalElapsedMillis = ui.totalElapsedMillis,
+            distanceMeters = ui.distanceMeters,
+            walkMillis = ui.activeWalkingMillis,
+            talkMillis = talkMillis,
+            meditateMillis = meditateMillis,
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
-            onToggle = viewModel::toggleRecording,
-            onPermissionDenied = viewModel::emitPermissionDenied,
-            onDismissError = viewModel::dismissRecorderError,
-        )
-        Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
-        Controls(
-            walkState = ui.walkState,
             onPause = viewModel::pauseWalk,
             onResume = viewModel::resumeWalk,
+            onStartWalk = { viewModel.startWalk() },
             onStartMeditation = viewModel::startMeditation,
             onEndMeditation = viewModel::endMeditation,
+            onToggleRecording = viewModel::toggleRecording,
+            onPermissionDenied = viewModel::emitPermissionDenied,
+            onDismissError = viewModel::dismissRecorderError,
             onFinish = viewModel::finishWalk,
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
 
 @Composable
-private fun WalkMap(points: List<LocationPoint>, initialCenter: LocationPoint?) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(220.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = pilgrimColors.parchmentSecondary,
-        ),
-    ) {
-        PilgrimMap(
-            points = points,
-            followLatest = true,
-            initialCenter = initialCenter,
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
-}
-
-@Composable
-private fun Timer(elapsedMillis: Long) {
-    Text(
-        text = WalkFormat.duration(elapsedMillis),
-        style = pilgrimType.timer,
-        color = pilgrimColors.ink,
-    )
-}
-
-@Composable
-private fun StatRow(
-    distanceLabel: String,
-    distanceValue: String,
-    paceLabel: String,
-    paceValue: String,
+private fun MapOverlayButtons(
+    onOptionsClick: () -> Unit,
+    onLeaveClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(
+                start = PilgrimSpacing.normal,
+                end = PilgrimSpacing.normal,
+                top = PilgrimSpacing.normal,
+            ),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Stat(label = distanceLabel, value = distanceValue)
-        Stat(label = paceLabel, value = paceValue)
+        OverlayCircleButton(
+            icon = Icons.Filled.MoreHoriz,
+            contentDescription = "Walk options",
+            onClick = onOptionsClick,
+        )
+        OverlayCircleButton(
+            icon = Icons.Filled.Close,
+            contentDescription = "Leave walk",
+            onClick = onLeaveClick,
+        )
     }
 }
 
 @Composable
-private fun Stat(label: String, value: String) {
-    Column {
-        Text(text = value, style = pilgrimType.statValue, color = pilgrimColors.ink)
-        Text(text = label, style = pilgrimType.statLabel, color = pilgrimColors.fog)
-    }
-}
-
-@Composable
-private fun Controls(
-    walkState: WalkState,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onStartMeditation: () -> Unit,
-    onEndMeditation: () -> Unit,
-    onFinish: () -> Unit,
+private fun OverlayCircleButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            when (walkState) {
-                is WalkState.Active -> {
-                    TextButton(onClick = onStartMeditation) {
-                        Text(stringResource(R.string.walk_action_meditate))
-                    }
-                    Button(onClick = onPause) {
-                        Text(stringResource(R.string.walk_action_pause))
-                    }
-                }
-                is WalkState.Paused -> {
-                    Spacer(modifier = Modifier.size(0.dp))
-                    Button(onClick = onResume) {
-                        Text(stringResource(R.string.walk_action_resume))
-                    }
-                }
-                is WalkState.Meditating -> {
-                    Spacer(modifier = Modifier.size(0.dp))
-                    Button(onClick = onEndMeditation) {
-                        Text(stringResource(R.string.walk_action_end_meditation))
-                    }
-                }
-                WalkState.Idle, is WalkState.Finished -> Unit
-            }
-        }
-        Spacer(Modifier.height(PilgrimSpacing.normal))
-        Button(
-            onClick = onFinish,
-            enabled = walkState !is WalkState.Finished && walkState != WalkState.Idle,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = pilgrimColors.rust,
-                contentColor = pilgrimColors.parchment,
+    val interactionSource = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            // Compose has no `.ultraThinMaterial`. parchment-secondary at
+            // ~70% alpha reads as a soft translucent disc against either
+            // light- or dark-mode map tiles.
+            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.7f))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
             ),
-        ) {
-            Text(stringResource(R.string.walk_action_finish))
-        }
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = pilgrimColors.ink,
+            modifier = Modifier.size(18.dp),
+        )
     }
+}
+
+@Composable
+private fun LeaveWalkDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Leave Walk?") },
+        text = { Text("This walk will not be saved.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Leave") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Stay") }
+        },
+        containerColor = pilgrimColors.parchment,
+        titleContentColor = pilgrimColors.ink,
+        textContentColor = pilgrimColors.ink,
+    )
 }

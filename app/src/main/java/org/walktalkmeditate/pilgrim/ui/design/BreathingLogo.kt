@@ -30,11 +30,10 @@ import org.walktalkmeditate.pilgrim.R
  * composition-phase reads on every animation frame; the lambda form
  * keeps the read in the draw phase.
  *
- * **TODO (follow-up issue):** the breathing logo currently uses
- * `R.drawable.ic_launcher_foreground`, which has Android adaptive-icon
- * 18% safe-zone padding. The visual will be smaller than iOS's
- * edge-to-edge `pilgrimLogo` asset until we ship a dedicated
- * `R.drawable.ic_pilgrim_logo` vector.
+ * Source asset: `R.drawable.ic_pilgrim_logo`, ported edge-to-edge from
+ * `pilgrim-ios/Pilgrim/Support Files/Assets.xcassets/pilgrimLogo.imageset/`.
+ * The dark variant lives in `drawable-night-nodpi/`; system picks the
+ * correct one based on the night-mode configuration.
  */
 @Composable
 fun BreathingLogo(
@@ -58,7 +57,7 @@ fun BreathingLogo(
         animated
     }
     Image(
-        painter = painterResource(R.drawable.ic_launcher_foreground),
+        painter = painterResource(R.drawable.ic_pilgrim_logo),
         contentDescription = null,
         modifier = modifier
             .size(size)

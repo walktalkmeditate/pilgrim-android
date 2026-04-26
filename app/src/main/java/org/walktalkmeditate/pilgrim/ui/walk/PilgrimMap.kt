@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import android.util.Log
@@ -32,6 +33,7 @@ import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManag
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
@@ -51,6 +53,7 @@ fun PilgrimMap(
     modifier: Modifier = Modifier,
     followLatest: Boolean = false,
     initialCenter: LocationPoint? = null,
+    bottomInsetDp: Dp = 0.dp,
 ) {
     val darkMode = isSystemInDarkTheme()
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -59,6 +62,7 @@ fun PilgrimMap(
     // EdgeInsets values are physical pixels; convert from a dp constant so
     // the padding looks consistent across screen densities.
     val paddingPx = with(LocalDensity.current) { FIT_PADDING_DP.dp.toPx().toDouble() }
+    val bottomInsetPx = with(LocalDensity.current) { bottomInsetDp.toPx().toDouble() }
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
@@ -112,6 +116,9 @@ fun PilgrimMap(
             // GNSS stream. Future cleanup: implement a LocationProvider
             // backed by FusedLocationSource (turning it into a SharedFlow)
             // so the map + service share one subscription.
+            // iOS reference doesn't show a scale bar on the walk map and
+            // device QA flagged the "0—150m" indicator as visually noisy.
+            view.scalebar.enabled = false
             if (followLatest) {
                 view.location.updateSettings {
                     enabled = true
@@ -213,7 +220,7 @@ fun PilgrimMap(
                             .zoom(FOLLOW_ZOOM)
                             .bearing(current.bearing)
                             .pitch(current.pitch)
-                            .padding(current.padding)
+                            .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
                             .build(),
                         MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                     )
@@ -221,7 +228,7 @@ fun PilgrimMap(
                     val camera = view.mapboxMap.cameraForCoordinates(
                         mapboxPoints,
                         CameraOptions.Builder().build(),
-                        EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
+                        EdgeInsets(paddingPx, paddingPx, paddingPx + bottomInsetPx, paddingPx),
                         null,
                         null,
                     )
@@ -248,7 +255,7 @@ fun PilgrimMap(
                         .zoom(FOLLOW_ZOOM)
                         .bearing(current.bearing)
                         .pitch(current.pitch)
-                        .padding(current.padding)
+                        .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
                         .build(),
                     MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                 )
@@ -265,6 +272,7 @@ fun PilgrimMap(
                         CameraOptions.Builder()
                             .center(Point.fromLngLat(center.longitude, center.latitude))
                             .zoom(FOLLOW_ZOOM)
+                            .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
                             .build(),
                     )
                     didSetInitialCenter = true

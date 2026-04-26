@@ -8,6 +8,7 @@ import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
@@ -175,7 +177,12 @@ fun WalkStartScreen(
                 Spacer(Modifier.height(PilgrimSpacing.big))
                 Text(
                     text = currentQuote,
-                    style = pilgrimType.displayMedium,
+                    // displayMedium (28sp) is too large for the longest
+                    // quote ("The journey of a thousand miles...") on
+                    // typical phone widths — "miles" wraps onto its own
+                    // line. 22sp fits every shipping quote on a single
+                    // logical line per the explicit `\n` rhythm.
+                    style = pilgrimType.displayMedium.copy(fontSize = 22.sp),
                     color = pilgrimColors.fog,
                     textAlign = TextAlign.Center,
                     maxLines = 4,
@@ -189,9 +196,13 @@ fun WalkStartScreen(
             )
             Spacer(Modifier.height(PilgrimSpacing.normal))
             Button(
-                onClick = { walkViewModel.startWalk() },
+                // iOS parity: button navigates to the active-walk surface
+                // in its "ready" state. The walk does NOT start recording
+                // until the user taps the Start button on that screen.
+                onClick = { onEnterActiveWalk() },
                 enabled = selectedMode.isAvailable && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = pilgrimColors.stone,
                     contentColor = pilgrimColors.parchment,
@@ -289,8 +300,16 @@ private fun ModeButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // indication = null suppresses the default Material ripple — the
+    // mode tabs use a selected-underline as their tap feedback; the
+    // bounded grey ripple over the label area reads as broken UX.
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+        ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
