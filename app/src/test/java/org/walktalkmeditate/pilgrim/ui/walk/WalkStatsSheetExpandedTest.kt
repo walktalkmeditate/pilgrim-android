@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -66,15 +67,26 @@ class WalkStatsSheetExpandedTest {
         // Chip values via WalkFormat.shortDuration: walk=1:00, talk=1:30
         nodeInExpandedWithText("1:00").assertExists()
         nodeInExpandedWithText("1:30").assertExists()
-        // Chip labels.
+        // Chip labels (filter out the action-button "Talk" / "Meditate"
+        // labels in the bottom action row, which share the same text but
+        // belong to clickable parents).
         composeRule.onAllNodesWithText("Walk")
-            .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)))
+            .filterToOne(
+                hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)) and
+                    hasClickAction().not(),
+            )
             .assertExists()
         composeRule.onAllNodesWithText("Talk")
-            .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)))
+            .filterToOne(
+                hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)) and
+                    hasClickAction().not(),
+            )
             .assertExists()
         composeRule.onAllNodesWithText("Meditate")
-            .filterToOne(hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)))
+            .filterToOne(
+                hasAnyAncestor(hasTestTag(EXPANDED_LAYER_TAG)) and
+                    hasClickAction().not(),
+            )
             .assertExists()
     }
 }
