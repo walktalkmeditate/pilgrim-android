@@ -3,7 +3,12 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.filterToOne
+import androidx.compose.ui.test.hasParent
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
@@ -42,9 +47,15 @@ class WalkStatsSheetMinimizedTest {
                 onFinish = {},
             )
         }
-        composeRule.onNodeWithText("1:30").assertIsDisplayed()
-        composeRule.onNodeWithText("0.25 km").assertIsDisplayed()
-        composeRule.onNodeWithText("Steps").assertIsDisplayed()
+        composeRule.onAllNodesWithText("1:30")
+            .filterToOne(hasParent(hasTestTag(MINIMIZED_LAYER_TAG)))
+            .assertIsDisplayed()
+        composeRule.onAllNodesWithText("0.25 km")
+            .filterToOne(hasParent(hasTestTag(MINIMIZED_LAYER_TAG)))
+            .assertIsDisplayed()
+        composeRule.onAllNodesWithText("Steps")
+            .filterToOne(hasParent(hasTestTag(MINIMIZED_LAYER_TAG)))
+            .assertIsDisplayed()
     }
 
     @Test
@@ -66,7 +77,9 @@ class WalkStatsSheetMinimizedTest {
                 onFinish = {},
             )
         }
-        composeRule.onNodeWithText("Time").performClick()
+        composeRule.onAllNodesWithText("Time")
+            .filterToOne(hasParent(hasTestTag(MINIMIZED_LAYER_TAG)))
+            .performClick()
         assertEquals(SheetState.Expanded, newState)
     }
 }

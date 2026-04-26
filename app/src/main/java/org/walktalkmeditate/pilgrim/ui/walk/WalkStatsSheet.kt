@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
@@ -110,7 +111,6 @@ fun WalkStatsSheet(
                     )
                 },
                 expandedContent = {
-                    // ExpandedContent body added in Task 9.
                     Box(modifier = Modifier.fillMaxWidth())
                 },
             )
@@ -126,10 +126,18 @@ private fun SheetContentSwitcher(
 ) {
     val showExpanded = state == SheetState.Expanded
     Box {
-        Box(modifier = Modifier.alpha(if (showExpanded) 0f else 1f)) {
+        Box(
+            modifier = Modifier
+                .alpha(if (showExpanded) 0f else 1f)
+                .testTag(MINIMIZED_LAYER_TAG),
+        ) {
             minimizedContent()
         }
-        Box(modifier = Modifier.alpha(if (showExpanded) 1f else 0f)) {
+        Box(
+            modifier = Modifier
+                .alpha(if (showExpanded) 1f else 0f)
+                .testTag(EXPANDED_LAYER_TAG),
+        ) {
             expandedContent()
         }
     }
@@ -210,3 +218,6 @@ private fun StatColumn(
         )
     }
 }
+
+internal const val MINIMIZED_LAYER_TAG = "walk-sheet-minimized-layer"
+internal const val EXPANDED_LAYER_TAG = "walk-sheet-expanded-layer"
