@@ -53,6 +53,13 @@ fun SettingsScreen(
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.fetchOnAppear() }
     Scaffold(
+        // Stage 9.5-A: PilgrimNavHost's outer Scaffold already consumed
+        // the system bar insets; nesting this Scaffold with the default
+        // contentWindowInsets = WindowInsets.safeDrawing would re-apply
+        // them and add a visible gap above the bottom nav + below the
+        // status bar. Pass WindowInsets(0) so the inner Scaffold doesn't
+        // double-count.
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },

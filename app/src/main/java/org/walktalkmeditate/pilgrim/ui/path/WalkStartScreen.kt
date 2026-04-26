@@ -109,6 +109,17 @@ fun WalkStartScreen(
 
     // Cold-launch one-shot resume-check. didCheck is rememberSaveable
     // so a config change doesn't re-fire the redirect.
+    //
+    // Two cases:
+    //  - isInProgress=true on first composition (process revival with a
+    //    walk already alive in the @Singleton controller) → navigate
+    //    immediately.
+    //  - isInProgress=false → call restoreActiveWalk(); the controller
+    //    flips state to non-Idle BEFORE the suspend returns, which
+    //    re-keys the LaunchedEffect(isInProgress) below → that observer
+    //    handles navigation. We do NOT also call onEnterActiveWalk here
+    //    on the restored != null case (avoids a launchSingleTop-deduped
+    //    double-fire that bait-and-switches a future refactor).
     val didCheck = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (didCheck.value) return@LaunchedEffect
@@ -117,14 +128,13 @@ fun WalkStartScreen(
             onEnterActiveWalk()
             return@LaunchedEffect
         }
-        val restored = walkViewModel.restoreActiveWalk()
-        if (restored != null) onEnterActiveWalk()
+        walkViewModel.restoreActiveWalk()
     }
 
-    // Post-tap redirect: when startWalk dispatches and state transitions
-    // Idle → Active, route to ACTIVE_WALK. Gated on didCheck so the
-    // cold-launch path's redirect isn't double-fired before the latch
-    // is set on first composition.
+    // Post-tap redirect AND post-restore redirect: fires when state
+    // flips Idle → in-progress, gated on didCheck so the
+    // cold-launch path's first composition (where didCheck is still
+    // false) doesn't fire spuriously on the initial Idle observation.
     LaunchedEffect(isInProgress) {
         if (isInProgress && didCheck.value) {
             onEnterActiveWalk()
@@ -212,8 +222,13 @@ internal fun pickRandomQuote(
         WalkMode.Seek -> R.array.path_quotes_seek
     }
     val quotes = context.resources.getStringArray(arrayId)
-    if (quotes.isEmpty()) return ""  // defensive: a future translation
-    // could ship an empty array; random.nextInt(0) would throw IAE.
+    if (quotes.isEmpty()) {
+        // Defensive: a future translation could ship an empty array;
+        // random.nextInt(0) would throw IAE. Fall back to a hardcoded
+        // contemplative line so the Path screen never goes blank.
+        android.util.Log.w("WalkStartScreen", "empty quote array for $mode; check translations")
+        return "Walk well."
+    }
     return quotes[random.nextInt(quotes.size)]
 }
 
