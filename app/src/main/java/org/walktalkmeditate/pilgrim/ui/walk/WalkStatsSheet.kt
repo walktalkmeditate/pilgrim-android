@@ -48,13 +48,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -567,7 +568,7 @@ private fun CircularActionButton(
 ) {
     val effectiveColor = if (enabled) color else pilgrimColors.fog.copy(alpha = 0.4f)
     Column(
-        modifier = modifier.clickable(enabled = enabled, onClick = onClick),
+        modifier = modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -637,7 +638,7 @@ private fun MicActionButton(
     val label = if (isRecording) "REC" else stringResource(R.string.walk_chip_talk)
 
     Column(
-        modifier = modifier.clickable(enabled = enabled) {
+        modifier = modifier.clickable(enabled = enabled, role = Role.Button) {
             if (isRecording || PermissionChecks.isMicrophoneGranted(context)) {
                 onToggle()
             } else {
@@ -677,6 +678,9 @@ private fun MicActionButton(
 private const val MIC_ERROR_BANNER_MS = 4_000L
 
 private val DRAG_THRESHOLD_DP = 40.dp
+// Density-relative flick threshold. Compose's VelocityTracker reports
+// velocity in px/s, so we convert dp via density.toPx() at use time —
+// a "300dp/s" flick scales naturally across screen densities.
 private val DRAG_FLICK_VELOCITY_DP = 300.dp
 private val DRAG_CLAMP_DP = 100.dp
 
