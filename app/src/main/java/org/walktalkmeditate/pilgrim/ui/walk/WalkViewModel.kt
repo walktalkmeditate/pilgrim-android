@@ -219,6 +219,17 @@ class WalkViewModel @Inject constructor(
      * Single source for voice-recording rows. Both [recordingsCount] and
      * [talkMillis] derive from this flow so we open ONE Room subscription
      * even when both downstream consumers are active.
+     *
+     * Uses [SharingStarted.Eagerly] (not WhileSubscribed) because this
+     * flow is `private` — the only consumers are the public downstream
+     * [recordingsCount] and [talkMillis] derivations. A WhileSubscribed
+     * intermediate would create a three-tier chain where this flow
+     * silently caches a stale initial value if anything ever calls
+     * `voiceRecordings.value` directly without first subscribing (the
+     * Stage 5-F + 7-A trap: `.value` reads do NOT count as subscribers
+     * for WhileSubscribed). Upstream cost is zero — `controller.state`
+     * is a hot Singleton that's always live, and the Room flow only
+     * activates when there's an active walkId (flatMapLatest → flowOf).
      */
     private val voiceRecordings: StateFlow<List<VoiceRecording>> = controller.state
         .map { walkIdOrNull(it) }
@@ -228,7 +239,7 @@ class WalkViewModel @Inject constructor(
             else repository.observeVoiceRecordings(walkId)
         }.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            started = SharingStarted.Eagerly,
             initialValue = emptyList(),
         )
 

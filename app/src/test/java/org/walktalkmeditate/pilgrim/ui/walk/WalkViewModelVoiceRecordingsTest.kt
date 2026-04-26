@@ -10,6 +10,7 @@ import app.cash.turbine.test
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -154,6 +155,48 @@ class WalkViewModelVoiceRecordingsTest {
             controller.finishWalk()
             controller.startWalk(intention = null)
             assertEquals(0L, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `recordingsCount and talkMillis update in lockstep on each insert`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+
+        // combine() of both downstream flows proves they propagate from
+        // ONE upstream emission — if voiceRecordings ever stopped being a
+        // shared single source (e.g. someone refactored each downstream
+        // back to its own observeVoiceRecordings subscription), this test
+        // would still pass, but the test serves as a behavioral regression
+        // guard: both flows MUST update together for any single insert.
+        combine(viewModel.recordingsCount, viewModel.talkMillis) { count, millis ->
+            count to millis
+        }.test {
+            assertEquals(0 to 0L, awaitItem())
+
+            repository.recordVoice(
+                VoiceRecording(
+                    walkId = walkId,
+                    startTimestamp = 0L,
+                    endTimestamp = 5_000L,
+                    durationMillis = 5_000L,
+                    fileRelativePath = "recordings/x/a.wav",
+                ),
+            )
+            assertEquals(1 to 5_000L, awaitItem())
+
+            repository.recordVoice(
+                VoiceRecording(
+                    walkId = walkId,
+                    startTimestamp = 6_000L,
+                    endTimestamp = 9_000L,
+                    durationMillis = 3_000L,
+                    fileRelativePath = "recordings/x/b.wav",
+                ),
+            )
+            assertEquals(2 to 8_000L, awaitItem())
+
             cancelAndIgnoreRemainingEvents()
         }
     }
