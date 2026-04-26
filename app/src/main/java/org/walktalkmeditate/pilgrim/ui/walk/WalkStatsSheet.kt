@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -35,10 +38,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +58,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.isInProgress
@@ -105,7 +108,11 @@ fun WalkStatsSheet(
     val flickPx = remember(density) { with(density) { DRAG_FLICK_VELOCITY_DP.toPx() } }
     val clampPx = remember(density) { with(density) { DRAG_CLAMP_DP.toPx() } }
 
-    var dragOffset by remember { mutableFloatStateOf(0f) }
+    // Animatable so partial drags below the threshold spring back to 0
+    // smoothly instead of snapping. snapTo (synchronous set) is used
+    // during the drag tick; animateTo runs on release.
+    val dragOffset = remember { Animatable(0f) }
+    val coroutineScope = rememberCoroutineScope()
 
     val currentState by rememberUpdatedState(state)
     val currentCanDrag by rememberUpdatedState(canDrag)
@@ -113,12 +120,13 @@ fun WalkStatsSheet(
 
     val draggableState = rememberDraggableState { delta ->
         if (!currentCanDrag) return@rememberDraggableState
-        val proposed = (dragOffset + delta).coerceIn(-clampPx, clampPx)
-        dragOffset = when {
+        val proposed = (dragOffset.value + delta).coerceIn(-clampPx, clampPx)
+        val target = when {
             currentState == SheetState.Minimized && delta < 0 -> proposed
             currentState == SheetState.Expanded && delta > 0 -> proposed
-            else -> dragOffset
+            else -> dragOffset.value
         }
+        coroutineScope.launch { dragOffset.snapTo(target) }
     }
 
     val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
@@ -126,19 +134,19 @@ fun WalkStatsSheet(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .graphicsLayer { translationY = dragOffset }
+            .graphicsLayer { translationY = dragOffset.value }
             .draggable(
                 state = draggableState,
                 orientation = Orientation.Vertical,
                 onDragStopped = { velocity ->
                     if (!currentCanDrag) {
-                        dragOffset = 0f
+                        dragOffset.animateTo(0f, SNAP_BACK_SPEC)
                         return@draggable
                     }
                     val shouldExpand = currentState == SheetState.Minimized &&
-                        (dragOffset < -thresholdPx || velocity < -flickPx)
+                        (dragOffset.value < -thresholdPx || velocity < -flickPx)
                     val shouldCollapse = currentState == SheetState.Expanded &&
-                        (dragOffset > thresholdPx || velocity > flickPx)
+                        (dragOffset.value > thresholdPx || velocity > flickPx)
                     when {
                         shouldExpand -> {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -149,7 +157,7 @@ fun WalkStatsSheet(
                             currentOnStateChange(SheetState.Minimized)
                         }
                     }
-                    dragOffset = 0f
+                    dragOffset.animateTo(0f, SNAP_BACK_SPEC)
                 },
             ),
     ) {
@@ -695,6 +703,14 @@ private val DRAG_THRESHOLD_DP = 40.dp
 // a "300dp/s" flick scales naturally across screen densities.
 private val DRAG_FLICK_VELOCITY_DP = 300.dp
 private val DRAG_CLAMP_DP = 100.dp
+
+// Spring-back animation when the user releases below the commit
+// threshold. Default damping ratio + slightly lower stiffness reads as
+// a gentle rubber-band rather than a stiff snap.
+private val SNAP_BACK_SPEC = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+)
 
 internal const val MINIMIZED_LAYER_TAG = "walk-sheet-minimized-layer"
 internal const val EXPANDED_LAYER_TAG = "walk-sheet-expanded-layer"
