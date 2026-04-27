@@ -16,7 +16,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -94,25 +94,29 @@ class WaypointMarkingSheetTest {
         composeRule.onNodeWithText("50/50").assertIsDisplayed()
     }
 
-    @Test fun `iconKeyToVector covers every iOS SF-Symbol key plus mappin`() {
-        // Each known key should resolve to a non-null Material ImageVector.
-        // Unknown keys must fall back to LocationOn (not throw, not return
-        // null) so a future iOS-introduced symbol still renders.
-        val knownKeys = listOf(
-            "leaf", "eye", "heart", "figure.seated.side",
-            "sparkles", "flag.fill", "mappin",
-        )
-        knownKeys.forEach { key ->
-            val vector = iconKeyToVector(key)
-            // Non-null + non-LocationOn for the 6 chip keys (mappin is
-            // intentionally LocationOn so we don't enforce that here).
-            assertNotNull("iconKeyToVector('$key') must not be null", vector)
-        }
-        val fallback = iconKeyToVector("totally.unknown.future.symbol")
+    @Test fun `iconKeyToVector returns distinct vectors for each chip key and falls back to LocationOn`() {
+        // Each of the 6 chip keys must resolve to a DISTINCT Material
+        // vector — proves the when-branches aren't accidentally collapsed
+        // into the fallback. mappin and unknown both intentionally map to
+        // LocationOn (mappin is the iOS canonical custom-text icon).
+        val chipKeys = listOf("leaf", "eye", "heart", "figure.seated.side", "sparkles", "flag.fill")
+        val resolved = chipKeys.map { iconKeyToVector(it) }
         assertEquals(
-            "Unknown keys must fall back to LocationOn",
-            Icons.Filled.LocationOn,
-            fallback,
+            "Each chip key must resolve to a distinct ImageVector (no collapsed branches)",
+            chipKeys.size,
+            resolved.toSet().size,
         )
+        // None of the 6 chip keys should fall through to the LocationOn
+        // fallback — that would mean the when-branch silently regressed.
+        resolved.forEach { vector ->
+            assertNotEquals(
+                "Chip key resolved to LocationOn fallback (when-branch regressed)",
+                Icons.Filled.LocationOn,
+                vector,
+            )
+        }
+        // mappin and unknown both go to LocationOn by design.
+        assertEquals(Icons.Filled.LocationOn, iconKeyToVector("mappin"))
+        assertEquals(Icons.Filled.LocationOn, iconKeyToVector("totally.unknown.future.symbol"))
     }
 }

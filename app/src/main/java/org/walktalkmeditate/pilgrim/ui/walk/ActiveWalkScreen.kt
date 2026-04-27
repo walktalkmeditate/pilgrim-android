@@ -87,22 +87,6 @@ fun ActiveWalkScreen(
     // controller has even transitioned to Active. Pattern matches
     // Stage 9.5-B's WalkTrackingService.hasBeenActive latch.
     val hasSeenInProgress = rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(navWalkState::class) {
-        val state = navWalkState
-        if (state is WalkState.Active ||
-            state is WalkState.Paused ||
-            state is WalkState.Meditating
-        ) {
-            hasSeenInProgress.value = true
-        }
-        when (state) {
-            is WalkState.Finished -> onFinished(state.walk.walkId)
-            is WalkState.Meditating -> onEnterMeditation()
-            WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
-            else -> Unit
-        }
-    }
-
     var sheetState by rememberSaveable { mutableStateOf(SheetState.Expanded) }
     // Drive sheet auto-state from the PASSTHROUGH walkState so we don't
     // act on a stale uiState during the brief window after returning
@@ -122,19 +106,28 @@ fun ActiveWalkScreen(
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
-    // If the walk transitions to Idle (discard) or Finished while the
-    // options or waypoint sheet is open, dismiss it — leaving it visible
-    // over a stale walk would invite confused taps onto controller actions
-    // that no-op on terminal states. showPreWalkIntention is NOT dismissed
-    // here — Idle is the pre-walk surface itself, and the pill/dialog
-    // should remain accessible between walks.
+    // Single state-class side-effect block: track in-progress latch for
+    // the discard-nav guard, route to neighbor screens on terminal
+    // emissions, and dismiss in-walk sheets when the walk leaves an
+    // in-progress state. showPreWalkIntention is intentionally NOT
+    // dismissed here — Idle is the pre-walk surface itself, so the
+    // pill/dialog should remain accessible between walks.
     LaunchedEffect(navWalkState::class) {
-        if (navWalkState !is WalkState.Active &&
-            navWalkState !is WalkState.Paused &&
-            navWalkState !is WalkState.Meditating
-        ) {
+        val state = navWalkState
+        val isInProgress = state is WalkState.Active ||
+            state is WalkState.Paused ||
+            state is WalkState.Meditating
+        if (isInProgress) {
+            hasSeenInProgress.value = true
+        } else {
             showOptions = false
             showWaypointMarking = false
+        }
+        when (state) {
+            is WalkState.Finished -> onFinished(state.walk.walkId)
+            is WalkState.Meditating -> onEnterMeditation()
+            WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
+            else -> Unit
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {

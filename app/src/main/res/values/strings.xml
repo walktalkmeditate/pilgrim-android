@@ -263,7 +263,6 @@
 
     <!-- Stage 9.5-C: WalkOptionsSheet (in-walk options modal) -->
     <string name="walk_options_title">Options</string>
-    <string name="walk_options_intention_title">Set Intention</string>
     <string name="walk_options_intention_dialog_title">Set Intention</string>
     <string name="walk_options_intention_placeholder">A line for this walk&#8230;</string>
     <string name="walk_options_intention_save">Set</string>
