@@ -97,6 +97,18 @@ class WalkController @Inject constructor(
         dispatch(WalkAction.Finish(at = clock.now()))
     }
 
+    /**
+     * Stage 9.5-C: leaves the walk without saving. Active|Paused|Meditating
+     * transitions to Idle and the walk row + all child rows are removed
+     * via the `PurgeWalk` effect. Idle and Finished are no-ops; once a
+     * walk reaches Finished the row has been committed to history and
+     * deletion belongs to a different surface (Goshuin/Home long-press).
+     */
+    suspend fun discardWalk() {
+        Log.i(TAG, "discardWalk invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.Discard(at = clock.now()))
+    }
+
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))
 
     /**
@@ -282,7 +294,7 @@ class WalkController @Inject constructor(
                 }
             }
 
-            is WalkEffect.PurgeWalk -> Unit
+            is WalkEffect.PurgeWalk -> repository.deleteWalkById(effect.walkId)
         }
     }
 
