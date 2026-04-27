@@ -143,6 +143,14 @@ fun ActiveWalkScreen(
     //    write to a now-irrelevant `preWalkIntention` field. Bumping
     //    the resetKey discards any in-progress draft so a fresh open
     //    next time we reach Idle starts clean.
+    //
+    // Future-self note: keying on `navWalkState::class` means same-class
+    // back-to-back transitions (e.g., a hypothetical Active(walkA) →
+    // Active(walkB) without an intervening Idle/Finished) would NOT
+    // re-fire this effect. The reducer doesn't produce that pattern
+    // today (every walk-start requires Idle/Finished), but if a future
+    // path does, change the key to `navWalkState` (full instance) so
+    // walkId changes also trigger.
     LaunchedEffect(navWalkState::class) {
         val state = navWalkState
         val isInProgress = state is WalkState.Active ||
