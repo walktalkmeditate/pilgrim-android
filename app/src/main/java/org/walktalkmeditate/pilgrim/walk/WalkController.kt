@@ -156,7 +156,7 @@ class WalkController @Inject constructor(
      * Best-effort: any Throwable from the repository write is logged
      * + swallowed. A failed waypoint must not crash the walk.
      */
-    suspend fun recordWaypoint() {
+    suspend fun recordWaypoint(label: String? = null, icon: String? = null) {
         dispatchMutex.withLock {
             val accumulator = when (val s = _state.value) {
                 is WalkState.Active -> s.walk
@@ -172,7 +172,8 @@ class WalkController @Inject constructor(
                         timestamp = clock.now(),
                         latitude = location.latitude,
                         longitude = location.longitude,
-                        label = null,
+                        label = label,
+                        icon = icon,
                     ),
                 )
             } catch (ce: CancellationException) {
