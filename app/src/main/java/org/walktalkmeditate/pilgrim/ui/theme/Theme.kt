@@ -24,11 +24,16 @@ fun PilgrimTheme(
         AppearanceMode.Dark -> true
     }
 
-    val colors = if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
-    // Cache the PilgrimTypography instance across recompositions. Without this,
-    // every PilgrimTheme recomposition would allocate 12 fresh TextStyle instances
-    // AND — more importantly — invalidate every typography consumer, because
-    // LocalPilgrimTypography is a staticCompositionLocalOf (reference-equality).
+    // Cache the PilgrimColors AND PilgrimTypography instances across
+    // recompositions. Without `remember`, every PilgrimTheme recomposition
+    // would allocate fresh instances and — because LocalPilgrimColors and
+    // LocalPilgrimTypography are both staticCompositionLocalOf
+    // (reference-equality) — invalidate every consumer in the entire app
+    // tree. Key the colors `remember` on `darkTheme` so a flip between
+    // light and dark still produces a fresh palette.
+    val colors = remember(darkTheme) {
+        if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
+    }
     val type = remember { pilgrimTypography() }
 
     // `outline` is consumed by Material3's OutlinedButton (and TextField
