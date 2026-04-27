@@ -82,6 +82,10 @@ class WalkRepository @Inject constructor(
         walkDao.update(walk)
     }
 
+    suspend fun updateWalkIntention(walkId: Long, intention: String?) {
+        walkDao.updateIntention(walkId = walkId, intention = intention)
+    }
+
     suspend fun deleteWalk(walk: Walk) {
         walkDao.delete(walk)
     }

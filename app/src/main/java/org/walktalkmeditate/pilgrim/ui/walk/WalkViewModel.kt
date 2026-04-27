@@ -291,6 +291,45 @@ class WalkViewModel @Inject constructor(
     }
 
     /**
+     * Bump-counter that lets [intention] re-read the Walk row after a
+     * [setIntention] call. WalkAccumulator does not carry the intention
+     * (Stage 9.5-C decision: avoid cascading the field through the
+     * reducer + restore paths), so the controller's state flow does not
+     * fire on intention writes. This counter changes synchronously after
+     * each setIntention to retrigger the upstream re-read. Initial value
+     * 0 also triggers the first read on subscribe.
+     */
+    private val intentionRefreshTick = MutableStateFlow(0L)
+
+    /**
+     * Currently-set intention for the active walk, or null when no
+     * walk is in progress / no intention set. Re-reads the Walk row
+     * whenever the active walkId changes OR setIntention bumps
+     * [intentionRefreshTick]. Drives the WalkOptionsSheet subtitle.
+     */
+    val intention: StateFlow<String?> = combine(
+        controller.state.map { walkIdOrNull(it) }.distinctUntilChanged(),
+        intentionRefreshTick,
+    ) { walkId, _ -> walkId }
+        .flatMapLatest { walkId ->
+            if (walkId == null) flowOf<String?>(null)
+            else flow<String?> { emit(repository.getWalk(walkId)?.intention) }
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = null,
+        )
+
+    fun setIntention(text: String) {
+        viewModelScope.launch {
+            controller.setIntention(text)
+            intentionRefreshTick.value = intentionRefreshTick.value + 1L
+        }
+    }
+
+    /**
      * Toggle recording on/off. Dispatches to IO because
      * VoiceRecorder.stop() blocks on doneLatch (~100 ms) while the
      * capture loop finishes its last buffer — never call directly from

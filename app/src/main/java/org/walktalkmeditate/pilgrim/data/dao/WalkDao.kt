@@ -23,6 +23,9 @@ interface WalkDao {
     @Query("DELETE FROM walks WHERE id = :walkId")
     suspend fun deleteById(walkId: Long)
 
+    @Query("UPDATE walks SET intention = :intention WHERE id = :walkId")
+    suspend fun updateIntention(walkId: Long, intention: String?)
+
     @Query("SELECT * FROM walks WHERE id = :id")
     suspend fun getById(id: Long): Walk?
 

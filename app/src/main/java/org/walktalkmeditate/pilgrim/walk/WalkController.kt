@@ -112,6 +112,32 @@ class WalkController @Inject constructor(
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))
 
     /**
+     * Stage 9.5-C: persist a free-text intention on the active walk. Trims
+     * whitespace, truncates at [MAX_INTENTION_CHARS], and clears the field
+     * (writes null) when the resulting text is blank. No-op when no walk
+     * is in progress (Idle / Finished).
+     *
+     * Held under [dispatchMutex] so a concurrent finishWalk()'s Finalize
+     * effect can't interleave; the repo write is direct (no [WalkAction]
+     * dispatched) because intention is metadata that doesn't participate
+     * in the reducer's state-machine transitions.
+     */
+    suspend fun setIntention(text: String) {
+        dispatchMutex.withLock {
+            val walkId = activeWalkIdOrNull(_state.value) ?: return@withLock
+            val sanitized = text.trim().take(MAX_INTENTION_CHARS).takeIf { it.isNotBlank() }
+            repository.updateWalkIntention(walkId = walkId, intention = sanitized)
+        }
+    }
+
+    private fun activeWalkIdOrNull(state: WalkState): Long? = when (state) {
+        is WalkState.Active -> state.walk.walkId
+        is WalkState.Paused -> state.walk.walkId
+        is WalkState.Meditating -> state.walk.walkId
+        else -> null
+    }
+
+    /**
      * Stage 9-B: insert a Waypoint at the current location for the
      * in-progress walk. Allowed from Active / Paused / Meditating —
      * the controller method is permissive so a future in-app waypoint
@@ -300,5 +326,6 @@ class WalkController @Inject constructor(
 
     private companion object {
         const val TAG = "WalkController"
+        const val MAX_INTENTION_CHARS = 140
     }
 }
