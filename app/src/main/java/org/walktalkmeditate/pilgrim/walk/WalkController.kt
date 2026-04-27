@@ -97,7 +97,45 @@ class WalkController @Inject constructor(
         dispatch(WalkAction.Finish(at = clock.now()))
     }
 
+    /**
+     * Stage 9.5-C: leaves the walk without saving. Active|Paused|Meditating
+     * transitions to Idle and the walk row + all child rows are removed
+     * via the `PurgeWalk` effect. Idle and Finished are no-ops; once a
+     * walk reaches Finished the row has been committed to history and
+     * deletion belongs to a different surface (Goshuin/Home long-press).
+     */
+    suspend fun discardWalk() {
+        Log.i(TAG, "discardWalk invoked from state=${_state.value::class.simpleName}")
+        dispatch(WalkAction.Discard(at = clock.now()))
+    }
+
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))
+
+    /**
+     * Stage 9.5-C: persist a free-text intention on the active walk. Trims
+     * whitespace, truncates at [MAX_INTENTION_CHARS], and clears the field
+     * (writes null) when the resulting text is blank. No-op when no walk
+     * is in progress (Idle / Finished).
+     *
+     * Held under [dispatchMutex] so a concurrent finishWalk()'s Finalize
+     * effect can't interleave; the repo write is direct (no [WalkAction]
+     * dispatched) because intention is metadata that doesn't participate
+     * in the reducer's state-machine transitions.
+     */
+    suspend fun setIntention(text: String) {
+        dispatchMutex.withLock {
+            val walkId = activeWalkIdOrNull(_state.value) ?: return@withLock
+            val sanitized = text.trim().take(MAX_INTENTION_CHARS).takeIf { it.isNotBlank() }
+            repository.updateWalkIntention(walkId = walkId, intention = sanitized)
+        }
+    }
+
+    private fun activeWalkIdOrNull(state: WalkState): Long? = when (state) {
+        is WalkState.Active -> state.walk.walkId
+        is WalkState.Paused -> state.walk.walkId
+        is WalkState.Meditating -> state.walk.walkId
+        else -> null
+    }
 
     /**
      * Stage 9-B: insert a Waypoint at the current location for the
@@ -281,10 +319,13 @@ class WalkController @Inject constructor(
                         "the database. The in-memory state and persisted walk have diverged."
                 }
             }
+
+            is WalkEffect.PurgeWalk -> repository.deleteWalkById(effect.walkId)
         }
     }
 
     private companion object {
         const val TAG = "WalkController"
+        const val MAX_INTENTION_CHARS = 140
     }
 }

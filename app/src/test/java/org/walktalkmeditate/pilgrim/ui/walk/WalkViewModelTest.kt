@@ -450,6 +450,26 @@ class WalkViewModelTest {
     }
 
     @Test
+    fun `WalkState transitioning to Idle (discard) mirrors voice UI state to Idle`() = runTest(dispatcher) {
+        // Stage 9.5-C: added Idle branch to the voice recorder state mirror
+        // observer in the VM (previously only Finished was mirrored). When
+        // discarding a walk (Active → Idle), WalkLifecycleObserver stops the
+        // recorder + deletes the WAV. The VM must also mirror the UI state
+        // to Idle so the mic button doesn't briefly render Recording after
+        // the discard.
+        controller.startWalk(intention = null)
+        requireActiveWalkId()
+
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+        viewModel.audioLevel.first { it > 0f }
+
+        controller.discardWalk()  // Active → Idle (calls deleteWalkById internally)
+
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Idle }
+    }
+
+    @Test
     fun `recordingsCount reflects rows for the active walk`() = runTest(dispatcher) {
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()

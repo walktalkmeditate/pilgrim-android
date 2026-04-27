@@ -10,8 +10,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
-import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
-import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
@@ -34,15 +32,12 @@ import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
  * contributions and stale the widget for users who don't promptly
  * return to the app.
  *
- * **Voice auto-stop ownership** — this observer is the canonical owner
- * of `voiceRecorder.stop()` on Finished transitions. It runs in
- * [WalkFinalizationScope] (app lifetime, SupervisorJob) so the
- * stop+INSERT cannot be cancelled by VM nav-pop. The VM-side voice
- * state is updated reactively in `WalkViewModel.init` to Idle on
- * Finished, but it does NOT call stop — that would race this observer
- * (the previous design had this race; see commit history). If no
- * recording was active, `voiceRecorder.stop()` returns
- * `NoActiveRecording` and we proceed immediately.
+ * **Voice auto-stop ownership** — Stage 9.5-C moved voice auto-stop into
+ * the new [WalkLifecycleObserver], which fires on every in-progress →
+ * terminal transition (Finished AND the discardWalk-driven Idle
+ * transition). This observer no longer touches the recorder; it only
+ * runs the post-finish side-effect bundle when a finalized walk row
+ * exists.
  *
  * Per-walkId dedup defends against any future code path that might call
  * a hypothetical `externalFinalize` directly, plus the (today
@@ -68,7 +63,6 @@ class WalkFinalizationObserver @Inject constructor(
     private val hemisphereRepository: HemisphereRepository,
     private val collectiveRepository: CollectiveRepository,
     private val widgetRefreshScheduler: WidgetRefreshScheduler,
-    private val voiceRecorder: VoiceRecorder,
 ) {
     // Set is unbounded by design — one Long per finished walk for the
     // process lifetime. 8 bytes × 100k walks = 800 KB worst case;
@@ -100,32 +94,16 @@ class WalkFinalizationObserver @Inject constructor(
     }
 
     private suspend fun runFinalize(walkId: Long, state: WalkState.Finished) {
-        // Stop any in-progress voice recording + commit its row before
-        // computing talkMin. See class kdoc for the race details. This
-        // observer's stop() runs in WalkFinalizationScope (app-lifetime,
-        // SupervisorJob) so it cannot be cancelled by VM nav-pop.
-        val stopResult = voiceRecorder.stop()
-        when {
-            stopResult.isSuccess -> {
-                try {
-                    repository.recordVoice(stopResult.getOrThrow())
-                } catch (cancel: CancellationException) {
-                    throw cancel
-                } catch (t: Throwable) {
-                    Log.w(TAG, "auto-stop INSERT failed", t)
-                }
-            }
-            stopResult.exceptionOrNull() is VoiceRecorderError.NoActiveRecording -> {
-                // Nothing was recording — common case for walks with
-                // no voice notes. Proceed immediately.
-            }
-            else -> {
-                // Unexpected stop failure (audio HAL throw, FS I/O).
-                // Log + proceed; the WAV-on-disk is recoverable by
-                // OrphanRecordingSweeper.
-                Log.w(TAG, "voice auto-stop failed", stopResult.exceptionOrNull())
-            }
-        }
+        // Voice auto-stop on Finished now lives in WalkLifecycleObserver,
+        // which subscribes to the SAME state flow on the SAME app-lifetime
+        // scope and fires on Active|Paused|Meditating → Idle|Finished. By
+        // the time we read voiceRecordingsFor() below, that observer's
+        // stop()+INSERT may or may not have completed (no ordering
+        // guarantee between two collectors on the same flow), but the
+        // collective POST tolerates a stale-by-one talkMin — same
+        // tolerance the pre-Stage-9.5-C design had against any race
+        // with the VM-side auto-stop, except now the latency window is
+        // even narrower because both observers run on Dispatchers.IO.
         Log.i(TAG, "finalizing walk=$walkId")
         // Hemisphere refresh: read-only, idempotent. Repo internally
         // try/catches SecurityException on missing location permission;

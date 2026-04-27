@@ -57,6 +57,18 @@ class WalkTrackingService : Service() {
     private var locationJob: Job? = null
     private var notificationJob: Job? = null
 
+    /**
+     * Latch: true once the controller has emitted any in-progress state
+     * (Active|Paused|Meditating) since the service started observing.
+     * Required to distinguish the cold-start initial Idle (do NOT
+     * self-stop — service is freshly promoted to FGS, controller hasn't
+     * dispatched anything yet) from the Stage 9.5-C discardWalk
+     * Active→Idle transition (DO self-stop — walk row was just
+     * cascade-deleted, service has nothing left to track). Reset is
+     * unnecessary because the service is destroyed between walks.
+     */
+    private var hasBeenActive = false
+
     private lateinit var notificationActions: WalkNotificationActions
 
     override fun onCreate() {
@@ -154,15 +166,21 @@ class WalkTrackingService : Service() {
 
         notificationJob = scope.launch {
             controller.state.collect { state ->
-                if (state is WalkState.Finished) {
-                    // Skip the Finished render — onDestroy's
-                    // stopForeground(REMOVE) is about to clear the
-                    // notification anyway, and posting a "Walk
-                    // complete." rebuild here just lets the user
-                    // briefly see it flash on slower devices.
-                    stopSelf()
-                } else {
-                    updateNotification(state)
+                val (nextLatch, action) = decideStateAction(state, hasBeenActive)
+                hasBeenActive = nextLatch
+                when (action) {
+                    StateAction.SelfStop -> {
+                        // Skip the Finished render — onDestroy's
+                        // stopForeground(REMOVE) is about to clear the
+                        // notification anyway, and posting a "Walk
+                        // complete." rebuild here just lets the user
+                        // briefly see it flash on slower devices.
+                        // For Idle-after-in-progress (Stage 9.5-C
+                        // discard), same reasoning: the walk row was
+                        // just cascade-deleted, no point re-rendering.
+                        stopSelf()
+                    }
+                    StateAction.UpdateNotification -> updateNotification(state)
                 }
             }
         }
@@ -348,6 +366,17 @@ class WalkTrackingService : Service() {
         return classOrdinal * 10_000_000L + distanceBucket
     }
 
+    /**
+     * What the state-collector should do for the just-observed [state],
+     * given whether the service has previously seen any in-progress
+     * state. Returns the new latch value and the action.
+     *
+     * Pure function — extracted so the discard self-stop path can be
+     * unit-tested without standing up a full Robolectric service +
+     * Hilt environment. See `WalkTrackingServiceDecisionTest`.
+     */
+    internal enum class StateAction { SelfStop, UpdateNotification }
+
     companion object {
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
         const val ACTION_PAUSE = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.PAUSE"
@@ -370,5 +399,33 @@ class WalkTrackingService : Service() {
 
         fun startIntent(context: Context): Intent =
             Intent(context, WalkTrackingService::class.java).apply { action = ACTION_START }
+
+        /**
+         * Pure decision: given the latest observed [state] and whether
+         * the service has seen any in-progress state since onCreate,
+         * return the new latch value and what the collector should do.
+         *
+         * Behavior:
+         *  - Finished → always SelfStop (controller has reached terminal).
+         *  - Idle when latch=true → SelfStop (Stage 9.5-C discard path).
+         *  - Idle when latch=false → UpdateNotification (cold-start
+         *    initial Idle, before any walk has been dispatched).
+         *  - Active|Paused|Meditating → UpdateNotification + flip latch true.
+         */
+        internal fun decideStateAction(
+            state: WalkState,
+            hasBeenActive: Boolean,
+        ): Pair<Boolean, StateAction> {
+            val nextLatch = hasBeenActive ||
+                state is WalkState.Active ||
+                state is WalkState.Paused ||
+                state is WalkState.Meditating
+            val action = when {
+                state is WalkState.Finished -> StateAction.SelfStop
+                state is WalkState.Idle && hasBeenActive -> StateAction.SelfStop
+                else -> StateAction.UpdateNotification
+            }
+            return nextLatch to action
+        }
     }
 }

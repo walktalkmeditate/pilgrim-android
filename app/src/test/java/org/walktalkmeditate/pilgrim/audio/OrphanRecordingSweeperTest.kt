@@ -224,6 +224,88 @@ class OrphanRecordingSweeperTest {
     }
 
     @Test
+    fun `case_e sweepAll deletes recordings dir for walks with no row`() = runBlocking {
+        // Stage 9.5-C scenario: user discarded a walk whose row had a
+        // mid-recording WAV on disk. The walk row + voice_recordings rows
+        // were cascade-deleted, but the on-disk recordings/<uuid>/ tree
+        // is still there. case (e) reclaims it.
+        val ghostUuid = "11111111-2222-3333-4444-555555555555"
+        val ghostFile = writeWav(ghostUuid, "leftover.wav", dataBytes = 200)
+        // A real finished walk in parallel — its dir must NOT be touched.
+        val livingWalk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(livingWalk, endTimestamp = 60_000L)
+        val livingFile = writeWav(livingWalk.uuid, "kept.wav", dataBytes = 200)
+        insertRecording(livingWalk.id, fileRelativePath = "recordings/${livingWalk.uuid}/kept.wav")
+
+        val result = sweeper.sweepAll()
+
+        assertEquals(1, result.orphanDirsDeleted)
+        assertFalse("orphan dir's WAV must be deleted", Files.exists(ghostFile))
+        assertFalse(
+            "orphan dir itself must be deleted",
+            Files.exists(context.filesDir.toPath().resolve("recordings/$ghostUuid")),
+        )
+        assertTrue("finished walk's WAV must survive", Files.exists(livingFile))
+    }
+
+    @Test
+    fun `case_e preserves active walk dir even though it has no finished-walk row`() = runBlocking {
+        // Active walk: row exists in walks table with endTimestamp=null.
+        // sweepAll filters per-walk reconciliation to finished walks but
+        // case (e) consults the FULL walk list — its uuid IS known, so
+        // the dir survives.
+        val activeWalk = repository.startWalk(startTimestamp = 0L)
+        val inFlight = writeWav(activeWalk.uuid, "in-flight.wav", dataBytes = 100)
+
+        val result = sweeper.sweepAll()
+
+        assertEquals(0, result.orphanDirsDeleted)
+        assertTrue("active walk's dir must be preserved", Files.exists(inFlight))
+    }
+
+    @Test
+    fun `case_e refuses to delete non-uuid named dirs`() = runBlocking {
+        // A dir whose name isn't a valid UUID — e.g. a future stage's
+        // metadata or a manually-created folder. case (e) skips it
+        // rather than deleting on a name we don't recognize.
+        val weirdDir = context.filesDir.toPath().resolve("recordings/not-a-uuid")
+        Files.createDirectories(weirdDir)
+        val weirdFile = weirdDir.resolve("strange.wav")
+        Files.newOutputStream(weirdFile).use { it.write(ByteArray(10)) }
+
+        val result = sweeper.sweepAll()
+
+        assertEquals(0, result.orphanDirsDeleted)
+        assertTrue("non-uuid dir must be preserved", Files.exists(weirdDir))
+        assertTrue(Files.exists(weirdFile))
+    }
+
+    @Test
+    fun `deleteRecordingIfSafe removes a single WAV under recordings root`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val target = writeWav(walk.uuid, "victim.wav", dataBytes = 50)
+        val relative = "recordings/${walk.uuid}/victim.wav"
+
+        val deleted = sweeper.deleteRecordingIfSafe(relative)
+
+        assertTrue(deleted)
+        assertFalse(Files.exists(target))
+    }
+
+    @Test
+    fun `deleteRecordingIfSafe refuses paths that escape recordings root`() = runBlocking {
+        // A relative path that escapes filesDir/recordings via "..".
+        // The canonical-path guard must reject it without touching disk.
+        val outsideFile = context.filesDir.toPath().resolve("rogue.wav")
+        Files.newOutputStream(outsideFile).use { it.write(ByteArray(10)) }
+
+        val deleted = sweeper.deleteRecordingIfSafe("../rogue.wav")
+
+        assertFalse(deleted)
+        assertTrue("file outside recordings root must be preserved", Files.exists(outsideFile))
+    }
+
+    @Test
     fun `sweepAll skips active walk so its in-flight WAV is preserved`() = runBlocking {
         val activeWalk = repository.startWalk(startTimestamp = 0L)
         // Simulate an in-flight recording: WAV written but Room row

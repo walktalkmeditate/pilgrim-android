@@ -76,6 +76,8 @@ object WalkReducer {
                     walkId = state.walk.walkId,
                     endTimestamp = action.at,
                 )
+            is WalkAction.Discard ->
+                WalkState.Idle to WalkEffect.PurgeWalk(walkId = state.walk.walkId)
             else -> state to WalkEffect.None
         }
 
@@ -105,6 +107,8 @@ object WalkReducer {
                     endTimestamp = action.at,
                 )
             }
+            is WalkAction.Discard ->
+                WalkState.Idle to WalkEffect.PurgeWalk(walkId = state.walk.walkId)
             else -> state to WalkEffect.None
         }
 
@@ -134,6 +138,8 @@ object WalkReducer {
                     endTimestamp = action.at,
                 )
             }
+            is WalkAction.Discard ->
+                WalkState.Idle to WalkEffect.PurgeWalk(walkId = state.walk.walkId)
             else -> state to WalkEffect.None
         }
 }
