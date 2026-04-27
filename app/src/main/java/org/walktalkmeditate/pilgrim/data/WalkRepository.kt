@@ -127,6 +127,9 @@ class WalkRepository @Inject constructor(
 
     suspend fun waypointsFor(walkId: Long): List<Waypoint> = waypointDao.getForWalk(walkId)
 
+    fun observeWaypoints(walkId: Long): Flow<List<Waypoint>> =
+        waypointDao.observeForWalk(walkId)
+
     fun observeWaypointCount(walkId: Long): Flow<Int> =
         waypointDao.observeCountForWalk(walkId)
 
