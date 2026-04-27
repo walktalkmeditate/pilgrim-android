@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,10 +37,25 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setAppearanceMode(mode: AppearanceMode) {
-        viewModelScope.launch { appearancePreferences.setAppearanceMode(mode) }
+        viewModelScope.launch {
+            // DataStore writes can throw on disk-full / corrupt-prefs / IO
+            // failure. viewModelScope uses a SupervisorJob, so an unhandled
+            // throw from this child coroutine routes to the thread's
+            // uncaught exception handler — on Main, that crashes the
+            // process. Swallow + log: the optimistic UI selection (driven
+            // by collectAsStateWithLifecycle on the StateFlow) will revert
+            // to the persisted value on next emission, signaling the
+            // failure to the user without crashing.
+            runCatching { appearancePreferences.setAppearanceMode(mode) }
+                .onFailure { Log.w(TAG, "failed to persist appearance mode", it) }
+        }
     }
 
     fun fetchOnAppear() {
         viewModelScope.launch { collectiveRepository.fetchIfStale() }
+    }
+
+    private companion object {
+        const val TAG = "SettingsViewModel"
     }
 }

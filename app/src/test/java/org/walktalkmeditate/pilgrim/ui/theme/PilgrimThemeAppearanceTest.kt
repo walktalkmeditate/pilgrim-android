@@ -49,6 +49,26 @@ class PilgrimThemeAppearanceTest {
     }
 
     @Test
+    fun `system defers to isSystemInDarkTheme`() {
+        // Robolectric's UiModeManager defaults to UI_MODE_NIGHT_NO, so
+        // `isSystemInDarkTheme()` returns false. AppearanceMode.System
+        // must therefore resolve to the light palette here. This locks
+        // in the System branch's behavior so a future refactor can't
+        // silently regress it (e.g., flipping the `when` arm to always
+        // dark would only be caught by this test).
+        var captured: PilgrimColors? = null
+        composeRule.setContent {
+            PilgrimTheme(appearanceMode = AppearanceMode.System) {
+                val c = pilgrimColors
+                SideEffect { captured = c }
+            }
+        }
+        composeRule.runOnIdle {
+            assertEquals(pilgrimLightColors().parchment, captured!!.parchment)
+        }
+    }
+
+    @Test
     fun `light and dark resolve to different palettes`() {
         // Sanity: the test would silently pass if both palettes were
         // accidentally identical. Verifying they differ ensures the

@@ -44,7 +44,7 @@ fun PilgrimTheme(
     // `colors` (which itself is keyed on `darkTheme`) so unrelated
     // PilgrimTheme recompositions don't reallocate the 30+ field
     // ColorScheme.
-    val m3 = remember(colors, darkTheme) {
+    val m3 = remember(colors) {
         if (darkTheme) {
             darkColorScheme(
                 primary = colors.stone,
