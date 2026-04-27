@@ -58,20 +58,13 @@ class WalkLifecycleObserver @Inject constructor(
     init {
         scope.launch {
             var firstEmission = true
-            var prevWasInProgress = false
             walkState.collect { state ->
-                val nowInProgress = state is WalkState.Active ||
-                    state is WalkState.Paused ||
-                    state is WalkState.Meditating
                 if (firstEmission) {
                     firstEmission = false
-                    prevWasInProgress = nowInProgress
                     return@collect
                 }
-                val wasInProgress = prevWasInProgress
-                prevWasInProgress = nowInProgress
 
-                // Finished is unconditional: stop + commit. The recorder
+                // Both Finished and Idle are unconditional: the recorder
                 // returns NoActiveRecording (gracefully handled below)
                 // when nothing was running, so this is idempotent for
                 // the common no-voice-notes walk. Why unconditional?
@@ -81,16 +74,16 @@ class WalkLifecycleObserver @Inject constructor(
                 // only `Finished` without ever observing
                 // `Active|Paused|Meditating`. A transition latch would
                 // wrongly skip the stop+commit in that race window.
-                //
-                // Idle DOES require having previously seen in-progress,
-                // because cold-start Idle is not a transition (and the
-                // controller initializes its state flow to Idle, so the
-                // first emission is always Idle).
+                // Similarly, under high CPU contention, discardWalk's
+                // Active → Idle transition can arrive with `prevWasInProgress`
+                // stale, skipping the stop for a discard. Unconditional
+                // Idle is safe: cold-start Idle is still skipped via
+                // firstEmission latch (not a transition), and all
+                // in-progress → Idle paths call stop() unconditionally
+                // (no-op if no recording was running).
                 when (state) {
                     is WalkState.Finished -> handleVoiceStop(commitRow = true)
-                    WalkState.Idle -> if (wasInProgress) {
-                        handleVoiceStop(commitRow = false)
-                    }
+                    WalkState.Idle -> handleVoiceStop(commitRow = false)
                     else -> Unit
                 }
             }

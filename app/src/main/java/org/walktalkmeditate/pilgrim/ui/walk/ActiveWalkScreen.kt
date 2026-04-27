@@ -86,7 +86,7 @@ fun ActiveWalkScreen(
     // ActiveWalk would spuriously fire onDiscarded() before the
     // controller has even transitioned to Active. Pattern matches
     // Stage 9.5-B's WalkTrackingService.hasBeenActive latch.
-    val hasSeenInProgress = remember { mutableStateOf(false) }
+    val hasSeenInProgress = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(navWalkState::class) {
         val state = navWalkState
         if (state is WalkState.Active ||
