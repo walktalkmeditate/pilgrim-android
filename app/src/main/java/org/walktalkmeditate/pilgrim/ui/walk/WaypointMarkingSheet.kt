@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LocationOn
@@ -119,10 +121,17 @@ fun WaypointMarkingSheet(
         containerColor = pilgrimColors.parchment,
     ) {
         Column(
-            modifier = Modifier.padding(
-                horizontal = PilgrimSpacing.big,
-                vertical = PilgrimSpacing.normal,
-            ),
+            // Defense against small screens with high font scaling: chip
+            // grid + custom note row + counter + Cancel can exceed the
+            // ModalBottomSheet's content viewport, pushing Mark below the
+            // visible region. NestedScroll cooperates with the sheet's
+            // drag-down gesture so scrolling within content stays smooth.
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    horizontal = PilgrimSpacing.big,
+                    vertical = PilgrimSpacing.normal,
+                ),
             verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
         ) {
             Text(

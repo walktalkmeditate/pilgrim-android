@@ -103,10 +103,18 @@ fun ActiveWalkScreen(
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
-    // preWalkIntention persists across rotation AND across `restoreActiveWalk`
-    // process-restart. The latter case is acceptable: a user typing a draft
-    // during a process kill can still see + use it on cold-start return,
-    // and the draft is cleared on the next successful Start.
+    // preWalkIntention persists across rotation, tab-switching (PilgrimNavHost
+    // pops Path with saveState=true), AND process death (rememberSaveable
+    // bundle round-trip). It is ONLY cleared by:
+    //   (a) successful Start — `onStartWalk` resets to null after the
+    //       intention is committed to the Walk row, OR
+    //   (b) back-button pop of the ACTIVE_WALK route — the NavBackStackEntry
+    //       is destroyed and the rememberSaveable bundle dies with it.
+    // The persistence-across-tab-switch behavior is intentional: a user who
+    // composed a draft while checking an old walk in Goshuin returns to
+    // their draft. Persistence-across-process-death covers the crash-recovery
+    // case. If the surface is reached weeks later with stale draft text, the
+    // user can still re-tap Set or just hit Start to commit it as-is.
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
