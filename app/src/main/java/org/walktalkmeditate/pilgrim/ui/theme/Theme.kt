@@ -8,12 +8,22 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 
 @Composable
 fun PilgrimTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    appearanceMode: AppearanceMode = AppearanceMode.System,
     content: @Composable () -> Unit,
 ) {
+    // Resolve appearance preference -> dark/light flag. `System` defers
+    // to the platform via `isSystemInDarkTheme()`; `Light`/`Dark` force
+    // the theme regardless of system setting.
+    val darkTheme = when (appearanceMode) {
+        AppearanceMode.System -> isSystemInDarkTheme()
+        AppearanceMode.Light -> false
+        AppearanceMode.Dark -> true
+    }
+
     val colors = if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
     // Cache the PilgrimTypography instance across recompositions. Without this,
     // every PilgrimTheme recomposition would allocate 12 fresh TextStyle instances
