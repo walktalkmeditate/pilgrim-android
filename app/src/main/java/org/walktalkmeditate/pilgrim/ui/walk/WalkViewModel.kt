@@ -270,6 +270,27 @@ class WalkViewModel @Inject constructor(
         )
 
     /**
+     * Live count of Waypoint rows for the current walk. Drives the
+     * Drop Waypoint subtitle in the WalkOptionsSheet.
+     */
+    val waypointCount: StateFlow<Int> = controller.state
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
+            if (walkId == null) flowOf(0)
+            else repository.observeWaypointCount(walkId)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = 0,
+        )
+
+    fun dropWaypoint() {
+        viewModelScope.launch { controller.recordWaypoint() }
+    }
+
+    /**
      * Toggle recording on/off. Dispatches to IO because
      * VoiceRecorder.stop() blocks on doneLatch (~100 ms) while the
      * capture loop finishes its last buffer — never call directly from
