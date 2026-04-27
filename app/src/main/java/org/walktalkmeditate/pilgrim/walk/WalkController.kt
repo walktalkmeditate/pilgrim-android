@@ -230,23 +230,12 @@ class WalkController @Inject constructor(
             "recoverStaleWalks: scan total=${all.size} unfinished=${unfinished.size} " +
                 "ids=${unfinished.map { it.id }} state=${_state.value::class.simpleName}",
         )
-        // Warm-launch case: process survived swipe-from-recents (FGS
-        // didn't fully tear down despite stopWithTask="true"). Controller
-        // still holds the walk in memory as Active|Paused|Meditating.
-        // Force the in-memory state back to Idle so the UI doesn't redirect
-        // to ActiveWalkScreen on the next composition. Done UNCONDITIONALLY
-        // before any reads of `_state` below — the in-memory state is
-        // authoritatively wrong if any walks are unfinished AND the
-        // controller is non-Idle (the swipe meant "end this walk").
-        if (unfinished.isNotEmpty() && _state.value !is WalkState.Idle) {
-            Log.i(TAG, "recoverStaleWalks: resetting in-memory state ${_state.value::class.simpleName} → Idle")
-            _state.value = WalkState.Idle
-        }
         if (unfinished.isEmpty()) {
             return@withLock null
         }
         var mostRecentlyRecovered: Long? = null
         var mostRecentStart = Long.MIN_VALUE
+        var mostRecentEndTs = 0L
         for (walk in unfinished) {
             val lastSample = repository.lastLocationSampleFor(walk.id)
             val endTs = lastSample?.timestamp ?: (walk.startTimestamp + 1L)
@@ -260,9 +249,44 @@ class WalkController @Inject constructor(
                 if (walk.startTimestamp > mostRecentStart) {
                     mostRecentStart = walk.startTimestamp
                     mostRecentlyRecovered = walk.id
+                    mostRecentEndTs = endTs
                 }
             } else {
                 Log.w(TAG, "recoverStaleWalks: finishWalkAtomic returned false for walk=${walk.id}")
+            }
+        }
+        // Warm-launch case: process survived swipe-from-recents (FGS
+        // didn't fully tear down despite stopWithTask="true"). Controller
+        // still holds the walk in memory as Active|Paused|Meditating.
+        // We need to flip the in-memory state OUT of "in-progress" so
+        // WalkStartScreen's `isInProgress` redirect doesn't navigate
+        // back to ActiveWalkScreen on the next composition.
+        //
+        // CRITICAL: emit Finished, NOT Idle. WalkLifecycleObserver's
+        // Idle branch deletes any in-flight WAV (treats Idle as the
+        // discardWalk path). Recovery is logically a finish-without-tap,
+        // not a discard — so the lifecycle observer's Finished branch
+        // (commit row + keep WAV) is the correct route. WalkFinalizationObserver
+        // also fires on Finished, which gets us transcription scheduling +
+        // collective POST + widget refresh for free.
+        val current = _state.value
+        if (current is WalkState.Active ||
+            current is WalkState.Paused ||
+            current is WalkState.Meditating
+        ) {
+            val accumulator = when (current) {
+                is WalkState.Active -> current.walk
+                is WalkState.Paused -> current.walk
+                is WalkState.Meditating -> current.walk
+                else -> null
+            }
+            if (accumulator != null) {
+                Log.i(
+                    TAG,
+                    "recoverStaleWalks: in-memory ${current::class.simpleName} → " +
+                        "Finished(walkId=${accumulator.walkId}, endedAt=$mostRecentEndTs)",
+                )
+                _state.value = WalkState.Finished(walk = accumulator, endedAt = mostRecentEndTs)
             }
         }
         return@withLock mostRecentlyRecovered

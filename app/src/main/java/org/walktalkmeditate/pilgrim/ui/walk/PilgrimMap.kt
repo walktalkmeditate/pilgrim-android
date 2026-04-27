@@ -295,19 +295,11 @@ fun PilgrimMap(
             // walk) so wholesale replace is cheaper than diffing — and
             // simpler than tracking row identity across recompositions.
             val pointMgr = waypointManager
-            Log.i(
-                "PilgrimMap",
-                "update waypoints=${waypoints.size} mgr=${pointMgr != null} bitmap=${waypointBitmap.width}x${waypointBitmap.height}",
-            )
             if (pointMgr != null) {
                 if (waypointAnnotations.isNotEmpty()) {
                     waypointAnnotations.forEach { pointMgr.delete(it) }
                 }
                 waypointAnnotations = waypoints.map { wp ->
-                    Log.i(
-                        "PilgrimMap",
-                        "creating waypoint at ${wp.latitude},${wp.longitude} label=${wp.label}",
-                    )
                     pointMgr.create(
                         PointAnnotationOptions()
                             .withPoint(Point.fromLngLat(wp.longitude, wp.latitude))

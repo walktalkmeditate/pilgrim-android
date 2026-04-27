@@ -105,7 +105,23 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "warm-launch recovery: controller=${state::class.simpleName}, no-op")
             return
         }
-        Log.i(TAG, "warm-launch recovery: controller=${state::class.simpleName}, finalizing")
+        // CRITICAL gate: if WalkTrackingService FGS is still alive, the
+        // walk is genuinely in-progress in this same process — the user
+        // came BACK to it (notification tap, launcher icon while in
+        // background). Do NOT finalize. Only finalize if FGS is gone,
+        // which signals the user-initiated swipe-from-recents path.
+        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive()) {
+            Log.i(
+                TAG,
+                "warm-launch recovery: FGS is alive (controller=${state::class.simpleName}); " +
+                    "user returned to a live walk, NOT finalizing",
+            )
+            return
+        }
+        Log.i(
+            TAG,
+            "warm-launch recovery: controller=${state::class.simpleName}, FGS gone, finalizing",
+        )
         try {
             val recoveredId = runBlocking { walkController.recoverStaleWalks() }
             if (recoveredId != null) {
