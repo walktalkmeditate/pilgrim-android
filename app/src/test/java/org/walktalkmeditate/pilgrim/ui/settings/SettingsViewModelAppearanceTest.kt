@@ -9,7 +9,6 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,13 +22,12 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
@@ -40,27 +38,20 @@ import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 
 /**
- * SettingsViewModel is a thin passthrough to [CollectiveRepository]:
- *  - `stats: StateFlow<CollectiveStats?> = repo.stats`
- *  - `optIn: StateFlow<Boolean> = repo.optIn`
- *  - `fun setOptIn(value)` → `viewModelScope.launch { repo.setOptIn(value) }`
- *  - `fun fetchOnAppear()` → `viewModelScope.launch { repo.fetchIfStale() }`
+ * Unit-tests the appearance-mode passthrough on [SettingsViewModel]:
+ *  - `appearanceMode: StateFlow<AppearanceMode> = repo.appearanceMode`
+ *  - `fun setAppearanceMode(mode)` → `viewModelScope.launch { repo.setAppearanceMode(mode) }`
  *
- * The two StateFlow passthroughs are exercised here. The two
- * `viewModelScope.launch`-based delegations are NOT tested via the VM
- * here — they hit a brittle Robolectric main-Looper / runBlocking /
- * viewModelScope-launch interaction where any test that suspends
- * across the launch boundary while sharing the same simulated main
- * thread deadlocks under multi-class run ordering. Their underlying
- * behavior is fully covered in CollectiveRepositoryTest (setOptIn
- * round-trip + fetchIfStale TTL gate). The VM bodies themselves are
- * one-line `viewModelScope.launch { repo.foo(arg) }`s — code reading
- * verifies the wiring more reliably than a flaky integration test.
+ * Mirrors the existing `SettingsViewModelTest` setup (real
+ * [CollectiveRepository] + a stub service) since the project does not
+ * use `mockk`. The appearance side uses an in-memory
+ * [FakeAppearancePreferencesRepository] so we can flip the mode and
+ * observe it surfacing through the VM.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
-class SettingsViewModelTest {
+class SettingsViewModelAppearanceTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext<Application>()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -69,13 +60,12 @@ class SettingsViewModelTest {
     private lateinit var cacheStore: CollectiveCacheStore
     private lateinit var fakeService: FakeCounterService
     private lateinit var scope: CoroutineScope
-    private lateinit var repo: CollectiveRepository
-    private lateinit var vm: SettingsViewModel
+    private lateinit var collectiveRepo: CollectiveRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(Dispatchers.Unconfined)
-        val unique = "test_settings_${UUID.randomUUID()}"
+        val unique = "test_settings_appearance_${UUID.randomUUID()}"
         dataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         dataStore = PreferenceDataStoreFactory.create(
             scope = dataStoreScope,
@@ -84,8 +74,7 @@ class SettingsViewModelTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        repo = CollectiveRepository(cacheStore, fakeService, scope)
-        vm = SettingsViewModel(repo, FakeAppearancePreferencesRepository())
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope)
     }
 
     @After
@@ -96,21 +85,25 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `stats StateFlow proxies the repo's stats`() = runBlocking {
-        cacheStore.writeStats(
-            CollectiveStats(totalWalks = 17, totalDistanceKm = 42.0, totalMeditationMin = 3, totalTalkMin = 1),
-            fetchedAtMs = 1_000L,
+    fun `appearanceMode reflects repo value`() = runBlocking {
+        val appearanceRepo = FakeAppearancePreferencesRepository(initial = AppearanceMode.Dark)
+        val vm = SettingsViewModel(
+            collectiveRepository = collectiveRepo,
+            appearancePreferences = appearanceRepo,
         )
-        val seen = vm.stats.first { it != null }
-        assertEquals(17, seen!!.totalWalks)
-        assertEquals(42.0, seen.totalDistanceKm, 0.001)
+        assertEquals(AppearanceMode.Dark, vm.appearanceMode.first())
     }
 
     @Test
-    fun `optIn StateFlow proxies the repo's optIn`() = runBlocking {
-        assertFalse(vm.optIn.first())
-        cacheStore.setOptIn(true)
-        assertTrue(vm.optIn.first { it })
+    fun `setAppearanceMode delegates to repo`() = runBlocking {
+        val appearanceRepo = FakeAppearancePreferencesRepository()
+        val vm = SettingsViewModel(
+            collectiveRepository = collectiveRepo,
+            appearancePreferences = appearanceRepo,
+        )
+        assertEquals(AppearanceMode.System, vm.appearanceMode.first())
+        vm.setAppearanceMode(AppearanceMode.Light)
+        assertEquals(AppearanceMode.Light, vm.appearanceMode.first { it == AppearanceMode.Light })
     }
 
     private class FakeCounterService(context: Context, json: Json) :
@@ -120,15 +113,7 @@ class SettingsViewModelTest {
             deviceTokenStore = DeviceTokenStore(context),
             baseUrl = "http://localhost",
         ) {
-        var fetchResult: CollectiveStats = CollectiveStats(0, 0.0, 0, 0)
-        var postResult: PostResult = PostResult.Success
-        val fetchCount = AtomicInteger(0)
-
-        override suspend fun fetch(): CollectiveStats {
-            fetchCount.incrementAndGet()
-            return fetchResult
-        }
-
-        override suspend fun post(delta: CollectiveCounterDelta): PostResult = postResult
+        override suspend fun fetch(): CollectiveStats = CollectiveStats(0, 0.0, 0, 0)
+        override suspend fun post(delta: CollectiveCounterDelta): PostResult = PostResult.Success
     }
 }

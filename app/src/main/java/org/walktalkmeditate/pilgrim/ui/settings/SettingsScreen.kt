@@ -3,7 +3,9 @@ package org.walktalkmeditate.pilgrim.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -51,6 +53,7 @@ fun SettingsScreen(
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
+    val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.fetchOnAppear() }
     Scaffold(
         // Stage 9.5-A: PilgrimNavHost's outer Scaffold already consumed
@@ -90,6 +93,11 @@ fun SettingsScreen(
                 .padding(padding)
                 .padding(top = 8.dp),
         ) {
+            AtmosphereCard(
+                currentMode = appearanceMode,
+                onSelectMode = viewModel::setAppearanceMode,
+            )
+            Spacer(Modifier.height(12.dp))
             CollectiveStatsCard(stats = stats)
             CollectiveOptInRow(checked = optIn, onCheckedChange = viewModel::setOptIn)
             SettingsRow(

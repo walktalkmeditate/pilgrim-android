@@ -10,9 +10,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
+import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
 import org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
@@ -32,6 +34,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var walkController: WalkController
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
+    @Inject lateinit var appearancePreferences: AppearancePreferencesRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,7 +60,8 @@ class MainActivity : ComponentActivity() {
             recoverIfStaleActiveWalk()
         }
         setContent {
-            PilgrimTheme {
+            val appearanceMode by appearancePreferences.appearanceMode.collectAsStateWithLifecycle()
+            PilgrimTheme(appearanceMode = appearanceMode) {
                 // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
                 // the chain. MainActivity's previous Scaffold was
                 // double-counting insets (parent + child both consuming
