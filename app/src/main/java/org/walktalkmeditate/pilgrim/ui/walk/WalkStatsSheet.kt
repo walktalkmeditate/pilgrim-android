@@ -21,9 +21,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -94,6 +97,9 @@ fun WalkStatsSheet(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    intention: String? = null,
+    preWalkIntention: String? = null,
+    onSetPreWalkIntention: () -> Unit = {},
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStartWalk: () -> Unit,
@@ -237,6 +243,9 @@ fun WalkStatsSheet(
                         recorderState = recorderState,
                         audioLevel = audioLevel,
                         recordingsCount = recordingsCount,
+                        intention = intention,
+                        preWalkIntention = preWalkIntention,
+                        onSetPreWalkIntention = onSetPreWalkIntention,
                         onPause = onPause,
                         onResume = onResume,
                         onStartWalk = onStartWalk,
@@ -370,6 +379,9 @@ private fun ExpandedContent(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    intention: String?,
+    preWalkIntention: String?,
+    onSetPreWalkIntention: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStartWalk: () -> Unit,
@@ -394,11 +406,17 @@ private fun ExpandedContent(
                 color = pilgrimColors.ink,
             )
             Spacer(Modifier.height(PilgrimSpacing.xs))
-            Text(
-                text = stringResource(R.string.walk_caption_every_step),
-                style = pilgrimType.caption,
-                color = pilgrimColors.fog.copy(alpha = 0.6f),
-            )
+            Crossfade(
+                targetState = intention?.trim()?.takeIf { it.isNotEmpty() },
+                animationSpec = tween(durationMillis = 600, easing = EaseInOut),
+                label = "intention-caption",
+            ) { resolved ->
+                Text(
+                    text = resolved ?: stringResource(R.string.walk_caption_every_step),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog.copy(alpha = 0.6f),
+                )
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -451,6 +469,8 @@ private fun ExpandedContent(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
+            preWalkIntention = preWalkIntention,
+            onSetPreWalkIntention = onSetPreWalkIntention,
             onStartWalk = onStartWalk,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
@@ -501,11 +521,14 @@ private fun TimeChip(
 }
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 private fun ActionButtonRow(
     walkState: WalkState,
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    preWalkIntention: String?,
+    onSetPreWalkIntention: () -> Unit,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
