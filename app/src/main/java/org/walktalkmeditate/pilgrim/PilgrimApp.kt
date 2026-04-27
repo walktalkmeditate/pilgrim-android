@@ -19,6 +19,8 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
+import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
+import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
 import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
 
@@ -116,6 +118,21 @@ class PilgrimApp : Application(), Configuration.Provider {
      */
     @Inject lateinit var walkLifecycleObserver: WalkLifecycleObserver
 
+    /**
+     * Cold-launch recovery: any Walk row whose `end_timestamp IS NULL`
+     * is a walk the OS killed (swipe-from-recents, force-stop, low-mem
+     * kill) without going through the normal `finishWalk` path.
+     * `recoverStaleWalks` finalizes them in Room and returns the most
+     * recent recovered walkId so the Path tab can show a transient
+     * banner — iOS-parity recovery UX.
+     *
+     * Runs once at process start. Warm launches (the process was already
+     * alive) don't re-run this — `Application.onCreate` only fires on
+     * cold start, exactly when we want recovery to apply.
+     */
+    @Inject lateinit var walkController: WalkController
+    @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -201,6 +218,36 @@ class PilgrimApp : Application(), Configuration.Provider {
         // running and an orphan WAV on disk that the user has no UI
         // to recover.
         walkLifecycleObserver.hashCode()
+
+        // Cold-launch stale-walk recovery. Any walk with end_timestamp
+        // NULL is one the OS killed (swipe-from-recents, force-stop,
+        // low-memory kill) without a normal finishWalk. Auto-finalize
+        // in Room + arm the recovery banner. iOS-parity UX (their
+        // WalkSessionGuard.recoverIfNeeded does the same on cold start
+        // via the JSON checkpoint file).
+        //
+        // runBlocking on the main thread is acceptable here: the recovery
+        // path is a single Room SELECT + a small fixed number of UPDATEs
+        // (typically 0-1 walks). Total cost <50ms in practice. Running
+        // synchronously here guarantees the banner is armed before any
+        // UI composition reads `recoveredWalkId`, eliminating a
+        // visible-then-flash-away race.
+        Log.i(TAG, "recoverStaleWalks: starting cold-launch recovery sweep")
+        try {
+            val recoveredId = kotlinx.coroutines.runBlocking {
+                walkController.recoverStaleWalks()
+            }
+            if (recoveredId != null) {
+                walkRecoveryRepository.markRecoveredBlocking(recoveredId)
+                Log.i(TAG, "recoverStaleWalks armed banner for walk=$recoveredId")
+            } else {
+                Log.i(TAG, "recoverStaleWalks: no stale walks")
+            }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "recoverStaleWalks failed", t)
+        }
     }
 
     private companion object {

@@ -53,13 +53,6 @@ class WalkTrackingService : Service() {
 
     @Inject lateinit var locationSource: LocationSource
 
-    @Inject lateinit var repository: org.walktalkmeditate.pilgrim.data.WalkRepository
-
-    @Inject lateinit var walkRecoveryRepository:
-        org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
-
-    @Inject lateinit var clock: org.walktalkmeditate.pilgrim.domain.Clock
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
     private var notificationJob: Job? = null
@@ -114,57 +107,6 @@ class WalkTrackingService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    /**
-     * Fires when the user swipes the app away from recents while a walk
-     * is in progress. iOS-parity behavior: the walk auto-finalizes (gets
-     * `endTimestamp` written), the recovery marker is persisted to
-     * DataStore, and a banner appears on the Path tab on next launch.
-     *
-     * iOS reaches this UX via process kill (CoreData has no walk row,
-     * so a JSON checkpoint is required for crash recovery). Android
-     * reaches it via this hook (Room writes incrementally during the
-     * walk; we just need to flip endTimestamp to "now"). Same UX, no
-     * JSON checkpoint dance.
-     *
-     * Called on the main thread before `onDestroy`. The OS may begin
-     * tearing the process down within milliseconds, so the finalize
-     * uses synchronous `runBlocking` writes — both are sub-frame fast
-     * (single Room UPDATE + single DataStore PUT).
-     *
-     * Manifest sets `stopWithTask="false"` so this hook fires (vs
-     * the default auto-stop) and we control the order: persist first,
-     * then stopSelf.
-     */
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        Log.i(TAG, "onTaskRemoved — finalizing in-progress walk for recovery banner")
-        try {
-            val activeWalk = kotlinx.coroutines.runBlocking { repository.getActiveWalk() }
-            if (activeWalk != null) {
-                val endedAt = clock.now()
-                val finalized = kotlinx.coroutines.runBlocking {
-                    repository.finishWalkAtomic(walkId = activeWalk.id, endTimestamp = endedAt)
-                }
-                if (finalized) {
-                    walkRecoveryRepository.markRecoveredBlocking(activeWalk.id)
-                    Log.i(
-                        TAG,
-                        "onTaskRemoved finalized walk=${activeWalk.id} at=$endedAt; banner armed",
-                    )
-                } else {
-                    Log.w(TAG, "onTaskRemoved: finishWalkAtomic returned false for walk=${activeWalk.id}")
-                }
-            } else {
-                Log.i(TAG, "onTaskRemoved: no active walk to finalize")
-            }
-        } catch (t: Throwable) {
-            // Best-effort. If Room is wedged or the process is being torn
-            // down hard, we'd rather lose the recovery banner than crash.
-            Log.w(TAG, "onTaskRemoved finalize failed", t)
-        }
-        stopSelf()
-        super.onTaskRemoved(rootIntent)
-    }
 
     override fun onDestroy() {
         scope.cancel()

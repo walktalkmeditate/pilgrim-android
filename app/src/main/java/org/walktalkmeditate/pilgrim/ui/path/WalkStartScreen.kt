@@ -118,25 +118,19 @@ fun WalkStartScreen(
     // Cold-launch one-shot resume-check. didCheck is rememberSaveable
     // so a config change doesn't re-fire the redirect.
     //
-    // Two cases:
-    //  - isInProgress=true on first composition (process revival with a
-    //    walk already alive in the @Singleton controller) → navigate
-    //    immediately.
-    //  - isInProgress=false → call restoreActiveWalk(); the controller
-    //    flips state to non-Idle BEFORE the suspend returns, which
-    //    re-keys the LaunchedEffect(isInProgress) below → that observer
-    //    handles navigation. We do NOT also call onEnterActiveWalk here
-    //    on the restored != null case (avoids a launchSingleTop-deduped
-    //    double-fire that bait-and-switches a future refactor).
+    // After the launch-side recovery refactor, there's no longer an
+    // unfinished walk to RESTORE — `PilgrimApp.onCreate.recoverStaleWalks`
+    // finalizes any walk-with-endTimestamp-null on cold launch and
+    // arms the recovery banner. So this LaunchedEffect just redirects
+    // to ActiveWalk if a walk was somehow already in-progress on the
+    // controller (warm launch case where the @Singleton survived).
     val didCheck = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (didCheck.value) return@LaunchedEffect
         didCheck.value = true
         if (isInProgress) {
             onEnterActiveWalk()
-            return@LaunchedEffect
         }
-        walkViewModel.restoreActiveWalk()
     }
 
     // Post-tap redirect AND post-restore redirect: fires when state
