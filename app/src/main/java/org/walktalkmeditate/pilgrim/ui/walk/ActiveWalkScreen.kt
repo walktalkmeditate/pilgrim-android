@@ -289,7 +289,15 @@ fun ActiveWalkScreen(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
-            intention = intention,
+            // Caption display rule: pre-walk shows the typed-but-not-yet-
+            // committed draft (preWalkIntention); in-walk shows the value
+            // committed to the Walk row (intention StateFlow). The two are
+            // never simultaneously set — startWalk clears preWalkIntention
+            // and writes intention; until Start, the Walk row doesn't
+            // exist and intention is null. iOS unifies these via a single
+            // viewModel.intention; Android keeps them split because the
+            // pre-walk path doesn't write to Room until commit.
+            intention = preWalkIntention ?: intention,
             onPause = viewModel::pauseWalk,
             onResume = viewModel::resumeWalk,
             onStartWalk = {
