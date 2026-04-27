@@ -99,7 +99,7 @@ Close the four iOS-parity gaps that surfaced during Stage 9.5-C device QA on One
    Delete dead strings (introduced by 9.5-C, now unused):
    - `walk_options_intention_unset = "No intention set"` — was the WalkOptionsSheet subtitle when intention was null. The row is removed; the string has no caller. Deleting prevents dead-code drift.
 
-   Existing `walk_options_intention_title`, `walk_options_intention_dialog_title`, `walk_options_intention_placeholder`, `walk_options_intention_cancel` stay — used by `IntentionSettingDialog` from the pre-walk surface.
+   Existing `walk_options_intention_dialog_title`, `walk_options_intention_placeholder`, `walk_options_intention_cancel` stay — used by `IntentionSettingDialog` from the pre-walk surface. (`walk_options_intention_title` "Set Intention" is also dropped during polish: only the dialog-title variant is referenced after the row removal.)
 
 ### Material icon mapping (chip glyphs)
 
