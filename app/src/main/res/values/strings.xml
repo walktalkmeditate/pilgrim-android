@@ -91,6 +91,13 @@
     <string name="settings_voice_guides_row">Voice guides</string>
     <string name="settings_voice_guides_subtitle">Audio reflections for your walk</string>
 
+    <string name="settings_atmosphere_title">Atmosphere</string>
+    <string name="settings_atmosphere_subtitle">Look and feel</string>
+    <string name="settings_appearance_label">Appearance</string>
+    <string name="settings_appearance_auto">Auto</string>
+    <string name="settings_appearance_light">Light</string>
+    <string name="settings_appearance_dark">Dark</string>
+
     <string name="voice_guide_picker_title">Voice guides</string>
     <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>
