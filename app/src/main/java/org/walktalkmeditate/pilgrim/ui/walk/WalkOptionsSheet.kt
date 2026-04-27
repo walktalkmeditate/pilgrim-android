@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -38,10 +37,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WalkOptionsSheet(
-    intention: String?,
     waypointCount: Int,
     canDropWaypoint: Boolean,
-    onSetIntention: () -> Unit,
     onDropWaypoint: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -63,13 +60,6 @@ fun WalkOptionsSheet(
                 style = pilgrimType.heading,
                 color = pilgrimColors.ink,
                 modifier = Modifier.padding(bottom = PilgrimSpacing.small),
-            )
-            OptionRow(
-                icon = Icons.Outlined.EditNote,
-                title = stringResource(R.string.walk_options_intention_title),
-                subtitle = intention?.takeIf { it.isNotBlank() }
-                    ?: stringResource(R.string.walk_options_intention_unset),
-                onClick = onSetIntention,
             )
             OptionRow(
                 icon = Icons.Outlined.LocationOn,

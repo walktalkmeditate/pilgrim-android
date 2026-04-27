@@ -63,7 +63,6 @@ fun ActiveWalkScreen(
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
-    val intention by viewModel.intention.collectAsStateWithLifecycle()
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
@@ -119,18 +118,16 @@ fun ActiveWalkScreen(
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
-    var showIntention by rememberSaveable { mutableStateOf(false) }
     // If the walk transitions to Idle (discard) or Finished while the
-    // options sheet or intention dialog is open, dismiss them — leaving
-    // them visible over a stale walk would invite confused taps onto
-    // controller actions that no-op on terminal states.
+    // options sheet is open, dismiss it — leaving it visible over a stale
+    // walk would invite confused taps onto controller actions that no-op on
+    // terminal states.
     LaunchedEffect(navWalkState::class) {
         if (navWalkState !is WalkState.Active &&
             navWalkState !is WalkState.Paused &&
             navWalkState !is WalkState.Meditating
         ) {
             showOptions = false
-            showIntention = false
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
@@ -168,29 +165,14 @@ fun ActiveWalkScreen(
         }
         if (showOptions) {
             WalkOptionsSheet(
-                intention = intention,
                 waypointCount = waypointCount,
                 canDropWaypoint = navWalkState is WalkState.Active ||
                     navWalkState is WalkState.Paused,
-                onSetIntention = {
-                    showOptions = false
-                    showIntention = true
-                },
                 onDropWaypoint = {
                     viewModel.dropWaypoint()
                     showOptions = false
                 },
                 onDismiss = { showOptions = false },
-            )
-        }
-        if (showIntention) {
-            IntentionSettingDialog(
-                initial = intention,
-                onSave = { text ->
-                    viewModel.setIntention(text)
-                    showIntention = false
-                },
-                onDismiss = { showIntention = false },
             )
         }
         WalkStatsSheet(
