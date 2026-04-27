@@ -221,6 +221,18 @@ fun ActiveWalkScreen(
             val activeWalk = (navWalkState as? WalkState.Active)?.walk
                 ?: (navWalkState as? WalkState.Paused)?.walk
             WalkOptionsSheet(
+                // Per-state row visibility:
+                //  - Idle: only Set Intention. Waypoints can't be dropped
+                //    before a walk row exists.
+                //  - Active|Paused (with GPS fix): only Drop Waypoint.
+                //    Intention is committed at startWalk; not editable
+                //    once a walk is in progress.
+                canSetIntention = navWalkState is WalkState.Idle,
+                intention = preWalkIntention,
+                onSetIntention = {
+                    showOptions = false
+                    showPreWalkIntention = true
+                },
                 waypointCount = waypointCount,
                 canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
@@ -278,8 +290,6 @@ fun ActiveWalkScreen(
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
             intention = intention,
-            preWalkIntention = preWalkIntention,
-            onSetPreWalkIntention = { showPreWalkIntention = true },
             onPause = viewModel::pauseWalk,
             onResume = viewModel::resumeWalk,
             onStartWalk = {

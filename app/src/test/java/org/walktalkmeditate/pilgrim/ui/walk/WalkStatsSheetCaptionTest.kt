@@ -49,8 +49,6 @@ class WalkStatsSheetCaptionTest {
             audioLevel = 0f,
             recordingsCount = 0,
             intention = intention,
-            preWalkIntention = null,
-            onSetPreWalkIntention = {},
             onPause = {},
             onResume = {},
             onStartWalk = {},

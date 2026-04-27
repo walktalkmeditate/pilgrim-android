@@ -263,6 +263,8 @@
 
     <!-- Stage 9.5-C: WalkOptionsSheet (in-walk options modal) -->
     <string name="walk_options_title">Options</string>
+    <string name="walk_options_intention_title">Set Intention</string>
+    <string name="walk_options_intention_pre_walk_unset">A line for this walk</string>
     <string name="walk_options_intention_dialog_title">Set Intention</string>
     <string name="walk_options_intention_placeholder">A line for this walk&#8230;</string>
     <string name="walk_options_intention_save">Set</string>
@@ -274,8 +276,7 @@
         <item quantity="other">%1$d marked</item>
     </plurals>
 
-    <!-- Stage 9.5-D: pre-walk intention pill + waypoint marking sheet -->
-    <string name="walk_pre_intention_pill_unset">Set an intention</string>
+    <!-- Stage 9.5-D: waypoint marking sheet -->
     <string name="walk_waypoint_marking_title">Drop a Waypoint</string>
     <string name="walk_waypoint_marking_custom_placeholder">Custom note</string>
     <string name="walk_waypoint_marking_mark">Mark</string>
