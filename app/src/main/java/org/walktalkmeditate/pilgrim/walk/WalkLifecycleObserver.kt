@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.walk
 
-import android.content.Context
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -53,7 +51,7 @@ class WalkLifecycleObserver @Inject constructor(
     @WalkFinalizationScope private val scope: CoroutineScope,
     private val voiceRecorder: VoiceRecorder,
     private val repository: WalkRepository,
-    @ApplicationContext private val context: Context,
+    private val orphanSweeper: OrphanRecordingSweeper,
 ) {
     init {
         scope.launch {
@@ -81,9 +79,17 @@ class WalkLifecycleObserver @Inject constructor(
                 // firstEmission latch (not a transition), and all
                 // in-progress → Idle paths call stop() unconditionally
                 // (no-op if no recording was running).
+                //
+                // Forked into a child coroutine so back-to-back terminal
+                // transitions (e.g. discard → start a new walk faster
+                // than `voiceRecorder.stop().doneLatch.await()` returns)
+                // don't wedge the collector and let StateFlow conflate
+                // away the next in-progress emission. Same forking
+                // pattern WalkFinalizationObserver uses for the same
+                // reason.
                 when (state) {
-                    is WalkState.Finished -> handleVoiceStop(commitRow = true)
-                    WalkState.Idle -> handleVoiceStop(commitRow = false)
+                    is WalkState.Finished -> scope.launch { handleVoiceStop(commitRow = true) }
+                    WalkState.Idle -> scope.launch { handleVoiceStop(commitRow = false) }
                     else -> Unit
                 }
             }
@@ -104,18 +110,24 @@ class WalkLifecycleObserver @Inject constructor(
             }
             stopResult.isSuccess && !commitRow -> {
                 val recording = stopResult.getOrThrow()
-                val file = File(context.filesDir, recording.fileRelativePath)
                 try {
-                    if (file.exists() && !file.delete()) {
-                        Log.w(
-                            TAG,
-                            "discard auto-stop: failed to delete orphan WAV " +
-                                recording.fileRelativePath,
-                        )
-                    } else {
+                    // Route through the sweeper's guarded helper so we
+                    // share the canonical-path / `.wav` / `isRegularFile`
+                    // checks instead of an unverified `File.delete`. A
+                    // future regression that lets `fileRelativePath`
+                    // escape filesDir/recordings is rejected here, not
+                    // silently honored.
+                    val deleted = orphanSweeper.deleteRecordingIfSafe(recording.fileRelativePath)
+                    if (deleted) {
                         Log.i(
                             TAG,
                             "discard auto-stop: deleted orphan WAV " +
+                                recording.fileRelativePath,
+                        )
+                    } else {
+                        Log.w(
+                            TAG,
+                            "discard auto-stop: failed to delete orphan WAV " +
                                 recording.fileRelativePath,
                         )
                     }
@@ -126,7 +138,11 @@ class WalkLifecycleObserver @Inject constructor(
                 }
             }
             stopResult.exceptionOrNull() is VoiceRecorderError.NoActiveRecording -> {
-                // Common case for walks with no voice notes.
+                // Common case for walks with no voice notes. The on-disk
+                // orphan-walk-uuid directory (if any — process death
+                // mid-recording survived through restoreActiveWalk and
+                // then discard) is reclaimed by the daily
+                // OrphanRecordingSweeper.sweepAll case (e) scan.
             }
             else -> {
                 Log.w(TAG, "voice auto-stop failed", stopResult.exceptionOrNull())

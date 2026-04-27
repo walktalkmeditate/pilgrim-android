@@ -270,8 +270,8 @@
     <string name="walk_options_intention_save">Save</string>
     <string name="walk_options_intention_cancel">Cancel</string>
     <string name="walk_options_waypoint_title">Drop Waypoint</string>
+    <string name="walk_options_waypoint_count_none">None marked</string>
     <plurals name="walk_options_waypoint_count">
-        <item quantity="zero">None marked</item>
         <item quantity="one">1 marked</item>
         <item quantity="other">%1$d marked</item>
     </plurals>

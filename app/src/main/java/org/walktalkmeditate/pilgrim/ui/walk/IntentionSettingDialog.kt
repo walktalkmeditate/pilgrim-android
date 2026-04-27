@@ -22,7 +22,12 @@ fun IntentionSettingDialog(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var text by rememberSaveable { mutableStateOf(initial.orEmpty()) }
+    // Key on `initial` so a Cancel + external-mutation + reopen sequence
+    // doesn't restore a stale draft over the freshly-set value. Today no
+    // surface mutates intention while ActiveWalkScreen is foregrounded,
+    // but this keeps the dialog defensible if a notification action or
+    // automation surface is added later.
+    var text by rememberSaveable(initial) { mutableStateOf(initial.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.walk_options_intention_dialog_title)) },

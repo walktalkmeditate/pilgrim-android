@@ -25,6 +25,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
 import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
+import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -83,12 +85,17 @@ class WalkLifecycleObserverTest {
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val sweeper = OrphanRecordingSweeper(
+            context = context,
+            repository = repository,
+            transcriptionScheduler = FakeTranscriptionScheduler(),
+        )
         observer = WalkLifecycleObserver(
             walkState = stateFlow,
             scope = observerScope,
             voiceRecorder = voiceRecorder,
             repository = repository,
-            context = context,
+            orphanSweeper = sweeper,
         )
         // Same async-collector-attach hazard as WalkFinalizationObserverTest:
         // the observer's `init { scope.launch { walkState.collect } }`

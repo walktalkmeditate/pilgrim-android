@@ -82,6 +82,40 @@ class WalkOptionsSheetTest {
     }
 
     @Test
+    fun `waypoint subtitle shows None marked when count is zero`() {
+        // Android plurals on en-US never select quantity="zero", so a
+        // pluralStringResource(... 0 ...) call would return "0 marked"
+        // from the `other` branch. The WalkOptionsSheet special-cases
+        // 0 with a non-plural string instead.
+        composeRule.setContent {
+            WalkOptionsSheet(
+                intention = null,
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onSetIntention = {},
+                onDropWaypoint = {},
+                onDismiss = {},
+            )
+        }
+        composeRule.onNodeWithText("None marked").assertIsDisplayed()
+    }
+
+    @Test
+    fun `waypoint subtitle uses plural for non-zero counts`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                intention = null,
+                waypointCount = 3,
+                canDropWaypoint = true,
+                onSetIntention = {},
+                onDropWaypoint = {},
+                onDismiss = {},
+            )
+        }
+        composeRule.onNodeWithText("3 marked").assertIsDisplayed()
+    }
+
+    @Test
     fun `intention click fires onSetIntention`() {
         var fired = false
         composeRule.setContent {

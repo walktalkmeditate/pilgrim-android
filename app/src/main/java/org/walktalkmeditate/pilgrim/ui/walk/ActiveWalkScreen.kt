@@ -120,6 +120,19 @@ fun ActiveWalkScreen(
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
     var showIntention by rememberSaveable { mutableStateOf(false) }
+    // If the walk transitions to Idle (discard) or Finished while the
+    // options sheet or intention dialog is open, dismiss them — leaving
+    // them visible over a stale walk would invite confused taps onto
+    // controller actions that no-op on terminal states.
+    LaunchedEffect(navWalkState::class) {
+        if (navWalkState !is WalkState.Active &&
+            navWalkState !is WalkState.Paused &&
+            navWalkState !is WalkState.Meditating
+        ) {
+            showOptions = false
+            showIntention = false
+        }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
             points = routePoints,

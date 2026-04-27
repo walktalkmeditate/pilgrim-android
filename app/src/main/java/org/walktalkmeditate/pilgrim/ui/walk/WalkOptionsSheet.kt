@@ -74,11 +74,18 @@ fun WalkOptionsSheet(
             OptionRow(
                 icon = Icons.Outlined.LocationOn,
                 title = stringResource(R.string.walk_options_waypoint_title),
-                subtitle = pluralStringResource(
-                    R.plurals.walk_options_waypoint_count,
-                    waypointCount,
-                    waypointCount,
-                ),
+                // Android plurals on en-US never select `quantity="zero"` —
+                // CLDR maps 0 to `other`, which would render "0 marked".
+                // Special-case the empty count with a non-plural string.
+                subtitle = if (waypointCount == 0) {
+                    stringResource(R.string.walk_options_waypoint_count_none)
+                } else {
+                    pluralStringResource(
+                        R.plurals.walk_options_waypoint_count,
+                        waypointCount,
+                        waypointCount,
+                    )
+                },
                 enabled = canDropWaypoint,
                 onClick = onDropWaypoint,
             )
