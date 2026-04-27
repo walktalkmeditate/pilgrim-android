@@ -58,7 +58,11 @@ class WalkController @Inject constructor(
             "startWalk requires Idle or Finished state but controller is currently $current"
         }
         val startedAt = clock.now()
-        val walk = repository.startWalk(startTimestamp = startedAt, intention = intention)
+        // Same trim/truncate/blank-check as `setIntention` so a future
+        // caller (test, restore, deep-link) passing `"   "` or a 200-char
+        // string can't land malformed text in Room.
+        val sanitized = intention?.trim()?.take(MAX_INTENTION_CHARS)?.takeIf { it.isNotBlank() }
+        val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized)
         val (next, effect) = WalkReducer.reduce(
             current,
             WalkAction.Start(walkId = walk.id, at = startedAt),
@@ -68,7 +72,7 @@ class WalkController @Inject constructor(
         // Log presence, not content — intentions can carry privacy-sensitive
         // text ("mourning Y", "anxiety about Z") that we don't want landing
         // in logcat where other debug tooling might capture it.
-        Log.i(TAG, "startWalk id=${walk.id} intentionSet=${intention != null} at=$startedAt")
+        Log.i(TAG, "startWalk id=${walk.id} intentionSet=${sanitized != null} at=$startedAt")
         walk
     }
 
@@ -156,7 +160,7 @@ class WalkController @Inject constructor(
      * Best-effort: any Throwable from the repository write is logged
      * + swallowed. A failed waypoint must not crash the walk.
      */
-    suspend fun recordWaypoint() {
+    suspend fun recordWaypoint(label: String? = null, icon: String? = null) {
         dispatchMutex.withLock {
             val accumulator = when (val s = _state.value) {
                 is WalkState.Active -> s.walk
@@ -172,7 +176,8 @@ class WalkController @Inject constructor(
                         timestamp = clock.now(),
                         latitude = location.latitude,
                         longitude = location.longitude,
-                        label = null,
+                        label = label,
+                        icon = icon,
                     ),
                 )
             } catch (ce: CancellationException) {
@@ -324,8 +329,11 @@ class WalkController @Inject constructor(
         }
     }
 
-    private companion object {
-        const val TAG = "WalkController"
+    internal companion object {
+        private const val TAG = "WalkController"
+        // Single source of truth for the intention character cap. UI surfaces
+        // (IntentionSettingDialog) reference this so the controller-side
+        // sanitize and the UI-side `take(N)` can never silently desync.
         const val MAX_INTENTION_CHARS = 140
     }
 }

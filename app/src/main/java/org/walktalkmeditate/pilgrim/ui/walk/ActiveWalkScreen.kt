@@ -63,8 +63,8 @@ fun ActiveWalkScreen(
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
-    val intention by viewModel.intention.collectAsStateWithLifecycle()
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
+    val intention by viewModel.intention.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
     // at the pre-meditation Meditating snapshot for one frame on
@@ -87,22 +87,6 @@ fun ActiveWalkScreen(
     // controller has even transitioned to Active. Pattern matches
     // Stage 9.5-B's WalkTrackingService.hasBeenActive latch.
     val hasSeenInProgress = rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(navWalkState::class) {
-        val state = navWalkState
-        if (state is WalkState.Active ||
-            state is WalkState.Paused ||
-            state is WalkState.Meditating
-        ) {
-            hasSeenInProgress.value = true
-        }
-        when (state) {
-            is WalkState.Finished -> onFinished(state.walk.walkId)
-            is WalkState.Meditating -> onEnterMeditation()
-            WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
-            else -> Unit
-        }
-    }
-
     var sheetState by rememberSaveable { mutableStateOf(SheetState.Expanded) }
     // Drive sheet auto-state from the PASSTHROUGH walkState so we don't
     // act on a stale uiState during the brief window after returning
@@ -119,18 +103,75 @@ fun ActiveWalkScreen(
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
-    var showIntention by rememberSaveable { mutableStateOf(false) }
-    // If the walk transitions to Idle (discard) or Finished while the
-    // options sheet or intention dialog is open, dismiss them — leaving
-    // them visible over a stale walk would invite confused taps onto
-    // controller actions that no-op on terminal states.
+    // preWalkIntention persists across rotation, tab-switching (PilgrimNavHost
+    // pops Path with saveState=true), AND process death (rememberSaveable
+    // bundle round-trip). It is ONLY cleared by:
+    //   (a) successful Start — `onStartWalk` resets to null after the
+    //       intention is committed to the Walk row, OR
+    //   (b) back-button pop of the ACTIVE_WALK route — the NavBackStackEntry
+    //       is destroyed and the rememberSaveable bundle dies with it.
+    // The persistence-across-tab-switch behavior is intentional: a user who
+    // composed a draft while checking an old walk in Goshuin returns to
+    // their draft. Persistence-across-process-death covers the crash-recovery
+    // case. If the surface is reached weeks later with stale draft text, the
+    // user can still re-tap Set or just hit Start to commit it as-is.
+    var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
+    var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
+    var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
+    // resetKey counters force the sheet/dialog's `rememberSaveable`-keyed
+    // text states to re-initialize on each open, so Cancel-then-reopen
+    // discards the typed-but-not-committed draft (matches dismiss-button
+    // semantics). rememberSaveable saves to the screen-wide saveable
+    // registry — without the bump on dismiss, the conditional render
+    // would resurrect the cancelled draft on reopen.
+    var preWalkIntentionResetKey by rememberSaveable { mutableStateOf(0) }
+    var waypointMarkingResetKey by rememberSaveable { mutableStateOf(0) }
+    // Single state-class side-effect block: track in-progress latch for
+    // the discard-nav guard, route to neighbor screens on terminal
+    // emissions, and dismiss in-walk sheets when the walk leaves an
+    // in-progress state.
+    //
+    // Dismissal policy:
+    //  - showOptions / showWaypointMarking: dismiss whenever the walk is
+    //    NOT in an active-walk state (Active|Paused). Meditating dismisses
+    //    them too — the nav goes to MeditationScreen and a re-emerging
+    //    sheet on return would surprise the user.
+    //  - showPreWalkIntention: dismiss whenever the walk is NOT Idle. The
+    //    dialog is the pre-walk surface; if the state transitions to
+    //    Active externally (FGS automation, restoreActiveWalk), the
+    //    typed draft would have nowhere to go — Save would silently
+    //    write to a now-irrelevant `preWalkIntention` field. Bumping
+    //    the resetKey discards any in-progress draft so a fresh open
+    //    next time we reach Idle starts clean.
+    //
+    // Future-self note: keying on `navWalkState::class` means same-class
+    // back-to-back transitions (e.g., a hypothetical Active(walkA) →
+    // Active(walkB) without an intervening Idle/Finished) would NOT
+    // re-fire this effect. The reducer doesn't produce that pattern
+    // today (every walk-start requires Idle/Finished), but if a future
+    // path does, change the key to `navWalkState` (full instance) so
+    // walkId changes also trigger.
     LaunchedEffect(navWalkState::class) {
-        if (navWalkState !is WalkState.Active &&
-            navWalkState !is WalkState.Paused &&
-            navWalkState !is WalkState.Meditating
-        ) {
+        val state = navWalkState
+        val isInProgress = state is WalkState.Active ||
+            state is WalkState.Paused ||
+            state is WalkState.Meditating
+        if (isInProgress) {
+            hasSeenInProgress.value = true
+        }
+        if (state !is WalkState.Active && state !is WalkState.Paused) {
             showOptions = false
-            showIntention = false
+            showWaypointMarking = false
+        }
+        if (state !is WalkState.Idle && showPreWalkIntention) {
+            showPreWalkIntention = false
+            preWalkIntentionResetKey++
+        }
+        when (state) {
+            is WalkState.Finished -> onFinished(state.walk.walkId)
+            is WalkState.Meditating -> onEnterMeditation()
+            WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
+            else -> Unit
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
@@ -167,30 +208,55 @@ fun ActiveWalkScreen(
             )
         }
         if (showOptions) {
+            // Gate Drop Waypoint on BOTH (a) walk-is-trackable state AND
+            // (b) we have a GPS fix. Without (b), `recordWaypoint` would
+            // silently no-op inside the controller's dispatch lock —
+            // user taps chip, hears the haptic confirmation, sheet
+            // dismisses, but no waypoint exists. The pre-gate makes the
+            // failure visible: row is greyed out until a fix arrives.
+            // Meditating is intentionally omitted: the LaunchedEffect
+            // above force-dismisses showOptions on Meditating transition
+            // (the user routes to MeditationScreen), so this branch is
+            // unreachable when state is Meditating.
+            val activeWalk = (navWalkState as? WalkState.Active)?.walk
+                ?: (navWalkState as? WalkState.Paused)?.walk
             WalkOptionsSheet(
-                intention = intention,
                 waypointCount = waypointCount,
-                canDropWaypoint = navWalkState is WalkState.Active ||
-                    navWalkState is WalkState.Paused,
-                onSetIntention = {
-                    showOptions = false
-                    showIntention = true
-                },
+                canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
-                    viewModel.dropWaypoint()
                     showOptions = false
+                    showWaypointMarking = true
                 },
                 onDismiss = { showOptions = false },
             )
         }
-        if (showIntention) {
-            IntentionSettingDialog(
-                initial = intention,
-                onSave = { text ->
-                    viewModel.setIntention(text)
-                    showIntention = false
+        if (showWaypointMarking) {
+            WaypointMarkingSheet(
+                onMark = { label, icon ->
+                    viewModel.dropWaypoint(label = label, icon = icon)
+                    showWaypointMarking = false
+                    waypointMarkingResetKey++
                 },
-                onDismiss = { showIntention = false },
+                onDismiss = {
+                    showWaypointMarking = false
+                    waypointMarkingResetKey++
+                },
+                resetKey = waypointMarkingResetKey,
+            )
+        }
+        if (showPreWalkIntention) {
+            IntentionSettingDialog(
+                initial = preWalkIntention,
+                onSave = { text ->
+                    preWalkIntention = text.takeIf { it.isNotBlank() }
+                    showPreWalkIntention = false
+                    preWalkIntentionResetKey++
+                },
+                onDismiss = {
+                    showPreWalkIntention = false
+                    preWalkIntentionResetKey++
+                },
+                resetKey = preWalkIntentionResetKey,
             )
         }
         WalkStatsSheet(
@@ -211,9 +277,15 @@ fun ActiveWalkScreen(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
+            intention = intention,
+            preWalkIntention = preWalkIntention,
+            onSetPreWalkIntention = { showPreWalkIntention = true },
             onPause = viewModel::pauseWalk,
             onResume = viewModel::resumeWalk,
-            onStartWalk = { viewModel.startWalk() },
+            onStartWalk = {
+                viewModel.startWalk(intention = preWalkIntention)
+                preWalkIntention = null
+            },
             onStartMeditation = viewModel::startMeditation,
             onEndMeditation = viewModel::endMeditation,
             onToggleRecording = viewModel::toggleRecording,

@@ -263,11 +263,9 @@
 
     <!-- Stage 9.5-C: WalkOptionsSheet (in-walk options modal) -->
     <string name="walk_options_title">Options</string>
-    <string name="walk_options_intention_title">Set Intention</string>
-    <string name="walk_options_intention_unset">No intention set</string>
     <string name="walk_options_intention_dialog_title">Set Intention</string>
     <string name="walk_options_intention_placeholder">A line for this walk&#8230;</string>
-    <string name="walk_options_intention_save">Save</string>
+    <string name="walk_options_intention_save">Set</string>
     <string name="walk_options_intention_cancel">Cancel</string>
     <string name="walk_options_waypoint_title">Drop Waypoint</string>
     <string name="walk_options_waypoint_count_none">None marked</string>
@@ -275,4 +273,18 @@
         <item quantity="one">1 marked</item>
         <item quantity="other">%1$d marked</item>
     </plurals>
+
+    <!-- Stage 9.5-D: pre-walk intention pill + waypoint marking sheet -->
+    <string name="walk_pre_intention_pill_unset">Set an intention</string>
+    <string name="walk_waypoint_marking_title">Drop a Waypoint</string>
+    <string name="walk_waypoint_marking_custom_placeholder">Custom note</string>
+    <string name="walk_waypoint_marking_mark">Mark</string>
+    <string name="walk_waypoint_marking_cancel">Cancel</string>
+    <string name="walk_waypoint_chip_peaceful">Peaceful</string>
+    <string name="walk_waypoint_chip_beautiful">Beautiful</string>
+    <string name="walk_waypoint_chip_grateful">Grateful</string>
+    <string name="walk_waypoint_chip_resting">Resting</string>
+    <string name="walk_waypoint_chip_inspired">Inspired</string>
+    <string name="walk_waypoint_chip_arrived">Arrived</string>
+    <string name="walk_waypoint_count_chars">%1$d/%2$d</string>
 </resources>

@@ -287,8 +287,8 @@ class WalkViewModel @Inject constructor(
             initialValue = 0,
         )
 
-    fun dropWaypoint() {
-        viewModelScope.launch { controller.recordWaypoint() }
+    fun dropWaypoint(label: String? = null, icon: String? = null) {
+        viewModelScope.launch { controller.recordWaypoint(label = label, icon = icon) }
     }
 
     /**
