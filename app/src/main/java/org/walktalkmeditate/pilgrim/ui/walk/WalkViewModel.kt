@@ -495,6 +495,20 @@ class WalkViewModel @Inject constructor(
     }
 
     /**
+     * Stage 9.5-C: leave the walk without saving. The controller's
+     * `discardWalk` reduces Active|Paused|Meditating → Idle and
+     * cascade-deletes the walk row + samples + events via the
+     * `PurgeWalk` effect. Voice auto-stop runs in
+     * [org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver] on the
+     * Active → Idle transition (app-lifetime scope, survives VM
+     * nav-pop) and intentionally drops the recording row since its
+     * parent walk no longer exists.
+     */
+    fun discardWalk() {
+        viewModelScope.launch { controller.discardWalk() }
+    }
+
+    /**
      * Restore a walk row left in Room when the process was killed
      * mid-walk. Returns the restored [Walk] if one existed, or null
      * when there's nothing to resume.

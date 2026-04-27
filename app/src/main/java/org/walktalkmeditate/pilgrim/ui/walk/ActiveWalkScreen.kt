@@ -130,12 +130,7 @@ fun ActiveWalkScreen(
             LeaveWalkDialog(
                 onConfirm = {
                     showLeaveConfirm = false
-                    // TODO Stage 9.5-C: replace with viewModel.discardWalk()
-                    // that cancels FGS + deletes the walk row + samples
-                    // + events without persisting endTimestamp. For now
-                    // this saves the walk and routes to summary, which is
-                    // NOT iOS-equivalent ("This walk will not be saved").
-                    viewModel.finishWalk()
+                    viewModel.discardWalk()
                 },
                 onDismiss = { showLeaveConfirm = false },
             )
