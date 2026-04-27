@@ -17,6 +17,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import android.content.Context
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -30,6 +32,7 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
+import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.soundscape.SoundscapePickerScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailScreen
@@ -177,19 +180,10 @@ fun PilgrimNavHost(
             // (Bells & Soundscapes, Recordings, Export/Import,
             // Feedback, About, Podcast, Play Store, Share Pilgrim);
             // see [handleSettingsAction] for the routing hub.
+            val settingsContext = LocalContext.current
             SettingsScreen(
                 onAction = { action ->
-                    when (action) {
-                        org.walktalkmeditate.pilgrim.ui.settings.SettingsAction.OpenVoiceGuides ->
-                            navController.navigate(Routes.VOICE_GUIDE_PICKER) {
-                                launchSingleTop = true
-                            }
-                        org.walktalkmeditate.pilgrim.ui.settings.SettingsAction.OpenSoundscapes ->
-                            navController.navigate(Routes.SOUNDSCAPE_PICKER) {
-                                launchSingleTop = true
-                            }
-                        else -> Unit
-                    }
+                    handleSettingsAction(action, navController, settingsContext)
                 },
             )
         }
@@ -452,5 +446,44 @@ fun PilgrimNavHost(
             }
         }
         onDeepLinkConsumed()
+    }
+}
+
+/**
+ * Routing hub for [SettingsAction]. The [Context] parameter is plumbed
+ * through now (unused by Stage 10-A) so subsequent stages adding
+ * intent-based destinations (Custom Tabs, Play Store deep link, share
+ * sheet) don't need to re-touch the SettingsScreen call site.
+ *
+ * The exhaustive `when` block captures every variant declared on
+ * [SettingsAction]; reserved variants no-op until the corresponding
+ * card lands.
+ */
+@Suppress("UNUSED_PARAMETER")
+private fun handleSettingsAction(
+    action: SettingsAction,
+    navController: NavController,
+    context: Context,
+) {
+    when (action) {
+        SettingsAction.OpenVoiceGuides ->
+            navController.navigate(Routes.VOICE_GUIDE_PICKER) { launchSingleTop = true }
+        SettingsAction.OpenSoundscapes ->
+            navController.navigate(Routes.SOUNDSCAPE_PICKER) { launchSingleTop = true }
+        // The remaining destinations are introduced in subsequent stages
+        // (10-B onward). Keeping them in the sealed interface NOW lets
+        // each card author drop in its own action without re-touching
+        // the SettingsScreen signature; the routing handler grows
+        // exhaustively as cards land.
+        SettingsAction.OpenBellsAndSoundscapes,
+        SettingsAction.OpenRecordings,
+        SettingsAction.OpenAppPermissionSettings,
+        SettingsAction.OpenExportImport,
+        SettingsAction.OpenJourneyViewer,
+        SettingsAction.OpenFeedback,
+        SettingsAction.OpenAbout,
+        SettingsAction.OpenPodcast,
+        SettingsAction.OpenPlayStoreReview,
+        SettingsAction.SharePilgrim -> Unit
     }
 }
