@@ -1,54 +1,52 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.Spa
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
- * Settings scaffold. Currently surfaces audio-catalog pickers (voice
- * guides + soundscapes); Phase 10 will add more rows (weather opt-in,
- * haptics, hemisphere override, export/import). Minimal M3 styling to
- * match the app's soft, text-forward aesthetic.
+ * Settings scaffold. Card-based layout matching iOS exactly: no nav
+ * bar, a centered "Settings" title at the top of the scroll content,
+ * then cards spaced evenly down the page. Stage 10-A lands this
+ * scaffolding plus AtmosphereCard + the existing CollectiveStats
+ * card; subsequent stages absorb Voice Guides + Soundscapes into
+ * proper cards (Voice card / Bells & Soundscapes card).
+ *
+ * Navigation is funneled through a single [SettingsAction] channel —
+ * the host (PilgrimNavHost) routes each action to a navController
+ * call or system Intent dispatch. New cards extend [SettingsAction]
+ * without changing this signature.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onOpenVoiceGuides: () -> Unit,
-    onOpenSoundscapes: () -> Unit,
-    onBack: (() -> Unit)? = null,
+    onAction: (SettingsAction) -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
@@ -62,56 +60,63 @@ fun SettingsScreen(
         // them and add a visible gap above the bottom nav + below the
         // status bar. Pass WindowInsets(0) so the inner Scaffold doesn't
         // double-count.
-        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) },
-                navigationIcon = {
-                    if (onBack != null) {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.Default.ArrowBack,
-                                contentDescription = stringResource(
-                                    R.string.settings_back_content_description,
-                                ),
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = pilgrimColors.parchment,
-                    titleContentColor = pilgrimColors.ink,
-                    navigationIconContentColor = pilgrimColors.ink,
-                ),
-            )
-        },
+        contentWindowInsets = WindowInsets(0),
         containerColor = pilgrimColors.parchment,
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .padding(top = 8.dp),
+                .padding(padding),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            AtmosphereCard(
-                currentMode = appearanceMode,
-                onSelectMode = viewModel::setAppearanceMode,
-            )
-            Spacer(Modifier.height(12.dp))
-            CollectiveStatsCard(stats = stats)
-            CollectiveOptInRow(checked = optIn, onCheckedChange = viewModel::setOptIn)
-            SettingsRow(
-                icon = Icons.Default.GraphicEq,
-                title = stringResource(R.string.settings_voice_guides_row),
-                subtitle = stringResource(R.string.settings_voice_guides_subtitle),
-                onClick = onOpenVoiceGuides,
-            )
-            SettingsRow(
-                icon = Icons.Default.Spa,
-                title = stringResource(R.string.settings_soundscapes_row),
-                subtitle = stringResource(R.string.settings_soundscapes_subtitle),
-                onClick = onOpenSoundscapes,
-            )
+            item {
+                Text(
+                    text = stringResource(R.string.settings_title),
+                    style = pilgrimType.heading,
+                    color = pilgrimColors.ink,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 16.dp),
+                    textAlign = TextAlign.Center,
+                )
+            }
+            item {
+                CollectiveStatsCard(stats = stats)
+            }
+            item {
+                CollectiveOptInRow(checked = optIn, onCheckedChange = viewModel::setOptIn)
+            }
+            item {
+                AtmosphereCard(
+                    currentMode = appearanceMode,
+                    onSelectMode = viewModel::setAppearanceMode,
+                )
+            }
+            // Voice Guides + Soundscapes are landed here as plain
+            // SettingNavRow stand-ins so the existing entry points
+            // (Stage 5-D / 5-F) keep working. They'll be absorbed
+            // into proper cards in upcoming Stage 10 sub-stages.
+            item {
+                SettingNavRow(
+                    label = stringResource(R.string.settings_voice_guides_row),
+                    detail = stringResource(R.string.settings_voice_guides_subtitle),
+                    onClick = { onAction(SettingsAction.OpenVoiceGuides) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                )
+            }
+            item {
+                SettingNavRow(
+                    label = stringResource(R.string.settings_soundscapes_row),
+                    detail = stringResource(R.string.settings_soundscapes_subtitle),
+                    onClick = { onAction(SettingsAction.OpenSoundscapes) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                )
+            }
         }
     }
 }
@@ -143,30 +148,5 @@ private fun CollectiveOptInRow(
             supportingColor = pilgrimColors.fog,
             leadingIconColor = pilgrimColors.ink,
         ),
-    )
-}
-
-@Composable
-private fun SettingsRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-) {
-    ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle) },
-        leadingContent = { Icon(icon, contentDescription = null) },
-        trailingContent = {
-            Icon(Icons.Default.ChevronRight, contentDescription = null)
-        },
-        colors = ListItemDefaults.colors(
-            containerColor = Color.Transparent,
-            headlineColor = pilgrimColors.ink,
-            supportingColor = pilgrimColors.fog,
-            leadingIconColor = pilgrimColors.ink,
-            trailingIconColor = pilgrimColors.fog,
-        ),
-        modifier = Modifier.clickable(onClick = onClick),
     )
 }

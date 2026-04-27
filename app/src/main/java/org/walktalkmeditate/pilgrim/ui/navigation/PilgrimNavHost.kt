@@ -168,18 +168,27 @@ fun PilgrimNavHost(
             )
         }
         composable(Routes.SETTINGS) {
-            // Stage 9.5-A: Settings is now a tab destination. No back
-            // arrow when reached as a tab — onBack = null.
+            // Stage 9.5-A: Settings is now a tab destination. The
+            // top bar / back arrow was dropped in Stage 10-A so the
+            // scroll content can host a centered title (matches iOS).
+            //
+            // Stage 10-A: navigation funnels through SettingsAction.
+            // Stage 10-B onward will route additional destinations
+            // (Bells & Soundscapes, Recordings, Export/Import,
+            // Feedback, About, Podcast, Play Store, Share Pilgrim);
+            // see [handleSettingsAction] for the routing hub.
             SettingsScreen(
-                onBack = null,
-                onOpenVoiceGuides = {
-                    navController.navigate(Routes.VOICE_GUIDE_PICKER) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenSoundscapes = {
-                    navController.navigate(Routes.SOUNDSCAPE_PICKER) {
-                        launchSingleTop = true
+                onAction = { action ->
+                    when (action) {
+                        org.walktalkmeditate.pilgrim.ui.settings.SettingsAction.OpenVoiceGuides ->
+                            navController.navigate(Routes.VOICE_GUIDE_PICKER) {
+                                launchSingleTop = true
+                            }
+                        org.walktalkmeditate.pilgrim.ui.settings.SettingsAction.OpenSoundscapes ->
+                            navController.navigate(Routes.SOUNDSCAPE_PICKER) {
+                                launchSingleTop = true
+                            }
+                        else -> Unit
                     }
                 },
             )
