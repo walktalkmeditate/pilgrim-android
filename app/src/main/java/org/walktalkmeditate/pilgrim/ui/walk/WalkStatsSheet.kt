@@ -21,9 +21,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,6 +60,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Job
@@ -94,6 +98,13 @@ fun WalkStatsSheet(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    intention: String? = null,
+    // `preWalkIntention` is meaningful only when `walkState == Idle` — the
+    // ActionButtonRow renders a tappable pill above the Start button using
+    // its value. During Active|Paused|Meditating the param is accepted but
+    // ignored; callers can pass the same draft pointer through all states.
+    preWalkIntention: String? = null,
+    onSetPreWalkIntention: () -> Unit = {},
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStartWalk: () -> Unit,
@@ -237,6 +248,9 @@ fun WalkStatsSheet(
                         recorderState = recorderState,
                         audioLevel = audioLevel,
                         recordingsCount = recordingsCount,
+                        intention = intention,
+                        preWalkIntention = preWalkIntention,
+                        onSetPreWalkIntention = onSetPreWalkIntention,
                         onPause = onPause,
                         onResume = onResume,
                         onStartWalk = onStartWalk,
@@ -370,6 +384,9 @@ private fun ExpandedContent(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    intention: String?,
+    preWalkIntention: String?,
+    onSetPreWalkIntention: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStartWalk: () -> Unit,
@@ -394,11 +411,17 @@ private fun ExpandedContent(
                 color = pilgrimColors.ink,
             )
             Spacer(Modifier.height(PilgrimSpacing.xs))
-            Text(
-                text = stringResource(R.string.walk_caption_every_step),
-                style = pilgrimType.caption,
-                color = pilgrimColors.fog.copy(alpha = 0.6f),
-            )
+            Crossfade(
+                targetState = intention?.trim()?.takeIf { it.isNotEmpty() },
+                animationSpec = tween(durationMillis = 600, easing = EaseInOut),
+                label = "intention-caption",
+            ) { resolved ->
+                Text(
+                    text = resolved ?: stringResource(R.string.walk_caption_every_step),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog.copy(alpha = 0.6f),
+                )
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -451,6 +474,8 @@ private fun ExpandedContent(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
+            preWalkIntention = preWalkIntention,
+            onSetPreWalkIntention = onSetPreWalkIntention,
             onStartWalk = onStartWalk,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
@@ -506,6 +531,8 @@ private fun ActionButtonRow(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    preWalkIntention: String?,
+    onSetPreWalkIntention: () -> Unit,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
@@ -523,14 +550,18 @@ private fun ActionButtonRow(
     //   Manual Pause is dropped — iOS uses motion-based auto-pause we
     //   don't have yet.
     if (walkState == WalkState.Idle) {
-        Box(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
         ) {
+            PreWalkIntentionPill(
+                text = preWalkIntention,
+                onClick = onSetPreWalkIntention,
+            )
             CircularActionButton(
                 label = stringResource(R.string.walk_action_start),
                 icon = Icons.Filled.PlayArrow,
-                // iOS uses moss-green for the Start button.
                 color = pilgrimColors.moss,
                 onClick = onStartWalk,
             )
@@ -633,6 +664,35 @@ private fun CircularActionButton(
                 maxLines = 1,
             )
         }
+    }
+}
+
+@Composable
+private fun PreWalkIntentionPill(
+    text: String?,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val display = text?.trim()?.takeIf { it.isNotEmpty() }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.5f))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = display ?: stringResource(R.string.walk_pre_intention_pill_unset),
+            style = pilgrimType.caption,
+            color = if (display == null) pilgrimColors.fog else pilgrimColors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

@@ -21,59 +21,37 @@ class WalkOptionsSheetTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun `renders intention and waypoint rows`() {
+    fun `renders waypoint row`() {
         composeRule.setContent {
             WalkOptionsSheet(
-                intention = null,
                 waypointCount = 0,
                 canDropWaypoint = true,
-                onSetIntention = {},
                 onDropWaypoint = {},
                 onDismiss = {},
             )
         }
-        composeRule.onNodeWithText("Set Intention").assertIsDisplayed()
         composeRule.onNodeWithText("Drop Waypoint").assertIsDisplayed()
     }
 
     @Test
-    fun `intention subtitle shows the persisted intention when set`() {
+    fun `set intention row is not rendered`() {
         composeRule.setContent {
             WalkOptionsSheet(
-                intention = "walk well",
                 waypointCount = 0,
                 canDropWaypoint = true,
-                onSetIntention = {},
                 onDropWaypoint = {},
                 onDismiss = {},
             )
         }
-        composeRule.onNodeWithText("walk well").assertIsDisplayed()
-    }
-
-    @Test
-    fun `intention subtitle shows fallback when null`() {
-        composeRule.setContent {
-            WalkOptionsSheet(
-                intention = null,
-                waypointCount = 0,
-                canDropWaypoint = true,
-                onSetIntention = {},
-                onDropWaypoint = {},
-                onDismiss = {},
-            )
-        }
-        composeRule.onNodeWithText("No intention set").assertIsDisplayed()
+        composeRule.onNodeWithText("Set Intention").assertDoesNotExist()
     }
 
     @Test
     fun `waypoint row disabled when canDropWaypoint is false`() {
         composeRule.setContent {
             WalkOptionsSheet(
-                intention = null,
                 waypointCount = 0,
                 canDropWaypoint = false,
-                onSetIntention = {},
                 onDropWaypoint = {},
                 onDismiss = {},
             )
@@ -89,10 +67,8 @@ class WalkOptionsSheetTest {
         // 0 with a non-plural string instead.
         composeRule.setContent {
             WalkOptionsSheet(
-                intention = null,
                 waypointCount = 0,
                 canDropWaypoint = true,
-                onSetIntention = {},
                 onDropWaypoint = {},
                 onDismiss = {},
             )
@@ -104,10 +80,8 @@ class WalkOptionsSheetTest {
     fun `waypoint subtitle uses plural for non-zero counts`() {
         composeRule.setContent {
             WalkOptionsSheet(
-                intention = null,
                 waypointCount = 3,
                 canDropWaypoint = true,
-                onSetIntention = {},
                 onDropWaypoint = {},
                 onDismiss = {},
             )
@@ -116,19 +90,17 @@ class WalkOptionsSheetTest {
     }
 
     @Test
-    fun `intention click fires onSetIntention`() {
+    fun `waypoint click fires onDropWaypoint`() {
         var fired = false
         composeRule.setContent {
             WalkOptionsSheet(
-                intention = null,
                 waypointCount = 0,
                 canDropWaypoint = true,
-                onSetIntention = { fired = true },
-                onDropWaypoint = {},
+                onDropWaypoint = { fired = true },
                 onDismiss = {},
             )
         }
-        composeRule.onNodeWithText("Set Intention").performClick()
+        composeRule.onNodeWithText("Drop Waypoint").performClick()
         assertTrue(fired)
     }
 }
