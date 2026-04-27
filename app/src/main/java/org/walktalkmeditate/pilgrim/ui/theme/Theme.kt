@@ -39,43 +39,51 @@ fun PilgrimTheme(
     // `outline` is consumed by Material3's OutlinedButton (and TextField
     // borders). Left unmapped, it falls back to M3's default cool
     // purple-gray, which clashes with Pilgrim's warm earth palette.
-    // Stone-at-40% reads as a muted secondary-button border.
-    val m3 = if (darkTheme) {
-        darkColorScheme(
-            primary = colors.stone,
-            onPrimary = colors.parchment,
-            background = colors.parchment,
-            onBackground = colors.ink,
-            surface = colors.parchmentSecondary,
-            onSurface = colors.ink,
-            surfaceVariant = colors.parchmentTertiary,
-            outline = colors.stone.copy(alpha = 0.4f),
-            error = colors.rust,
-        )
-    } else {
-        lightColorScheme(
-            primary = colors.stone,
-            onPrimary = colors.parchment,
-            background = colors.parchment,
-            onBackground = colors.ink,
-            surface = colors.parchmentSecondary,
-            onSurface = colors.ink,
-            surfaceVariant = colors.parchmentTertiary,
-            outline = colors.stone.copy(alpha = 0.4f),
-            error = colors.rust,
-        )
+    // Stone-at-40% reads as a muted secondary-button border. Memoize on
+    // `colors` (which itself is keyed on `darkTheme`) so unrelated
+    // PilgrimTheme recompositions don't reallocate the 30+ field
+    // ColorScheme.
+    val m3 = remember(colors, darkTheme) {
+        if (darkTheme) {
+            darkColorScheme(
+                primary = colors.stone,
+                onPrimary = colors.parchment,
+                background = colors.parchment,
+                onBackground = colors.ink,
+                surface = colors.parchmentSecondary,
+                onSurface = colors.ink,
+                surfaceVariant = colors.parchmentTertiary,
+                outline = colors.stone.copy(alpha = 0.4f),
+                error = colors.rust,
+            )
+        } else {
+            lightColorScheme(
+                primary = colors.stone,
+                onPrimary = colors.parchment,
+                background = colors.parchment,
+                onBackground = colors.ink,
+                surface = colors.parchmentSecondary,
+                onSurface = colors.ink,
+                surfaceVariant = colors.parchmentTertiary,
+                outline = colors.stone.copy(alpha = 0.4f),
+                error = colors.rust,
+            )
+        }
     }
 
-    val m3Typography = MaterialTheme.typography.copy(
-        displayLarge = type.displayLarge,
-        displayMedium = type.displayMedium,
-        titleLarge = type.heading,
-        bodyLarge = type.body,
-        bodyMedium = type.body,
-        labelLarge = type.button,
-        labelMedium = type.caption,
-        labelSmall = type.micro,
-    )
+    val baseTypography = MaterialTheme.typography
+    val m3Typography = remember(type, baseTypography) {
+        baseTypography.copy(
+            displayLarge = type.displayLarge,
+            displayMedium = type.displayMedium,
+            titleLarge = type.heading,
+            bodyLarge = type.body,
+            bodyMedium = type.body,
+            labelLarge = type.button,
+            labelMedium = type.caption,
+            labelSmall = type.micro,
+        )
+    }
 
     CompositionLocalProvider(
         LocalPilgrimColors provides colors,
