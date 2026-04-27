@@ -98,6 +98,10 @@ fun WalkStatsSheet(
     audioLevel: Float,
     recordingsCount: Int,
     intention: String? = null,
+    // `preWalkIntention` is meaningful only when `walkState == Idle` — the
+    // ActionButtonRow renders a tappable pill above the Start button using
+    // its value. During Active|Paused|Meditating the param is accepted but
+    // ignored; callers can pass the same draft pointer through all states.
     preWalkIntention: String? = null,
     onSetPreWalkIntention: () -> Unit = {},
     onPause: () -> Unit,

@@ -58,7 +58,11 @@ class WalkController @Inject constructor(
             "startWalk requires Idle or Finished state but controller is currently $current"
         }
         val startedAt = clock.now()
-        val walk = repository.startWalk(startTimestamp = startedAt, intention = intention)
+        // Same trim/truncate/blank-check as `setIntention` so a future
+        // caller (test, restore, deep-link) passing `"   "` or a 200-char
+        // string can't land malformed text in Room.
+        val sanitized = intention?.trim()?.take(MAX_INTENTION_CHARS)?.takeIf { it.isNotBlank() }
+        val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized)
         val (next, effect) = WalkReducer.reduce(
             current,
             WalkAction.Start(walkId = walk.id, at = startedAt),
@@ -68,7 +72,7 @@ class WalkController @Inject constructor(
         // Log presence, not content — intentions can carry privacy-sensitive
         // text ("mourning Y", "anxiety about Z") that we don't want landing
         // in logcat where other debug tooling might capture it.
-        Log.i(TAG, "startWalk id=${walk.id} intentionSet=${intention != null} at=$startedAt")
+        Log.i(TAG, "startWalk id=${walk.id} intentionSet=${sanitized != null} at=$startedAt")
         walk
     }
 

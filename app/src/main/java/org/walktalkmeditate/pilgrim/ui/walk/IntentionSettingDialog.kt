@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
@@ -14,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import org.walktalkmeditate.pilgrim.R
@@ -49,14 +47,6 @@ fun IntentionSettingDialog(
                     singleLine = false,
                     maxLines = 3,
                 )
-                val countColor by animateColorAsState(
-                    targetValue = lerp(
-                        pilgrimColors.fog,
-                        pilgrimColors.moss,
-                        fraction = (text.length.toFloat() / MAX_INTENTION_CHARS).coerceIn(0f, 1f),
-                    ),
-                    label = "intention-count-color",
-                )
                 Text(
                     text = stringResource(
                         R.string.walk_waypoint_count_chars,
@@ -64,7 +54,9 @@ fun IntentionSettingDialog(
                         MAX_INTENTION_CHARS,
                     ),
                     style = pilgrimType.caption,
-                    color = countColor,
+                    // iOS parity: `IntentionSettingView.swift:113` uses
+                    // `.fog.opacity(0.5)` — a static fog tint, no gradient.
+                    color = pilgrimColors.fog.copy(alpha = 0.5f),
                     textAlign = TextAlign.End,
                     modifier = Modifier.fillMaxWidth(),
                 )

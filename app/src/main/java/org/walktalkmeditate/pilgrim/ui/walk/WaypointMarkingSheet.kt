@@ -9,12 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
@@ -115,23 +111,27 @@ fun WaypointMarkingSheet(
                 modifier = Modifier.padding(bottom = PilgrimSpacing.small),
             )
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
-                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
-                userScrollEnabled = false,
-                modifier = Modifier.height(200.dp),
-            ) {
-                items(PRESET_CHIPS) { chip ->
-                    val label = stringResource(chip.labelRes)
-                    PresetChip(
-                        label = label,
-                        iconKey = chip.iconKey,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onMark(label, chip.iconKey)
-                        },
-                    )
+            // Two static rows of three chips each. With only 6 fixed
+            // chips there's no value in LazyVerticalGrid's virtualization
+            // and a non-lazy layout sizes correctly without the height-pin
+            // workaround Robolectric needed for `LazyVerticalGrid`.
+            PRESET_CHIPS.chunked(3).forEach { rowChips ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+                ) {
+                    rowChips.forEach { chip ->
+                        val label = stringResource(chip.labelRes)
+                        PresetChip(
+                            label = label,
+                            iconKey = chip.iconKey,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onMark(label, chip.iconKey)
+                            },
+                        )
+                    }
                 }
             }
 
@@ -158,10 +158,11 @@ private fun PresetChip(
     label: String,
     iconKey: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.4f))

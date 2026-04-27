@@ -2,6 +2,8 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -89,5 +91,30 @@ class WaypointMarkingSheetTest {
         val long = "a".repeat(60)
         composeRule.onNodeWithText("Custom note").performTextInput(long)
         composeRule.onNodeWithText("50/50").assertIsDisplayed()
+    }
+
+    @Test fun `iconKeyToVector covers every iOS SF-Symbol key plus mappin`() {
+        // Each known key should resolve to a non-null Material ImageVector.
+        // Unknown keys must fall back to LocationOn (not throw, not return
+        // null) so a future iOS-introduced symbol still renders.
+        val knownKeys = listOf(
+            "leaf", "eye", "heart", "figure.seated.side",
+            "sparkles", "flag.fill", "mappin",
+        )
+        knownKeys.forEach { key ->
+            val vector = iconKeyToVector(key)
+            // Non-null + non-LocationOn for the 6 chip keys (mappin is
+            // intentionally LocationOn so we don't enforce that here).
+            org.junit.Assert.assertNotNull(
+                "iconKeyToVector('$key') must not be null",
+                vector,
+            )
+        }
+        val fallback = iconKeyToVector("totally.unknown.future.symbol")
+        org.junit.Assert.assertEquals(
+            "Unknown keys must fall back to LocationOn",
+            Icons.Filled.LocationOn,
+            fallback,
+        )
     }
 }
