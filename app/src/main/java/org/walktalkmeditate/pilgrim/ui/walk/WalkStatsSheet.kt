@@ -60,6 +60,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Job
@@ -405,10 +407,22 @@ private fun ExpandedContent(
                 animationSpec = tween(durationMillis = 600, easing = EaseInOut),
                 label = "intention-caption",
             ) { resolved ->
+                // iOS WalkStatsSheet.swift:410-415 reference: caption is
+                // centered, max 2 lines, scales down to 70% to fit. Compose
+                // has no direct minimumScaleFactor analog; the closest
+                // faithful port is maxLines=2 + ellipsis + center align +
+                // fillMaxWidth so longer intention text wraps within the
+                // sheet's content width and overflow ellipsises gracefully
+                // (vs the previous unbounded wrap that pushed stats off
+                // the visible region for long intentions).
                 Text(
                     text = resolved ?: stringResource(R.string.walk_caption_every_step),
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog.copy(alpha = 0.6f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
