@@ -69,7 +69,21 @@ class WalkViewModel @Inject constructor(
     private val clock: Clock,
     private val voiceRecorder: VoiceRecorder,
     private val locationSource: LocationSource,
+    private val walkRecoveryRepository:
+        org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository,
 ) : ViewModel() {
+
+    /**
+     * Id of a walk that was auto-finalized by `WalkTrackingService.onTaskRemoved`
+     * (user swiped the app away from recents while a walk was in progress).
+     * Path screen renders the recovery banner while non-null and clears via
+     * [dismissRecovery] after the banner auto-times-out.
+     */
+    val recoveredWalkId: StateFlow<Long?> = walkRecoveryRepository.recoveredWalkId
+
+    fun dismissRecovery() {
+        viewModelScope.launch { walkRecoveryRepository.clearRecovered() }
+    }
 
     val uiState: StateFlow<WalkUiState> = combine(
         controller.state,
