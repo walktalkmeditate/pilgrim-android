@@ -7,6 +7,7 @@ import kotlin.reflect.KClass
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
@@ -50,6 +51,7 @@ class MeditationBellObserver @Inject constructor(
     // don't match and the app fails to compose at Hilt-gen time.
     @MeditationObservedWalkState walkState: StateFlow<@JvmSuppressWildcards WalkState>,
     bellPlayer: BellPlaying,
+    private val soundsPreferences: SoundsPreferencesRepository,
     @MeditationBellScope scope: CoroutineScope,
 ) {
     init {
@@ -73,7 +75,10 @@ class MeditationBellObserver @Inject constructor(
                 val isRestoreIntoMeditating =
                     prev == WalkState.Idle::class && isMeditating
                 if (wasMeditating != isMeditating && !isRestoreIntoMeditating) {
-                    bellPlayer.play()
+                    // Stage 10-B master sounds toggle: short-circuit if user has muted.
+                    if (soundsPreferences.soundsEnabled.value) {
+                        bellPlayer.play()
+                    }
                 }
             }
         }

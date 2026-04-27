@@ -12,6 +12,8 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
@@ -160,16 +162,62 @@ class MeditationBellObserverTest {
         }
     }
 
-    private fun TestScope.newScenario(initial: WalkState): Scenario {
+    private fun TestScope.newScenario(
+        initial: WalkState,
+        soundsPreferences: SoundsPreferencesRepository = FakeSoundsPreferencesRepository(initial = true),
+    ): Scenario {
         val state = MutableStateFlow(initial)
         val fakePlayer = FakeBellPlayer()
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         MeditationBellObserver(
             walkState = state,
             bellPlayer = fakePlayer,
+            soundsPreferences = soundsPreferences,
             scope = scope,
         )
         return Scenario(state, fakePlayer, scope)
+    }
+
+    @Test fun `master toggle off suppresses Active to Meditating bell`() = runTest {
+        val s = newScenario(
+            initial = WalkState.Active(acc),
+            soundsPreferences = FakeSoundsPreferencesRepository(initial = false),
+        )
+        advanceUntilIdle()
+        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+        advanceUntilIdle()
+        // Master sounds toggle is OFF — the Active→Meditating boundary
+        // would normally ring, but the gate suppresses it.
+        assertEquals(0, s.player.playCount)
+        s.cancel()
+    }
+
+    @Test fun `master toggle off suppresses Meditating to Active bell`() = runTest {
+        val s = newScenario(
+            initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L),
+            soundsPreferences = FakeSoundsPreferencesRepository(initial = false),
+        )
+        advanceUntilIdle()
+        s.state.value = WalkState.Active(acc)
+        advanceUntilIdle()
+        assertEquals(0, s.player.playCount)
+        s.cancel()
+    }
+
+    @Test fun `master toggle flipped on mid-session unmutes subsequent bells`() = runTest {
+        val prefs = FakeSoundsPreferencesRepository(initial = false)
+        val s = newScenario(initial = WalkState.Active(acc), soundsPreferences = prefs)
+        advanceUntilIdle()
+        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+        advanceUntilIdle()
+        assertEquals(0, s.player.playCount)   // muted
+
+        prefs.setSoundsEnabled(true)
+        advanceUntilIdle()
+        s.state.value = WalkState.Active(acc)
+        advanceUntilIdle()
+        assertEquals(1, s.player.playCount)   // unmuted, ring on the boundary
+        s.cancel()
     }
 }
 
