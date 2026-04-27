@@ -121,9 +121,20 @@ fun ActiveWalkScreen(
     // Single state-class side-effect block: track in-progress latch for
     // the discard-nav guard, route to neighbor screens on terminal
     // emissions, and dismiss in-walk sheets when the walk leaves an
-    // in-progress state. showPreWalkIntention is intentionally NOT
-    // dismissed here — Idle is the pre-walk surface itself, so the
-    // pill/dialog should remain accessible between walks.
+    // in-progress state.
+    //
+    // Dismissal policy:
+    //  - showOptions / showWaypointMarking: dismiss whenever the walk is
+    //    NOT in an active-walk state (Active|Paused). Meditating dismisses
+    //    them too — the nav goes to MeditationScreen and a re-emerging
+    //    sheet on return would surprise the user.
+    //  - showPreWalkIntention: dismiss whenever the walk is NOT Idle. The
+    //    dialog is the pre-walk surface; if the state transitions to
+    //    Active externally (FGS automation, restoreActiveWalk), the
+    //    typed draft would have nowhere to go — Save would silently
+    //    write to a now-irrelevant `preWalkIntention` field. Bumping
+    //    the resetKey discards any in-progress draft so a fresh open
+    //    next time we reach Idle starts clean.
     LaunchedEffect(navWalkState::class) {
         val state = navWalkState
         val isInProgress = state is WalkState.Active ||
@@ -131,9 +142,14 @@ fun ActiveWalkScreen(
             state is WalkState.Meditating
         if (isInProgress) {
             hasSeenInProgress.value = true
-        } else {
+        }
+        if (state !is WalkState.Active && state !is WalkState.Paused) {
             showOptions = false
             showWaypointMarking = false
+        }
+        if (state !is WalkState.Idle && showPreWalkIntention) {
+            showPreWalkIntention = false
+            preWalkIntentionResetKey++
         }
         when (state) {
             is WalkState.Finished -> onFinished(state.walk.walkId)

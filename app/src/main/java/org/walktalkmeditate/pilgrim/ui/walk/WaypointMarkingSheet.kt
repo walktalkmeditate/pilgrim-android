@@ -105,6 +105,12 @@ fun WaypointMarkingSheet(
     // cancelled custom note. Rotation within a single open session still
     // preserves the text via Bundle round-trip.
     var customText by rememberSaveable(resetKey) { mutableStateOf("") }
+    // Single-shot debounce: rapid double-tap on a chip OR Mark before the
+    // parent recomposes with `showWaypointMarking = false` would otherwise
+    // fire `onMark` twice and insert two waypoints at the same location.
+    // The flag survives only within a single open session — keyed on
+    // resetKey so the next sheet open starts fresh.
+    var marked by remember(resetKey) { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -144,6 +150,8 @@ fun WaypointMarkingSheet(
                             iconKey = chip.iconKey,
                             modifier = Modifier.weight(1f),
                             onClick = {
+                                if (marked) return@PresetChip
+                                marked = true
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onMark(label, chip.iconKey)
                             },
@@ -158,8 +166,10 @@ fun WaypointMarkingSheet(
                     customText = incoming.take(MAX_WAYPOINT_CUSTOM_CHARS)
                 },
                 onMark = {
+                    if (marked) return@CustomNoteRow
                     val trimmed = customText.trim()
                     if (trimmed.isEmpty()) return@CustomNoteRow
+                    marked = true
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onMark(trimmed, WAYPOINT_CUSTOM_ICON_KEY)
                 },
@@ -206,6 +216,10 @@ private fun PresetChip(
                 text = label,
                 style = pilgrimType.caption,
                 color = pilgrimColors.ink.copy(alpha = 0.8f),
+                // Long-translation defense (Phase 10 i18n trip-wire): keep
+                // chip labels single-line at ~110dp width with ellipsis.
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
     }

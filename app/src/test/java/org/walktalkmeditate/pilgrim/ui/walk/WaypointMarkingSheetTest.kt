@@ -94,6 +94,23 @@ class WaypointMarkingSheetTest {
         composeRule.onNodeWithText("50/50").assertIsDisplayed()
     }
 
+    @Test fun `rapid double-tap on a chip fires onMark exactly once`() {
+        // Slow devices can deliver two taps before the parent re-renders
+        // with the sheet dismissed; the in-sheet `marked` debounce guards
+        // against duplicate waypoints at the same location.
+        var fireCount = 0
+        composeRule.setContent {
+            WaypointMarkingSheet(
+                onMark = { _, _ -> fireCount++ },
+                onDismiss = {},
+            )
+        }
+        // Two clicks back-to-back without a parent recomposition between them.
+        composeRule.onNodeWithText("Peaceful").performClick()
+        composeRule.onNodeWithText("Peaceful").performClick()
+        assertEquals(1, fireCount)
+    }
+
     @Test fun `iconKeyToVector returns distinct vectors for each chip key and falls back to LocationOn`() {
         // Each of the 6 chip keys must resolve to a DISTINCT Material
         // vector — proves the when-branches aren't accidentally collapsed
