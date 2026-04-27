@@ -62,6 +62,8 @@ fun ActiveWalkScreen(
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
+    val intention by viewModel.intention.collectAsStateWithLifecycle()
+    val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
     // at the pre-meditation Meditating snapshot for one frame on
@@ -99,6 +101,8 @@ fun ActiveWalkScreen(
         SHEET_HEIGHT_MINIMIZED_DP
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
+    var showOptions by rememberSaveable { mutableStateOf(false) }
+    var showIntention by rememberSaveable { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
             points = routePoints,
@@ -113,10 +117,7 @@ fun ActiveWalkScreen(
         // top-left, X (leave walk) top-right.
         // ActiveWalkView.swift:530-567.
         MapOverlayButtons(
-            // TODO Stage 9.5-C: ellipsis opens an options sheet
-            // (intention/waypoint/whisper/stone/soundscape/voice-guide).
-            // No-op for now — the underlying features aren't all ported.
-            onOptionsClick = {},
+            onOptionsClick = { showOptions = true },
             onLeaveClick = { showLeaveConfirm = true },
             // Stage 9.5-A trap (already fixed for the bottom sheet): the
             // PilgrimNavHost Scaffold already passes status-bar inset
@@ -133,6 +134,33 @@ fun ActiveWalkScreen(
                     viewModel.discardWalk()
                 },
                 onDismiss = { showLeaveConfirm = false },
+            )
+        }
+        if (showOptions) {
+            WalkOptionsSheet(
+                intention = intention,
+                waypointCount = waypointCount,
+                canDropWaypoint = navWalkState is WalkState.Active ||
+                    navWalkState is WalkState.Paused,
+                onSetIntention = {
+                    showOptions = false
+                    showIntention = true
+                },
+                onDropWaypoint = {
+                    viewModel.dropWaypoint()
+                    showOptions = false
+                },
+                onDismiss = { showOptions = false },
+            )
+        }
+        if (showIntention) {
+            IntentionSettingDialog(
+                initial = intention,
+                onSave = { text ->
+                    viewModel.setIntention(text)
+                    showIntention = false
+                },
+                onDismiss = { showIntention = false },
             )
         }
         WalkStatsSheet(
