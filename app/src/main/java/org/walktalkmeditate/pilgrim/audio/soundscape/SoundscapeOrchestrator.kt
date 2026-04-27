@@ -9,11 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
@@ -68,6 +70,7 @@ class SoundscapeOrchestrator @Inject constructor(
     private val manifestService: AudioManifestService,
     private val fileStore: SoundscapeFileStore,
     private val player: SoundscapePlayer,
+    private val soundsPreferences: SoundsPreferencesRepository,
     @SoundscapePlaybackScope private val scope: CoroutineScope,
 ) {
     fun start() {
@@ -77,9 +80,24 @@ class SoundscapeOrchestrator @Inject constructor(
     private suspend fun observe() {
         var playJob: Job? = null
 
-        walkState.collect { state ->
+        // Stage 10-B master sounds toggle: combine walkState with the
+        // soundsEnabled flag so flipping the toggle mid-meditation
+        // cancels playback and does not spawn while muted. Spawn
+        // decision happens here at the per-emission level (not inside
+        // runSessionLoop) so the existing retry-budget logic stays
+        // intact for legitimately-muted-and-then-unmuted sessions.
+        combine(walkState, soundsPreferences.soundsEnabled) { state, enabled ->
+            state to enabled
+        }.collect { (state, enabled) ->
             when (state) {
                 is WalkState.Meditating -> {
+                    if (!enabled) {
+                        // Master toggle is OFF — cancel any in-flight
+                        // session and stop the player. No spawn.
+                        playJob?.cancel(); playJob = null
+                        safeStopPlayer()
+                        return@collect
+                    }
                     // `isActive != true` catches (1) first-ever-null,
                     // (2) cancelled, and (3) completed-but-not-null.
                     // With the `player.state` observer below keeping

@@ -36,6 +36,8 @@ import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
@@ -112,7 +114,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -131,7 +133,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -151,7 +153,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         // Before the 800ms delay elapses, no play yet.
@@ -176,7 +178,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -208,7 +210,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         // User bails mid-delay (tap Done at ~400ms).
@@ -234,7 +236,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -257,7 +259,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -289,7 +291,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -329,7 +331,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -380,12 +382,99 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(2_000)
         runCurrent()
         assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `master toggle off prevents soundscape spawn on Meditating`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer,
+            FakeSoundsPreferencesRepository(initial = false),
+            s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        // Master sounds toggle is OFF — even though the soundscape is
+        // eligible (selected, manifest hit, file on disk), no spawn.
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `flipping master toggle off mid-session cancels playback`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(initial = true)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        // User flips the master toggle OFF mid-meditation.
+        prefs.setSoundsEnabled(false)
+        runCurrent()
+
+        assertTrue(
+            "expected at least one stop after master toggle off, got ${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        s.cancel()
+    }
+
+    @Test fun `flipping master toggle on mid-session spawns soundscape`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(initial = false)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+
+        // User flips master toggle ON mid-meditation. After the start
+        // delay, the soundscape should fire.
+        prefs.setSoundsEnabled(true)
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(
+            "expected soundscape to spawn after master toggle on, got ${capturingPlayer.playCount}",
+            1, capturingPlayer.playCount,
+        )
         s.cancel()
     }
 
