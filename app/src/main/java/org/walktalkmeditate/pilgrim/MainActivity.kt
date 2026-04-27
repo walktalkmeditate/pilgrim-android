@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -10,8 +11,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import kotlinx.coroutines.runBlocking
+import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
 import org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
+import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.widget.DeepLinkTarget
 
 @AndroidEntryPoint
@@ -25,11 +30,32 @@ class MainActivity : ComponentActivity() {
      */
     private val pendingDeepLink = mutableStateOf<DeepLinkTarget?>(null)
 
+    @Inject lateinit var walkController: WalkController
+    @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // Stage 9-A: parse widget intent extras at first launch.
         pendingDeepLink.value = DeepLinkTarget.parse(intent)
+        // iOS-parity recovery: catches the warm-launch-after-swipe case
+        // that `PilgrimApp.onCreate.recoverStaleWalks` misses. Application
+        // onCreate only fires on cold launch; if the user swipes the app
+        // away and the process is cached (FGS may keep it warm depending
+        // on the Android version + OEM), reopen is a warm launch — same
+        // process, same WalkController @Singleton state, no recovery hook
+        // unless we do it here.
+        //
+        // savedInstanceState == null discriminates fresh-Activity-creation
+        // (warm launch after task remove) from configuration changes
+        // (rotation; savedInstanceState != null) and OS-preserved state.
+        // Idle controller state means recovery already ran via PilgrimApp
+        // (cold launch); skip. Active/Paused/Meditating means a walk was
+        // alive in-memory — by definition it persisted across the user's
+        // task-remove gesture, which iOS-parity says should END the walk.
+        if (savedInstanceState == null) {
+            recoverIfStaleActiveWalk()
+        }
         setContent {
             PilgrimTheme {
                 // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
@@ -68,5 +94,30 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingDeepLink.value = DeepLinkTarget.parse(intent)
+    }
+
+    private fun recoverIfStaleActiveWalk() {
+        val state = walkController.state.value
+        val needsRecovery = state is org.walktalkmeditate.pilgrim.domain.WalkState.Active ||
+            state is org.walktalkmeditate.pilgrim.domain.WalkState.Paused ||
+            state is org.walktalkmeditate.pilgrim.domain.WalkState.Meditating
+        if (!needsRecovery) {
+            Log.i(TAG, "warm-launch recovery: controller=${state::class.simpleName}, no-op")
+            return
+        }
+        Log.i(TAG, "warm-launch recovery: controller=${state::class.simpleName}, finalizing")
+        try {
+            val recoveredId = runBlocking { walkController.recoverStaleWalks() }
+            if (recoveredId != null) {
+                walkRecoveryRepository.markRecoveredBlocking(recoveredId)
+                Log.i(TAG, "warm-launch recovery armed banner for walk=$recoveredId")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "warm-launch recovery failed", t)
+        }
+    }
+
+    private companion object {
+        const val TAG = "MainActivity"
     }
 }

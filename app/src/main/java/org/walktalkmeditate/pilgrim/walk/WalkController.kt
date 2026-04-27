@@ -228,8 +228,20 @@ class WalkController @Inject constructor(
         Log.i(
             TAG,
             "recoverStaleWalks: scan total=${all.size} unfinished=${unfinished.size} " +
-                "ids=${unfinished.map { it.id }}",
+                "ids=${unfinished.map { it.id }} state=${_state.value::class.simpleName}",
         )
+        // Warm-launch case: process survived swipe-from-recents (FGS
+        // didn't fully tear down despite stopWithTask="true"). Controller
+        // still holds the walk in memory as Active|Paused|Meditating.
+        // Force the in-memory state back to Idle so the UI doesn't redirect
+        // to ActiveWalkScreen on the next composition. Done UNCONDITIONALLY
+        // before any reads of `_state` below — the in-memory state is
+        // authoritatively wrong if any walks are unfinished AND the
+        // controller is non-Idle (the swipe meant "end this walk").
+        if (unfinished.isNotEmpty() && _state.value !is WalkState.Idle) {
+            Log.i(TAG, "recoverStaleWalks: resetting in-memory state ${_state.value::class.simpleName} → Idle")
+            _state.value = WalkState.Idle
+        }
         if (unfinished.isEmpty()) {
             return@withLock null
         }
