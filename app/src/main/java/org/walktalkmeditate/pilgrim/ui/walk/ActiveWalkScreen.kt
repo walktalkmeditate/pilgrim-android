@@ -64,6 +64,7 @@ fun ActiveWalkScreen(
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
+    val intention by viewModel.intention.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
     // at the pre-meditation Meditating snapshot for one frame on
@@ -118,16 +119,22 @@ fun ActiveWalkScreen(
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
+    var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
+    var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
+    var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
     // If the walk transitions to Idle (discard) or Finished while the
-    // options sheet is open, dismiss it — leaving it visible over a stale
-    // walk would invite confused taps onto controller actions that no-op on
-    // terminal states.
+    // options or waypoint sheet is open, dismiss it — leaving it visible
+    // over a stale walk would invite confused taps onto controller actions
+    // that no-op on terminal states. showPreWalkIntention is NOT dismissed
+    // here — Idle is the pre-walk surface itself, and the pill/dialog
+    // should remain accessible between walks.
     LaunchedEffect(navWalkState::class) {
         if (navWalkState !is WalkState.Active &&
             navWalkState !is WalkState.Paused &&
             navWalkState !is WalkState.Meditating
         ) {
             showOptions = false
+            showWaypointMarking = false
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
@@ -169,10 +176,29 @@ fun ActiveWalkScreen(
                 canDropWaypoint = navWalkState is WalkState.Active ||
                     navWalkState is WalkState.Paused,
                 onDropWaypoint = {
-                    viewModel.dropWaypoint()
                     showOptions = false
+                    showWaypointMarking = true
                 },
                 onDismiss = { showOptions = false },
+            )
+        }
+        if (showWaypointMarking) {
+            WaypointMarkingSheet(
+                onMark = { label, icon ->
+                    viewModel.dropWaypoint(label = label, icon = icon)
+                    showWaypointMarking = false
+                },
+                onDismiss = { showWaypointMarking = false },
+            )
+        }
+        if (showPreWalkIntention) {
+            IntentionSettingDialog(
+                initial = preWalkIntention,
+                onSave = { text ->
+                    preWalkIntention = text.takeIf { it.isNotBlank() }
+                    showPreWalkIntention = false
+                },
+                onDismiss = { showPreWalkIntention = false },
             )
         }
         WalkStatsSheet(
@@ -193,9 +219,15 @@ fun ActiveWalkScreen(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
+            intention = intention,
+            preWalkIntention = preWalkIntention,
+            onSetPreWalkIntention = { showPreWalkIntention = true },
             onPause = viewModel::pauseWalk,
             onResume = viewModel::resumeWalk,
-            onStartWalk = { viewModel.startWalk() },
+            onStartWalk = {
+                viewModel.startWalk(intention = preWalkIntention)
+                preWalkIntention = null
+            },
             onStartMeditation = viewModel::startMeditation,
             onEndMeditation = viewModel::endMeditation,
             onToggleRecording = viewModel::toggleRecording,
