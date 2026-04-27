@@ -86,6 +86,16 @@ class WalkRepository @Inject constructor(
         walkDao.delete(walk)
     }
 
+    /**
+     * Deletes the walk row by id. All child rows in route_data_samples,
+     * altitude_samples, walk_events, activity_intervals, waypoints,
+     * voice_recordings, and walk_photos are removed via SQLite
+     * `ON DELETE CASCADE`. No-op when the id matches no row.
+     */
+    suspend fun deleteWalkById(walkId: Long) {
+        walkDao.deleteById(walkId)
+    }
+
     suspend fun recordLocation(sample: RouteDataSample): Long = routeDao.insert(sample)
 
     suspend fun recordLocations(samples: List<RouteDataSample>) = routeDao.insertAll(samples)
