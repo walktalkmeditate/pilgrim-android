@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -31,7 +32,7 @@ class IntentionSettingDialogTest {
             )
         }
         composeRule.onNodeWithText("A line for this walk…").performTextInput("  walk well  ")
-        composeRule.onNodeWithText("Save").performClick()
+        composeRule.onNodeWithText("Set").performClick()
         assertEquals("walk well", saved)
     }
 
@@ -61,7 +62,32 @@ class IntentionSettingDialogTest {
         }
         val longText = "x".repeat(200)
         composeRule.onNodeWithText("A line for this walk…").performTextInput(longText)
-        composeRule.onNodeWithText("Save").performClick()
+        composeRule.onNodeWithText("Set").performClick()
         assertEquals(140, saved?.length)
+    }
+
+    @Test
+    fun `confirm button reads Set after iOS-parity rename`() {
+        composeRule.setContent {
+            IntentionSettingDialog(initial = null, onSave = {}, onDismiss = {})
+        }
+        composeRule.onNodeWithText("Set").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertDoesNotExist()
+    }
+
+    @Test
+    fun `character count caption renders for empty text`() {
+        composeRule.setContent {
+            IntentionSettingDialog(initial = null, onSave = {}, onDismiss = {})
+        }
+        composeRule.onNodeWithText("0/140").assertIsDisplayed()
+    }
+
+    @Test
+    fun `character count caption updates as user types`() {
+        composeRule.setContent {
+            IntentionSettingDialog(initial = "walk well", onSave = {}, onDismiss = {})
+        }
+        composeRule.onNodeWithText("9/140").assertIsDisplayed()
     }
 }
