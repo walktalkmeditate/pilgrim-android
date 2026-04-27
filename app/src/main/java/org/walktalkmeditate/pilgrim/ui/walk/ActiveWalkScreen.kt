@@ -214,6 +214,10 @@ fun ActiveWalkScreen(
             // user taps chip, hears the haptic confirmation, sheet
             // dismisses, but no waypoint exists. The pre-gate makes the
             // failure visible: row is greyed out until a fix arrives.
+            // Meditating is intentionally omitted: the LaunchedEffect
+            // above force-dismisses showOptions on Meditating transition
+            // (the user routes to MeditationScreen), so this branch is
+            // unreachable when state is Meditating.
             val activeWalk = (navWalkState as? WalkState.Active)?.walk
                 ?: (navWalkState as? WalkState.Paused)?.walk
             WalkOptionsSheet(
