@@ -399,9 +399,13 @@ class WalkViewModel @Inject constructor(
         // toggleRecording() call would race the observer's stop and
         // re-introduce the cancellation bug the observer was added to
         // eliminate (see Stage 9-B's WalkFinalizationObserver kdoc).
+        // Stage 9.5-C: WalkLifecycleObserver also stops the recorder on
+        // Active→Idle (discard path), not just Active→Finished. Mirror the
+        // VM UI state for both terminal transitions so the mic button
+        // doesn't briefly render Recording after a discard.
         viewModelScope.launch {
             controller.state.collect { state ->
-                if (state is WalkState.Finished &&
+                if ((state is WalkState.Finished || state is WalkState.Idle) &&
                     _voiceRecorderState.value is VoiceRecorderUiState.Recording
                 ) {
                     _voiceRecorderState.value = VoiceRecorderUiState.Idle
