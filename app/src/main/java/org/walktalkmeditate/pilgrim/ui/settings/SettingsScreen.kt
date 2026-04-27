@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.Icon
@@ -53,6 +54,10 @@ fun SettingsScreen(
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
+    // rememberLazyListState wraps a rememberSaveable internally — without
+    // it, rotating the device would yank the user back to the top of
+    // Settings instead of preserving their scroll position.
+    val listState = rememberLazyListState()
     LaunchedEffect(Unit) { viewModel.fetchOnAppear() }
     Scaffold(
         // Stage 9.5-A: PilgrimNavHost's outer Scaffold already consumed
@@ -68,6 +73,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
+            state = listState,
             contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -97,26 +103,23 @@ fun SettingsScreen(
             // Voice Guides + Soundscapes are landed here as
             // SettingNavRow stand-ins inside a shared settingsCard
             // wrapper so they share AtmosphereCard's 32dp content
-            // indent (16dp screen padding + 16dp card-internal padding).
-            // Without the wrapper, standalone rows would sit at 16dp
-            // and create a staggered vertical line vs the cards above.
-            // Both rows will be absorbed into proper cards (Voice card
-            // in 10-D, Bells & Soundscapes in 10-B) at which point
-            // this transitional wrapper goes away.
+            // indent. Both rows will be absorbed into proper cards
+            // (Voice card in 10-D, Bells & Soundscapes in 10-B) at
+            // which point this transitional wrapper goes away.
+            //
+            // The divider has no extra padding — each SettingNavRow
+            // already has its own 4dp vertical content padding (and a
+            // 48dp min-height), so the iOS-faithful gap of "row pad +
+            // 1dp line + row pad" is correct without piling on more.
             item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .settingsCard(),
-                ) {
+                Column(modifier = Modifier.fillMaxWidth().settingsCard()) {
                     SettingNavRow(
                         label = stringResource(R.string.settings_voice_guides_row),
                         detail = stringResource(R.string.settings_voice_guides_subtitle),
                         onClick = { onAction(SettingsAction.OpenVoiceGuides) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    SettingsDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    SettingsDivider()
                     SettingNavRow(
                         label = stringResource(R.string.settings_soundscapes_row),
                         detail = stringResource(R.string.settings_soundscapes_subtitle),

@@ -28,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -44,16 +43,26 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * Bells, Recordings, ExportImport, About, Feedback) only declare their
  * content, not the chrome.
  *
- * Note: a `Modifier` extension that needs to read CompositionLocals
- * (`pilgrimColors`) MUST go through `Modifier.composed { ... }` —
- * making the extension itself `@Composable` doesn't work because
- * `Modifier` is not a Composable function receiver.
+ * Bakes in the 16dp horizontal screen indent + 16dp internal padding
+ * pattern (32dp total content-from-screen-edge, matching iOS where
+ * the parent VStack supplies the outer padding once and each card's
+ * `.settingsCard()` adds its internal). Callers just write
+ * `Modifier.fillMaxWidth().settingsCard()` — the indent comes for free,
+ * preventing the "forgot the outer padding, card goes full-bleed" trap.
+ *
+ * `@Composable` on a `Modifier` extension is the post-Compose-1.7
+ * idiom (Compose UI 1.7+ deprecated `Modifier.composed { ... }`).
+ * `pilgrimColors` is a CompositionLocal; reading it in a Composable
+ * Modifier extension is well-defined and is what every Compose 1.8+
+ * sample uses.
  */
-fun Modifier.settingsCard(): Modifier = composed {
-    clip(RoundedCornerShape(16.dp))
+@Composable
+fun Modifier.settingsCard(): Modifier =
+    this
+        .padding(horizontal = 16.dp)
+        .clip(RoundedCornerShape(16.dp))
         .background(pilgrimColors.parchmentSecondary)
         .padding(16.dp)
-}
 
 /**
  * Card title + caption header. Used at the top of every settings card
@@ -148,6 +157,11 @@ fun <T> SettingPicker(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Fail fast: SegmentedButtonDefaults.itemShape(index, count = 0)
+    // throws IllegalArgumentException internally on M3 1.4+. Surface
+    // the misuse at the call site rather than letting a downstream
+    // M3 error bubble up with no breadcrumbs.
+    require(options.isNotEmpty()) { "SettingPicker requires at least one option" }
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,

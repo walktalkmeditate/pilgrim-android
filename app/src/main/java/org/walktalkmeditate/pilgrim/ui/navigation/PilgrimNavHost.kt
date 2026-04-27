@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.Context
+import android.util.Log
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -474,16 +475,22 @@ private fun handleSettingsAction(
         // (10-B onward). Keeping them in the sealed interface NOW lets
         // each card author drop in its own action without re-touching
         // the SettingsScreen signature; the routing handler grows
-        // exhaustively as cards land.
-        SettingsAction.OpenBellsAndSoundscapes,
-        SettingsAction.OpenRecordings,
-        SettingsAction.OpenAppPermissionSettings,
-        SettingsAction.OpenExportImport,
-        SettingsAction.OpenJourneyViewer,
-        SettingsAction.OpenFeedback,
-        SettingsAction.OpenAbout,
-        SettingsAction.OpenPodcast,
-        SettingsAction.OpenPlayStoreReview,
-        SettingsAction.SharePilgrim -> Unit
+        // exhaustively as cards land. The Log.w turns silent swallowing
+        // into a discoverable signal during manual QA — if a future
+        // card author wires a row but forgets to update this hub, the
+        // tap will log instead of vanishing into the void.
+        SettingsAction.OpenBellsAndSoundscapes, // STAGE 10-B
+        SettingsAction.OpenRecordings,          // STAGE 10-D
+        SettingsAction.OpenAppPermissionSettings, // STAGE 10-E
+        SettingsAction.OpenExportImport,        // STAGE 10-G
+        SettingsAction.OpenJourneyViewer,       // STAGE 10-G
+        SettingsAction.OpenFeedback,            // STAGE 10-F
+        SettingsAction.OpenAbout,               // STAGE 10-H
+        SettingsAction.OpenPodcast,             // STAGE 10-F
+        SettingsAction.OpenPlayStoreReview,     // STAGE 10-F
+        SettingsAction.SharePilgrim ->          // STAGE 10-F
+            Log.w(TAG_NAV, "Unhandled SettingsAction: $action — wire in the corresponding stage")
     }
 }
+
+private const val TAG_NAV = "PilgrimNav"
