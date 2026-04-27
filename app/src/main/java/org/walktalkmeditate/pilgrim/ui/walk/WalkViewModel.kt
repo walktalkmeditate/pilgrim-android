@@ -287,6 +287,24 @@ class WalkViewModel @Inject constructor(
             initialValue = 0,
         )
 
+    /**
+     * Live list of Waypoint rows for the current walk. Drives the
+     * point annotations rendered on the Active Walk map.
+     */
+    val waypoints: StateFlow<List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>> =
+        controller.state
+            .map { walkIdOrNull(it) }
+            .distinctUntilChanged()
+            .flatMapLatest { walkId ->
+                if (walkId == null) flowOf(emptyList())
+                else repository.observeWaypoints(walkId)
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+                initialValue = emptyList(),
+            )
+
     fun dropWaypoint(label: String? = null, icon: String? = null) {
         viewModelScope.launch { controller.recordWaypoint(label = label, icon = icon) }
     }

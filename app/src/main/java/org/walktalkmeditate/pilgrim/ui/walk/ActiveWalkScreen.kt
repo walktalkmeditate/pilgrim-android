@@ -64,6 +64,7 @@ fun ActiveWalkScreen(
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
+    val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
     val intention by viewModel.intention.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
@@ -182,6 +183,7 @@ fun ActiveWalkScreen(
             // Match map bottom-inset to the visible sheet height so the
             // user puck stays just above the sheet in BOTH detents.
             bottomInsetDp = sheetInsetDp,
+            waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
         )
         // iOS-parity overlay row at the top of the map: ellipsis (options)
