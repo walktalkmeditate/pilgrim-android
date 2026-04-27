@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
@@ -85,11 +86,24 @@ fun AtmosphereCard(
                         activeContainerColor = pilgrimColors.stone,
                         activeContentColor = pilgrimColors.parchment,
                         inactiveContainerColor = pilgrimColors.parchmentSecondary.copy(alpha = 0f),
-                        inactiveContentColor = pilgrimColors.fog,
+                        // Faded ink instead of fog: fog (#6B6359 in dark mode)
+                        // on parchmentSecondary at alpha 0.5 falls below WCAG
+                        // AA; ink-at-60% holds contrast in both light and dark.
+                        inactiveContentColor = pilgrimColors.ink.copy(alpha = 0.6f),
                         activeBorderColor = pilgrimColors.stone,
                         inactiveBorderColor = pilgrimColors.fog.copy(alpha = 0.3f),
                     ),
-                    label = { Text(stringResource(option.labelRes)) },
+                    // maxLines + ellipsis guard against overflow at high
+                    // accessibility font scaling (system Display Size set to
+                    // largest, e.g. 200%). Without this the three labels can
+                    // wrap or clip mid-glyph in the fixed-width segmented row.
+                    label = {
+                        Text(
+                            text = stringResource(option.labelRes),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
                 )
             }
         }
