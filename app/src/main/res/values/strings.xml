@@ -260,4 +260,19 @@
     <string name="walk_action_meditate_short">Meditate</string>
     <string name="walk_action_end_meditation_short">End</string>
     <string name="walk_action_finish_short">End</string>
+
+    <!-- Stage 9.5-C: WalkOptionsSheet (in-walk options modal) -->
+    <string name="walk_options_title">Options</string>
+    <string name="walk_options_intention_title">Set Intention</string>
+    <string name="walk_options_intention_unset">No intention set</string>
+    <string name="walk_options_intention_dialog_title">Set Intention</string>
+    <string name="walk_options_intention_placeholder">A line for this walk&#8230;</string>
+    <string name="walk_options_intention_save">Save</string>
+    <string name="walk_options_intention_cancel">Cancel</string>
+    <string name="walk_options_waypoint_title">Drop Waypoint</string>
+    <plurals name="walk_options_waypoint_count">
+        <item quantity="zero">None marked</item>
+        <item quantity="one">1 marked</item>
+        <item quantity="other">%1$d marked</item>
+    </plurals>
 </resources>
