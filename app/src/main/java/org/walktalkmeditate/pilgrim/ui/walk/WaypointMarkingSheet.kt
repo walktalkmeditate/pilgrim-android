@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -79,7 +80,13 @@ internal fun iconKeyToVector(key: String): ImageVector = when (key) {
     "sparkles" -> Icons.Outlined.AutoAwesome
     "flag.fill" -> Icons.Filled.Flag
     "mappin" -> Icons.Filled.LocationOn
-    else -> Icons.Filled.LocationOn
+    else -> {
+        // Unknown SF Symbol key — likely from a future iOS-introduced
+        // chip imported via .pilgrim ZIP into a stale Android build.
+        // Log a breadcrumb so support sees it; render as LocationOn.
+        Log.w("WaypointMarkingSheet", "unknown waypoint icon key: $key — rendering LocationOn")
+        Icons.Filled.LocationOn
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,10 +94,17 @@ internal fun iconKeyToVector(key: String): ImageVector = when (key) {
 fun WaypointMarkingSheet(
     onMark: (label: String, icon: String) -> Unit,
     onDismiss: () -> Unit,
+    resetKey: Int = 0,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptic = LocalHapticFeedback.current
-    var customText by rememberSaveable { mutableStateOf("") }
+    // Key on resetKey so a Cancel + reopen discards the typed-but-not-marked
+    // draft. rememberSaveable persists to the screen-wide saveable registry,
+    // which outlives the parent's `if (showWaypointMarking) ...` conditional
+    // render — without the key bump on dismiss, reopen would resurrect the
+    // cancelled custom note. Rotation within a single open session still
+    // preserves the text via Bundle round-trip.
+    var customText by rememberSaveable(resetKey) { mutableStateOf("") }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

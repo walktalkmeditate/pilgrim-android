@@ -25,13 +25,21 @@ fun IntentionSettingDialog(
     initial: String?,
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
+    resetKey: Int = 0,
 ) {
-    // Key on `initial` so a Cancel + external-mutation + reopen sequence
-    // doesn't restore a stale draft over the freshly-set value. Today no
-    // surface mutates intention while ActiveWalkScreen is foregrounded,
-    // but this keeps the dialog defensible if a notification action or
-    // automation surface is added later.
-    var text by rememberSaveable(initial) { mutableStateOf(initial.orEmpty()) }
+    // Key on (initial, resetKey) so:
+    //  (a) external mutation of `initial` between Cancel + reopen brings
+    //      in the fresh value (overrides stale Saver),
+    //  (b) parent-bumped `resetKey` discards the typed-but-cancelled
+    //      draft on reopen (Cancel semantics — typing "abc" then Cancel
+    //      then reopen must NOT restore "abc"). rememberSaveable saves
+    //      to the screen-wide SaveableStateRegistry, which outlives the
+    //      conditional `if (showPreWalkIntention) IntentionSettingDialog(…)`
+    //      removal — so without this key bump, the Saver would resurrect
+    //      the cancelled draft.
+    // Rotation still preserves typed text within a single open session
+    // because the (initial, resetKey) tuple round-trips through Bundle.
+    var text by rememberSaveable(initial, resetKey) { mutableStateOf(initial.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.walk_options_intention_dialog_title)) },

@@ -103,9 +103,21 @@ fun ActiveWalkScreen(
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
+    // preWalkIntention persists across rotation AND across `restoreActiveWalk`
+    // process-restart. The latter case is acceptable: a user typing a draft
+    // during a process kill can still see + use it on cold-start return,
+    // and the draft is cleared on the next successful Start.
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
+    // resetKey counters force the sheet/dialog's `rememberSaveable`-keyed
+    // text states to re-initialize on each open, so Cancel-then-reopen
+    // discards the typed-but-not-committed draft (matches dismiss-button
+    // semantics). rememberSaveable saves to the screen-wide saveable
+    // registry — without the bump on dismiss, the conditional render
+    // would resurrect the cancelled draft on reopen.
+    var preWalkIntentionResetKey by rememberSaveable { mutableStateOf(0) }
+    var waypointMarkingResetKey by rememberSaveable { mutableStateOf(0) }
     // Single state-class side-effect block: track in-progress latch for
     // the discard-nav guard, route to neighbor screens on terminal
     // emissions, and dismiss in-walk sheets when the walk leaves an
@@ -180,8 +192,13 @@ fun ActiveWalkScreen(
                 onMark = { label, icon ->
                     viewModel.dropWaypoint(label = label, icon = icon)
                     showWaypointMarking = false
+                    waypointMarkingResetKey++
                 },
-                onDismiss = { showWaypointMarking = false },
+                onDismiss = {
+                    showWaypointMarking = false
+                    waypointMarkingResetKey++
+                },
+                resetKey = waypointMarkingResetKey,
             )
         }
         if (showPreWalkIntention) {
@@ -190,8 +207,13 @@ fun ActiveWalkScreen(
                 onSave = { text ->
                     preWalkIntention = text.takeIf { it.isNotBlank() }
                     showPreWalkIntention = false
+                    preWalkIntentionResetKey++
                 },
-                onDismiss = { showPreWalkIntention = false },
+                onDismiss = {
+                    showPreWalkIntention = false
+                    preWalkIntentionResetKey++
+                },
+                resetKey = preWalkIntentionResetKey,
             )
         }
         WalkStatsSheet(

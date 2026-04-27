@@ -2,7 +2,11 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -89,5 +93,33 @@ class IntentionSettingDialogTest {
             IntentionSettingDialog(initial = "walk well", onSave = {}, onDismiss = {})
         }
         composeRule.onNodeWithText("9/140").assertIsDisplayed()
+    }
+
+    @Test
+    fun `bumping resetKey discards the typed draft on reopen`() {
+        // Reproduces the Cancel-then-reopen scenario: user types "abc",
+        // the parent dismisses (resetKey++), reopens (same `initial`,
+        // new resetKey). The draft must NOT be restored.
+        var resetKey by mutableStateOf(0)
+        var initial by mutableStateOf<String?>(null)
+        composeRule.setContent {
+            IntentionSettingDialog(
+                initial = initial,
+                resetKey = resetKey,
+                onSave = {},
+                onDismiss = {},
+            )
+        }
+        // The dialog renders an OutlinedTextField with a Compose
+        // semantics SetText action — drive it via that action so the
+        // assertion doesn't depend on placeholder vs typed-content
+        // selectors.
+        composeRule.onNode(hasSetTextAction()).performTextInput("abc")
+        composeRule.onNodeWithText("3/140").assertIsDisplayed()
+        // Parent bumps the key (Cancel handler).
+        resetKey++
+        composeRule.waitForIdle()
+        // Draft is discarded; counter back to 0/140.
+        composeRule.onNodeWithText("0/140").assertIsDisplayed()
     }
 }
