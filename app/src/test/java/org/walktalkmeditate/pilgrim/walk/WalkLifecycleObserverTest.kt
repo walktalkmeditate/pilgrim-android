@@ -159,6 +159,33 @@ class WalkLifecycleObserverTest {
     }
 
     @Test
+    fun `Paused to Idle (discard from Paused) stops voice recorder and does NOT insert row`() = runBlocking {
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        startLiveRecordingFor(walkId)
+
+        testClock.current = 90_000L
+        // Walk progressed Active → Paused before the user discarded. The
+        // observer's "any in-progress → Idle" branch must fire on the
+        // Paused → Idle leg too — otherwise discarding from a paused walk
+        // would leak the active recorder.
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Paused(
+            WalkAccumulator(walkId = walkId, startedAt = 0L),
+            pausedAt = 30_000L,
+        )
+        repository.deleteWalkById(walkId)
+        stateFlow.value = WalkState.Idle
+
+        Thread.sleep(WAIT_FOR_OBSERVER_MS)
+        assertEquals(0f, voiceRecorder.audioLevel.value, 0.0001f)
+        val orphanedRows = repository.voiceRecordingsFor(walkId)
+        assertTrue(
+            "Paused→Idle discard path must not insert a VoiceRecording row, found: $orphanedRows",
+            orphanedRows.isEmpty(),
+        )
+    }
+
+    @Test
     fun `cold-start initial Idle does not stop the recorder`() = runBlocking {
         // Mirror the cold-start scenario: process boot, controller's state
         // is Idle, no recording was ever started. The observer's
