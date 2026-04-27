@@ -88,6 +88,7 @@ class WalkLifecycleObserverTest {
             scope = observerScope,
             voiceRecorder = voiceRecorder,
             repository = repository,
+            context = context,
         )
         // Same async-collector-attach hazard as WalkFinalizationObserverTest:
         // the observer's `init { scope.launch { walkState.collect } }`

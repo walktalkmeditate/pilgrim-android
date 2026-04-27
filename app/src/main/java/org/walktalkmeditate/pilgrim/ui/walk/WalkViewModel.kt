@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
@@ -306,6 +307,16 @@ class WalkViewModel @Inject constructor(
      * walk is in progress / no intention set. Re-reads the Walk row
      * whenever the active walkId changes OR setIntention bumps
      * [intentionRefreshTick]. Drives the WalkOptionsSheet subtitle.
+     *
+     * Uses [SharingStarted.Eagerly] (not WhileSubscribed) because
+     * the IntentionSettingDialog can sit open longer than the
+     * SUBSCRIBER_GRACE_MS window with no other subscriber. If the
+     * upstream unsubscribes mid-edit, [setIntention]'s
+     * [intentionRefreshTick] bump fires into a cold flow and the
+     * emission is lost — when the dialog dismisses and ActiveWalk
+     * re-subscribes, it gets the stale initial null. Same trap
+     * pattern as Stage 5-F's `WhileSubscribed(5s)`-on-cold-consumer
+     * regression.
      */
     val intention: StateFlow<String?> = combine(
         controller.state.map { walkIdOrNull(it) }.distinctUntilChanged(),
@@ -318,14 +329,14 @@ class WalkViewModel @Inject constructor(
         .distinctUntilChanged()
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            started = SharingStarted.Eagerly,
             initialValue = null,
         )
 
     fun setIntention(text: String) {
         viewModelScope.launch {
             controller.setIntention(text)
-            intentionRefreshTick.value = intentionRefreshTick.value + 1L
+            intentionRefreshTick.update { it + 1L }
         }
     }
 

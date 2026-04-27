@@ -49,6 +49,7 @@ private val SHEET_HEIGHT_MINIMIZED_DP = 88.dp
 fun ActiveWalkScreen(
     onFinished: (walkId: Long) -> Unit,
     onEnterMeditation: () -> Unit,
+    onDiscarded: () -> Unit,
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -78,10 +79,26 @@ fun ActiveWalkScreen(
         (context as? Activity)?.moveTaskToBack(true)
     }
 
+    // Stage 9.5-C polish fix: gate Idle → onDiscarded behind a
+    // hasSeenInProgress latch. LaunchedEffect(navWalkState::class) fires
+    // on FIRST composition (Stage 5-A memory) and the controller's
+    // initial state is Idle, so without the latch a fresh nav into
+    // ActiveWalk would spuriously fire onDiscarded() before the
+    // controller has even transitioned to Active. Pattern matches
+    // Stage 9.5-B's WalkTrackingService.hasBeenActive latch.
+    val hasSeenInProgress = remember { mutableStateOf(false) }
     LaunchedEffect(navWalkState::class) {
-        when (val state = navWalkState) {
+        val state = navWalkState
+        if (state is WalkState.Active ||
+            state is WalkState.Paused ||
+            state is WalkState.Meditating
+        ) {
+            hasSeenInProgress.value = true
+        }
+        when (state) {
             is WalkState.Finished -> onFinished(state.walk.walkId)
             is WalkState.Meditating -> onEnterMeditation()
+            WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
             else -> Unit
         }
     }

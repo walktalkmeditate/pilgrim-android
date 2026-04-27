@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.walk
 
+import android.content.Context
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -29,9 +32,11 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
  *    pre-Stage-9.5-C `WalkFinalizationObserver` block.
  *  - Idle after in-progress (discard): stop + DROP the row. Parent
  *    Walk row has already been removed by the controller's PurgeWalk
- *    effect; inserting would FK-fail. The on-disk WAV is recoverable
- *    via [org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper]
- *    if the user changes their mind (extremely unlikely UX-wise).
+ *    effect; inserting would FK-fail. The on-disk WAV is deleted
+ *    directly here since
+ *    [org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper]
+ *    .sweepAll filters to walks with a row, and the discarded walk
+ *    row is cascade-deleted — the sweeper never visits its directory.
  *
  * Discards its first emission — observing the CURRENT state of a
  * `@Singleton` controller at app-init time is not a transition (it is
@@ -48,6 +53,7 @@ class WalkLifecycleObserver @Inject constructor(
     @WalkFinalizationScope private val scope: CoroutineScope,
     private val voiceRecorder: VoiceRecorder,
     private val repository: WalkRepository,
+    @ApplicationContext private val context: Context,
 ) {
     init {
         scope.launch {
@@ -104,7 +110,27 @@ class WalkLifecycleObserver @Inject constructor(
                 }
             }
             stopResult.isSuccess && !commitRow -> {
-                Log.i(TAG, "discard auto-stop: dropping recording (parent walk purged)")
+                val recording = stopResult.getOrThrow()
+                val file = File(context.filesDir, recording.fileRelativePath)
+                try {
+                    if (file.exists() && !file.delete()) {
+                        Log.w(
+                            TAG,
+                            "discard auto-stop: failed to delete orphan WAV " +
+                                recording.fileRelativePath,
+                        )
+                    } else {
+                        Log.i(
+                            TAG,
+                            "discard auto-stop: deleted orphan WAV " +
+                                recording.fileRelativePath,
+                        )
+                    }
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    Log.w(TAG, "discard auto-stop: exception deleting orphan WAV", t)
+                }
             }
             stopResult.exceptionOrNull() is VoiceRecorderError.NoActiveRecording -> {
                 // Common case for walks with no voice notes.
