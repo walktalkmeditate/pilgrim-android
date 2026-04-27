@@ -20,6 +20,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
+import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
 
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
@@ -103,6 +104,18 @@ class PilgrimApp : Application(), Configuration.Provider {
      */
     @Inject lateinit var walkFinalizationObserver: WalkFinalizationObserver
 
+    /**
+     * Stage 9.5-C: voice-recorder auto-stop on every in-progress →
+     * terminal transition (Active|Paused|Meditating → Idle|Finished).
+     * Lives separately from [walkFinalizationObserver] because that
+     * observer only fires on Finished — leaving the discardWalk path
+     * (Active → Idle, parent walk row already cascade-deleted) with a
+     * leaked recorder + a guaranteed FK-violation if it tried to
+     * insert. Eager `@Inject` so the `init { scope.launch { ... } }`
+     * block runs at app start.
+     */
+    @Inject lateinit var walkLifecycleObserver: WalkLifecycleObserver
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -179,6 +192,15 @@ class PilgrimApp : Application(), Configuration.Provider {
         // collective counter would lose any walk finished from the
         // notification's Finish button.
         walkFinalizationObserver.hashCode()
+
+        // Force Hilt to instantiate the walk-lifecycle observer so
+        // its `init { scope.launch { ... } }` block subscribes to the
+        // controller state flow. Without this reference the binding
+        // stays lazy and voice auto-stop on the discardWalk path
+        // (Active → Idle) silently fails — leaving the recorder
+        // running and an orphan WAV on disk that the user has no UI
+        // to recover.
+        walkLifecycleObserver.hashCode()
     }
 
     private companion object {
