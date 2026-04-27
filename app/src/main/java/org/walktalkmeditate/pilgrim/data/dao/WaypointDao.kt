@@ -15,6 +15,9 @@ interface WaypointDao {
     @Query("SELECT * FROM waypoints WHERE walk_id = :walkId ORDER BY timestamp ASC")
     suspend fun getForWalk(walkId: Long): List<Waypoint>
 
+    @Query("SELECT * FROM waypoints WHERE walk_id = :walkId ORDER BY timestamp ASC")
+    fun observeForWalk(walkId: Long): Flow<List<Waypoint>>
+
     @Query("SELECT COUNT(*) FROM waypoints WHERE walk_id = :walkId")
     fun observeCountForWalk(walkId: Long): Flow<Int>
 }

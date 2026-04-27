@@ -3,7 +3,6 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -21,9 +20,29 @@ class WalkOptionsSheetTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun `renders waypoint row`() {
+    fun `pre-walk renders only Set Intention row not Drop Waypoint`() {
         composeRule.setContent {
             WalkOptionsSheet(
+                canSetIntention = true,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+            )
+        }
+        composeRule.onNodeWithText("Set Intention").assertIsDisplayed()
+        composeRule.onNodeWithText("Drop Waypoint").assertDoesNotExist()
+    }
+
+    @Test
+    fun `in-walk renders only Drop Waypoint row not Set Intention`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
                 waypointCount = 0,
                 canDropWaypoint = true,
                 onDropWaypoint = {},
@@ -31,32 +50,57 @@ class WalkOptionsSheetTest {
             )
         }
         composeRule.onNodeWithText("Drop Waypoint").assertIsDisplayed()
-    }
-
-    @Test
-    fun `set intention row is not rendered`() {
-        composeRule.setContent {
-            WalkOptionsSheet(
-                waypointCount = 0,
-                canDropWaypoint = true,
-                onDropWaypoint = {},
-                onDismiss = {},
-            )
-        }
         composeRule.onNodeWithText("Set Intention").assertDoesNotExist()
     }
 
     @Test
-    fun `waypoint row disabled when canDropWaypoint is false`() {
+    fun `pre-walk Set Intention subtitle shows persisted draft when set`() {
         composeRule.setContent {
             WalkOptionsSheet(
+                canSetIntention = true,
+                intention = "find peace",
+                onSetIntention = {},
                 waypointCount = 0,
                 canDropWaypoint = false,
                 onDropWaypoint = {},
                 onDismiss = {},
             )
         }
-        composeRule.onNodeWithText("Drop Waypoint").assertIsNotEnabled()
+        composeRule.onNodeWithText("find peace").assertIsDisplayed()
+    }
+
+    @Test
+    fun `pre-walk Set Intention subtitle shows fallback when null`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = true,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+            )
+        }
+        composeRule.onNodeWithText("A line for this walk").assertIsDisplayed()
+    }
+
+    @Test
+    fun `Set Intention click fires onSetIntention`() {
+        var fired = false
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = true,
+                intention = null,
+                onSetIntention = { fired = true },
+                waypointCount = 0,
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+            )
+        }
+        composeRule.onNodeWithText("Set Intention").performClick()
+        assertTrue(fired)
     }
 
     @Test
@@ -67,6 +111,9 @@ class WalkOptionsSheetTest {
         // 0 with a non-plural string instead.
         composeRule.setContent {
             WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
                 waypointCount = 0,
                 canDropWaypoint = true,
                 onDropWaypoint = {},
@@ -80,6 +127,9 @@ class WalkOptionsSheetTest {
     fun `waypoint subtitle uses plural for non-zero counts`() {
         composeRule.setContent {
             WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
                 waypointCount = 3,
                 canDropWaypoint = true,
                 onDropWaypoint = {},
@@ -94,6 +144,9 @@ class WalkOptionsSheetTest {
         var fired = false
         composeRule.setContent {
             WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
                 waypointCount = 0,
                 canDropWaypoint = true,
                 onDropWaypoint = { fired = true },

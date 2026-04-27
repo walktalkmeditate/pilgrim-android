@@ -60,6 +60,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -99,12 +100,6 @@ fun WalkStatsSheet(
     audioLevel: Float,
     recordingsCount: Int,
     intention: String? = null,
-    // `preWalkIntention` is meaningful only when `walkState == Idle` — the
-    // ActionButtonRow renders a tappable pill above the Start button using
-    // its value. During Active|Paused|Meditating the param is accepted but
-    // ignored; callers can pass the same draft pointer through all states.
-    preWalkIntention: String? = null,
-    onSetPreWalkIntention: () -> Unit = {},
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStartWalk: () -> Unit,
@@ -249,8 +244,6 @@ fun WalkStatsSheet(
                         audioLevel = audioLevel,
                         recordingsCount = recordingsCount,
                         intention = intention,
-                        preWalkIntention = preWalkIntention,
-                        onSetPreWalkIntention = onSetPreWalkIntention,
                         onPause = onPause,
                         onResume = onResume,
                         onStartWalk = onStartWalk,
@@ -385,8 +378,6 @@ private fun ExpandedContent(
     audioLevel: Float,
     recordingsCount: Int,
     intention: String?,
-    preWalkIntention: String?,
-    onSetPreWalkIntention: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStartWalk: () -> Unit,
@@ -416,10 +407,22 @@ private fun ExpandedContent(
                 animationSpec = tween(durationMillis = 600, easing = EaseInOut),
                 label = "intention-caption",
             ) { resolved ->
+                // iOS WalkStatsSheet.swift:410-415 reference: caption is
+                // centered, max 2 lines, scales down to 70% to fit. Compose
+                // has no direct minimumScaleFactor analog; the closest
+                // faithful port is maxLines=2 + ellipsis + center align +
+                // fillMaxWidth so longer intention text wraps within the
+                // sheet's content width and overflow ellipsises gracefully
+                // (vs the previous unbounded wrap that pushed stats off
+                // the visible region for long intentions).
                 Text(
                     text = resolved ?: stringResource(R.string.walk_caption_every_step),
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog.copy(alpha = 0.6f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -474,8 +477,6 @@ private fun ExpandedContent(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
-            preWalkIntention = preWalkIntention,
-            onSetPreWalkIntention = onSetPreWalkIntention,
             onStartWalk = onStartWalk,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
@@ -531,8 +532,6 @@ private fun ActionButtonRow(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
-    preWalkIntention: String?,
-    onSetPreWalkIntention: () -> Unit,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
@@ -545,20 +544,16 @@ private fun ActionButtonRow(
     //
     // - Idle (walk hasn't started yet): single Start button. The user
     //   navigated to ActiveWalk from the Path tab but hasn't tapped
-    //   Start to begin recording. iOS's `.ready` state.
+    //   Start to begin recording. iOS's `.ready` state. Pre-walk intention
+    //   is set via the ellipsis menu's Set Intention row, NOT here.
     // - Active/Paused/Meditating: 3-button row Meditate / Mic / End.
     //   Manual Pause is dropped — iOS uses motion-based auto-pause we
     //   don't have yet.
     if (walkState == WalkState.Idle) {
-        Column(
+        Box(
             modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+            contentAlignment = Alignment.Center,
         ) {
-            PreWalkIntentionPill(
-                text = preWalkIntention,
-                onClick = onSetPreWalkIntention,
-            )
             CircularActionButton(
                 label = stringResource(R.string.walk_action_start),
                 icon = Icons.Filled.PlayArrow,
@@ -664,35 +659,6 @@ private fun CircularActionButton(
                 maxLines = 1,
             )
         }
-    }
-}
-
-@Composable
-private fun PreWalkIntentionPill(
-    text: String?,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val display = text?.trim()?.takeIf { it.isNotEmpty() }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.5f))
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                role = Role.Button,
-                onClick = onClick,
-            )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = display ?: stringResource(R.string.walk_pre_intention_pill_unset),
-            style = pilgrimType.caption,
-            color = if (display == null) pilgrimColors.fog else pilgrimColors.ink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
