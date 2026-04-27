@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -71,9 +72,16 @@ fun PilgrimTheme(
         }
     }
 
-    val baseTypography = MaterialTheme.typography
-    val m3Typography = remember(type, baseTypography) {
-        baseTypography.copy(
+    // Build a fresh M3 Typography rather than copying MaterialTheme.typography:
+    // PilgrimTheme owns the full M3 typography mapping, and a `.copy()` would
+    // capture whichever Typography is in scope at this call site. If PilgrimTheme
+    // is ever nested (Compose previews, tests), the outer Typography would be
+    // an already-Pilgrim-customized one and `.copy()` would re-stack onto itself.
+    // Constructing directly leaves the unmapped slots (displaySmall, headline*,
+    // titleMedium, titleSmall, bodySmall) at the M3 default — the same values
+    // a fresh root MaterialTheme would expose.
+    val m3Typography = remember(type) {
+        Typography(
             displayLarge = type.displayLarge,
             displayMedium = type.displayMedium,
             titleLarge = type.heading,
