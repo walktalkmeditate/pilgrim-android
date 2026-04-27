@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -210,8 +212,15 @@ fun SettingNavRow(
     onClick: () -> Unit,
 ) {
     Row(
+        // heightIn(min = 48.dp) guarantees the Material 3 minimum
+        // touch target so taps don't miss on smaller phones or during
+        // a walk. The clickable's onClickLabel makes the row's purpose
+        // discoverable to TalkBack — without it the row announces
+        // only "double tap to activate" with no indication of WHAT
+        // activates.
         modifier = modifier
-            .clickable(onClick = onClick)
+            .heightIn(min = 48.dp)
+            .clickable(onClickLabel = label, onClick = onClick)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -252,10 +261,15 @@ fun SettingNavRow(
             },
             contentDescription = null,
             tint = pilgrimColors.fog,
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier
+                .size(16.dp)
+                .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG),
         )
     }
 }
+
+internal const val NAV_ROW_CHEVRON_ICON_TAG = "SettingNavRow.chevron"
+internal const val NAV_ROW_EXTERNAL_ICON_TAG = "SettingNavRow.externalIcon"
 
 /**
  * Hairline divider between rows inside a card. Subtler than

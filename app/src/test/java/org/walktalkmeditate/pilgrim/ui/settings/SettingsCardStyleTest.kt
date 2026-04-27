@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
@@ -144,5 +145,37 @@ class SettingsCardStyleTest {
             }
         }
         composeRule.onNodeWithText("Brother Crane").assertIsDisplayed()
+    }
+
+    @Test
+    fun `SettingNavRow defaults to chevron icon`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                SettingNavRow(
+                    label = "About Pilgrim",
+                    onClick = {},
+                )
+            }
+        }
+        // useUnmergedTree = true: the row's clickable + onClickLabel
+        // merges descendant semantics into a single tappable node, so
+        // the icon's testTag is only visible in the unmerged tree.
+        composeRule.onNodeWithTag(NAV_ROW_CHEVRON_ICON_TAG, useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag(NAV_ROW_EXTERNAL_ICON_TAG, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `SettingNavRow with external uses outbound icon`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                SettingNavRow(
+                    label = "Rate Pilgrim",
+                    external = true,
+                    onClick = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag(NAV_ROW_EXTERNAL_ICON_TAG, useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag(NAV_ROW_CHEVRON_ICON_TAG, useUnmergedTree = true).assertDoesNotExist()
     }
 }

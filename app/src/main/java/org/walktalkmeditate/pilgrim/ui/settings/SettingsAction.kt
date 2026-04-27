@@ -15,7 +15,26 @@ package org.walktalkmeditate.pilgrim.ui.settings
  * `SettingsScreen` signature.
  */
 sealed interface SettingsAction {
+    /**
+     * Stage 5-D entry point for the voice-guide pack picker. Will be
+     * absorbed into the upcoming Stage 10-D VoiceCard's "Guide Packs"
+     * nav row; once 10-D lands, the standalone SettingNavRow in
+     * SettingsScreen disappears but this action stays — it routes from
+     * VoiceCard's nav row to the same picker destination.
+     */
     data object OpenVoiceGuides : SettingsAction
+
+    /**
+     * Stage 5-F legacy entry point — opens the soundscape PICKER
+     * directly. Stage 10-B introduces [OpenBellsAndSoundscapes] which
+     * routes to the new SoundSettingsScreen (a richer surface with
+     * per-event bell pickers + volume sliders + breath rhythm + this
+     * soundscape picker as one section). When 10-B lands:
+     *  1. The standalone SettingNavRow in SettingsScreen is removed.
+     *  2. AtmosphereCard adds a "Bells & Soundscapes" SettingNavRow
+     *     that emits [OpenBellsAndSoundscapes].
+     *  3. [OpenSoundscapes] should be DELETED (no remaining caller).
+     */
     data object OpenSoundscapes : SettingsAction
 
     // Reserved for upcoming stages — defined now so the navigation

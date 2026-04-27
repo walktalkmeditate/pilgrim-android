@@ -25,6 +25,13 @@ fun AtmosphereCard(
     onSelectMode: (AppearanceMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The outer 16dp horizontal padding indents the card slab from
+    // the screen edge; `settingsCard()` then adds another 16dp of
+    // padding INSIDE the card for content. Total content-from-screen-
+    // edge is 32dp — same pattern as iOS, where the parent VStack
+    // applies `.padding(.horizontal, 16)` and each card's
+    // `.settingsCard()` applies a 16dp internal padding (totaling 32dp
+    // from screen to content).
     Column(
         modifier = modifier
             .fillMaxWidth()
