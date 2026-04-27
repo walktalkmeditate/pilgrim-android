@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -93,29 +94,36 @@ fun SettingsScreen(
                     onSelectMode = viewModel::setAppearanceMode,
                 )
             }
-            // Voice Guides + Soundscapes are landed here as plain
-            // SettingNavRow stand-ins so the existing entry points
-            // (Stage 5-D / 5-F) keep working. They'll be absorbed
-            // into proper cards in upcoming Stage 10 sub-stages.
+            // Voice Guides + Soundscapes are landed here as
+            // SettingNavRow stand-ins inside a shared settingsCard
+            // wrapper so they share AtmosphereCard's 32dp content
+            // indent (16dp screen padding + 16dp card-internal padding).
+            // Without the wrapper, standalone rows would sit at 16dp
+            // and create a staggered vertical line vs the cards above.
+            // Both rows will be absorbed into proper cards (Voice card
+            // in 10-D, Bells & Soundscapes in 10-B) at which point
+            // this transitional wrapper goes away.
             item {
-                SettingNavRow(
-                    label = stringResource(R.string.settings_voice_guides_row),
-                    detail = stringResource(R.string.settings_voice_guides_subtitle),
-                    onClick = { onAction(SettingsAction.OpenVoiceGuides) },
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                )
-            }
-            item {
-                SettingNavRow(
-                    label = stringResource(R.string.settings_soundscapes_row),
-                    detail = stringResource(R.string.settings_soundscapes_subtitle),
-                    onClick = { onAction(SettingsAction.OpenSoundscapes) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                )
+                        .padding(horizontal = 16.dp)
+                        .settingsCard(),
+                ) {
+                    SettingNavRow(
+                        label = stringResource(R.string.settings_voice_guides_row),
+                        detail = stringResource(R.string.settings_voice_guides_subtitle),
+                        onClick = { onAction(SettingsAction.OpenVoiceGuides) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SettingsDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    SettingNavRow(
+                        label = stringResource(R.string.settings_soundscapes_row),
+                        detail = stringResource(R.string.settings_soundscapes_subtitle),
+                        onClick = { onAction(SettingsAction.OpenSoundscapes) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
