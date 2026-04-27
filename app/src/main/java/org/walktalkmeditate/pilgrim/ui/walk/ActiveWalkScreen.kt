@@ -64,6 +64,7 @@ fun ActiveWalkScreen(
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
+    val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
     val intention by viewModel.intention.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
@@ -182,6 +183,7 @@ fun ActiveWalkScreen(
             // Match map bottom-inset to the visible sheet height so the
             // user puck stays just above the sheet in BOTH detents.
             bottomInsetDp = sheetInsetDp,
+            waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
         )
         // iOS-parity overlay row at the top of the map: ellipsis (options)
@@ -221,6 +223,18 @@ fun ActiveWalkScreen(
             val activeWalk = (navWalkState as? WalkState.Active)?.walk
                 ?: (navWalkState as? WalkState.Paused)?.walk
             WalkOptionsSheet(
+                // Per-state row visibility:
+                //  - Idle: only Set Intention. Waypoints can't be dropped
+                //    before a walk row exists.
+                //  - Active|Paused (with GPS fix): only Drop Waypoint.
+                //    Intention is committed at startWalk; not editable
+                //    once a walk is in progress.
+                canSetIntention = navWalkState is WalkState.Idle,
+                intention = preWalkIntention,
+                onSetIntention = {
+                    showOptions = false
+                    showPreWalkIntention = true
+                },
                 waypointCount = waypointCount,
                 canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
@@ -277,9 +291,15 @@ fun ActiveWalkScreen(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
-            intention = intention,
-            preWalkIntention = preWalkIntention,
-            onSetPreWalkIntention = { showPreWalkIntention = true },
+            // Caption display rule: pre-walk shows the typed-but-not-yet-
+            // committed draft (preWalkIntention); in-walk shows the value
+            // committed to the Walk row (intention StateFlow). The two are
+            // never simultaneously set — startWalk clears preWalkIntention
+            // and writes intention; until Start, the Walk row doesn't
+            // exist and intention is null. iOS unifies these via a single
+            // viewModel.intention; Android keeps them split because the
+            // pre-walk path doesn't write to Room until commit.
+            intention = preWalkIntention ?: intention,
             onPause = viewModel::pauseWalk,
             onResume = viewModel::resumeWalk,
             onStartWalk = {

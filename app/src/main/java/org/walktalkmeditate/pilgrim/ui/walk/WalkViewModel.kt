@@ -69,7 +69,21 @@ class WalkViewModel @Inject constructor(
     private val clock: Clock,
     private val voiceRecorder: VoiceRecorder,
     private val locationSource: LocationSource,
+    private val walkRecoveryRepository:
+        org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository,
 ) : ViewModel() {
+
+    /**
+     * Id of a walk that was auto-finalized by `WalkTrackingService.onTaskRemoved`
+     * (user swiped the app away from recents while a walk was in progress).
+     * Path screen renders the recovery banner while non-null and clears via
+     * [dismissRecovery] after the banner auto-times-out.
+     */
+    val recoveredWalkId: StateFlow<Long?> = walkRecoveryRepository.recoveredWalkId
+
+    fun dismissRecovery() {
+        viewModelScope.launch { walkRecoveryRepository.clearRecovered() }
+    }
 
     val uiState: StateFlow<WalkUiState> = combine(
         controller.state,
@@ -286,6 +300,24 @@ class WalkViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = 0,
         )
+
+    /**
+     * Live list of Waypoint rows for the current walk. Drives the
+     * point annotations rendered on the Active Walk map.
+     */
+    val waypoints: StateFlow<List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>> =
+        controller.state
+            .map { walkIdOrNull(it) }
+            .distinctUntilChanged()
+            .flatMapLatest { walkId ->
+                if (walkId == null) flowOf(emptyList())
+                else repository.observeWaypoints(walkId)
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+                initialValue = emptyList(),
+            )
 
     fun dropWaypoint(label: String? = null, icon: String? = null) {
         viewModelScope.launch { controller.recordWaypoint(label = label, icon = icon) }

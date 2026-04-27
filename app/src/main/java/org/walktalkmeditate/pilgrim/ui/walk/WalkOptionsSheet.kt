@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,9 +35,28 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
+/**
+ * Per-state options sheet (the "ellipsis" menu).
+ *
+ * Row visibility depends on the walk's lifecycle:
+ *  - **Pre-walk (Idle)**: only "Set Intention" is shown. Waypoints can't
+ *    be dropped before a walk row exists, so the row is hidden — not
+ *    rendered at all (vs disabled-but-visible) so the sheet doesn't
+ *    advertise an action that's unavailable.
+ *  - **In-walk (Active|Paused)**: only "Drop Waypoint" is shown.
+ *    Intention is committed at startWalk time and is no longer editable
+ *    once a walk is in progress.
+ *
+ * If neither flag is true (e.g., Meditating, Finished), no options
+ * render — the parent's auto-dismiss LaunchedEffect closes the sheet
+ * before this state is reachable.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WalkOptionsSheet(
+    canSetIntention: Boolean,
+    intention: String?,
+    onSetIntention: () -> Unit,
     waypointCount: Int,
     canDropWaypoint: Boolean,
     onDropWaypoint: () -> Unit,
@@ -61,24 +81,34 @@ fun WalkOptionsSheet(
                 color = pilgrimColors.ink,
                 modifier = Modifier.padding(bottom = PilgrimSpacing.small),
             )
-            OptionRow(
-                icon = Icons.Outlined.LocationOn,
-                title = stringResource(R.string.walk_options_waypoint_title),
-                // Android plurals on en-US never select `quantity="zero"` —
-                // CLDR maps 0 to `other`, which would render "0 marked".
-                // Special-case the empty count with a non-plural string.
-                subtitle = if (waypointCount == 0) {
-                    stringResource(R.string.walk_options_waypoint_count_none)
-                } else {
-                    pluralStringResource(
-                        R.plurals.walk_options_waypoint_count,
-                        waypointCount,
-                        waypointCount,
-                    )
-                },
-                enabled = canDropWaypoint,
-                onClick = onDropWaypoint,
-            )
+            if (canSetIntention) {
+                OptionRow(
+                    icon = Icons.Outlined.EditNote,
+                    title = stringResource(R.string.walk_options_intention_title),
+                    subtitle = intention?.takeIf { it.isNotBlank() }
+                        ?: stringResource(R.string.walk_options_intention_pre_walk_unset),
+                    onClick = onSetIntention,
+                )
+            }
+            if (canDropWaypoint) {
+                OptionRow(
+                    icon = Icons.Outlined.LocationOn,
+                    title = stringResource(R.string.walk_options_waypoint_title),
+                    // Android plurals on en-US never select `quantity="zero"` —
+                    // CLDR maps 0 to `other`, which would render "0 marked".
+                    // Special-case the empty count with a non-plural string.
+                    subtitle = if (waypointCount == 0) {
+                        stringResource(R.string.walk_options_waypoint_count_none)
+                    } else {
+                        pluralStringResource(
+                            R.plurals.walk_options_waypoint_count,
+                            waypointCount,
+                            waypointCount,
+                        )
+                    },
+                    onClick = onDropWaypoint,
+                )
+            }
         }
     }
 }

@@ -73,6 +73,7 @@ class WalkTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning.set(true)
         createNotificationChannel()
         notificationActions = WalkNotificationActions(
             pause = actionPendingIntent(ACTION_PAUSE, REQUEST_CODE_PAUSE),
@@ -109,6 +110,7 @@ class WalkTrackingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        isRunning.set(false)
         scope.cancel()
         // Explicit teardown so the FGS notification is gone the moment
         // the service stops, not whenever the OS gets around to clearing
@@ -378,6 +380,21 @@ class WalkTrackingService : Service() {
     internal enum class StateAction { SelfStop, UpdateNotification }
 
     companion object {
+        /**
+         * Cross-cutting "is the FGS currently alive in this process" flag.
+         * Set in `onCreate`, cleared in `onDestroy`. Read by
+         * `MainActivity.onCreate` to discriminate the warm-launch-after-
+         * swipe case (FGS gone, walk row stale → recover) from the
+         * notification-tap-to-return case (FGS still alive, controller's
+         * Active state is the source of truth → don't recover).
+         *
+         * AtomicBoolean for thread-safety across the service's worker
+         * threads + the Activity's main thread.
+         */
+        private val isRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun isFgsAlive(): Boolean = isRunning.get()
+
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
         const val ACTION_PAUSE = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.PAUSE"
         const val ACTION_RESUME = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.RESUME"

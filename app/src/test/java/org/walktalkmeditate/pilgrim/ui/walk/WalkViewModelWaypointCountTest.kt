@@ -78,6 +78,7 @@ class WalkViewModelWaypointCountTest {
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
         )
     }
 

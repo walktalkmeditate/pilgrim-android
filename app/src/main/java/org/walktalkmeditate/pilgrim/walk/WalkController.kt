@@ -201,6 +201,97 @@ class WalkController @Inject constructor(
      * (assumes caller is about to restart the process, not duplicate
      * state from a running session).
      */
+    /**
+     * On cold launch, finalize any walk row whose `end_timestamp IS NULL`
+     * — these are walks the OS killed (swipe-from-recents → process death,
+     * force-stop, low-memory kill) without going through the normal
+     * `finishWalk` path. iOS does the equivalent via JSON checkpoint
+     * recovery; Android does it from Room directly because writes are
+     * incremental.
+     *
+     * Sets each walk's end_timestamp to the last-recorded route sample's
+     * timestamp (the latest evidence of activity), or to the start
+     * timestamp + 1ms if no samples exist (degenerate walk that never
+     * got a fix). Returns the id of the most-recent recovered walk so
+     * the Path tab can show a transient banner; null when nothing
+     * needed recovery.
+     *
+     * Called once from app init before [restoreActiveWalk]. After this
+     * runs, no walk has end_timestamp NULL, so restoreActiveWalk
+     * becomes a no-op — by design, mirroring iOS's "swipe ends the
+     * walk" UX. If the user wanted to keep walking, they'll see the
+     * recovery banner and start a new walk.
+     */
+    suspend fun recoverStaleWalks(): Long? = dispatchMutex.withLock {
+        val all = repository.allWalks()
+        val unfinished = all.filter { it.endTimestamp == null }
+        Log.i(
+            TAG,
+            "recoverStaleWalks: scan total=${all.size} unfinished=${unfinished.size} " +
+                "ids=${unfinished.map { it.id }} state=${_state.value::class.simpleName}",
+        )
+        if (unfinished.isEmpty()) {
+            return@withLock null
+        }
+        var mostRecentlyRecovered: Long? = null
+        var mostRecentStart = Long.MIN_VALUE
+        var mostRecentEndTs = 0L
+        for (walk in unfinished) {
+            val lastSample = repository.lastLocationSampleFor(walk.id)
+            val endTs = lastSample?.timestamp ?: (walk.startTimestamp + 1L)
+            val finalized = repository.finishWalkAtomic(walkId = walk.id, endTimestamp = endTs)
+            if (finalized) {
+                Log.i(
+                    TAG,
+                    "recoverStaleWalks: finalized walk=${walk.id} startedAt=${walk.startTimestamp} " +
+                        "endedAt=$endTs (lastSample=${lastSample != null})",
+                )
+                if (walk.startTimestamp > mostRecentStart) {
+                    mostRecentStart = walk.startTimestamp
+                    mostRecentlyRecovered = walk.id
+                    mostRecentEndTs = endTs
+                }
+            } else {
+                Log.w(TAG, "recoverStaleWalks: finishWalkAtomic returned false for walk=${walk.id}")
+            }
+        }
+        // Warm-launch case: process survived swipe-from-recents (FGS
+        // didn't fully tear down despite stopWithTask="true"). Controller
+        // still holds the walk in memory as Active|Paused|Meditating.
+        // We need to flip the in-memory state OUT of "in-progress" so
+        // WalkStartScreen's `isInProgress` redirect doesn't navigate
+        // back to ActiveWalkScreen on the next composition.
+        //
+        // CRITICAL: emit Finished, NOT Idle. WalkLifecycleObserver's
+        // Idle branch deletes any in-flight WAV (treats Idle as the
+        // discardWalk path). Recovery is logically a finish-without-tap,
+        // not a discard — so the lifecycle observer's Finished branch
+        // (commit row + keep WAV) is the correct route. WalkFinalizationObserver
+        // also fires on Finished, which gets us transcription scheduling +
+        // collective POST + widget refresh for free.
+        val current = _state.value
+        if (current is WalkState.Active ||
+            current is WalkState.Paused ||
+            current is WalkState.Meditating
+        ) {
+            val accumulator = when (current) {
+                is WalkState.Active -> current.walk
+                is WalkState.Paused -> current.walk
+                is WalkState.Meditating -> current.walk
+                else -> null
+            }
+            if (accumulator != null) {
+                Log.i(
+                    TAG,
+                    "recoverStaleWalks: in-memory ${current::class.simpleName} → " +
+                        "Finished(walkId=${accumulator.walkId}, endedAt=$mostRecentEndTs)",
+                )
+                _state.value = WalkState.Finished(walk = accumulator, endedAt = mostRecentEndTs)
+            }
+        }
+        return@withLock mostRecentlyRecovered
+    }
+
     suspend fun restoreActiveWalk(): Walk? = dispatchMutex.withLock {
         if (_state.value !is WalkState.Idle) {
             Log.i(TAG, "restoreActiveWalk skipped: state=${_state.value::class.simpleName}")

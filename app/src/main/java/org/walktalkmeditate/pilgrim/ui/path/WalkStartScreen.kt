@@ -86,6 +86,7 @@ fun WalkStartScreen(
     // exactly this purpose (mirrors ActiveWalkScreen line 53).
     val walkState by walkViewModel.walkState.collectAsStateWithLifecycle()
     val isInProgress = walkState.isInProgress
+    val recoveredWalkId by walkViewModel.recoveredWalkId.collectAsStateWithLifecycle()
 
     // Back from the Path tab (the effective root) should background
     // the app, not destroy it. Launcher re-tap then resumes here.
@@ -117,25 +118,19 @@ fun WalkStartScreen(
     // Cold-launch one-shot resume-check. didCheck is rememberSaveable
     // so a config change doesn't re-fire the redirect.
     //
-    // Two cases:
-    //  - isInProgress=true on first composition (process revival with a
-    //    walk already alive in the @Singleton controller) → navigate
-    //    immediately.
-    //  - isInProgress=false → call restoreActiveWalk(); the controller
-    //    flips state to non-Idle BEFORE the suspend returns, which
-    //    re-keys the LaunchedEffect(isInProgress) below → that observer
-    //    handles navigation. We do NOT also call onEnterActiveWalk here
-    //    on the restored != null case (avoids a launchSingleTop-deduped
-    //    double-fire that bait-and-switches a future refactor).
+    // After the launch-side recovery refactor, there's no longer an
+    // unfinished walk to RESTORE — `PilgrimApp.onCreate.recoverStaleWalks`
+    // finalizes any walk-with-endTimestamp-null on cold launch and
+    // arms the recovery banner. So this LaunchedEffect just redirects
+    // to ActiveWalk if a walk was somehow already in-progress on the
+    // controller (warm launch case where the @Singleton survived).
     val didCheck = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (didCheck.value) return@LaunchedEffect
         didCheck.value = true
         if (isInProgress) {
             onEnterActiveWalk()
-            return@LaunchedEffect
         }
-        walkViewModel.restoreActiveWalk()
     }
 
     // Post-tap redirect AND post-restore redirect: fires when state
@@ -153,6 +148,16 @@ fun WalkStartScreen(
             .fillMaxSize()
             .background(pilgrimColors.parchment),
     ) {
+        // iOS-parity recovery banner: shows when a walk was auto-finalized
+        // because the user swiped the app from recents mid-walk. Auto-
+        // dismisses after 4s via the banner's internal LaunchedEffect.
+        // Aligned to the top of the screen so it doesn't push the rest of
+        // the layout around — overlays via the outer Box.
+        RecoveryBanner(
+            visible = recoveredWalkId != null,
+            onDismiss = { walkViewModel.dismissRecovery() },
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()

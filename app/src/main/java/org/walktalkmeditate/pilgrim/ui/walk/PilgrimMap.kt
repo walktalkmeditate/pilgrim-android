@@ -26,9 +26,13 @@ import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.animation.MapAnimationOptions
 import com.mapbox.maps.plugin.animation.easeTo
 import com.mapbox.maps.plugin.annotation.annotations
+import com.mapbox.maps.plugin.annotation.generated.PointAnnotation
+import com.mapbox.maps.plugin.annotation.generated.PointAnnotationManager
+import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
+import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
@@ -54,6 +58,7 @@ fun PilgrimMap(
     followLatest: Boolean = false,
     initialCenter: LocationPoint? = null,
     bottomInsetDp: Dp = 0.dp,
+    waypoints: List<org.walktalkmeditate.pilgrim.data.entity.Waypoint> = emptyList(),
 ) {
     val darkMode = isSystemInDarkTheme()
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -67,6 +72,9 @@ fun PilgrimMap(
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
+    var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
+    val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
     var didFitBounds by remember { mutableStateOf(false) }
     // One-shot: set the camera to [initialCenter] exactly once, on
     // whichever composition first has a non-null center AND points is
@@ -99,8 +107,12 @@ fun PilgrimMap(
         polylineManager?.let { view.annotations.removeAnnotationManager(it) }
         polylineManager = null
         polyline = null
+        waypointManager?.let { view.annotations.removeAnnotationManager(it) }
+        waypointManager = null
+        waypointAnnotations = emptyList()
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
+            waypointManager = view.annotations.createPointAnnotationManager()
             // Show Mapbox's built-in "you are here" puck on the Active
             // Walk map only. The summary map is a post-hoc review; a live
             // puck there would be out of place. The default 2D puck uses
@@ -278,6 +290,23 @@ fun PilgrimMap(
                     didSetInitialCenter = true
                 }
             }
+            // Sync waypoint annotations: delete existing pins and re-create
+            // for the current list. The list is short (typically <30 per
+            // walk) so wholesale replace is cheaper than diffing — and
+            // simpler than tracking row identity across recompositions.
+            val pointMgr = waypointManager
+            if (pointMgr != null) {
+                if (waypointAnnotations.isNotEmpty()) {
+                    waypointAnnotations.forEach { pointMgr.delete(it) }
+                }
+                waypointAnnotations = waypoints.map { wp ->
+                    pointMgr.create(
+                        PointAnnotationOptions()
+                            .withPoint(Point.fromLngLat(wp.longitude, wp.latitude))
+                            .withIconImage(waypointBitmap),
+                    )
+                }
+            }
         },
         onRelease = { view ->
             // Mapbox v11's lifecycle plugin drives onStart/onStop via the
@@ -296,9 +325,51 @@ fun PilgrimMap(
                 mapView = null
                 polylineManager = null
                 polyline = null
+                waypointManager = null
+                waypointAnnotations = emptyList()
             }
         },
     )
+}
+
+/**
+ * Generate the bitmap used as the icon for every waypoint annotation.
+ * A `WAYPOINT_BITMAP_SIZE_PX`-sized rust circle with a thin parchment
+ * stroke — visible against both light and dark Mapbox styles. Drawn
+ * once per theme change (`remember(darkMode)` in the caller) and
+ * reused across all waypoints in the walk.
+ */
+private fun createWaypointBitmap(darkMode: Boolean): android.graphics.Bitmap {
+    val size = WAYPOINT_BITMAP_SIZE_PX
+    val bitmap = android.graphics.Bitmap.createBitmap(
+        size,
+        size,
+        android.graphics.Bitmap.Config.ARGB_8888,
+    )
+    val canvas = android.graphics.Canvas(bitmap)
+    val cx = size / 2f
+    val cy = size / 2f
+    val strokeWidth = size * 0.08f
+    // Pilgrim rust + parchment tokens — see ui/theme/Color.kt. Hardcoded
+    // here because Compose ColorScheme isn't reachable from this raw
+    // Bitmap helper; if the palette ever shifts, update both places.
+    val rust = if (darkMode) 0xFFB85F4D.toInt() else 0xFFA8543E.toInt()
+    val parchment = if (darkMode) 0xFF1A1814.toInt() else 0xFFF5F0E6.toInt()
+    val fill = android.graphics.Paint().apply {
+        isAntiAlias = true
+        color = rust
+        style = android.graphics.Paint.Style.FILL
+    }
+    val stroke = android.graphics.Paint().apply {
+        isAntiAlias = true
+        color = parchment
+        style = android.graphics.Paint.Style.STROKE
+        this.strokeWidth = strokeWidth
+    }
+    val radius = (size / 2f) - strokeWidth
+    canvas.drawCircle(cx, cy, radius, fill)
+    canvas.drawCircle(cx, cy, radius, stroke)
+    return bitmap
 }
 
 private const val POLYLINE_WIDTH_DP = 4.0
@@ -307,6 +378,10 @@ private const val MAX_FIT_ZOOM = 17.0
 private const val FOLLOW_EASE_MS = 800L
 private const val FIT_PADDING_DP = 32
 private const val FADE_IN_MS = 400
+// Bitmap size in pixels for the waypoint marker. Mapbox icon images
+// scale by `iconSize` (default 1.0); 56px draws as a ~22dp marker on
+// 320dpi devices, comparable in visual weight to iOS waypoint pins.
+private const val WAYPOINT_BITMAP_SIZE_PX = 56
 // 3s is comfortably above typical cold-load times (~100-500ms per
 // Mapbox v11 traces) but short enough to avoid leaving the user
 // staring at a blank card on failure paths.
