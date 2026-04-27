@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -219,7 +220,7 @@ private fun PresetChip(
                 // Long-translation defense (Phase 10 i18n trip-wire): keep
                 // chip labels single-line at ~110dp width with ellipsis.
                 maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
