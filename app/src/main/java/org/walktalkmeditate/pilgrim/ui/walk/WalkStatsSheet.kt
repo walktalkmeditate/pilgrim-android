@@ -521,7 +521,6 @@ private fun TimeChip(
 }
 
 @Composable
-@Suppress("UNUSED_PARAMETER")
 private fun ActionButtonRow(
     walkState: WalkState,
     recorderState: VoiceRecorderUiState,
@@ -546,14 +545,18 @@ private fun ActionButtonRow(
     //   Manual Pause is dropped — iOS uses motion-based auto-pause we
     //   don't have yet.
     if (walkState == WalkState.Idle) {
-        Box(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
         ) {
+            PreWalkIntentionPill(
+                text = preWalkIntention,
+                onClick = onSetPreWalkIntention,
+            )
             CircularActionButton(
                 label = stringResource(R.string.walk_action_start),
                 icon = Icons.Filled.PlayArrow,
-                // iOS uses moss-green for the Start button.
                 color = pilgrimColors.moss,
                 onClick = onStartWalk,
             )
@@ -656,6 +659,35 @@ private fun CircularActionButton(
                 maxLines = 1,
             )
         }
+    }
+}
+
+@Composable
+private fun PreWalkIntentionPill(
+    text: String?,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val display = text?.trim()?.takeIf { it.isNotEmpty() }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.5f))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = display ?: stringResource(R.string.walk_pre_intention_pill_unset),
+            style = pilgrimType.caption,
+            color = if (display == null) pilgrimColors.fog else pilgrimColors.ink,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
