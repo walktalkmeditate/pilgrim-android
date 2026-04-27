@@ -208,10 +208,17 @@ fun ActiveWalkScreen(
             )
         }
         if (showOptions) {
+            // Gate Drop Waypoint on BOTH (a) walk-is-trackable state AND
+            // (b) we have a GPS fix. Without (b), `recordWaypoint` would
+            // silently no-op inside the controller's dispatch lock —
+            // user taps chip, hears the haptic confirmation, sheet
+            // dismisses, but no waypoint exists. The pre-gate makes the
+            // failure visible: row is greyed out until a fix arrives.
+            val activeWalk = (navWalkState as? WalkState.Active)?.walk
+                ?: (navWalkState as? WalkState.Paused)?.walk
             WalkOptionsSheet(
                 waypointCount = waypointCount,
-                canDropWaypoint = navWalkState is WalkState.Active ||
-                    navWalkState is WalkState.Paused,
+                canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
                     showOptions = false
                     showWaypointMarking = true
