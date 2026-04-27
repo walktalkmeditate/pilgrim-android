@@ -82,8 +82,22 @@ class WalkRepository @Inject constructor(
         walkDao.update(walk)
     }
 
+    suspend fun updateWalkIntention(walkId: Long, intention: String?) {
+        walkDao.updateIntention(walkId = walkId, intention = intention)
+    }
+
     suspend fun deleteWalk(walk: Walk) {
         walkDao.delete(walk)
+    }
+
+    /**
+     * Deletes the walk row by id. All child rows in route_data_samples,
+     * altitude_samples, walk_events, activity_intervals, waypoints,
+     * voice_recordings, and walk_photos are removed via SQLite
+     * `ON DELETE CASCADE`. No-op when the id matches no row.
+     */
+    suspend fun deleteWalkById(walkId: Long) {
+        walkDao.deleteById(walkId)
     }
 
     suspend fun recordLocation(sample: RouteDataSample): Long = routeDao.insert(sample)
@@ -112,6 +126,9 @@ class WalkRepository @Inject constructor(
     suspend fun addWaypoint(waypoint: Waypoint): Long = waypointDao.insert(waypoint)
 
     suspend fun waypointsFor(walkId: Long): List<Waypoint> = waypointDao.getForWalk(walkId)
+
+    fun observeWaypointCount(walkId: Long): Flow<Int> =
+        waypointDao.observeCountForWalk(walkId)
 
     suspend fun recordVoice(recording: VoiceRecording): Long =
         voiceRecordingDao.insert(recording)

@@ -239,6 +239,17 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
+                onDiscarded = {
+                    // Stage 9.5-C polish fix: discardWalk transitions
+                    // Active → Idle. Without an explicit pop, the user
+                    // is stranded on a frozen ActiveWalk map over a
+                    // cascade-deleted walk row. The Path-launched stack
+                    // is [PATH, ACTIVE_WALK]; popping ACTIVE_WALK lands
+                    // on PATH (WalkStartScreen), which matches the
+                    // contemplative pre-walk hub the user expects after
+                    // leaving a walk.
+                    navController.popBackStack(Routes.PATH, inclusive = false)
+                },
             )
         }
         composable(Routes.MEDITATION) {

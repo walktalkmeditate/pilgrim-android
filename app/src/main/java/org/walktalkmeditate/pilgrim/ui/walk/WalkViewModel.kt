@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
@@ -270,6 +271,76 @@ class WalkViewModel @Inject constructor(
         )
 
     /**
+     * Live count of Waypoint rows for the current walk. Drives the
+     * Drop Waypoint subtitle in the WalkOptionsSheet.
+     */
+    val waypointCount: StateFlow<Int> = controller.state
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
+            if (walkId == null) flowOf(0)
+            else repository.observeWaypointCount(walkId)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = 0,
+        )
+
+    fun dropWaypoint() {
+        viewModelScope.launch { controller.recordWaypoint() }
+    }
+
+    /**
+     * Bump-counter that lets [intention] re-read the Walk row after a
+     * [setIntention] call. WalkAccumulator does not carry the intention
+     * (Stage 9.5-C decision: avoid cascading the field through the
+     * reducer + restore paths), so the controller's state flow does not
+     * fire on intention writes. This counter changes synchronously after
+     * each setIntention to retrigger the upstream re-read. Initial value
+     * 0 also triggers the first read on subscribe.
+     */
+    private val intentionRefreshTick = MutableStateFlow(0L)
+
+    /**
+     * Currently-set intention for the active walk, or null when no
+     * walk is in progress / no intention set. Re-reads the Walk row
+     * whenever the active walkId changes OR setIntention bumps
+     * [intentionRefreshTick]. Drives the WalkOptionsSheet subtitle.
+     *
+     * Uses [SharingStarted.Eagerly] (not WhileSubscribed) because
+     * the IntentionSettingDialog can sit open longer than the
+     * SUBSCRIBER_GRACE_MS window with no other subscriber. If the
+     * upstream unsubscribes mid-edit, [setIntention]'s
+     * [intentionRefreshTick] bump fires into a cold flow and the
+     * emission is lost — when the dialog dismisses and ActiveWalk
+     * re-subscribes, it gets the stale initial null. Same trap
+     * pattern as Stage 5-F's `WhileSubscribed(5s)`-on-cold-consumer
+     * regression.
+     */
+    val intention: StateFlow<String?> = combine(
+        controller.state.map { walkIdOrNull(it) }.distinctUntilChanged(),
+        intentionRefreshTick,
+    ) { walkId, _ -> walkId }
+        .flatMapLatest { walkId ->
+            if (walkId == null) flowOf<String?>(null)
+            else flow<String?> { emit(repository.getWalk(walkId)?.intention) }
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null,
+        )
+
+    fun setIntention(text: String) {
+        viewModelScope.launch {
+            controller.setIntention(text)
+            intentionRefreshTick.update { it + 1L }
+        }
+    }
+
+    /**
      * Toggle recording on/off. Dispatches to IO because
      * VoiceRecorder.stop() blocks on doneLatch (~100 ms) while the
      * capture loop finishes its last buffer — never call directly from
@@ -399,9 +470,13 @@ class WalkViewModel @Inject constructor(
         // toggleRecording() call would race the observer's stop and
         // re-introduce the cancellation bug the observer was added to
         // eliminate (see Stage 9-B's WalkFinalizationObserver kdoc).
+        // Stage 9.5-C: WalkLifecycleObserver also stops the recorder on
+        // Active→Idle (discard path), not just Active→Finished. Mirror the
+        // VM UI state for both terminal transitions so the mic button
+        // doesn't briefly render Recording after a discard.
         viewModelScope.launch {
             controller.state.collect { state ->
-                if (state is WalkState.Finished &&
+                if ((state is WalkState.Finished || state is WalkState.Idle) &&
                     _voiceRecorderState.value is VoiceRecorderUiState.Recording
                 ) {
                     _voiceRecorderState.value = VoiceRecorderUiState.Idle
@@ -492,6 +567,20 @@ class WalkViewModel @Inject constructor(
             // off to the controller and let the observer take over.
             controller.finishWalk()
         }
+    }
+
+    /**
+     * Stage 9.5-C: leave the walk without saving. The controller's
+     * `discardWalk` reduces Active|Paused|Meditating → Idle and
+     * cascade-deletes the walk row + samples + events via the
+     * `PurgeWalk` effect. Voice auto-stop runs in
+     * [org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver] on the
+     * Active → Idle transition (app-lifetime scope, survives VM
+     * nav-pop) and intentionally drops the recording row since its
+     * parent walk no longer exists.
+     */
+    fun discardWalk() {
+        viewModelScope.launch { controller.discardWalk() }
     }
 
     /**

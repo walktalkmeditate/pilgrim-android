@@ -49,6 +49,7 @@ private val SHEET_HEIGHT_MINIMIZED_DP = 88.dp
 fun ActiveWalkScreen(
     onFinished: (walkId: Long) -> Unit,
     onEnterMeditation: () -> Unit,
+    onDiscarded: () -> Unit,
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -62,6 +63,8 @@ fun ActiveWalkScreen(
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
+    val intention by viewModel.intention.collectAsStateWithLifecycle()
+    val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
     // at the pre-meditation Meditating snapshot for one frame on
@@ -76,10 +79,26 @@ fun ActiveWalkScreen(
         (context as? Activity)?.moveTaskToBack(true)
     }
 
+    // Stage 9.5-C polish fix: gate Idle → onDiscarded behind a
+    // hasSeenInProgress latch. LaunchedEffect(navWalkState::class) fires
+    // on FIRST composition (Stage 5-A memory) and the controller's
+    // initial state is Idle, so without the latch a fresh nav into
+    // ActiveWalk would spuriously fire onDiscarded() before the
+    // controller has even transitioned to Active. Pattern matches
+    // Stage 9.5-B's WalkTrackingService.hasBeenActive latch.
+    val hasSeenInProgress = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(navWalkState::class) {
-        when (val state = navWalkState) {
+        val state = navWalkState
+        if (state is WalkState.Active ||
+            state is WalkState.Paused ||
+            state is WalkState.Meditating
+        ) {
+            hasSeenInProgress.value = true
+        }
+        when (state) {
             is WalkState.Finished -> onFinished(state.walk.walkId)
             is WalkState.Meditating -> onEnterMeditation()
+            WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
             else -> Unit
         }
     }
@@ -99,6 +118,21 @@ fun ActiveWalkScreen(
         SHEET_HEIGHT_MINIMIZED_DP
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
+    var showOptions by rememberSaveable { mutableStateOf(false) }
+    var showIntention by rememberSaveable { mutableStateOf(false) }
+    // If the walk transitions to Idle (discard) or Finished while the
+    // options sheet or intention dialog is open, dismiss them — leaving
+    // them visible over a stale walk would invite confused taps onto
+    // controller actions that no-op on terminal states.
+    LaunchedEffect(navWalkState::class) {
+        if (navWalkState !is WalkState.Active &&
+            navWalkState !is WalkState.Paused &&
+            navWalkState !is WalkState.Meditating
+        ) {
+            showOptions = false
+            showIntention = false
+        }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
             points = routePoints,
@@ -113,10 +147,7 @@ fun ActiveWalkScreen(
         // top-left, X (leave walk) top-right.
         // ActiveWalkView.swift:530-567.
         MapOverlayButtons(
-            // TODO Stage 9.5-C: ellipsis opens an options sheet
-            // (intention/waypoint/whisper/stone/soundscape/voice-guide).
-            // No-op for now — the underlying features aren't all ported.
-            onOptionsClick = {},
+            onOptionsClick = { showOptions = true },
             onLeaveClick = { showLeaveConfirm = true },
             // Stage 9.5-A trap (already fixed for the bottom sheet): the
             // PilgrimNavHost Scaffold already passes status-bar inset
@@ -130,14 +161,36 @@ fun ActiveWalkScreen(
             LeaveWalkDialog(
                 onConfirm = {
                     showLeaveConfirm = false
-                    // TODO Stage 9.5-C: replace with viewModel.discardWalk()
-                    // that cancels FGS + deletes the walk row + samples
-                    // + events without persisting endTimestamp. For now
-                    // this saves the walk and routes to summary, which is
-                    // NOT iOS-equivalent ("This walk will not be saved").
-                    viewModel.finishWalk()
+                    viewModel.discardWalk()
                 },
                 onDismiss = { showLeaveConfirm = false },
+            )
+        }
+        if (showOptions) {
+            WalkOptionsSheet(
+                intention = intention,
+                waypointCount = waypointCount,
+                canDropWaypoint = navWalkState is WalkState.Active ||
+                    navWalkState is WalkState.Paused,
+                onSetIntention = {
+                    showOptions = false
+                    showIntention = true
+                },
+                onDropWaypoint = {
+                    viewModel.dropWaypoint()
+                    showOptions = false
+                },
+                onDismiss = { showOptions = false },
+            )
+        }
+        if (showIntention) {
+            IntentionSettingDialog(
+                initial = intention,
+                onSave = { text ->
+                    viewModel.setIntention(text)
+                    showIntention = false
+                },
+                onDismiss = { showIntention = false },
             )
         }
         WalkStatsSheet(

@@ -717,12 +717,21 @@ private fun MicActionButton(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Icon(
-                imageVector = if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
-                contentDescription = null,
-                tint = effectiveColor,
-                modifier = Modifier.size(22.dp),
-            )
+            Box(
+                modifier = Modifier.height(22.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isRecording) {
+                    AudioWaveformView(level = audioLevel)
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.Mic,
+                        contentDescription = null,
+                        tint = effectiveColor,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
             Text(
                 text = label,
                 style = pilgrimType.caption,

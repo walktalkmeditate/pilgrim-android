@@ -8,5 +8,6 @@ sealed class WalkAction {
     data class MeditateStart(val at: Long) : WalkAction()
     data class MeditateEnd(val at: Long) : WalkAction()
     data class Finish(val at: Long) : WalkAction()
+    data class Discard(val at: Long) : WalkAction()
     data class LocationSampled(val point: LocationPoint) : WalkAction()
 }
