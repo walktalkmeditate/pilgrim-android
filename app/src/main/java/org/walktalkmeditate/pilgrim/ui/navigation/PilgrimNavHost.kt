@@ -17,6 +17,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import android.content.Context
+import android.util.Log
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -30,6 +33,7 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
+import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.soundscape.SoundscapePickerScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailScreen
@@ -168,19 +172,19 @@ fun PilgrimNavHost(
             )
         }
         composable(Routes.SETTINGS) {
-            // Stage 9.5-A: Settings is now a tab destination. No back
-            // arrow when reached as a tab — onBack = null.
+            // Stage 9.5-A: Settings is now a tab destination. The
+            // top bar / back arrow was dropped in Stage 10-A so the
+            // scroll content can host a centered title (matches iOS).
+            //
+            // Stage 10-A: navigation funnels through SettingsAction.
+            // Stage 10-B onward will route additional destinations
+            // (Bells & Soundscapes, Recordings, Export/Import,
+            // Feedback, About, Podcast, Play Store, Share Pilgrim);
+            // see [handleSettingsAction] for the routing hub.
+            val settingsContext = LocalContext.current
             SettingsScreen(
-                onBack = null,
-                onOpenVoiceGuides = {
-                    navController.navigate(Routes.VOICE_GUIDE_PICKER) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenSoundscapes = {
-                    navController.navigate(Routes.SOUNDSCAPE_PICKER) {
-                        launchSingleTop = true
-                    }
+                onAction = { action ->
+                    handleSettingsAction(action, navController, settingsContext)
                 },
             )
         }
@@ -445,3 +449,48 @@ fun PilgrimNavHost(
         onDeepLinkConsumed()
     }
 }
+
+/**
+ * Routing hub for [SettingsAction]. The [Context] parameter is plumbed
+ * through now (unused by Stage 10-A) so subsequent stages adding
+ * intent-based destinations (Custom Tabs, Play Store deep link, share
+ * sheet) don't need to re-touch the SettingsScreen call site.
+ *
+ * The exhaustive `when` block captures every variant declared on
+ * [SettingsAction]; reserved variants no-op until the corresponding
+ * card lands.
+ */
+@Suppress("UNUSED_PARAMETER")
+private fun handleSettingsAction(
+    action: SettingsAction,
+    navController: NavController,
+    context: Context,
+) {
+    when (action) {
+        SettingsAction.OpenVoiceGuides ->
+            navController.navigate(Routes.VOICE_GUIDE_PICKER) { launchSingleTop = true }
+        SettingsAction.OpenSoundscapes ->
+            navController.navigate(Routes.SOUNDSCAPE_PICKER) { launchSingleTop = true }
+        // The remaining destinations are introduced in subsequent stages
+        // (10-B onward). Keeping them in the sealed interface NOW lets
+        // each card author drop in its own action without re-touching
+        // the SettingsScreen signature; the routing handler grows
+        // exhaustively as cards land. The Log.w turns silent swallowing
+        // into a discoverable signal during manual QA — if a future
+        // card author wires a row but forgets to update this hub, the
+        // tap will log instead of vanishing into the void.
+        SettingsAction.OpenBellsAndSoundscapes, // STAGE 10-B
+        SettingsAction.OpenRecordings,          // STAGE 10-D
+        SettingsAction.OpenAppPermissionSettings, // STAGE 10-E
+        SettingsAction.OpenExportImport,        // STAGE 10-G
+        SettingsAction.OpenJourneyViewer,       // STAGE 10-G
+        SettingsAction.OpenFeedback,            // STAGE 10-F
+        SettingsAction.OpenAbout,               // STAGE 10-H
+        SettingsAction.OpenPodcast,             // STAGE 10-F
+        SettingsAction.OpenPlayStoreReview,     // STAGE 10-F
+        SettingsAction.SharePilgrim ->          // STAGE 10-F
+            Log.w(TAG_NAV, "Unhandled SettingsAction: $action — wire in the corresponding stage")
+    }
+}
+
+private const val TAG_NAV = "PilgrimNav"
