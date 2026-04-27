@@ -329,8 +329,11 @@ class WalkController @Inject constructor(
         }
     }
 
-    private companion object {
-        const val TAG = "WalkController"
+    internal companion object {
+        private const val TAG = "WalkController"
+        // Single source of truth for the intention character cap. UI surfaces
+        // (IntentionSettingDialog) reference this so the controller-side
+        // sanitize and the UI-side `take(N)` can never silently desync.
         const val MAX_INTENTION_CHARS = 140
     }
 }

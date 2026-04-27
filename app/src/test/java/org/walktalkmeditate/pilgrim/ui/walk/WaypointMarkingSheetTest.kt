@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -105,13 +106,10 @@ class WaypointMarkingSheetTest {
             val vector = iconKeyToVector(key)
             // Non-null + non-LocationOn for the 6 chip keys (mappin is
             // intentionally LocationOn so we don't enforce that here).
-            org.junit.Assert.assertNotNull(
-                "iconKeyToVector('$key') must not be null",
-                vector,
-            )
+            assertNotNull("iconKeyToVector('$key') must not be null", vector)
         }
         val fallback = iconKeyToVector("totally.unknown.future.symbol")
-        org.junit.Assert.assertEquals(
+        assertEquals(
             "Unknown keys must fall back to LocationOn",
             Icons.Filled.LocationOn,
             fallback,

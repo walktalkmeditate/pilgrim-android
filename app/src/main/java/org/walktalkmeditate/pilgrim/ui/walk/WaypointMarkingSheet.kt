@@ -115,6 +115,9 @@ fun WaypointMarkingSheet(
             // chips there's no value in LazyVerticalGrid's virtualization
             // and a non-lazy layout sizes correctly without the height-pin
             // workaround Robolectric needed for `LazyVerticalGrid`.
+            // If `PRESET_CHIPS` ever grows to a non-multiple-of-3, pad
+            // each short row with `Spacer(Modifier.weight(1f))` so the
+            // chips stay equal-width across rows.
             PRESET_CHIPS.chunked(3).forEach { rowChips ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),

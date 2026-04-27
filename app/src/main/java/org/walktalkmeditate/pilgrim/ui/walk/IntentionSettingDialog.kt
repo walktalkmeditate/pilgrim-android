@@ -18,8 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-
-internal const val MAX_INTENTION_CHARS = 140
+import org.walktalkmeditate.pilgrim.walk.WalkController
 
 @Composable
 fun IntentionSettingDialog(
@@ -41,7 +40,7 @@ fun IntentionSettingDialog(
                 OutlinedTextField(
                     value = text,
                     onValueChange = { incoming ->
-                        text = incoming.take(MAX_INTENTION_CHARS)
+                        text = incoming.take(WalkController.MAX_INTENTION_CHARS)
                     },
                     placeholder = { Text(stringResource(R.string.walk_options_intention_placeholder)) },
                     singleLine = false,
@@ -51,7 +50,7 @@ fun IntentionSettingDialog(
                     text = stringResource(
                         R.string.walk_waypoint_count_chars,
                         text.length,
-                        MAX_INTENTION_CHARS,
+                        WalkController.MAX_INTENTION_CHARS,
                     ),
                     style = pilgrimType.caption,
                     // iOS parity: `IntentionSettingView.swift:113` uses
