@@ -446,12 +446,19 @@ class SoundscapeOrchestratorTest {
     }
 
     @Test fun `master toggle flipped off during start delay does not play`() = runTest {
-        // Regression for the race window between `delay(START_DELAY_MS)`
-        // resuming and `attemptPlay()` calling `player.play()`. The
-        // combine-driven cancel covers the common case but leaves a
-        // sub-frame window; the defensive `soundsEnabled.value` check
-        // inside `attemptPlay()` closes it. Toggle OFF mid-delay; expect
-        // ZERO plays even after the delay completes.
+        // Covers the combine-driven cancellation path: when the master
+        // toggle flips OFF while a start-delay coroutine is suspended,
+        // `combine(walkState, soundsEnabled)` re-emits with enabled=false
+        // and the orchestrator cancels the in-flight delay coroutine
+        // before `player.play()` runs. Under StandardTestDispatcher the
+        // dispatcher serializes coroutines, so the cancel reliably runs
+        // before the delay resumption — that's what this test asserts.
+        //
+        // The defensive `soundsEnabled.value` check inside `attemptPlay()`
+        // closes the sub-frame race window that can exist on real
+        // dispatchers (where the delay continuation may already be on
+        // the run queue when the cancel arrives). That defensive check
+        // is verified by code review only, not by this test.
         val a = asset("rain")
         seedManifest(listOf(a))
         writeAssetFile(a)
