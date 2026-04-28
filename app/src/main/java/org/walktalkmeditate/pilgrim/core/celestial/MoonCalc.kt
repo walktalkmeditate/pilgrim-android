@@ -18,6 +18,12 @@ import kotlin.math.floor
  * ephemeris (±5% illumination, ±1 day age in worst cases), but
  * sufficient for a contemplative UI that shows "waxing gibbous"
  * not "67.3% illuminated as of 14:22:35 UTC".
+ *
+ * **TODO (Stage 10-C+):** When sun-sign / planetary-hour calculation
+ * is ported (currently iOS-only), it should consume
+ * `PracticePreferencesRepository.zodiacSystem` (Tropical / Sidereal)
+ * to apply the right ayanamsa correction. The pref already persists
+ * via Stage 10-C; the runtime consumer just hasn't been written yet.
  */
 internal object MoonCalc {
 

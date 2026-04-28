@@ -281,10 +281,15 @@ fun ActiveWalkScreen(
         delay(AUTO_INTENTION_DELAY_MS)
         // Re-check after the delay — the user might have set the
         // intention via the ellipsis menu in the gap, or paused /
-        // discarded the walk. `if` instead of an early-return so the
-        // latch stays set in either case (the iOS reference is "fire
-        // at most once per walk").
-        if (navWalkState is WalkState.Active && intention == null) {
+        // discarded the walk. Also guard against sheet collision: if
+        // any other modal surface is already open (ellipsis options,
+        // leave confirm, waypoint marking), don't pop the auto-intent
+        // dialog on top of it. The user can still set the intention
+        // from the options menu they're currently in. `if` instead of
+        // an early-return so the latch stays set in either case (iOS
+        // reference is "fire at most once per walk").
+        val anyOtherSheetOpen = showOptions || showLeaveConfirm || showWaypointMarking
+        if (navWalkState is WalkState.Active && intention == null && !anyOtherSheetOpen) {
             showAutoIntention = true
         }
     }
