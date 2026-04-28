@@ -136,6 +136,33 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // Bump the unit-test JVM heap. Robolectric loads ~50–100 MB
+            // of Android-runtime stub state per test class, plus Compose
+            // + Hilt + Room runtimes — the Gradle default `-Xmx512m`
+            // GC-thrashes after ~10 classes and looks like a hang on CI
+            // (manifested as a 22-minute timeout on PR #65 with no test
+            // reports produced). 2 GB gives headroom for the full
+            // ~1080-test suite without GC pauses dominating wall time.
+            it.maxHeapSize = "2g"
+
+            // Fork a fresh JVM every 50 test classes. Robolectric's
+            // SandboxClassLoader retains every class it ever loaded for
+            // every API level it ever encountered — across hundreds of
+            // test classes this hits PermGen-style memory pressure even
+            // with 2 GB heap. Recycling the worker every 50 classes
+            // bounds the lifetime memory footprint without paying JVM
+            // startup cost for every class. Default `0` = no recycling.
+            it.setForkEvery(50L)
+
+            // Run two test workers in parallel inside the unit-tests
+            // job (different from `--max-workers` which controls Gradle
+            // task parallelism). 4-core CI runner can comfortably host
+            // two Robolectric JVMs at 2 GB each. Cuts wall time roughly
+            // in half on CI while leaving 2 cores for Gradle daemon +
+            // build cache I/O.
+            it.maxParallelForks = 2
+        }
     }
 
     lint {
