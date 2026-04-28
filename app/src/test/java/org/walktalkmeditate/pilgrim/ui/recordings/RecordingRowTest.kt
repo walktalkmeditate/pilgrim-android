@@ -39,12 +39,14 @@ class RecordingRowTest {
 
     private lateinit var context: Context
     private lateinit var fileSystem: VoiceRecordingFileSystem
+    private lateinit var waveformCache: WaveformCache
     private val createdFiles = mutableListOf<File>()
 
     @org.junit.Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         fileSystem = VoiceRecordingFileSystem(context)
+        waveformCache = WaveformCache()
     }
 
     @After
@@ -92,6 +94,8 @@ class RecordingRowTest {
                     recording = rec,
                     indexInSection = 3,
                     fileSystem = fileSystem,
+                    waveformCache = waveformCache,
+                    fileAvailable = true,
                     isPlayingThisRow = false,
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
@@ -124,6 +128,8 @@ class RecordingRowTest {
                     recording = rec,
                     indexInSection = 1,
                     fileSystem = fileSystem,
+                    waveformCache = waveformCache,
+                    fileAvailable = false,
                     isPlayingThisRow = false,
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
@@ -153,6 +159,8 @@ class RecordingRowTest {
                     recording = rec,
                     indexInSection = 1,
                     fileSystem = fileSystem,
+                    waveformCache = waveformCache,
+                    fileAvailable = true,
                     isPlayingThisRow = false,
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.5f,
@@ -180,6 +188,8 @@ class RecordingRowTest {
                     recording = rec,
                     indexInSection = 1,
                     fileSystem = fileSystem,
+                    waveformCache = waveformCache,
+                    fileAvailable = true,
                     isPlayingThisRow = false,
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
@@ -211,6 +221,8 @@ class RecordingRowTest {
                     recording = rec,
                     indexInSection = 1,
                     fileSystem = fileSystem,
+                    waveformCache = waveformCache,
+                    fileAvailable = true,
                     isPlayingThisRow = false,
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,

@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,10 +72,13 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
  *  3. edit-mode — replaces the transcription view-block with an
  *     `OutlinedTextField` plus a `Done` button.
  *
- * The [fileSystem] dependency is plumbed in directly (rather than the VM
- * surfacing an `isFileAvailable` bool per row) so the row can also resolve
- * size at the same single seam — keeps both reads consistent and avoids
- * recomputing two separate VM-side caches.
+ * The [fileSystem] dependency is plumbed in for the file-size lookup
+ * (which we still resolve here so the meta-string doesn't need a parallel
+ * VM-side map). File EXISTENCE is now resolved in the VM's combine block
+ * and threaded down as [fileAvailable] — see Stage 10-D final-review
+ * Fix 1: the previous per-row `remember(recording.fileRelativePath)` key
+ * never changed when `onDeleteFile` succeeded (we keep the Room row), so
+ * the player UI stayed visible for a deleted file.
  *
  * iOS unavailable-state icon is `waveform.slash`. Material's extended
  * icon set has no `GraphicEqOff` — `Icons.Filled.MusicOff` is the
@@ -86,6 +90,8 @@ fun RecordingRow(
     recording: VoiceRecording,
     indexInSection: Int,
     fileSystem: VoiceRecordingFileSystem,
+    waveformCache: WaveformCache,
+    fileAvailable: Boolean,
     isPlayingThisRow: Boolean,
     playbackPositionFraction: Float,
     playbackSpeed: Float,
@@ -100,9 +106,6 @@ fun RecordingRow(
     modifier: Modifier = Modifier,
 ) {
     val colors = pilgrimColors
-    val fileAvailable = remember(recording.fileRelativePath) {
-        fileSystem.fileExists(recording.fileRelativePath)
-    }
     val sizeBytes = remember(recording.fileRelativePath, fileAvailable) {
         if (fileAvailable) fileSystem.fileSizeBytes(recording.fileRelativePath) else 0L
     }
@@ -125,6 +128,7 @@ fun RecordingRow(
             WaveformLine(
                 file = fileSystem.absolutePath(recording.fileRelativePath),
                 recordingId = recording.id,
+                cache = waveformCache,
                 progress = if (isPlayingThisRow) playbackPositionFraction else 0f,
                 onSeek = { fraction -> onSeek(recording.id, fraction) },
             )
@@ -267,15 +271,24 @@ private fun formatSpeed(speed: Float): String =
 private fun WaveformLine(
     file: File,
     recordingId: Long,
+    cache: WaveformCache,
     progress: Float,
     onSeek: (Float) -> Unit,
 ) {
     val colors = pilgrimColors
-    var samples by remember(recordingId) { mutableStateOf<FloatArray?>(null) }
+    // Seed from cache (synchronous) so a re-scrolled row paints
+    // immediately. Cache miss falls through to a one-shot IO load
+    // followed by `cache.put`, mirroring iOS's WaveformCache.shared.
+    var samples by remember(recordingId) {
+        mutableStateOf<FloatArray?>(cache.get(recordingId))
+    }
     LaunchedEffect(recordingId) {
-        samples = withContext(Dispatchers.IO) {
+        if (samples != null) return@LaunchedEffect
+        val loaded = withContext(Dispatchers.IO) {
             WaveformLoader.load(file, barCount = 64)
         }
+        cache.put(recordingId, loaded)
+        samples = loaded
     }
     Box(modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp, max = 32.dp)) {
         val current = samples
@@ -406,7 +419,11 @@ private fun TranscriptionEditor(
 ) {
     val colors = pilgrimColors
     val type = pilgrimType
-    var text by remember(initial) { mutableStateOf(initial) }
+    // `rememberSaveable` so typed-but-unsaved edits survive configuration
+    // change (rotation, dark-mode toggle, system font scale change). The
+    // [initial] key still resets the saveable when the user enters edit
+    // mode for a different recording.
+    var text by rememberSaveable(initial) { mutableStateOf(initial) }
     val latestText by rememberUpdatedState(text)
     val editorDescription = stringResource(R.string.recordings_transcription_editor_description)
 

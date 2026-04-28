@@ -46,6 +46,7 @@ class RecordingsListViewModelTest {
     private lateinit var playback: FakeVoicePlaybackController
     private lateinit var scheduler: FakeTranscriptionScheduler
     private lateinit var fileSystem: VoiceRecordingFileSystem
+    private lateinit var waveformCache: WaveformCache
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -76,6 +77,7 @@ class RecordingsListViewModelTest {
         playback = FakeVoicePlaybackController()
         scheduler = FakeTranscriptionScheduler()
         fileSystem = VoiceRecordingFileSystem(context)
+        waveformCache = WaveformCache()
     }
 
     @After
@@ -89,6 +91,7 @@ class RecordingsListViewModelTest {
         playbackController = playback,
         transcriptionScheduler = scheduler,
         fileSystem = fileSystem,
+        waveformCache = waveformCache,
         context = context,
     )
 
@@ -220,7 +223,22 @@ class RecordingsListViewModelTest {
     }
 
     @Test
-    fun `onSeek only fires when this is the currently playing recording`() = runTest(dispatcher) {
+    fun `onSeek on the currently playing recording forwards the fraction`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val rec = insertRecording(walkId = walk.id, startAt = 10_000L)
+
+        val vm = newViewModel()
+        vm.onPlay(rec.id)
+
+        vm.onSeek(recordingId = rec.id, fraction = 0.5f)
+        assertEquals(listOf(0.5f), playback.seekCalls)
+        // Did not re-play (already playing this id).
+        assertEquals(listOf(rec.id), playback.playCalls)
+    }
+
+    @Test
+    fun `onSeek on inactive row starts playback then seeks`() = runTest(dispatcher) {
         val walk = repository.startWalk(startTimestamp = 0L)
         repository.finishWalk(walk, endTimestamp = 60_000L)
         val recA = insertRecording(walkId = walk.id, startAt = 10_000L)
@@ -229,11 +247,13 @@ class RecordingsListViewModelTest {
         val vm = newViewModel()
         vm.onPlay(recA.id)
 
+        // Tap the OTHER row's waveform — should start B and then seek.
         vm.onSeek(recordingId = recB.id, fraction = 0.4f)
-        assertTrue("seek to non-playing recording must be a no-op", playback.seekCalls.isEmpty())
+        // Drain the 100ms hop so the seek lands.
+        dispatcher.scheduler.advanceUntilIdle()
 
-        vm.onSeek(recordingId = recA.id, fraction = 0.5f)
-        assertEquals(listOf(0.5f), playback.seekCalls)
+        assertEquals(listOf(recA.id, recB.id), playback.playCalls)
+        assertEquals(listOf(0.4f), playback.seekCalls)
     }
 
     @Test
@@ -272,6 +292,46 @@ class RecordingsListViewModelTest {
     }
 
     @Test
+    fun `onDeleteFile of currently-playing recording stops playback first`() =
+        runTest(dispatcher) {
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val rec = insertRecordingWithFile(
+                walkId = walk.id,
+                walkUuid = walk.uuid,
+                startAt = 10_000L,
+            )
+
+            val vm = newViewModel()
+            vm.onPlay(rec.id)
+            assertEquals(0, playback.stopCalls.get())
+
+            vm.onDeleteFile(rec.id)
+            awaitFileGone(rec.fileRelativePath)
+
+            assertEquals(
+                "stop() must be called before deleting the active recording",
+                1,
+                playback.stopCalls.get(),
+            )
+        }
+
+    @Test
+    fun `onDeleteFile of non-playing recording does not stop playback`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recA = insertRecordingWithFile(walkId = walk.id, walkUuid = walk.uuid, startAt = 10_000L)
+        val recB = insertRecordingWithFile(walkId = walk.id, walkUuid = walk.uuid, startAt = 20_000L)
+
+        val vm = newViewModel()
+        vm.onPlay(recA.id)
+        vm.onDeleteFile(recB.id)
+        awaitFileGone(recB.fileRelativePath)
+
+        assertEquals(0, playback.stopCalls.get())
+    }
+
+    @Test
     fun `onDeleteAllFiles removes every file`() = runTest(dispatcher) {
         val walkA = repository.startWalk(startTimestamp = 0L)
         repository.finishWalk(walkA, endTimestamp = 60_000L)
@@ -289,6 +349,61 @@ class RecordingsListViewModelTest {
         assertNotNull(repository.getVoiceRecording(recA.id))
         assertNotNull(repository.getVoiceRecording(recB.id))
     }
+
+    @Test
+    fun `onDeleteAllFiles stops playback before deleting`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val rec = insertRecordingWithFile(walkId = walk.id, walkUuid = walk.uuid, startAt = 10_000L)
+
+        val vm = newViewModel()
+        vm.onPlay(rec.id)
+        assertEquals(0, playback.stopCalls.get())
+
+        vm.onDeleteAllFiles()
+        awaitFileGone(rec.fileRelativePath)
+
+        assertEquals(
+            "stop() must be called once before walking the delete loop",
+            1,
+            playback.stopCalls.get(),
+        )
+    }
+
+    @Test
+    fun `onDeleteFile flips fileExistenceById to false for that recording`() =
+        runTest(dispatcher) {
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val rec = insertRecordingWithFile(
+                walkId = walk.id,
+                walkUuid = walk.uuid,
+                startAt = 10_000L,
+            )
+
+            val vm = newViewModel()
+            assertEquals(true, loaded(vm).fileExistenceById[rec.id])
+
+            vm.onDeleteFile(rec.id)
+            awaitFileGone(rec.fileRelativePath)
+
+            // After the delete + fileSystemVersion bump, the combine
+            // re-runs and the row's existence flips to false.
+            // Poll briefly because the state propagation from the
+            // version bump runs through the test dispatcher but the
+            // file delete itself ran on real Dispatchers.IO.
+            withContext(Dispatchers.Default) {
+                withTimeout(2_000L) {
+                    while ((vm.state.value as? RecordingsListUiState.Loaded)
+                            ?.fileExistenceById?.get(rec.id) != false
+                    ) {
+                        Thread.sleep(25L)
+                    }
+                }
+            }
+            assertEquals(false, (vm.state.value as RecordingsListUiState.Loaded)
+                .fileExistenceById[rec.id])
+        }
 
     private suspend fun awaitFileGone(relativePath: String) {
         // Bridge real-time IO to virtual-time runTest by polling on a

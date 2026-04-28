@@ -68,6 +68,7 @@ class RecordingsListScreenTest {
     private lateinit var playback: FakeVoicePlaybackController
     private lateinit var scheduler: FakeTranscriptionScheduler
     private lateinit var fileSystem: VoiceRecordingFileSystem
+    private lateinit var waveformCache: WaveformCache
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -93,6 +94,7 @@ class RecordingsListScreenTest {
         playback = FakeVoicePlaybackController()
         scheduler = FakeTranscriptionScheduler()
         fileSystem = VoiceRecordingFileSystem(context)
+        waveformCache = WaveformCache()
     }
 
     @After
@@ -106,6 +108,7 @@ class RecordingsListScreenTest {
         playbackController = playback,
         transcriptionScheduler = scheduler,
         fileSystem = fileSystem,
+        waveformCache = waveformCache,
         context = context,
     )
 

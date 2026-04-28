@@ -49,12 +49,16 @@ fun WaveformBar(
         if (samples.isEmpty()) return@Canvas
         val barWidth = size.width / samples.size
         val centerY = size.height / 2f
+        // Half-open boundary: at progress = 0f, activeUntil = 0 and NO bar
+        // is active. At progress = 1f, activeUntil = samples.size and every
+        // bar is active. Using `i < activeUntil` (not `<=`) preserves that
+        // semantic at both endpoints.
         val activeUntil = (progress.coerceIn(0f, 1f) * samples.size).toInt()
         for (i in samples.indices) {
             val mag = samples[i].coerceIn(0f, 1f)
             val barHalfHeight = (mag * size.height / 2f).coerceAtLeast(1f)
             drawLine(
-                color = if (i <= activeUntil) activeColor else inactiveColor,
+                color = if (i < activeUntil) activeColor else inactiveColor,
                 start = Offset(i * barWidth + barWidth / 2f, centerY - barHalfHeight),
                 end = Offset(i * barWidth + barWidth / 2f, centerY + barHalfHeight),
                 strokeWidth = (barWidth * 0.6f).coerceAtLeast(1f),

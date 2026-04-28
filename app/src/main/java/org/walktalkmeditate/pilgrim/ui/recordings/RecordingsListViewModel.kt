@@ -9,6 +9,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -46,6 +47,14 @@ sealed interface RecordingsListUiState {
         val playbackPositionFraction: Float,
         val playbackSpeed: Float,
         val editingRecordingId: Long?,
+        /**
+         * Per-recording-id snapshot of `fileSystem.fileExists` resolved
+         * inside the VM's `combine`. The map is rebuilt whenever any
+         * upstream source emits OR a delete handler bumps
+         * [RecordingsListViewModel] `fileSystemVersion`. UI reads via
+         * `fileExistenceById[recording.id] ?: false`.
+         */
+        val fileExistenceById: Map<Long, Boolean>,
     ) : RecordingsListUiState
 }
 
@@ -77,6 +86,7 @@ class RecordingsListViewModel @Inject constructor(
      * direct mutation paths still flow through this VM.
      */
     private val fileSystem: VoiceRecordingFileSystem,
+    private val waveformCache: WaveformCache,
     @Suppress("UNUSED_PARAMETER")
     @ApplicationContext context: Context,
 ) : ViewModel() {
@@ -84,8 +94,22 @@ class RecordingsListViewModel @Inject constructor(
     /** Read-only view of the bound [VoiceRecordingFileSystem]. */
     val recordingFileSystem: VoiceRecordingFileSystem get() = fileSystem
 
+    /** Read-only view of the bound [WaveformCache] for [RecordingRow]. */
+    val recordingWaveformCache: WaveformCache get() = waveformCache
+
     private val searchQuery = MutableStateFlow("")
     private val editingRecordingId = MutableStateFlow<Long?>(null)
+
+    /**
+     * Monotonic counter bumped after each successful `fileSystem.deleteFile`
+     * call inside [onDeleteFile] / [onDeleteAllFiles]. The combine block
+     * reads this as a dependency so the resulting `fileExistenceById`
+     * map recomputes after a delete — without it, the map staleness
+     * after a delete kept the player UI rendered for a now-missing file
+     * (the per-row `remember(recording.fileRelativePath)` key didn't
+     * change because we intentionally preserve the Room row).
+     */
+    private val fileSystemVersion = MutableStateFlow(0L)
 
     val state: StateFlow<RecordingsListUiState> = combine(
         walkRepository.observeAllVoiceRecordings(),
@@ -95,7 +119,8 @@ class RecordingsListViewModel @Inject constructor(
         playbackController.playbackSpeed,
         playbackController.playbackPositionMillis,
         editingRecordingId,
-    ) { args ->
+        fileSystemVersion,
+    ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
         val recordings = args[0] as List<VoiceRecording>
         @Suppress("UNCHECKED_CAST")
@@ -105,6 +130,11 @@ class RecordingsListViewModel @Inject constructor(
         val speed = args[4] as Float
         val posMs = args[5] as Long
         val editingId = args[6] as Long?
+        // `fileSystemVersion` (args[7]) is read for its dependency
+        // effect — incrementing it forces the combine to re-run, which
+        // re-reads `fileSystem.fileExists` for every recording below.
+        @Suppress("UNUSED_VARIABLE")
+        val version = args[7] as Long
 
         val sections = walks
             .filter { walk -> recordings.any { it.walkId == walk.id } }
@@ -138,6 +168,16 @@ class RecordingsListViewModel @Inject constructor(
             0f
         }
 
+        // Re-resolve file existence per recording id. Cheap (one
+        // `File.exists()` per row, dozens of rows), keeps the row
+        // composable free of per-recompose syscalls, and gives delete
+        // handlers a single seam for invalidation via [fileSystemVersion].
+        val existence = HashMap<Long, Boolean>(recordings.size).apply {
+            for (rec in recordings) {
+                put(rec.id, fileSystem.fileExists(rec.fileRelativePath))
+            }
+        }
+
         RecordingsListUiState.Loaded(
             visibleSections = visible,
             hasAnyRecordings = sections.isNotEmpty(),
@@ -146,6 +186,7 @@ class RecordingsListViewModel @Inject constructor(
             playbackPositionFraction = fraction,
             playbackSpeed = speed,
             editingRecordingId = editingId,
+            fileExistenceById = existence,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, RecordingsListUiState.Loading)
     // No `flowOn(Dispatchers.Default)`: the combine body is pure
@@ -171,15 +212,28 @@ class RecordingsListViewModel @Inject constructor(
     }
 
     /**
-     * Seek is anchored to the currently playing recording's id — a
-     * stale tap on a row that's no longer the active player is a
-     * no-op. The fraction is forwarded raw; the controller coerces
-     * to [0, 1] and clamps the resolved millisecond target.
+     * iOS parity: tapping the waveform on an inactive row STARTS playback
+     * of that recording first, then seeks. Without this, Android's tap
+     * was a no-op for non-playing rows, breaking the "tap-to-resume from
+     * here" affordance the iOS app provides.
+     *
+     * The [SEEK_AFTER_START_DELAY_MILLIS] hop mirrors iOS's
+     * `DispatchQueue.main.asyncAfter(deadline: .now() + 0.1)` — gives
+     * ExoPlayer time to transition into a Ready/Playing state where its
+     * `seekTo(...)` is honoured. A faster hop risks the seek being
+     * silently dropped on a still-preparing player.
      */
     fun onSeek(recordingId: Long, fraction: Float) {
-        val playing = (playbackController.state.value as? PlaybackState.Playing)?.recordingId
-        if (playing != recordingId) return
-        playbackController.seek(fraction)
+        viewModelScope.launch {
+            val currentPlaying =
+                (playbackController.state.value as? PlaybackState.Playing)?.recordingId
+            if (currentPlaying != recordingId) {
+                val recording = walkRepository.getVoiceRecording(recordingId) ?: return@launch
+                playbackController.play(recording)
+                delay(SEEK_AFTER_START_DELAY_MILLIS)
+            }
+            playbackController.seek(fraction)
+        }
     }
 
     /**
@@ -213,10 +267,20 @@ class RecordingsListViewModel @Inject constructor(
      * preserved [VoiceRecording.fileRelativePath]. Per Stage 5-D
      * memory, the delete path computes its target through the same
      * helper the write path used.
+     *
+     * If the recording being deleted is the one currently playing,
+     * stop playback first — otherwise the controller would keep an
+     * active session pointed at a now-deleted file (iOS parity:
+     * `audioPlayer.stop()` before `DataManager.deleteRecordingFile()`).
      */
     fun onDeleteFile(recordingId: Long) {
         viewModelScope.launch {
             val recording = walkRepository.getVoiceRecording(recordingId) ?: return@launch
+            val currentlyPlayingId =
+                (playbackController.state.value as? PlaybackState.Playing)?.recordingId
+            if (currentlyPlayingId == recordingId) {
+                playbackController.stop()
+            }
             try {
                 fileSystem.deleteFile(recording.fileRelativePath)
             } catch (ce: CancellationException) {
@@ -224,11 +288,18 @@ class RecordingsListViewModel @Inject constructor(
             } catch (t: Throwable) {
                 android.util.Log.w(TAG, "deleteFile failed for recording $recordingId", t)
             }
+            waveformCache.invalidate(recordingId)
+            fileSystemVersion.value += 1L
         }
     }
 
     fun onDeleteAllFiles() {
         viewModelScope.launch {
+            // iOS parity: stop any active playback BEFORE walking the
+            // delete loop. Without this, ExoPlayer would keep its file
+            // descriptor open against a recording whose file is about
+            // to disappear — emitting confusing intermediate states.
+            playbackController.stop()
             // Snapshot recordings per walk via the suspend reader — a
             // single `observeAllVoiceRecordings().first()` would also
             // work, but iterating walks lets a per-walk failure log
@@ -267,8 +338,10 @@ class RecordingsListViewModel @Inject constructor(
                             t,
                         )
                     }
+                    waveformCache.invalidate(recording.id)
                 }
             }
+            fileSystemVersion.value += 1L
         }
     }
 
@@ -299,5 +372,11 @@ class RecordingsListViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "RecordingsListVM"
+        /**
+         * Delay in milliseconds between starting playback of an inactive
+         * recording and seeking it. Mirrors iOS's
+         * `DispatchQueue.main.asyncAfter(deadline: .now() + 0.1)`.
+         */
+        const val SEEK_AFTER_START_DELAY_MILLIS = 100L
     }
 }

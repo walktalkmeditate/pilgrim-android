@@ -512,6 +512,8 @@ private fun SwipeableRecordingRow(
                 recording = recording,
                 indexInSection = indexInSection,
                 fileSystem = viewModel.recordingFileSystem,
+                waveformCache = viewModel.recordingWaveformCache,
+                fileAvailable = state.fileExistenceById[recording.id] ?: false,
                 isPlayingThisRow = state.playingRecordingId == recording.id,
                 playbackPositionFraction = state.playbackPositionFraction,
                 playbackSpeed = state.playbackSpeed,
