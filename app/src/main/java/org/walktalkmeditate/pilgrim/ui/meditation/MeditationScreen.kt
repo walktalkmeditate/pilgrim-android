@@ -37,6 +37,8 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
+import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -171,11 +173,13 @@ fun MeditationScreen(
     BackHandler { endSession() }
 
     val moss = pilgrimColors.moss
+    val breathRhythm = BreathRhythm.byId(LocalBreathRhythm.current)
     MeditationScreenContent(
         elapsedSeconds = elapsedSeconds,
         mossColor = moss,
         enabled = !didEnd,
         onDone = endSession,
+        breathRhythm = breathRhythm,
     )
 }
 
@@ -190,6 +194,7 @@ internal fun MeditationScreenContent(
     mossColor: Color,
     enabled: Boolean,
     onDone: () -> Unit,
+    breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
 ) {
     Box(
         modifier = Modifier
@@ -203,7 +208,7 @@ internal fun MeditationScreenContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            BreathingCircle(moss = mossColor)
+            BreathingCircle(moss = mossColor, breathRhythm = breathRhythm)
             Spacer(Modifier.height(PilgrimSpacing.big))
             Text(
                 text = formatTimer(elapsedSeconds),

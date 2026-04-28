@@ -17,6 +17,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
+import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost
@@ -66,8 +67,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appearanceMode by appearancePreferences.appearanceMode.collectAsStateWithLifecycle()
             val soundsEnabled by soundsPreferences.soundsEnabled.collectAsStateWithLifecycle()
+            val breathRhythmId by soundsPreferences.breathRhythm.collectAsStateWithLifecycle()
             PilgrimTheme(appearanceMode = appearanceMode) {
-                CompositionLocalProvider(LocalSoundsEnabled provides soundsEnabled) {
+                CompositionLocalProvider(
+                    LocalSoundsEnabled provides soundsEnabled,
+                    LocalBreathRhythm provides breathRhythmId,
+                ) {
                     // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
                     // the chain. MainActivity's previous Scaffold was
                     // double-counting insets (parent + child both consuming
