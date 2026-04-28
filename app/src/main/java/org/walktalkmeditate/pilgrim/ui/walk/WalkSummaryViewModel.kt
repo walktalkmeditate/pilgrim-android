@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -147,6 +148,7 @@ class WalkSummaryViewModel @Inject constructor(
     hemisphereRepository: HemisphereRepository,
     private val cachedShareStore: CachedShareStore,
     unitsPreferences: UnitsPreferencesRepository,
+    private val practicePreferences: PracticePreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -575,17 +577,28 @@ class WalkSummaryViewModel @Inject constructor(
         // and leave lightReading = null; the card simply doesn't
         // render. Uses device `ZoneId.systemDefault()` at render time
         // (documented iOS-parity limitation).
+        //
+        // Stage 10-C: gated on the celestial-awareness practice
+        // preference. When off, the card is suppressed in the VM
+        // rather than the screen so the rendering layer stays a
+        // simple `lightReading?.let { ... }`. Mirrors iOS
+        // `ActiveWalkView.swift:379`: the celestial snapshot is only
+        // computed when the pref is true.
         val firstLocation = points.firstOrNull()
-        val lightReading = runCatching {
-            LightReading.from(
-                walkId = walkId,
-                startedAtEpochMs = walk.startTimestamp,
-                location = firstLocation,
-                zoneId = ZoneId.systemDefault(),
-            )
-        }.onFailure {
-            android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
-        }.getOrNull()
+        val lightReading = if (!practicePreferences.celestialAwarenessEnabled.value) {
+            null
+        } else {
+            runCatching {
+                LightReading.from(
+                    walkId = walkId,
+                    startedAtEpochMs = walk.startTimestamp,
+                    location = firstLocation,
+                    zoneId = ZoneId.systemDefault(),
+                )
+            }.onFailure {
+                android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
+            }.getOrNull()
+        }
 
         // Stage 7-C: compose the etegami spec. Pulls altitude samples
         // + activity intervals + voice recordings from the repo to

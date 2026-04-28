@@ -113,7 +113,17 @@ class WalkSummaryViewModelTest {
 
     private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
 
-    private fun newViewModel(walkId: Long): WalkSummaryViewModel {
+    private fun newViewModel(
+        walkId: Long,
+        practicePreferences: org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository =
+            // Stage 10-C: light reading is gated on celestialAwarenessEnabled.
+            // The legacy tests in this file all assert non-null lightReading
+            // (or don't care) — flip the default ON so they pass without
+            // changes. The OFF-suppression path has its own dedicated test.
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+                initialCelestialAwarenessEnabled = true,
+            ),
+    ): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
         val json = kotlinx.serialization.json.Json {
             ignoreUnknownKeys = true
@@ -129,6 +139,7 @@ class WalkSummaryViewModelTest {
             hemisphereRepository = hemisphereRepo,
             cachedShareStore = cachedShareStore,
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            practicePreferences = practicePreferences,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
     }
@@ -386,6 +397,38 @@ class WalkSummaryViewModelTest {
             assertNotNull("sun should be populated when location is present", reading.sun)
             assertNotNull("planetaryHour should be populated", reading.planetaryHour)
             assertTrue("koan text should be non-blank", reading.koan.text.isNotBlank())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `celestialAwarenessEnabled = false suppresses lightReading`() = runTest(dispatcher) {
+        // Stage 10-C: when the practice pref is off, the VM sets
+        // lightReading = null regardless of whether the underlying
+        // calculator could produce a snapshot. Mirrors iOS
+        // ActiveWalkView.swift:379 (the celestial snapshot is only
+        // computed when the pref is true).
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 48.8566, longitude = 2.3522),
+        )
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(
+            walkId = walk.id,
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+                initialCelestialAwarenessEnabled = false,
+            ),
+        )
+
+        vm.state.test {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            val loaded = item as WalkSummaryUiState.Loaded
+            assertNull(
+                "celestialAwarenessEnabled = false should suppress lightReading",
+                loaded.summary.lightReading,
+            )
             cancelAndIgnoreRemainingEvents()
         }
     }
