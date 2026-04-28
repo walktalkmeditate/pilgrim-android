@@ -75,6 +75,19 @@ class SoundscapeOrchestrator @Inject constructor(
 ) {
     fun start() {
         scope.launch { observe() }
+        // Parallel collector: live-apply user soundscape volume to the
+        // player. Runs for the orchestrator's lifetime; the cold spawn
+        // logic in `observe()` stays untouched (intentional — folding
+        // volume into the existing combine would also restart playback
+        // on every volume tweak, which is exactly what we don't want).
+        // The first emission (StateFlow's current value) seeds the
+        // player's userVolume before any `play()` runs, so the very
+        // first soundscape session also honors the pref.
+        scope.launch {
+            soundsPreferences.soundscapeVolume.collect { v ->
+                player.setVolume(v)
+            }
+        }
     }
 
     private suspend fun observe() {

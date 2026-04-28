@@ -79,6 +79,19 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     @Volatile private var wasPlayingBeforeTransientLoss: Boolean = false
 
+    /**
+     * The user's currently-configured soundscape volume in [0, 1],
+     * applied at play time and used as the "full" reference for ducking.
+     * Driven by [SoundscapeOrchestrator] from
+     * [org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository.soundscapeVolume].
+     * `@Volatile` because [setVolume] is callable from any thread —
+     * the orchestrator's volume-collector runs on the orchestrator's
+     * playback scope, not the main thread; the player listener +
+     * focus listener run on main. The actual ExoPlayer.volume write
+     * is still posted to the main handler.
+     */
+    @Volatile private var userVolume: Float = FULL_VOLUME
+
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             // REPEAT_MODE_ONE loops internally, so STATE_ENDED should
@@ -163,7 +176,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             val p = player ?: createPlayer().also { player = it }
             p.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             p.repeatMode = Player.REPEAT_MODE_ONE
-            p.volume = FULL_VOLUME
+            p.volume = userVolume
             p.prepare()
             p.play()
             registerNoisyReceiver()
@@ -214,14 +227,35 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         mainHandler.post { p.release() }
     }
 
-    /** Dip ExoPlayer volume for duckable transient focus loss. Main thread. */
+    /**
+     * Dip ExoPlayer volume for duckable transient focus loss. Main thread.
+     * Ducks to [DUCK_FRACTION] of the user's configured [userVolume],
+     * so users running at low volume don't get whip-sawed up before
+     * being ducked back down.
+     */
     private fun duckVolume() {
-        player?.volume = DUCK_VOLUME
+        player?.volume = (userVolume * DUCK_FRACTION).coerceIn(0f, 1f)
     }
 
     /** Restore ExoPlayer volume when focus returns. Main thread. */
     private fun restoreVolume() {
-        player?.volume = FULL_VOLUME
+        player?.volume = userVolume
+    }
+
+    override fun setVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        userVolume = clamped
+        // Apply live to the running player. Posted to the main handler
+        // because ExoPlayer access must happen on its build thread.
+        //
+        // We deliberately do NOT inspect the duck-state and re-scale
+        // here: ducking events are short (sub-second voice-guide
+        // prompt) and the next focus event re-applies the right
+        // amplitude via [duckVolume] / [restoreVolume], both of
+        // which now read the updated [userVolume]. A null player
+        // just means no playback in progress; the next [play] picks
+        // up the new userVolume.
+        mainHandler.post { player?.volume = clamped }
     }
 
     /** Pause for transient focus loss — keep focus request, mark resumable. */
@@ -334,13 +368,23 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     private companion object {
         const val TAG = "SoundscapePlayer"
+
+        /**
+         * Default user volume when no preference has been written
+         * (e.g., before [setVolume] runs the first time). The
+         * orchestrator wires the actual default (0.4 — iOS parity)
+         * via [SoundscapePlayer.setVolume] before the first [play].
+         */
         const val FULL_VOLUME = 1.0f
 
         /**
-         * Ducked volume when voice-guide (or any app) requests
-         * `GAIN_TRANSIENT_MAY_DUCK`. iOS uses ~0.3 with a 0.5s fade.
-         * We hard-step to match for MVP; fade curve can come later.
+         * Fraction of [userVolume] used when voice-guide (or any
+         * app) requests `GAIN_TRANSIENT_MAY_DUCK`. iOS uses ~0.3
+         * absolute with a 0.5s fade — we match the proportion
+         * relative to the user's chosen volume so a low-volume
+         * user doesn't get whip-sawed up before being ducked back
+         * down. Fade curve can come later.
          */
-        const val DUCK_VOLUME = 0.3f
+        const val DUCK_FRACTION = 0.3f
     }
 }

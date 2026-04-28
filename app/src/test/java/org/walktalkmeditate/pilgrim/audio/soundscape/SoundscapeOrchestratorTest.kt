@@ -527,6 +527,47 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `flipping soundscape volume mid-session updates player without restarting`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(
+            initialSoundsEnabled = true,
+            initialSoundscapeVolume = 0.4f,
+        )
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        // Initial play has fired and the volume-collector seeded the
+        // player with the initial pref value.
+        assertEquals(1, capturingPlayer.playCount)
+        assertEquals(0.4f, capturingPlayer.lastVolume)
+        val playsBefore = capturingPlayer.playCount
+
+        // User drags the slider to 0.2 mid-meditation.
+        prefs.setSoundscapeVolume(0.2f)
+        runCurrent()
+        advanceTimeBy(50)
+        runCurrent()
+
+        // Volume change applied live — no restart, no extra play() call.
+        assertEquals(
+            "expected no restart when volume changes, got ${capturingPlayer.playCount}",
+            playsBefore, capturingPlayer.playCount,
+        )
+        assertEquals(0.2f, capturingPlayer.lastVolume)
+        s.cancel()
+    }
+
     // --- fakes ---
 
     private class CapturingSoundscapePlayer : SoundscapePlayer {
@@ -534,6 +575,8 @@ class SoundscapeOrchestratorTest {
         override val state: StateFlow<SoundscapePlayer.State> = _state.asStateFlow()
         private val played = CopyOnWriteArrayList<File>()
         @Volatile var stopCount: Int = 0
+        @Volatile var lastVolume: Float = Float.NaN
+        @Volatile var setVolumeCount: Int = 0
         val playCount: Int get() = played.size
 
         override fun play(file: File) {
@@ -544,6 +587,11 @@ class SoundscapeOrchestratorTest {
         override fun stop() {
             stopCount += 1
             _state.value = SoundscapePlayer.State.Idle
+        }
+
+        override fun setVolume(volume: Float) {
+            lastVolume = volume
+            setVolumeCount += 1
         }
 
         override fun release() {
