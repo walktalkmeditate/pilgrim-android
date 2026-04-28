@@ -10,26 +10,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.settings.practice.PracticeCard
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -56,6 +52,16 @@ fun SettingsScreen(
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
     val soundsEnabled by viewModel.soundsEnabled.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val beginWithIntention by viewModel.beginWithIntention.collectAsStateWithLifecycle()
+    val celestialAwareness by viewModel.celestialAwarenessEnabled.collectAsStateWithLifecycle()
+    val zodiacSystem by viewModel.zodiacSystem.collectAsStateWithLifecycle()
+    val walkReliquary by viewModel.walkReliquaryEnabled.collectAsStateWithLifecycle()
+    // Android's Photo Picker (ActivityResultContracts.PickVisualMedia)
+    // doesn't require a runtime permission on API 33+ and uses the
+    // photo-picker pseudo-permission below that, so this flag will rarely
+    // flip to true in practice. It is screen-level transient state per
+    // the iOS pattern and survives rotation via rememberSaveable.
+    var showPhotosDeniedNote by rememberSaveable { mutableStateOf(false) }
     // rememberLazyListState wraps a rememberSaveable internally — without
     // it, rotating the device would yank the user back to the top of
     // Settings instead of preserving their scroll position.
@@ -94,7 +100,21 @@ fun SettingsScreen(
                 CollectiveStatsCard(stats = stats, units = distanceUnits)
             }
             item {
-                CollectiveOptInRow(checked = optIn, onCheckedChange = viewModel::setOptIn)
+                PracticeCard(
+                    beginWithIntention = beginWithIntention,
+                    onSetBeginWithIntention = viewModel::setBeginWithIntention,
+                    celestialAwareness = celestialAwareness,
+                    onSetCelestialAwareness = viewModel::setCelestialAwarenessEnabled,
+                    zodiacSystem = zodiacSystem,
+                    onSetZodiacSystem = viewModel::setZodiacSystem,
+                    distanceUnits = distanceUnits,
+                    onSetDistanceUnits = viewModel::setDistanceUnits,
+                    walkWithCollective = optIn,
+                    onSetWalkWithCollective = viewModel::setOptIn,
+                    walkReliquary = walkReliquary,
+                    onSetWalkReliquary = viewModel::setWalkReliquaryEnabled,
+                    showPhotosDeniedNote = showPhotosDeniedNote,
+                )
             }
             item {
                 AtmosphereCard(
@@ -137,32 +157,3 @@ fun SettingsScreen(
     }
 }
 
-@Composable
-private fun CollectiveOptInRow(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    ListItem(
-        headlineContent = { Text(stringResource(R.string.collective_opt_in_label)) },
-        supportingContent = { Text(stringResource(R.string.collective_opt_in_description)) },
-        leadingContent = { Icon(Icons.Default.People, contentDescription = null) },
-        trailingContent = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = pilgrimColors.parchment,
-                    checkedTrackColor = pilgrimColors.moss,
-                    uncheckedThumbColor = pilgrimColors.fog,
-                    uncheckedTrackColor = pilgrimColors.parchmentTertiary,
-                ),
-            )
-        },
-        colors = ListItemDefaults.colors(
-            containerColor = Color.Transparent,
-            headlineColor = pilgrimColors.ink,
-            supportingColor = pilgrimColors.fog,
-            leadingIconColor = pilgrimColors.ink,
-        ),
-    )
-}
