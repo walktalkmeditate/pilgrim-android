@@ -27,6 +27,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -52,6 +53,8 @@ class WalkTrackingService : Service() {
     @Inject lateinit var controller: WalkController
 
     @Inject lateinit var locationSource: LocationSource
+
+    @Inject lateinit var unitsPreferences: UnitsPreferencesRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
@@ -301,7 +304,7 @@ class WalkTrackingService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(walkNotificationText(this, state))
+            .setContentText(walkNotificationText(this, state, unitsPreferences.distanceUnits.value))
             .setOngoing(true)
             .setShowWhen(false)
             .setOnlyAlertOnce(true)

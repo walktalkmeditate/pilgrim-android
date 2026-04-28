@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
@@ -89,12 +90,28 @@ internal fun addWalkActionsForState(
     }
 }
 
-internal fun walkNotificationText(context: Context, state: WalkState): String = when (state) {
+internal fun walkNotificationText(
+    context: Context,
+    state: WalkState,
+    units: UnitSystem,
+): String = when (state) {
     WalkState.Idle -> context.getString(R.string.walk_notification_starting)
-    is WalkState.Active -> context.getString(
-        R.string.walk_notification_active,
-        state.walk.distanceMeters / 1_000.0,
-    )
+    is WalkState.Active -> {
+        // Stage 10-C: notification distance honors the user's unit
+        // preference. Two distinct string resources (km / mi) so we
+        // don't post-hoc swap unit suffixes inside a localized string.
+        val km = state.walk.distanceMeters / 1_000.0
+        when (units) {
+            UnitSystem.Metric -> context.getString(
+                R.string.walk_notification_active,
+                km,
+            )
+            UnitSystem.Imperial -> context.getString(
+                R.string.walk_notification_active_mi,
+                km * 0.621371,
+            )
+        }
+    }
     is WalkState.Paused -> context.getString(R.string.walk_notification_paused)
     is WalkState.Meditating -> context.getString(R.string.walk_notification_meditating)
     is WalkState.Finished -> context.getString(R.string.walk_notification_finished)
