@@ -77,19 +77,21 @@ class SoundSettingsViewModel @Inject constructor(
     val totalDiskUsageBytes: StateFlow<Long> = _totalDiskUsageBytes.asStateFlow()
 
     init {
+        // One-shot initial read covers the cold-start case where the
+        // manifest may not be populated yet but on-disk files from a
+        // previous run are present. The `fileStore.invalidations`
+        // collector handles every subsequent change (downloads land,
+        // user clears all). We deliberately do NOT subscribe to
+        // `manifestService.assets` for disk-usage recomputes —
+        // `totalSize` scans the filesystem, not the manifest, so a
+        // manifest refresh adds no new information; the only path
+        // that matters is filesystem changes, which `invalidations`
+        // already covers.
         viewModelScope.launch {
             recomputeDiskUsage()
         }
         viewModelScope.launch {
             fileStore.invalidations.collect { recomputeDiskUsage() }
-        }
-        viewModelScope.launch {
-            // Recompute on manifest changes too — the catalog flips from
-            // empty to populated on first cache load, and `totalSize`
-            // doesn't depend on the manifest contents (it scans the
-            // filesystem) but kicking it once after init lands is
-            // cheap and produces a stable initial number.
-            manifestService.assets.collect { recomputeDiskUsage() }
         }
     }
 
@@ -173,6 +175,21 @@ class SoundSettingsViewModel @Inject constructor(
      * playback) but the storage UI's byte counter would still report
      * (Stage 5-D delete-then-cancel-worker lesson, applied here).
      *
+     * Also deselects the active soundscape so the Meditation card's
+     * "Soundscape" row doesn't show a stale display name (the asset
+     * still exists in the manifest, just not on disk — without the
+     * deselect, the row reads "Soft Rain" while the file is gone).
+     *
+     * **Scope note:** this currently covers only soundscapes — bell
+     * downloads aren't yet implemented on Android (BellPlayer plays
+     * the bundled `R.raw.bell` regardless of `meditation*BellId`
+     * persistence). When a bell download orchestration ships, this
+     * method needs the same cancel-then-clear treatment for bell
+     * assets, OR a sibling `clearAllBellDownloads()` should split out.
+     * The button copy says "Clear all downloads" in line with iOS;
+     * the iOS surface has the same future-debt because iOS bell
+     * downloads landed before the Sounds settings sub-screen.
+     *
      * The file store's invalidation stream republishes
      * [totalDiskUsageBytes] back to ~0 once the sweep completes and
      * any downstream availability checks see the deletes immediately.
@@ -184,6 +201,7 @@ class SoundSettingsViewModel @Inject constructor(
                     downloadScheduler.cancel(asset.id)
                 }
                 fileStore.clearAll()
+                soundscapeSelection.deselect()
             }.onFailure { Log.w(TAG, "failed to clear all soundscape downloads", it) }
         }
     }

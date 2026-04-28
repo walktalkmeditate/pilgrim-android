@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -208,7 +209,17 @@ internal fun MeditationScreenContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            BreathingCircle(moss = mossColor, breathRhythm = breathRhythm)
+            // `key(breathRhythm.id)` forces a full re-composition of
+            // BreathingCircle (and its rememberInfiniteTransition) when
+            // the user picks a new rhythm mid-meditation. Without it,
+            // changing rhythms can resume the new keyframe spec at the
+            // old cycle's offset — visually jumping to a nonsensical
+            // phase. The key restart trades a brief snap to
+            // SCALE_EXHALED for a clean, predictable cycle on the new
+            // rhythm.
+            key(breathRhythm.id) {
+                BreathingCircle(moss = mossColor, breathRhythm = breathRhythm)
+            }
             Spacer(Modifier.height(PilgrimSpacing.big))
             Text(
                 text = formatTimer(elapsedSeconds),

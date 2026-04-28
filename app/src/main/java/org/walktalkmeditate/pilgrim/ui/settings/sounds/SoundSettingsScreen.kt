@@ -196,7 +196,11 @@ fun SoundSettingsScreen(
                         shrinkVertically(animationSpec = tween(200)),
                 ) {
                     StorageSection(
-                        soundscapeCount = availableSoundscapes.size,
+                        // Match iOS: total count covers ALL audio
+                        // assets in the manifest (bells + soundscapes),
+                        // not just soundscapes. iOS reads
+                        // `manifestService.manifest?.assets.count`.
+                        soundscapeCount = availableBells.size + availableSoundscapes.size,
                         totalDiskUsageBytes = totalDiskUsageBytes,
                         onClearAll = viewModel::clearAllDownloads,
                     )
@@ -489,7 +493,16 @@ private fun StorageSection(
 
 private fun bellDisplayName(id: String?, available: List<AudioAsset>): String {
     if (id == null) return ""
-    return available.firstOrNull { it.id == id }?.displayName ?: id
+    // Fall back to empty when the persisted id doesn't resolve in the
+    // current manifest. Two cases:
+    //  1. Manifest hasn't loaded yet (cold start, network race) —
+    //     `available` is empty for the first ~50-200ms of the screen.
+    //  2. Asset was removed in a future manifest version (downgrade or
+    //     server-side asset retirement).
+    // Either way, showing the raw asset id ("temple-bell-v2") is worse
+    // than showing nothing — empty string lets the row read as "no
+    // bell selected" until the manifest catches up.
+    return available.firstOrNull { it.id == id }?.displayName ?: ""
 }
 
 private fun soundscapeDisplayName(

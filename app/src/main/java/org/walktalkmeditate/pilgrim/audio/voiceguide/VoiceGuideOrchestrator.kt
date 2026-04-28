@@ -91,6 +91,16 @@ class VoiceGuideOrchestrator @Inject constructor(
         // soundsEnabled flag so flipping the toggle mid-walk cancels
         // any active scheduler loop and prevents new spawns while
         // muted. Same pattern as SoundscapeOrchestrator.
+        //
+        // **Divergence from iOS:** iOS's `soundsEnabled` does NOT gate
+        // voice guides — that's a separate `voiceGuideEnabled` toggle
+        // inside the iOS VoiceCard. Android gates voice guides here as
+        // a "panic mute" so the user has one switch that silences
+        // everything during the transitional period before Stage 10-D
+        // ships the dedicated `voiceGuideEnabled` toggle. When 10-D
+        // lands, revisit whether to keep this gate (Android-only
+        // panic mute) or remove it (strict iOS parity, two separate
+        // toggles required for full silence).
         combine(walkState, soundsPreferences.soundsEnabled) { state, enabled ->
             state to enabled
         }.collect { (state, enabled) ->
