@@ -93,44 +93,57 @@ class SoundscapeOrchestrator @Inject constructor(
     private suspend fun observe() {
         var playJob: Job? = null
 
-        // Stage 10-B master sounds toggle: combine walkState with the
-        // soundsEnabled flag so flipping the toggle mid-meditation
-        // cancels playback and does not spawn while muted. Spawn
-        // decision happens here at the per-emission level (not inside
-        // runSessionLoop) so the existing retry-budget logic stays
-        // intact for legitimately-muted-and-then-unmuted sessions.
-        combine(walkState, soundsPreferences.soundsEnabled) { state, enabled ->
-            state to enabled
-        }.collect { (state, enabled) ->
-            when (state) {
-                is WalkState.Meditating -> {
-                    if (!enabled) {
-                        // Master toggle is OFF — cancel any in-flight
-                        // session and stop the player. No spawn.
+        // Combine three signals:
+        //  - walkState: Meditating triggers spawn; anything else stops.
+        //  - soundsEnabled: master mute. Stage 10-B.
+        //  - selectedAssetId: when the user clears their soundscape
+        //    mid-meditation (e.g. "Clear all downloads" in
+        //    SoundSettingsScreen calls deselect()), the orchestrator
+        //    must cancel + stop. WITHOUT this signal, ExoPlayer would
+        //    keep playing from its in-memory buffer until the loop
+        //    wrapped back to the (now-deleted) file and Errored —
+        //    minutes of audio after the user thought they cleared it.
+        //
+        // Spawn decision happens per-emission (not inside
+        // runSessionLoop) so the retry-budget logic stays intact for
+        // legitimately-muted-and-then-unmuted sessions.
+        combine(
+            walkState,
+            soundsPreferences.soundsEnabled,
+            selectedAssetId,
+        ) { state, enabled, assetId -> Triple(state, enabled, assetId) }
+            .collect { (state, enabled, assetId) ->
+                when (state) {
+                    is WalkState.Meditating -> {
+                        if (!enabled || assetId == null) {
+                            // Either the master toggle is OFF or the
+                            // user cleared their soundscape selection.
+                            // Cancel any in-flight session and stop
+                            // the player. No spawn.
+                            playJob?.cancel(); playJob = null
+                            safeStopPlayer()
+                            return@collect
+                        }
+                        // `isActive != true` catches (1) first-ever-null,
+                        // (2) cancelled, and (3) completed-but-not-null.
+                        // With the `player.state` observer below keeping
+                        // the job alive for the duration of meditation,
+                        // case (3) is now rare (only if the initial
+                        // eligibility check returns null — e.g., no
+                        // soundscape selected). Stage 5-E lesson.
+                        if (playJob?.isActive != true) {
+                            playJob = scope.launch { runSessionLoop() }
+                        }
+                    }
+                    is WalkState.Active,
+                    is WalkState.Paused,
+                    WalkState.Idle,
+                    is WalkState.Finished -> {
                         playJob?.cancel(); playJob = null
                         safeStopPlayer()
-                        return@collect
                     }
-                    // `isActive != true` catches (1) first-ever-null,
-                    // (2) cancelled, and (3) completed-but-not-null.
-                    // With the `player.state` observer below keeping
-                    // the job alive for the duration of meditation,
-                    // case (3) is now rare (only if the initial
-                    // eligibility check returns null — e.g., no
-                    // soundscape selected). Stage 5-E lesson.
-                    if (playJob?.isActive != true) {
-                        playJob = scope.launch { runSessionLoop() }
-                    }
-                }
-                is WalkState.Active,
-                is WalkState.Paused,
-                WalkState.Idle,
-                is WalkState.Finished -> {
-                    playJob?.cancel(); playJob = null
-                    safeStopPlayer()
                 }
             }
-        }
     }
 
     /**

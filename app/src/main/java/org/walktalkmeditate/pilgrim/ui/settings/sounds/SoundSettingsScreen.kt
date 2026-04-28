@@ -287,6 +287,7 @@ private fun WalkSection(
     onOpenWalkStart: () -> Unit,
     onOpenWalkEnd: () -> Unit,
 ) {
+    val noneLabel = stringResource(R.string.settings_bell_picker_none)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -300,14 +301,14 @@ private fun WalkSection(
         )
         SettingNavRow(
             label = stringResource(R.string.settings_bell_start_label),
-            detail = bellDisplayName(walkStartBellId, availableBells),
+            detail = bellDisplayName(walkStartBellId, availableBells, noneLabel),
             onClick = onOpenWalkStart,
             modifier = Modifier.fillMaxWidth(),
         )
         SettingsDivider()
         SettingNavRow(
             label = stringResource(R.string.settings_bell_end_label),
-            detail = bellDisplayName(walkEndBellId, availableBells),
+            detail = bellDisplayName(walkEndBellId, availableBells, noneLabel),
             onClick = onOpenWalkEnd,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -341,14 +342,14 @@ private fun MeditationSection(
         )
         SettingNavRow(
             label = stringResource(R.string.settings_bell_start_label),
-            detail = bellDisplayName(meditationStartBellId, availableBells),
+            detail = bellDisplayName(meditationStartBellId, availableBells, noneLabel),
             onClick = onOpenMeditationStart,
             modifier = Modifier.fillMaxWidth(),
         )
         SettingsDivider()
         SettingNavRow(
             label = stringResource(R.string.settings_bell_end_label),
-            detail = bellDisplayName(meditationEndBellId, availableBells),
+            detail = bellDisplayName(meditationEndBellId, availableBells, noneLabel),
             onClick = onOpenMeditationEnd,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -409,6 +410,15 @@ private fun VolumeRow(
     onChange: (Float) -> Unit,
     testTag: String,
 ) {
+    // Hold a local drag-state so onValueChange updates only Compose
+    // state. The DataStore write fires once on `onValueChangeFinished`
+    // — without this, every drag tick (dozens per gesture) would
+    // dispatch a `viewModelScope.launch { dataStore.edit { } }`,
+    // hammering the I/O bus and visually lagging the slider on
+    // low-end devices under battery saver. Re-sync local with the
+    // VM value when it changes externally (live re-emit on toggle
+    // OFF/ON, rotation, etc.).
+    var dragValue by remember(volume) { mutableStateOf(volume) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row {
             Text(
@@ -420,7 +430,7 @@ private fun VolumeRow(
             Text(
                 text = stringResource(
                     R.string.settings_volume_percent_format,
-                    (volume * 100f).toInt(),
+                    (dragValue * 100f).toInt(),
                 ),
                 style = pilgrimType.caption,
                 color = pilgrimColors.fog,
@@ -431,8 +441,9 @@ private fun VolumeRow(
         // track and parchmentTertiary for the inactive track to
         // approximate iOS's flat stone tint on parchment.
         Slider(
-            value = volume,
-            onValueChange = onChange,
+            value = dragValue,
+            onValueChange = { dragValue = it },
+            onValueChangeFinished = { onChange(dragValue) },
             valueRange = 0f..1f,
             steps = 19,
             colors = SliderDefaults.colors(
@@ -491,18 +502,24 @@ private fun StorageSection(
     }
 }
 
-private fun bellDisplayName(id: String?, available: List<AudioAsset>): String {
-    if (id == null) return ""
-    // Fall back to empty when the persisted id doesn't resolve in the
-    // current manifest. Two cases:
+private fun bellDisplayName(
+    id: String?,
+    available: List<AudioAsset>,
+    noneLabel: String,
+): String {
+    if (id == null) return noneLabel
+    // Fall back to noneLabel when the persisted id doesn't resolve in
+    // the current manifest. Two cases:
     //  1. Manifest hasn't loaded yet (cold start, network race) —
     //     `available` is empty for the first ~50-200ms of the screen.
+    //     The caption flickers from "None" to the asset name once the
+    //     manifest emits — acceptable; the alternative (raw asset id)
+    //     is worse.
     //  2. Asset was removed in a future manifest version (downgrade or
-    //     server-side asset retirement).
-    // Either way, showing the raw asset id ("temple-bell-v2") is worse
-    // than showing nothing — empty string lets the row read as "no
-    // bell selected" until the manifest catches up.
-    return available.firstOrNull { it.id == id }?.displayName ?: ""
+    //     server-side asset retirement). User is told "None" so they
+    //     can re-select.
+    // Match `soundscapeDisplayName` semantics for consistency.
+    return available.firstOrNull { it.id == id }?.displayName ?: noneLabel
 }
 
 private fun soundscapeDisplayName(

@@ -35,6 +35,24 @@ data class BreathRhythm(
         )
 
         const val DEFAULT_ID: Int = 0
-        fun byId(id: Int): BreathRhythm = all.getOrElse(id) { all[DEFAULT_ID] }
+
+        /**
+         * Resolve an [id] to a [BreathRhythm]. Out-of-range ids fall
+         * back to [DEFAULT_ID] (Calm) and emit a Log.w so a future
+         * maintainer debugging "user says they picked Box but the
+         * circle animates Calm" has a breadcrumb. Out-of-range ids
+         * can come from data corruption, a future iOS build adding
+         * presets we don't recognize, or a `.pilgrim` ZIP from a
+         * newer iOS version.
+         */
+        fun byId(id: Int): BreathRhythm {
+            val match = all.getOrNull(id)
+            if (match != null) return match
+            android.util.Log.w(
+                "BreathRhythm",
+                "unknown breathRhythm id=$id (range 0..${all.lastIndex}) — falling back to Calm",
+            )
+            return all[DEFAULT_ID]
+        }
     }
 }

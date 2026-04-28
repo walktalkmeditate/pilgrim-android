@@ -160,13 +160,16 @@ class VoiceGuideOrchestrator @Inject constructor(
                 }
                 is WalkState.Meditating -> {
                     walkJob?.cancel(); walkJob = null
-                    exitingMeditation = true
                     if (!enabled) {
                         // Master toggle is OFF — cancel any in-flight
                         // meditation scheduler and stop the player.
-                        // `exitingMeditation` stays true so the next
-                        // Active spawn (on toggle ON or state change)
-                        // still applies the silence window.
+                        // Do NOT arm `exitingMeditation` here: if the
+                        // user keeps sounds OFF for the entire session,
+                        // no meditation prompts ever played, so there's
+                        // no rationale for a post-meditation silence
+                        // window when sounds are re-enabled. The flag
+                        // is only armed when a meditation scheduler
+                        // actually spawned (see below).
                         meditationJob?.cancel(); meditationJob = null
                         safeStopPlayer()
                         return@collect
@@ -178,6 +181,13 @@ class VoiceGuideOrchestrator @Inject constructor(
                         // treat as a silent meditation session.
                         if (pack != null && pack.meditationPrompts != null &&
                             pack.meditationScheduling != null) {
+                            // Arm `exitingMeditation` ONLY now that we
+                            // know a real meditation scheduler is about
+                            // to run. The Active branch's silence
+                            // window only makes sense if the user
+                            // actually heard prompts during the
+                            // session.
+                            exitingMeditation = true
                             meditationJob = scope.launch {
                                 try {
                                     runSchedulerLoop(
