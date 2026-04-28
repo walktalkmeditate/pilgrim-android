@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.sounds
 
+import android.app.Application
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+// Runs under Robolectric so the `android.util.Log.w` call inside
+// BreathRhythm.byId's out-of-range fallback resolves cleanly (a plain
+// JUnit test would throw "Method w in android.util.Log not mocked").
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class BreathRhythmTest {
 
     @Test

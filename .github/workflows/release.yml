@@ -18,7 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # CI doesn't need full git history.
+          # The release job only needs the tag's tree, not the full
+          # history. Shallow clone saves a few seconds.
           fetch-depth: 1
 
       - name: Set up JDK 17
