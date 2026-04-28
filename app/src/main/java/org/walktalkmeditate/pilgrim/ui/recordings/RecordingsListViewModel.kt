@@ -68,10 +68,21 @@ class RecordingsListViewModel @Inject constructor(
     private val walkRepository: WalkRepository,
     private val playbackController: VoicePlaybackController,
     private val transcriptionScheduler: TranscriptionScheduler,
+    /**
+     * Plumbed through the VM (rather than re-injected at the screen
+     * boundary) so [RecordingRow] resolves file existence + size at the
+     * same single seam used by [onDeleteFile] / [onDeleteAllFiles].
+     * Exposed via the [recordingFileSystem] accessor below for
+     * Compose-side reads — the constructor parameter stays private so
+     * direct mutation paths still flow through this VM.
+     */
     private val fileSystem: VoiceRecordingFileSystem,
     @Suppress("UNUSED_PARAMETER")
     @ApplicationContext context: Context,
 ) : ViewModel() {
+
+    /** Read-only view of the bound [VoiceRecordingFileSystem]. */
+    val recordingFileSystem: VoiceRecordingFileSystem get() = fileSystem
 
     private val searchQuery = MutableStateFlow("")
     private val editingRecordingId = MutableStateFlow<Long?>(null)

@@ -33,6 +33,7 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
+import org.walktalkmeditate.pilgrim.ui.recordings.RecordingsListScreen
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.soundscape.SoundscapePickerScreen
@@ -64,6 +65,7 @@ object Routes {
 
     const val SOUNDSCAPE_PICKER = "soundscapes"
     const val SOUND_SETTINGS = "sound_settings"
+    const val RECORDINGS_LIST = "recordings"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -193,6 +195,21 @@ fun PilgrimNavHost(
         composable(Routes.SOUNDSCAPE_PICKER) {
             SoundscapePickerScreen(
                 onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.RECORDINGS_LIST) {
+            // Stage 10-D: Recordings list reachable from VoiceCard's
+            // Recordings nav row (SettingsAction.OpenRecordings).
+            // Tapping a section header navigates to that walk's
+            // WalkSummary; launchSingleTop guards a double-tap from
+            // pushing two summary entries.
+            RecordingsListScreen(
+                onBack = { navController.popBackStack() },
+                onWalkClick = { walkId ->
+                    navController.navigate(Routes.walkSummary(walkId)) {
+                        launchSingleTop = true
+                    }
+                },
             )
         }
         composable(Routes.SOUND_SETTINGS) {
@@ -490,6 +507,8 @@ private fun handleSettingsAction(
             navController.navigate(Routes.SOUNDSCAPE_PICKER) { launchSingleTop = true }
         SettingsAction.OpenBellsAndSoundscapes ->
             navController.navigate(Routes.SOUND_SETTINGS) { launchSingleTop = true }
+        SettingsAction.OpenRecordings ->
+            navController.navigate(Routes.RECORDINGS_LIST) { launchSingleTop = true }
         // The remaining destinations are introduced in subsequent stages
         // (10-D onward). Keeping them in the sealed interface NOW lets
         // each card author drop in its own action without re-touching
@@ -498,7 +517,6 @@ private fun handleSettingsAction(
         // into a discoverable signal during manual QA — if a future
         // card author wires a row but forgets to update this hub, the
         // tap will log instead of vanishing into the void.
-        SettingsAction.OpenRecordings,          // STAGE 10-D
         SettingsAction.OpenAppPermissionSettings, // STAGE 10-E
         SettingsAction.OpenExportImport,        // STAGE 10-G
         SettingsAction.OpenJourneyViewer,       // STAGE 10-G
