@@ -17,6 +17,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
+import org.walktalkmeditate.pilgrim.data.sounds.LocalBellHapticEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -67,10 +68,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appearanceMode by appearancePreferences.appearanceMode.collectAsStateWithLifecycle()
             val soundsEnabled by soundsPreferences.soundsEnabled.collectAsStateWithLifecycle()
+            val bellHapticEnabled by soundsPreferences.bellHapticEnabled.collectAsStateWithLifecycle()
             val breathRhythmId by soundsPreferences.breathRhythm.collectAsStateWithLifecycle()
             PilgrimTheme(appearanceMode = appearanceMode) {
                 CompositionLocalProvider(
                     LocalSoundsEnabled provides soundsEnabled,
+                    LocalBellHapticEnabled provides bellHapticEnabled,
                     LocalBreathRhythm provides breathRhythmId,
                 ) {
                     // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
