@@ -39,7 +39,21 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
  * observer's `init` block never runs.
  *
  * Same bell asset fires for both directions (start and end), matching
- * iOS. See the design spec for the single-asset rationale.
+ * iOS's MVP behavior. See the design spec for the single-asset rationale.
+ *
+ * **Per-event bell selection (deferred).** Stage 10-B Chunk B persists
+ * `meditationStartBellId` and `meditationEndBellId` so a user's choice
+ * survives across launches AND a `.pilgrim` ZIP can round-trip with
+ * iOS. The runtime path that resolves those ids to an [AudioAsset]
+ * + plays the matching file is NOT yet wired — [BellPlayer] is
+ * hardcoded to the bundled `R.raw.bell` resource. Generalizing
+ * BellPlayer to accept an asset (similar to
+ * [org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapePlayer.play])
+ * is intentionally deferred to a future PR; it requires a
+ * bell-specific file store + download orchestration that doesn't
+ * fit the Stage 10-B scope. Until then, both bell-id prefs persist
+ * silently and the bundled bell plays for every meditation
+ * boundary.
  */
 @Singleton
 class MeditationBellObserver @Inject constructor(
