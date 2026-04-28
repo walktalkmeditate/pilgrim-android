@@ -31,6 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -90,6 +91,7 @@ class SettingsViewModelTest {
             repo,
             FakeAppearancePreferencesRepository(),
             FakeSoundsPreferencesRepository(),
+            FakePracticePreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
     }
