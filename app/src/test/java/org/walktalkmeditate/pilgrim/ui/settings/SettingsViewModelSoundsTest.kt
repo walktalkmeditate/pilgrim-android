@@ -14,6 +14,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import java.io.IOException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -36,6 +40,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 
 /**
  * Unit-tests the soundsEnabled passthrough on [SettingsViewModel]:
@@ -104,6 +109,37 @@ class SettingsViewModelSoundsTest {
         assertEquals(false, vm.soundsEnabled.first { it == false })
         // Confirm the write reached the repo, not just the VM's StateFlow.
         assertEquals(false, soundsRepo.soundsEnabled.first())
+    }
+
+    @Test
+    fun `setSoundsEnabled swallows DataStore errors via runCatching`() = runBlocking {
+        val throwingRepo = ThrowingSoundsPreferencesRepository(initial = true)
+        val vm = SettingsViewModel(
+            collectiveRepository = collectiveRepo,
+            appearancePreferences = FakeAppearancePreferencesRepository(),
+            soundsPreferences = throwingRepo,
+        )
+        // Calling the setter must NOT throw — runCatching inside the
+        // VM swallows the IOException and logs it.
+        vm.setSoundsEnabled(false)
+        // Repo's setSoundsEnabled threw, so its underlying flow stayed
+        // at the initial value. The VM is still functional — its
+        // soundsEnabled flow continues to reflect the repo's source of
+        // truth and is queryable.
+        assertEquals(true, vm.soundsEnabled.first())
+        assertEquals(1, throwingRepo.attemptCount)
+    }
+
+    private class ThrowingSoundsPreferencesRepository(
+        initial: Boolean = true,
+    ) : SoundsPreferencesRepository {
+        private val _soundsEnabled = MutableStateFlow(initial)
+        override val soundsEnabled: StateFlow<Boolean> = _soundsEnabled.asStateFlow()
+        @Volatile var attemptCount: Int = 0
+        override suspend fun setSoundsEnabled(value: Boolean) {
+            attemptCount += 1
+            throw IOException("disk full")
+        }
     }
 
     private class FakeCounterService(context: Context, json: Json) :
