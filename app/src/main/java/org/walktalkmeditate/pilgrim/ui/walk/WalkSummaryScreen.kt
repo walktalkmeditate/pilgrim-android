@@ -58,6 +58,7 @@ fun WalkSummaryScreen(
     val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val lightReadingDisplay by viewModel.lightReadingDisplay.collectAsStateWithLifecycle()
     // Stage 8-A: must be collected unconditionally here, not inside
     // the Loaded branch's `if (routePoints.size >= 2)` nested block.
     // `collectAsStateWithLifecycle` calls `remember` internally, and
@@ -178,7 +179,12 @@ fun WalkSummaryScreen(
                     // render. Room's autoGenerate guarantees the
                     // walkId > 0 precondition LightReading.from needs,
                     // so null is unreachable in production today.
-                    s.summary.lightReading?.let { reading ->
+                    //
+                    // Stage 10-C: read from `lightReadingDisplay` (live
+                    // combine of summary + celestialAwarenessEnabled
+                    // pref) so toggling the pref while the summary is
+                    // open immediately shows / hides the card.
+                    lightReadingDisplay?.let { reading ->
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         WalkLightReadingCard(reading = reading)
                     }

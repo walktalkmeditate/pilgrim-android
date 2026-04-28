@@ -182,6 +182,27 @@ class WalkSummaryViewModel @Inject constructor(
     )
 
     /**
+     * Live-gated light reading: combines the loaded summary's stored
+     * [LightReading] with the practice preference. Toggling
+     * Celestial awareness ON/OFF in Settings flips this immediately,
+     * so the post-walk Light Reading card appears/disappears without
+     * the user navigating away and back. iOS computes the snapshot
+     * conditionally at walk-finish; we always compute it (cheap) and
+     * gate at display time so the toggle is observable.
+     */
+    val lightReadingDisplay: StateFlow<LightReading?> =
+        kotlinx.coroutines.flow.combine(
+            state,
+            practicePreferences.celestialAwarenessEnabled,
+        ) { s, enabled ->
+            if (s is WalkSummaryUiState.Loaded && enabled) s.summary.lightReading else null
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null,
+        )
+
+    /**
      * Stage 8-A: observer for the per-walk cached journey-share. Drives
      * the Fresh / Active / Expired state of [WalkShareJourneyRow] on
      * the summary. `flatMapLatest` re-opens the DataStore observer
@@ -578,27 +599,23 @@ class WalkSummaryViewModel @Inject constructor(
         // render. Uses device `ZoneId.systemDefault()` at render time
         // (documented iOS-parity limitation).
         //
-        // Stage 10-C: gated on the celestial-awareness practice
-        // preference. When off, the card is suppressed in the VM
-        // rather than the screen so the rendering layer stays a
-        // simple `lightReading?.let { ... }`. Mirrors iOS
-        // `ActiveWalkView.swift:379`: the celestial snapshot is only
-        // computed when the pref is true.
+        // Stage 10-C: ALWAYS compute the lightReading; the celestial-
+        // awareness gate is applied at the SCREEN level via the
+        // [lightReadingDisplay] flow (combine of summary + pref). This
+        // way the user can toggle the pref while the summary is open
+        // and the card appears/disappears immediately, rather than
+        // being frozen at summary-load time.
         val firstLocation = points.firstOrNull()
-        val lightReading = if (!practicePreferences.celestialAwarenessEnabled.value) {
-            null
-        } else {
-            runCatching {
-                LightReading.from(
-                    walkId = walkId,
-                    startedAtEpochMs = walk.startTimestamp,
-                    location = firstLocation,
-                    zoneId = ZoneId.systemDefault(),
-                )
-            }.onFailure {
-                android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
-            }.getOrNull()
-        }
+        val lightReading = runCatching {
+            LightReading.from(
+                walkId = walkId,
+                startedAtEpochMs = walk.startTimestamp,
+                location = firstLocation,
+                zoneId = ZoneId.systemDefault(),
+            )
+        }.onFailure {
+            android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
+        }.getOrNull()
 
         // Stage 7-C: compose the etegami spec. Pulls altitude samples
         // + activity intervals + voice recordings from the repo to
@@ -606,6 +623,17 @@ class WalkSummaryViewModel @Inject constructor(
         // runCatching so any unexpected data-shape issue (e.g. a
         // future schema change) degrades to "no etegami" rather than
         // breaking Walk Summary entirely.
+        //
+        // Stage 10-C TODO: like the seal artwork, the etegami spec
+        // bakes the unit-system-dependent stats text at summary-load
+        // time. If the user toggles Metric ↔ Imperial in Settings
+        // after opening the summary, the rendered postcard at share
+        // time still shows the load-time units. Re-rendering on
+        // toggle requires reloading the underlying altitude /
+        // activity / voice samples and rebuilding the spec at share-
+        // time, which crosses a boundary the share flow doesn't
+        // currently span. Defer to the future "live re-render of
+        // generated artifacts" stage that also handles the seal.
         val etegamiSpec = runCatching {
             val altitudeSamples = repository.altitudeSamplesFor(walkId)
             val activityIntervals = repository.activityIntervalsFor(walkId)

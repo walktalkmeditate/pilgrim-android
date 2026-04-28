@@ -246,9 +246,23 @@ fun ActiveWalkScreen(
     // re-firing the prompt is a minor annoyance, not a correctness
     // issue, and the `intention != null` check naturally suppresses
     // the re-fire after a confirmed value).
+    //
+    // **Recovery guard**: if the first observed walk-state is already
+    // in-progress (Active / Paused / Meditating), the user is
+    // returning to an already-running walk via process death + cold
+    // launch (Stage 9.5-D recovery) OR notification-tap-while-walking.
+    // Don't pop a fresh-walk auto-prompt on the recovery surface —
+    // it's confusing UX. Auto-prompt only fires when the user
+    // observably transitions FROM idle TO active in this composition.
     val activeWalkId = (navWalkState as? WalkState.Active)?.walk?.walkId
     val hasCheckedAutoIntention = remember(activeWalkId) { mutableStateOf(false) }
+    val isRecoveryComposition = remember {
+        // `navWalkState` at first composition: Idle = fresh start;
+        // anything else = we're entering an in-progress walk (recovery).
+        navWalkState !is WalkState.Idle
+    }
     LaunchedEffect(navWalkState, beginWithIntention, intention) {
+        if (isRecoveryComposition) return@LaunchedEffect
         if (!shouldAutoPromptIntention(
                 walkState = navWalkState,
                 beginWithIntention = beginWithIntention,

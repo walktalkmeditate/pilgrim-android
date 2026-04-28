@@ -402,12 +402,12 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
-    fun `celestialAwarenessEnabled = false suppresses lightReading`() = runTest(dispatcher) {
-        // Stage 10-C: when the practice pref is off, the VM sets
-        // lightReading = null regardless of whether the underlying
-        // calculator could produce a snapshot. Mirrors iOS
-        // ActiveWalkView.swift:379 (the celestial snapshot is only
-        // computed when the pref is true).
+    fun `celestialAwarenessEnabled = false suppresses lightReadingDisplay`() = runTest(dispatcher) {
+        // Stage 10-C: the underlying lightReading is ALWAYS computed
+        // (so the toggle is observable while the summary is open) but
+        // the VM exposes a separate `lightReadingDisplay` flow that
+        // gates on `celestialAwarenessEnabled`. The screen renders
+        // from this flow, not from `summary.lightReading`.
         val walk = repository.startWalk(startTimestamp = 5_000_000L)
         repository.recordLocation(
             RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 48.8566, longitude = 2.3522),
@@ -421,13 +421,12 @@ class WalkSummaryViewModelTest {
             ),
         )
 
-        vm.state.test {
-            var item = awaitItem()
-            while (item is WalkSummaryUiState.Loading) item = awaitItem()
-            val loaded = item as WalkSummaryUiState.Loaded
+        vm.lightReadingDisplay.test {
+            // The display flow seeds with null (initialValue) and
+            // stays null because the gate is OFF.
             assertNull(
-                "celestialAwarenessEnabled = false should suppress lightReading",
-                loaded.summary.lightReading,
+                "celestialAwarenessEnabled = false should suppress lightReadingDisplay",
+                awaitItem(),
             )
             cancelAndIgnoreRemainingEvents()
         }

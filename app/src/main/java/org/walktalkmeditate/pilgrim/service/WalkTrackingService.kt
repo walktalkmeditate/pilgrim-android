@@ -350,11 +350,17 @@ class WalkTrackingService : Service() {
     }
 
     private fun notificationFingerprint(state: WalkState): Long {
-        // Pack the state-class ordinal + 5m-bucketed distance into one
-        // Long. State-class change always re-renders (action set + text
-        // both depend on it); within a single state-class only crossing
-        // a 5m boundary re-renders, matching the displayed text's
-        // rounding granularity.
+        // Pack the state-class ordinal + 5m-bucketed distance + units
+        // ordinal into one Long. State-class change always re-renders
+        // (action set + text both depend on it); within a single
+        // state-class only crossing a 5m boundary re-renders, matching
+        // the displayed text's rounding granularity.
+        //
+        // The units ordinal MUST be in the fingerprint so a Settings
+        // toggle from Metric→Imperial (or vice versa) mid-walk forces
+        // the notification to re-render with the new unit. Without
+        // this, the notification would show stale km/mi until the
+        // user walked another 5m.
         val classOrdinal = when (state) {
             WalkState.Idle -> 0L
             is WalkState.Active -> 1L
@@ -368,7 +374,8 @@ class WalkTrackingService : Service() {
             is WalkState.Meditating -> (state.walk.distanceMeters / 5.0).toLong()
             else -> 0L
         }
-        return classOrdinal * 10_000_000L + distanceBucket
+        val unitsOrdinal = unitsPreferences.distanceUnits.value.ordinal.toLong()
+        return classOrdinal * 100_000_000L + distanceBucket * 10L + unitsOrdinal
     }
 
     /**

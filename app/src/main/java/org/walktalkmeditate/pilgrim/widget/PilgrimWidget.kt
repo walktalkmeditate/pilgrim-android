@@ -79,12 +79,14 @@ class PilgrimWidget : GlanceAppWidget() {
         // real state on first render — avoids a flash-of-Empty for the
         // user when last-walk content is what should appear.
         val initial = repository.stateFlow.first()
-        // Stage 10-C: snapshot unit preference at provide time. Glance's
-        // composable runs in a remote process, so we read `.value` once
-        // here rather than collecting the flow inside `Body` (the worker
-        // re-issues `updateAll` on relevant changes; UnitsPreferences is
-        // not yet wired through that path, but a Settings flip will
-        // refresh the widget within the worker's next interval).
+        // Stage 10-C: read the units flow LIVE inside Body via
+        // collectAsState. The previous snapshot-at-provide-time approach
+        // left widgets showing stale km/mi until the next walk completed
+        // (the worker chain only re-issues updateAll on walk events, not
+        // on Settings toggles). With the live flow, Glance's composable
+        // re-renders on every distanceUnits emission, so flipping the
+        // Units picker in PracticeCard refreshes the widget within one
+        // recomposition.
         val initialUnits = unitsRepo.distanceUnits.value
 
         provideContent {
@@ -92,7 +94,8 @@ class PilgrimWidget : GlanceAppWidget() {
                 stateFlow = repository.stateFlow,
                 initial = initial,
                 mantras = mantras,
-                units = initialUnits,
+                unitsFlow = unitsRepo.distanceUnits,
+                initialUnits = initialUnits,
                 today = remember { LocalDate.now() },
             )
         }
@@ -104,10 +107,12 @@ private fun Body(
     stateFlow: kotlinx.coroutines.flow.Flow<WidgetState>,
     initial: WidgetState,
     mantras: String,
-    units: UnitSystem,
+    unitsFlow: kotlinx.coroutines.flow.Flow<UnitSystem>,
+    initialUnits: UnitSystem,
     today: LocalDate,
 ) {
     val state by stateFlow.collectAsState(initial = initial)
+    val units by unitsFlow.collectAsState(initial = initialUnits)
     val context = LocalContext.current
     val description = when (val s = state) {
         is WidgetState.LastWalk -> context.getString(

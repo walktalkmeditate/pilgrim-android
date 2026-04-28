@@ -139,6 +139,10 @@ fun PracticeCard(
             onSelect = onSetDistanceUnits,
         )
 
+        // The Imperial caption ("mi · min/mi · ft · °F") is wider
+        // than the Metric one ("km · min/km · m · °C") and clips on a
+        // 360dp screen if `maxLines = 1`. Allow up to 2 lines so °F
+        // never disappears off the right edge. iOS lets it wrap freely.
         Text(
             text = stringResource(
                 if (distanceUnits == UnitSystem.Metric) {
@@ -149,7 +153,7 @@ fun PracticeCard(
             ),
             style = pilgrimType.caption,
             color = pilgrimColors.fog,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
 
