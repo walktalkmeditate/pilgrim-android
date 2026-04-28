@@ -139,6 +139,15 @@
     <string name="settings_recordings_detail_one">1 recording • %1$s MB</string>
     <string name="settings_recordings_detail_many">%1$d recordings • %2$s MB</string>
 
+    <!-- Stage 10-D RecordingsListScreen — RecordingRow -->
+    <string name="recordings_row_index">Recording %1$d</string>
+    <string name="recordings_row_meta">%1$s · %2$s MB</string>
+    <string name="recordings_row_meta_enhanced">%1$s · %2$s MB · Enhanced</string>
+    <string name="recordings_row_unavailable">File unavailable</string>
+    <string name="recordings_action_done">Done</string>
+    <string name="recordings_action_copy_transcription">Copy transcription</string>
+    <string name="recordings_transcription_editor_description">Transcription editor</string>
+
     <string name="voice_guide_picker_title">Voice guides</string>
     <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>
