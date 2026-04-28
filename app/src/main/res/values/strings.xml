@@ -126,6 +126,19 @@
     <string name="settings_walk_reliquary_description">Find photos you took along each walk and pin them to the route. Photos stay in your gallery — never copied or uploaded.</string>
     <string name="settings_walk_reliquary_photos_denied_note">Photo access was declined. To enable the reliquary, grant photo access in Android Settings → Apps → Pilgrim → Permissions.</string>
 
+    <!-- Stage 10-D VoiceCard -->
+    <string name="settings_voice_card_header_title">Voice</string>
+    <string name="settings_voice_card_header_subtitle">Speaking and listening</string>
+    <string name="settings_voice_guide_label">Voice Guide</string>
+    <string name="settings_voice_guide_description">Spoken prompts during walks and meditation</string>
+    <string name="settings_voice_guide_packs_row">Guide Packs</string>
+    <string name="settings_auto_transcribe_label">Auto-transcribe</string>
+    <string name="settings_auto_transcribe_description">Convert recordings to text after each walk</string>
+    <string name="settings_recordings_row">Recordings</string>
+    <string name="settings_recordings_detail_zero">0 recordings • 0.0 MB</string>
+    <string name="settings_recordings_detail_one">1 recording • %1$s MB</string>
+    <string name="settings_recordings_detail_many">%1$d recordings • %2$s MB</string>
+
     <string name="voice_guide_picker_title">Voice guides</string>
     <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>
