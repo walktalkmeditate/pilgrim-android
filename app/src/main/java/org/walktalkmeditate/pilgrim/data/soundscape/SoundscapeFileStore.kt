@@ -67,6 +67,33 @@ class SoundscapeFileStore @Inject constructor(
         _invalidations.tryEmit(Unit)
     }
 
+    /**
+     * Sum of every cached soundscape file's length, in bytes. Iterates
+     * the on-disk directory rather than the manifest so partial /
+     * orphaned downloads (asset removed from manifest but file still
+     * present on disk) are still surfaced — matches iOS's
+     * `AudioFileStore.totalDiskUsage()`. Suspends because
+     * `File.length()` is a blocking syscall on every entry.
+     */
+    suspend fun totalSize(): Long = withContext(Dispatchers.IO) {
+        val files = root.listFiles() ?: return@withContext 0L
+        files.sumOf { if (it.isFile) it.length() else 0L }
+    }
+
+    /**
+     * Delete every file in the soundscape directory. Counterpart to
+     * iOS's `AudioFileStore.clearAll()` — used by SoundSettingsScreen's
+     * "Clear all downloads" action. Emits one invalidation after the
+     * sweep so observers re-derive availability state once.
+     */
+    suspend fun clearAll() {
+        withContext(Dispatchers.IO) {
+            val files = root.listFiles() ?: return@withContext
+            files.forEach { if (it.isFile) it.delete() }
+        }
+        _invalidations.tryEmit(Unit)
+    }
+
     private companion object {
         const val SOUNDSCAPE_DIR = "audio/soundscape"
     }
