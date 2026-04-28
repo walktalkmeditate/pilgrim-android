@@ -114,7 +114,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -133,7 +133,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -153,7 +153,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         // Before the 800ms delay elapses, no play yet.
@@ -178,7 +178,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -210,7 +210,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         // User bails mid-delay (tap Done at ~400ms).
@@ -236,7 +236,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -259,7 +259,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -291,7 +291,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -331,7 +331,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -382,7 +382,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initial = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(2_000)
@@ -403,7 +403,7 @@ class SoundscapeOrchestratorTest {
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
             capturingPlayer,
-            FakeSoundsPreferencesRepository(initial = false),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
             s,
         ).start()
         runCurrent()
@@ -423,7 +423,7 @@ class SoundscapeOrchestratorTest {
             WalkState.Meditating(acc, meditationStartedAt = 1_000L),
         )
         val selectedAssetId = MutableStateFlow<String?>("rain")
-        val prefs = FakeSoundsPreferencesRepository(initial = true)
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
@@ -466,7 +466,7 @@ class SoundscapeOrchestratorTest {
             WalkState.Meditating(acc, meditationStartedAt = 1_000L),
         )
         val selectedAssetId = MutableStateFlow<String?>("rain")
-        val prefs = FakeSoundsPreferencesRepository(initial = true)
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
@@ -502,7 +502,7 @@ class SoundscapeOrchestratorTest {
             WalkState.Meditating(acc, meditationStartedAt = 1_000L),
         )
         val selectedAssetId = MutableStateFlow<String?>("rain")
-        val prefs = FakeSoundsPreferencesRepository(initial = false)
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = false)
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,

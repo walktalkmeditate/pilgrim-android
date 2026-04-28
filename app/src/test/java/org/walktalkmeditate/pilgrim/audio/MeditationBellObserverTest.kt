@@ -164,7 +164,7 @@ class MeditationBellObserverTest {
 
     private fun TestScope.newScenario(
         initial: WalkState,
-        soundsPreferences: SoundsPreferencesRepository = FakeSoundsPreferencesRepository(initial = true),
+        soundsPreferences: SoundsPreferencesRepository = FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
     ): Scenario {
         val state = MutableStateFlow(initial)
         val fakePlayer = FakeBellPlayer()
@@ -181,7 +181,7 @@ class MeditationBellObserverTest {
     @Test fun `master toggle off suppresses Active to Meditating bell`() = runTest {
         val s = newScenario(
             initial = WalkState.Active(acc),
-            soundsPreferences = FakeSoundsPreferencesRepository(initial = false),
+            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
         )
         advanceUntilIdle()
         s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
@@ -195,7 +195,7 @@ class MeditationBellObserverTest {
     @Test fun `master toggle off suppresses Meditating to Active bell`() = runTest {
         val s = newScenario(
             initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L),
-            soundsPreferences = FakeSoundsPreferencesRepository(initial = false),
+            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
         )
         advanceUntilIdle()
         s.state.value = WalkState.Active(acc)
@@ -205,7 +205,7 @@ class MeditationBellObserverTest {
     }
 
     @Test fun `master toggle flipped on mid-session unmutes subsequent bells`() = runTest {
-        val prefs = FakeSoundsPreferencesRepository(initial = false)
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = false)
         val s = newScenario(initial = WalkState.Active(acc), soundsPreferences = prefs)
         advanceUntilIdle()
         s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)

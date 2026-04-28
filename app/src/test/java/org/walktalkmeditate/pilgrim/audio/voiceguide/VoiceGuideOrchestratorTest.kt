@@ -134,7 +134,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -152,7 +152,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -183,7 +183,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
 
@@ -229,7 +229,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         assertEquals("no spawn before files exist", 0, capturingPlayer.playCount)
@@ -259,7 +259,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         assertTrue(
@@ -279,7 +279,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         val baseline = capturingPlayer.playCount
@@ -304,7 +304,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
 
@@ -327,7 +327,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -357,7 +357,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = true), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
 
@@ -383,7 +383,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = false), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = false), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -415,7 +415,7 @@ class VoiceGuideOrchestratorTest {
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
             capturingPlayer, FixedClock(),
-            FakeSoundsPreferencesRepository(initial = false), s,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = false), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -432,7 +432,7 @@ class VoiceGuideOrchestratorTest {
         writePromptFiles(pk)
         val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
         val selectedPackId = MutableStateFlow<String?>("p")
-        val prefs = FakeSoundsPreferencesRepository(initial = true)
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,

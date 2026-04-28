@@ -87,7 +87,7 @@ class SettingsViewModelSoundsTest {
 
     @Test
     fun `soundsEnabled flow reflects repo value`() = runBlocking {
-        val soundsRepo = FakeSoundsPreferencesRepository(initial = false)
+        val soundsRepo = FakeSoundsPreferencesRepository(initialSoundsEnabled = false)
         val vm = SettingsViewModel(
             collectiveRepository = collectiveRepo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
@@ -98,7 +98,7 @@ class SettingsViewModelSoundsTest {
 
     @Test
     fun `setSoundsEnabled delegates to repo`() = runBlocking {
-        val soundsRepo = FakeSoundsPreferencesRepository(initial = true)
+        val soundsRepo = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
         val vm = SettingsViewModel(
             collectiveRepository = collectiveRepo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
@@ -140,6 +140,25 @@ class SettingsViewModelSoundsTest {
             attemptCount += 1
             throw IOException("disk full")
         }
+
+        // Sibling prefs are not exercised in these tests — return
+        // inert default-backed StateFlows; setters are no-ops.
+        override val bellHapticEnabled: StateFlow<Boolean> = MutableStateFlow(true).asStateFlow()
+        override suspend fun setBellHapticEnabled(value: Boolean) = Unit
+        override val bellVolume: StateFlow<Float> = MutableStateFlow(0.7f).asStateFlow()
+        override suspend fun setBellVolume(value: Float) = Unit
+        override val soundscapeVolume: StateFlow<Float> = MutableStateFlow(0.4f).asStateFlow()
+        override suspend fun setSoundscapeVolume(value: Float) = Unit
+        override val walkStartBellId: StateFlow<String?> = MutableStateFlow<String?>(null).asStateFlow()
+        override suspend fun setWalkStartBellId(value: String?) = Unit
+        override val walkEndBellId: StateFlow<String?> = MutableStateFlow<String?>(null).asStateFlow()
+        override suspend fun setWalkEndBellId(value: String?) = Unit
+        override val meditationStartBellId: StateFlow<String?> = MutableStateFlow<String?>(null).asStateFlow()
+        override suspend fun setMeditationStartBellId(value: String?) = Unit
+        override val meditationEndBellId: StateFlow<String?> = MutableStateFlow<String?>(null).asStateFlow()
+        override suspend fun setMeditationEndBellId(value: String?) = Unit
+        override val breathRhythm: StateFlow<Int> = MutableStateFlow(0).asStateFlow()
+        override suspend fun setBreathRhythm(value: Int) = Unit
     }
 
     private class FakeCounterService(context: Context, json: Json) :
