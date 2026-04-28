@@ -57,10 +57,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          # Tightened cache key so a libs.versions.toml change doesn't
-          # invalidate every cache entry; the action keys on file
-          # contents by default but being explicit avoids drift if we
-          # add more dependency files.
+          # PR builds READ the cache populated by main-branch pushes
+          # but don't WRITE to it, so transient PR work doesn't evict
+          # the canonical cache (GitHub free tier: 10GB total budget).
+          # On `push` to main this falls through to read-write so the
+          # cache is freshly populated for the next pipeline run.
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Make gradlew executable
