@@ -37,6 +37,8 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -96,8 +98,10 @@ class HomeViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun newViewModel(): HomeViewModel =
-        HomeViewModel(context, repository, clock, hemisphereRepo)
+    private fun newViewModel(
+        units: FakeUnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
+    ): HomeViewModel =
+        HomeViewModel(context, repository, clock, hemisphereRepo, units)
 
     @Test
     fun `Empty when no finished walks exist`() = runTest(dispatcher) {
@@ -275,6 +279,35 @@ class HomeViewModelTest {
             // value — the exact number comes from the haversine impl.
             assertTrue("distanceMeters=${row.distanceMeters}", row.distanceMeters > 0.0)
             assertEquals(600.0, row.durationSeconds, 0.01)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `Loaded row distanceText flips to imperial when UnitsPreferences says Imperial`() = runTest(dispatcher) {
+        // Stage 10-C canonical regression guard: VM-level proof that the
+        // unit toggle reaches the formatted distance text. ~111 m for
+        // 0.001° longitude at the equator → "0.07 mi" in Imperial.
+        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking {
+            repository.recordLocation(
+                RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 0.0, longitude = 0.0),
+            )
+            repository.recordLocation(
+                RouteDataSample(walkId = walk.id, timestamp = 5_200_000L, latitude = 0.0, longitude = 0.001),
+            )
+            repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        }
+        val vm = newViewModel(FakeUnitsPreferencesRepository(initial = UnitSystem.Imperial))
+        vm.uiState.test {
+            val loaded = awaitLoaded(this)
+            // 111 m ≈ 0.069 mi → falls below the 0.1-mi threshold
+            // → renders as feet ("364 ft" / "365 ft" depending on
+            // haversine rounding). Either way, no "km" suffix.
+            assertTrue(
+                "expected ft suffix in imperial mode but got '${loaded.rows[0].distanceText}'",
+                loaded.rows[0].distanceText.endsWith(" ft"),
+            )
             cancelAndIgnoreRemainingEvents()
         }
     }
