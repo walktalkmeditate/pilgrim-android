@@ -37,6 +37,8 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -79,9 +81,9 @@ class HomeViewModelTest {
         clock = FakeHomeClock(initial = 10_000_000L)
         // Hemisphere setup — start clean each test so a prior Southern
         // override from a previous run doesn't leak through.
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         fakeLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -92,12 +94,14 @@ class HomeViewModelTest {
     fun tearDown() {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         Dispatchers.resetMain()
     }
 
-    private fun newViewModel(): HomeViewModel =
-        HomeViewModel(context, repository, clock, hemisphereRepo)
+    private fun newViewModel(
+        units: FakeUnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
+    ): HomeViewModel =
+        HomeViewModel(context, repository, clock, hemisphereRepo, units)
 
     @Test
     fun `Empty when no finished walks exist`() = runTest(dispatcher) {
@@ -280,6 +284,35 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `Loaded row distanceText flips to imperial when UnitsPreferences says Imperial`() = runTest(dispatcher) {
+        // Stage 10-C canonical regression guard: VM-level proof that the
+        // unit toggle reaches the formatted distance text. ~111 m for
+        // 0.001° longitude at the equator → "0.07 mi" in Imperial.
+        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking {
+            repository.recordLocation(
+                RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 0.0, longitude = 0.0),
+            )
+            repository.recordLocation(
+                RouteDataSample(walkId = walk.id, timestamp = 5_200_000L, latitude = 0.0, longitude = 0.001),
+            )
+            repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        }
+        val vm = newViewModel(FakeUnitsPreferencesRepository(initial = UnitSystem.Imperial))
+        vm.uiState.test {
+            val loaded = awaitLoaded(this)
+            // 111 m ≈ 0.069 mi → falls below the 0.1-mi threshold
+            // → renders as feet ("364 ft" / "365 ft" depending on
+            // haversine rounding). Either way, no "km" suffix.
+            assertTrue(
+                "expected ft suffix in imperial mode but got '${loaded.rows[0].distanceText}'",
+                loaded.rows[0].distanceText.endsWith(" ft"),
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `hemisphere StateFlow proxies repository`() = runTest(dispatcher) {
         val vm = newViewModel()
         // Initial value: Northern by default.
@@ -338,9 +371,8 @@ class HomeViewModelTest {
             fileRelativePath = "recordings/test/$start.wav",
         )
 
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "home-vm-hemisphere-test"
-    }
+    // UUID-suffixed so parallel test forks can't collide on file path.
+    private val hemisphereStoreName: String = "home-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 }
 
 private class FakeHomeClock(initial: Long) : Clock {

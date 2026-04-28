@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
@@ -46,6 +48,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 class GoshuinViewModel @Inject constructor(
     private val repository: WalkRepository,
     hemisphereRepository: HemisphereRepository,
+    unitsPreferences: UnitsPreferencesRepository,
 ) : ViewModel() {
 
     /**
@@ -122,12 +125,26 @@ class GoshuinViewModel @Inject constructor(
             )
         }
 
+    /**
+     * Stage 10-C: passthrough of the units preference.
+     *
+     * NOTE: only the surrounding card text on the goshuin grid responds
+     * to this — the seal artwork itself bakes [WalkFormat.distanceLabel]
+     * at metric below, intentionally. The seal is treated as a permanent
+     * artifact of the walk locked to the unit at generation time;
+     * re-rendering the cached seal on toggle is a separate stage of
+     * work (TODO stage 10-Z). Same call-site policy as
+     * [org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel.buildState].
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
     private fun mapToSeal(
         walk: Walk,
         distance: Double,
         milestone: GoshuinMilestone?,
     ): GoshuinSeal {
-        val distanceLabel = WalkFormat.distanceLabel(distance)
+        // Seal artwork stays metric (TODO stage 10-Z; see [distanceUnits]).
+        val distanceLabel = WalkFormat.distanceLabel(distance, UnitSystem.Metric)
         val sealSpec = walk.toSealSpec(
             distanceMeters = distance,
             ink = Color.Transparent,

@@ -5,7 +5,9 @@ import android.app.PendingIntent
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
  * Cached PendingIntents for the five notification actions. Built once
@@ -89,11 +91,21 @@ internal fun addWalkActionsForState(
     }
 }
 
-internal fun walkNotificationText(context: Context, state: WalkState): String = when (state) {
+internal fun walkNotificationText(
+    context: Context,
+    state: WalkState,
+    units: UnitSystem,
+): String = when (state) {
     WalkState.Idle -> context.getString(R.string.walk_notification_starting)
     is WalkState.Active -> context.getString(
         R.string.walk_notification_active,
-        state.walk.distanceMeters / 1_000.0,
+        // Delegate to WalkFormat so the notification follows the SAME
+        // unit conventions as every other display surface — including
+        // the Imperial <0.1 mi → feet fallback (e.g., "320 ft" rather
+        // than "0.06 mi" early in a walk) and the Metric <100 m → m
+        // fallback. Centralizing here matches the goal stated in
+        // WalkFormat's KDoc: "the conversion happens at format time only".
+        WalkFormat.distance(state.walk.distanceMeters, units),
     )
     is WalkState.Paused -> context.getString(R.string.walk_notification_paused)
     is WalkState.Meditating -> context.getString(R.string.walk_notification_meditating)

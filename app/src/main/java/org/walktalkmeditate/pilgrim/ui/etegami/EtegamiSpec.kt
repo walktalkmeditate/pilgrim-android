@@ -10,6 +10,7 @@ import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
@@ -47,6 +48,13 @@ data class EtegamiSpec(
      */
     val topText: String?,
     val activityMarkers: List<ActivityMarker>,
+    /**
+     * Stage 10-C: unit system used by [EtegamiBitmapRenderer] when it
+     * draws the stats whisper line ("0.62 mi · 1:30:00 · 100m ↑").
+     * Not part of the seal artwork itself — the seal's center distance
+     * was baked at compose time (TODO stage 10-Z).
+     */
+    val units: UnitSystem,
 )
 
 @Immutable
@@ -74,6 +82,7 @@ internal fun composeEtegamiSpec(
     altitudeSamples: List<AltitudeSample>,
     activityIntervals: List<ActivityInterval>,
     voiceRecordings: List<VoiceRecording>,
+    units: UnitSystem,
     zoneId: ZoneId = ZoneId.systemDefault(),
 ): EtegamiSpec {
     val hourOfDay = Instant.ofEpochMilli(walk.startTimestamp).atZone(zoneId).hour
@@ -113,6 +122,7 @@ internal fun composeEtegamiSpec(
                 marker.timestampMs in routeStart..routeEnd
             }
             .sortedBy { it.timestampMs },
+        units = units,
     )
 }
 

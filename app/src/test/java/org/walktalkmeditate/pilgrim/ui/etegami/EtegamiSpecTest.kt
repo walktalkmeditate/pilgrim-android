@@ -13,6 +13,7 @@ import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
@@ -52,6 +53,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertEquals("deep breath", spec.topText)
     }
@@ -68,6 +70,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertEquals("evening walk", spec.topText)
     }
@@ -84,6 +87,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertNull(spec.topText)
     }
@@ -100,6 +104,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertEquals("fallback", spec.topText)
     }
@@ -123,6 +128,7 @@ class EtegamiSpecTest {
             altitudeSamples = samples,
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertEquals(30.0, spec.elevationGainMeters, 0.001)
     }
@@ -152,6 +158,7 @@ class EtegamiSpecTest {
             altitudeSamples = samples,
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertEquals(20.0, spec.elevationGainMeters, 0.001)
         assertTrue(spec.elevationGainMeters.isFinite())
@@ -174,6 +181,7 @@ class EtegamiSpecTest {
             altitudeSamples = samples,
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertTrue(spec.elevationGainMeters.isFinite())
     }
@@ -197,6 +205,7 @@ class EtegamiSpecTest {
             altitudeSamples = samples,
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         // Sorted: (1,100) → (2,110)+10 → (3,105)-5 → (4,125)+20 → (5,125)+0
         assertEquals(30.0, spec.elevationGainMeters, 0.001)
@@ -239,6 +248,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = listOf(meditationInterval, walkingInterval),
             voiceRecordings = listOf(voice),
+            units = UnitSystem.Metric,
         )
         assertEquals(2, spec.activityMarkers.size)
         // Sorted by timestamp ascending.
@@ -288,6 +298,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = listOf(earlyMeditation, inRangeMeditation),
             voiceRecordings = listOf(lateRecording),
+            units = UnitSystem.Metric,
         )
         assertEquals(1, spec.activityMarkers.size)
         assertEquals(30_000L, spec.activityMarkers[0].timestampMs)
@@ -313,6 +324,7 @@ class EtegamiSpecTest {
                 ),
             ),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertTrue(spec.activityMarkers.isEmpty())
     }
@@ -338,6 +350,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
             zoneId = ZoneId.of("UTC"),
         )
         val expected = Instant.ofEpochMilli(1_700_000_000_000L)
@@ -359,6 +372,7 @@ class EtegamiSpecTest {
             altitudeSamples = emptyList(),
             activityIntervals = emptyList(),
             voiceRecordings = emptyList(),
+            units = UnitSystem.Metric,
         )
         assertNotNull(spec.walkUuid)
         assertTrue(spec.walkUuid.isNotBlank())

@@ -36,6 +36,9 @@ import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
@@ -144,6 +147,8 @@ class WalkSummaryViewModel @Inject constructor(
     private val photoAnalysisScheduler: PhotoAnalysisScheduler,
     hemisphereRepository: HemisphereRepository,
     private val cachedShareStore: CachedShareStore,
+    unitsPreferences: UnitsPreferencesRepository,
+    private val practicePreferences: PracticePreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -159,6 +164,15 @@ class WalkSummaryViewModel @Inject constructor(
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 
+    /**
+     * Stage 10-C: passthrough of the units preference. The summary
+     * stats card and stats sheet read this to format distance / pace
+     * in the user's chosen unit system. The seal artwork itself
+     * (built once into [WalkSummary.sealSpec]) currently bakes the
+     * metric label at generation time — see TODO in [buildState].
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
     }.stateIn(
@@ -166,6 +180,27 @@ class WalkSummaryViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = WalkSummaryUiState.Loading,
     )
+
+    /**
+     * Live-gated light reading: combines the loaded summary's stored
+     * [LightReading] with the practice preference. Toggling
+     * Celestial awareness ON/OFF in Settings flips this immediately,
+     * so the post-walk Light Reading card appears/disappears without
+     * the user navigating away and back. iOS computes the snapshot
+     * conditionally at walk-finish; we always compute it (cheap) and
+     * gate at display time so the toggle is observable.
+     */
+    val lightReadingDisplay: StateFlow<LightReading?> =
+        kotlinx.coroutines.flow.combine(
+            state,
+            practicePreferences.celestialAwarenessEnabled,
+        ) { s, enabled ->
+            if (s is WalkSummaryUiState.Loaded && enabled) s.summary.lightReading else null
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null,
+        )
 
     /**
      * Stage 8-A: observer for the per-walk cached journey-share. Drives
@@ -527,7 +562,13 @@ class WalkSummaryViewModel @Inject constructor(
             null
         }
 
-        val distanceLabel = WalkFormat.distanceLabel(distance)
+        // TODO(stage 10-Z): Goshuin seal artwork stays metric for now —
+        // the seal is treated as a permanent record of the walk; re-
+        // rendering on a unit-toggle is a separate concern (cached
+        // bitmaps, share-sheet asset reuse). The surrounding card text
+        // (e.g. WalkSummaryScreen's `walk_stat_distance` row) DOES flip
+        // with [distanceUnits].
+        val distanceLabel = WalkFormat.distanceLabel(distance, UnitSystem.Metric)
         val sealSpec = walk.toSealSpec(
             // Reuse the haversine sum computed above — `toSealSpec`
             // takes the distance directly so both the seal's center
@@ -557,6 +598,13 @@ class WalkSummaryViewModel @Inject constructor(
         // and leave lightReading = null; the card simply doesn't
         // render. Uses device `ZoneId.systemDefault()` at render time
         // (documented iOS-parity limitation).
+        //
+        // Stage 10-C: ALWAYS compute the lightReading; the celestial-
+        // awareness gate is applied at the SCREEN level via the
+        // [lightReadingDisplay] flow (combine of summary + pref). This
+        // way the user can toggle the pref while the summary is open
+        // and the card appears/disappears immediately, rather than
+        // being frozen at summary-load time.
         val firstLocation = points.firstOrNull()
         val lightReading = runCatching {
             LightReading.from(
@@ -575,6 +623,17 @@ class WalkSummaryViewModel @Inject constructor(
         // runCatching so any unexpected data-shape issue (e.g. a
         // future schema change) degrades to "no etegami" rather than
         // breaking Walk Summary entirely.
+        //
+        // Stage 10-C TODO: like the seal artwork, the etegami spec
+        // bakes the unit-system-dependent stats text at summary-load
+        // time. If the user toggles Metric ↔ Imperial in Settings
+        // after opening the summary, the rendered postcard at share
+        // time still shows the load-time units. Re-rendering on
+        // toggle requires reloading the underlying altitude /
+        // activity / voice samples and rebuilding the spec at share-
+        // time, which crosses a boundary the share flow doesn't
+        // currently span. Defer to the future "live re-render of
+        // generated artifacts" stage that also handles the seal.
         val etegamiSpec = runCatching {
             val altitudeSamples = repository.altitudeSamplesFor(walkId)
             val activityIntervals = repository.activityIntervalsFor(walkId)
@@ -589,6 +648,7 @@ class WalkSummaryViewModel @Inject constructor(
                 altitudeSamples = altitudeSamples,
                 activityIntervals = activityIntervals,
                 voiceRecordings = voiceRecordings,
+                units = distanceUnits.value,
                 zoneId = ZoneId.systemDefault(),
             )
         }.onFailure {
