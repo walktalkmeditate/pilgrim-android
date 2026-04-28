@@ -37,6 +37,8 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -71,7 +73,15 @@ class WalkViewModel @Inject constructor(
     private val locationSource: LocationSource,
     private val walkRecoveryRepository:
         org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository,
+    unitsPreferences: UnitsPreferencesRepository,
 ) : ViewModel() {
+
+    /**
+     * Stage 10-C: passthrough of the units preference. ActiveWalkScreen
+     * reads this and feeds it to [WalkStatsSheet] for live distance /
+     * pace formatting.
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
     /**
      * Id of a walk that was auto-finalized by `WalkTrackingService.onTaskRemoved`

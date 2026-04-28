@@ -82,6 +82,7 @@ class WalkViewModelVoiceRecordingsTest {
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
     }
 

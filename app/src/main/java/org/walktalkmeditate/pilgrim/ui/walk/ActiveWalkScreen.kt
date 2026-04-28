@@ -66,6 +66,7 @@ fun ActiveWalkScreen(
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
     val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
     val intention by viewModel.intention.collectAsStateWithLifecycle()
+    val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
     // at the pre-meditation Meditating snapshot for one frame on
@@ -291,6 +292,7 @@ fun ActiveWalkScreen(
             recorderState = recorderState,
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
+            units = distanceUnits,
             // Caption display rule: pre-walk shows the typed-but-not-yet-
             // committed draft (preWalkIntention); in-walk shows the value
             // committed to the Walk row (intention StateFlow). The two are
