@@ -445,6 +445,48 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `master toggle flipped off during start delay does not play`() = runTest {
+        // Regression for the race window between `delay(START_DELAY_MS)`
+        // resuming and `attemptPlay()` calling `player.play()`. The
+        // combine-driven cancel covers the common case but leaves a
+        // sub-frame window; the defensive `soundsEnabled.value` check
+        // inside `attemptPlay()` closes it. Toggle OFF mid-delay; expect
+        // ZERO plays even after the delay completes.
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(initial = true)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        // Sit inside the start delay (800ms in production). Don't
+        // advance past it yet.
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+
+        // Flip OFF mid-delay; the combine-driven cancel runs.
+        prefs.setSoundsEnabled(false)
+        runCurrent()
+        // Advance past the original delay window. attemptPlay must
+        // NOT have fired player.play() — the defensive gate-check
+        // catches any sub-frame race.
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(
+            "expected zero plays after master toggle off during start delay, got ${capturingPlayer.playCount}",
+            0, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
     @Test fun `flipping master toggle on mid-session spawns soundscape`() = runTest {
         val a = asset("rain")
         seedManifest(listOf(a))

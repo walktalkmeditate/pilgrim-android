@@ -175,6 +175,15 @@ class SoundscapeOrchestrator @Inject constructor(
             Log.w(TAG, "file vanished during start delay: ${asset.id}")
             return false
         }
+        // Final defensive gate-check immediately before `player.play()`.
+        // The combine-driven cancellation in `observe()` covers the
+        // common case (toggle OFF → playJob.cancel + safeStopPlayer)
+        // but a 1-frame race exists between `delay(START_DELAY_MS)`
+        // resuming and this synchronous block running. Without this
+        // line, a rapid OFF→ON→OFF in that micro-window could let a
+        // burst of audio fire before the cancellation lands. Reading
+        // `.value` on the Eagerly StateFlow is non-suspend and current.
+        if (!soundsPreferences.soundsEnabled.value) return false
         player.play(file)
         return true
     }
