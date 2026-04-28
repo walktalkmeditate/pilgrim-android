@@ -199,6 +199,13 @@ class SoundscapeOrchestrator @Inject constructor(
     private fun safeStopPlayer() {
         try {
             player.stop()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            // Re-throw to preserve structured concurrency. SoundscapePlayer.stop()
+            // is currently non-suspend, but the interface doesn't prevent a future
+            // impl from suspending or launching internally — guard against silent
+            // CE swallowing now per CLAUDE.md's "never silently swallow exceptions"
+            // policy.
+            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "player.stop failed", t)
         }
