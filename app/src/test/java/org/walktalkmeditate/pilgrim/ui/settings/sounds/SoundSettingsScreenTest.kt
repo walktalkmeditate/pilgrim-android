@@ -136,7 +136,16 @@ class SoundSettingsScreenTest {
             soundscapeSelection = selectionRepo,
             manifestService = manifestService,
             fileStore = fileStore,
+            downloadScheduler = NoOpScheduler,
         )
+    }
+
+    private object NoOpScheduler : org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler {
+        override fun enqueue(assetId: String) = Unit
+        override fun retry(assetId: String) = Unit
+        override fun cancel(assetId: String) = Unit
+        override fun observe(assetId: String) =
+            kotlinx.coroutines.flow.flowOf<org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress?>(null)
     }
 
     @Test

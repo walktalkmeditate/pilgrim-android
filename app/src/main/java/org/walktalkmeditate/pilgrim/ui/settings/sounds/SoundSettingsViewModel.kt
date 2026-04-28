@@ -43,6 +43,7 @@ class SoundSettingsViewModel @Inject constructor(
     private val soundscapeSelection: SoundscapeSelectionRepository,
     private val manifestService: AudioManifestService,
     private val fileStore: SoundscapeFileStore,
+    private val downloadScheduler: org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler,
 ) : ViewModel() {
 
     val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
@@ -165,15 +166,25 @@ class SoundSettingsViewModel @Inject constructor(
     }
 
     /**
-     * Wipes every cached soundscape file. The file store's invalidation
-     * stream will republish [totalDiskUsageBytes] (back to ~0) and any
-     * downstream availability checks (`isAvailable`) will see the
-     * deletes immediately.
+     * Wipes every cached soundscape file. Cancels any in-flight
+     * download workers FIRST so a running worker doesn't immediately
+     * write the file back to disk after the sweep — leaving a
+     * partially-written file that `isAvailable` would reject (silent
+     * playback) but the storage UI's byte counter would still report
+     * (Stage 5-D delete-then-cancel-worker lesson, applied here).
+     *
+     * The file store's invalidation stream republishes
+     * [totalDiskUsageBytes] back to ~0 once the sweep completes and
+     * any downstream availability checks see the deletes immediately.
      */
     fun clearAllDownloads() {
         viewModelScope.launch {
-            runCatching { fileStore.clearAll() }
-                .onFailure { Log.w(TAG, "failed to clear all soundscape downloads", it) }
+            runCatching {
+                manifestService.soundscapes().forEach { asset ->
+                    downloadScheduler.cancel(asset.id)
+                }
+                fileStore.clearAll()
+            }.onFailure { Log.w(TAG, "failed to clear all soundscape downloads", it) }
         }
     }
 

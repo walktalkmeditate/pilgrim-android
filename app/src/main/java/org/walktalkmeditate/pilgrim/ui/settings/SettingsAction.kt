@@ -25,15 +25,17 @@ sealed interface SettingsAction {
     data object OpenVoiceGuides : SettingsAction
 
     /**
-     * Stage 5-F legacy entry point — opens the soundscape PICKER
-     * directly. Stage 10-B introduces [OpenBellsAndSoundscapes] which
-     * routes to the new SoundSettingsScreen (a richer surface with
-     * per-event bell pickers + volume sliders + breath rhythm + this
-     * soundscape picker as one section). When 10-B lands:
-     *  1. The standalone SettingNavRow in SettingsScreen is removed.
-     *  2. AtmosphereCard adds a "Bells & Soundscapes" SettingNavRow
-     *     that emits [OpenBellsAndSoundscapes].
-     *  3. [OpenSoundscapes] should be DELETED (no remaining caller).
+     * Opens the soundscape picker directly (Stage 5-F's
+     * `SoundscapePickerScreen`). Originally introduced in Stage 10-A
+     * as a temporary stand-in row in SettingsScreen, expected to be
+     * deleted in 10-B. Stage 10-B INTENTIONALLY KEPT this action —
+     * the new SoundSettingsScreen reuses the same picker via its
+     * Meditation card's "Soundscape" row. The standalone Settings
+     * stand-in row IS gone (10-B replaced it via the new
+     * AtmosphereCard "Bells & Soundscapes" nav row); the action
+     * itself stays load-bearing for the SoundSettingsScreen sub-row.
+     *
+     * Don't delete this — the picker route is shared.
      */
     data object OpenSoundscapes : SettingsAction
 

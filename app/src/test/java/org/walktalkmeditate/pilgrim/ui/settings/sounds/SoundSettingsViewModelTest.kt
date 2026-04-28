@@ -122,7 +122,23 @@ class SoundSettingsViewModelTest {
         soundscapeSelection = selectionRepo,
         manifestService = manifestService,
         fileStore = fileStore,
+        downloadScheduler = NoOpScheduler,
     )
+
+    /**
+     * Tests don't need a real WorkManager scheduler — every cancel
+     * call routes here and is recorded but never enqueues real work.
+     * The clear-all-downloads test verifies cancel was invoked for
+     * every soundscape asset.
+     */
+    private object NoOpScheduler : org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler {
+        val canceled = mutableListOf<String>()
+        override fun enqueue(assetId: String) = Unit
+        override fun retry(assetId: String) = Unit
+        override fun cancel(assetId: String) { canceled += assetId }
+        override fun observe(assetId: String) =
+            kotlinx.coroutines.flow.flowOf<org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress?>(null)
+    }
 
     @Test
     fun `availableBells filters manifest to bell type`() = runTest {

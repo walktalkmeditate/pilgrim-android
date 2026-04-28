@@ -55,20 +55,44 @@ class SoundscapeSelectionRepository @Inject constructor(
             Log.w(TAG, "selection datastore read failed; emitting empty", t)
             emit(emptyPreferences())
         }
-        .map { it[KEY_SELECTED] }
+        .map { prefs ->
+            // One-shot migration from the legacy snake_case key to the
+            // iOS-faithful camelCase key. Read the new key first; if
+            // absent and the legacy key has a value, fall back to it.
+            // Writes go to the new key only (legacy key is cleared on
+            // first write — see select / deselect). This keeps existing
+            // users' selections live across the migration without a
+            // separate migration job.
+            prefs[KEY_SELECTED] ?: prefs[KEY_SELECTED_LEGACY]
+        }
         .distinctUntilChanged()
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     suspend fun select(assetId: String) {
-        dataStore.edit { it[KEY_SELECTED] = assetId }
+        dataStore.edit { prefs ->
+            prefs[KEY_SELECTED] = assetId
+            // Clear the legacy key so the user doesn't carry it forward
+            // forever — once they save with the new code path, the
+            // canonical source becomes KEY_SELECTED.
+            prefs.remove(KEY_SELECTED_LEGACY)
+        }
     }
 
     suspend fun deselect() {
-        dataStore.edit { it.remove(KEY_SELECTED) }
+        dataStore.edit { prefs ->
+            prefs.remove(KEY_SELECTED)
+            prefs.remove(KEY_SELECTED_LEGACY)
+        }
     }
 
     private companion object {
         const val TAG = "SoundscapeSelection"
-        val KEY_SELECTED = stringPreferencesKey("selected_soundscape_id")
+        // iOS UserDefaults key — matches verbatim for cross-platform
+        // .pilgrim ZIP round-trip. See iOS UserPreferences.swift line 51.
+        val KEY_SELECTED = stringPreferencesKey("selectedSoundscapeId")
+        // Legacy snake_case key from before Stage 10-B. Read on
+        // migration so existing users don't lose their selection;
+        // cleared on the next select / deselect.
+        val KEY_SELECTED_LEGACY = stringPreferencesKey("selected_soundscape_id")
     }
 }
