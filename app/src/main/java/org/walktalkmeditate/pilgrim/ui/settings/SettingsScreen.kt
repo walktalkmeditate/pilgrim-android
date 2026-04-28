@@ -26,6 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.settings.practice.PracticeCard
+import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCard
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -56,6 +57,7 @@ fun SettingsScreen(
     val celestialAwareness by viewModel.celestialAwarenessEnabled.collectAsStateWithLifecycle()
     val zodiacSystem by viewModel.zodiacSystem.collectAsStateWithLifecycle()
     val walkReliquary by viewModel.walkReliquaryEnabled.collectAsStateWithLifecycle()
+    val voiceCardState by viewModel.voiceCardState.collectAsStateWithLifecycle()
     // Android's Photo Picker (ActivityResultContracts.PickVisualMedia)
     // doesn't require a runtime permission on API 33+ and uses the
     // photo-picker pseudo-permission below that, so this flag will rarely
@@ -116,6 +118,18 @@ fun SettingsScreen(
                     showPhotosDeniedNote = showPhotosDeniedNote,
                 )
             }
+            // Stage 10-D: VoiceCard sits between Practice and
+            // Atmosphere, matching iOS's settings card order.
+            // Replaces the transitional voice-guides nav row.
+            item {
+                VoiceCard(
+                    state = voiceCardState,
+                    onSetVoiceGuideEnabled = viewModel::setVoiceGuideEnabled,
+                    onSetAutoTranscribe = viewModel::setAutoTranscribe,
+                    onOpenVoiceGuides = { onAction(SettingsAction.OpenVoiceGuides) },
+                    onOpenRecordings = { onAction(SettingsAction.OpenRecordings) },
+                )
+            }
             item {
                 AtmosphereCard(
                     currentMode = appearanceMode,
@@ -125,26 +139,14 @@ fun SettingsScreen(
                     onAction = onAction,
                 )
             }
-            // Voice Guides + Soundscapes are landed here as
-            // SettingNavRow stand-ins inside a shared settingsCard
-            // wrapper so they share AtmosphereCard's 32dp content
-            // indent. Both rows will be absorbed into proper cards
-            // (Voice card in 10-D, Bells & Soundscapes in 10-B) at
-            // which point this transitional wrapper goes away.
-            //
-            // The divider has no extra padding — each SettingNavRow
-            // already has its own 4dp vertical content padding (and a
-            // 48dp min-height), so the iOS-faithful gap of "row pad +
-            // 1dp line + row pad" is correct without piling on more.
+            // Soundscapes is landed here as a SettingNavRow
+            // stand-in inside a settingsCard wrapper to share
+            // AtmosphereCard's 32dp content indent. The row will
+            // be absorbed into a proper Bells & Soundscapes card
+            // in Stage 10-B at which point this transitional
+            // wrapper goes away.
             item {
                 Column(modifier = Modifier.fillMaxWidth().settingsCard()) {
-                    SettingNavRow(
-                        label = stringResource(R.string.settings_voice_guides_row),
-                        detail = stringResource(R.string.settings_voice_guides_subtitle),
-                        onClick = { onAction(SettingsAction.OpenVoiceGuides) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    SettingsDivider()
                     SettingNavRow(
                         label = stringResource(R.string.settings_soundscapes_row),
                         detail = stringResource(R.string.settings_soundscapes_subtitle),

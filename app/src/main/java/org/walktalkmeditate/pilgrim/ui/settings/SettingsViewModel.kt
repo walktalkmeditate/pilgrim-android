@@ -6,8 +6,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -17,6 +24,9 @@ import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
+import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCardState
 
 /**
  * Stage 8-B: ViewModel for the Settings screen surfaces — currently
@@ -45,6 +55,9 @@ class SettingsViewModel @Inject constructor(
     private val soundsPreferences: SoundsPreferencesRepository,
     private val practicePreferences: PracticePreferencesRepository,
     private val unitsPreferences: UnitsPreferencesRepository,
+    private val voicePreferences: VoicePreferencesRepository,
+    private val walkRepository: WalkRepository,
+    private val voiceRecordingFileSystem: VoiceRecordingFileSystem,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
@@ -128,6 +141,79 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Stage 10-D: aggregate count + total bytes of every stored
+     * voice recording. The aggregation hops onto [Dispatchers.IO]
+     * because [VoiceRecordingFileSystem.fileSizeBytes] does a
+     * `File.length()` syscall per row — running that on Main during
+     * recompose trips StrictMode in tests and risks ANRs on device
+     * once a user has accumulated dozens of recordings.
+     */
+    val recordingsAggregate: StateFlow<RecordingsAggregate> =
+        walkRepository.observeAllVoiceRecordings()
+            .map { recs ->
+                RecordingsAggregate(
+                    count = recs.size,
+                    sizeBytes = recs.sumOf { voiceRecordingFileSystem.fileSizeBytes(it.fileRelativePath) },
+                )
+            }
+            .flowOn(Dispatchers.IO)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = RecordingsAggregate(0, 0L),
+            )
+
+    /**
+     * Stage 10-D: snapshot driving [VoiceCard]. Combines the two
+     * voice prefs with the recordings aggregate — any of the three
+     * changing re-emits a fresh [VoiceCardState].
+     *
+     * `WhileSubscribed(5_000)` is fine here: the only consumer is
+     * the SettingsScreen Compose tree, which stays subscribed via
+     * `collectAsStateWithLifecycle` while Settings is composed.
+     * The 5-second tail covers config-change recompositions
+     * (rotation) without a cold-restart. The `voiceGuideEnabled`
+     * upstream is `Eagerly`-shared so its `.value` reads from
+     * background contexts (orchestrator, walk-finalize observer)
+     * are unaffected by this VM-side caching policy.
+     */
+    val voiceCardState: StateFlow<VoiceCardState> = combine(
+        voicePreferences.voiceGuideEnabled,
+        voicePreferences.autoTranscribe,
+        recordingsAggregate,
+    ) { vge, at, agg ->
+        VoiceCardState(
+            voiceGuideEnabled = vge,
+            autoTranscribe = at,
+            recordingsCount = agg.count,
+            recordingsSizeBytes = agg.sizeBytes,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = VoiceCardState(
+            voiceGuideEnabled = false,
+            autoTranscribe = false,
+            recordingsCount = 0,
+            recordingsSizeBytes = 0L,
+        ),
+    )
+
+    fun setVoiceGuideEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { voicePreferences.setVoiceGuideEnabled(enabled) }
+                .onFailure { Log.w(TAG, "failed to persist voiceGuideEnabled", it) }
+        }
+    }
+
+    fun setAutoTranscribe(enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { voicePreferences.setAutoTranscribe(enabled) }
+                .onFailure { Log.w(TAG, "failed to persist autoTranscribe", it) }
+        }
+    }
+
     fun fetchOnAppear() {
         viewModelScope.launch { collectiveRepository.fetchIfStale() }
     }
@@ -136,3 +222,11 @@ class SettingsViewModel @Inject constructor(
         const val TAG = "SettingsViewModel"
     }
 }
+
+/**
+ * Stage 10-D: shape of the voice-recording aggregation that powers
+ * the Recordings nav row's `X recordings • Y.Y MB` caption. Stored
+ * as a small immutable snapshot so [SettingsViewModel.voiceCardState]
+ * can compose it with the voice prefs via `combine`.
+ */
+data class RecordingsAggregate(val count: Int, val sizeBytes: Long)
