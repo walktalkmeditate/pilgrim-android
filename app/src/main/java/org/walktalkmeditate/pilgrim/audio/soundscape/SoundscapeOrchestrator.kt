@@ -9,11 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
@@ -68,38 +70,101 @@ class SoundscapeOrchestrator @Inject constructor(
     private val manifestService: AudioManifestService,
     private val fileStore: SoundscapeFileStore,
     private val player: SoundscapePlayer,
+    private val soundsPreferences: SoundsPreferencesRepository,
     @SoundscapePlaybackScope private val scope: CoroutineScope,
 ) {
     fun start() {
         scope.launch { observe() }
+        // Parallel collector: live-apply user soundscape volume to the
+        // player. Runs for the orchestrator's lifetime; the cold spawn
+        // logic in `observe()` stays untouched (intentional — folding
+        // volume into the existing combine would also restart playback
+        // on every volume tweak, which is exactly what we don't want).
+        // The first emission (StateFlow's current value) seeds the
+        // player's userVolume before any `play()` runs, so the very
+        // first soundscape session also honors the pref.
+        scope.launch {
+            soundsPreferences.soundscapeVolume.collect { v ->
+                player.setVolume(v)
+            }
+        }
     }
 
     private suspend fun observe() {
         var playJob: Job? = null
+        // Track which asset is currently spawned so a mid-meditation
+        // X→Y selection swap (user opens Settings → Sound Settings →
+        // Soundscape → picks a different one — Settings is a tab and
+        // does NOT exit meditation) actually re-spawns playback with
+        // the new asset. Without this, the new assetId would be silently
+        // ignored because `playJob?.isActive == true` for the old one.
+        var spawnedAssetId: String? = null
 
-        walkState.collect { state ->
-            when (state) {
-                is WalkState.Meditating -> {
-                    // `isActive != true` catches (1) first-ever-null,
-                    // (2) cancelled, and (3) completed-but-not-null.
-                    // With the `player.state` observer below keeping
-                    // the job alive for the duration of meditation,
-                    // case (3) is now rare (only if the initial
-                    // eligibility check returns null — e.g., no
-                    // soundscape selected). Stage 5-E lesson.
-                    if (playJob?.isActive != true) {
-                        playJob = scope.launch { runSessionLoop() }
+        // Combine three signals:
+        //  - walkState: Meditating triggers spawn; anything else stops.
+        //  - soundsEnabled: master mute. Stage 10-B.
+        //  - selectedAssetId: when the user clears their soundscape
+        //    mid-meditation (e.g. "Clear all downloads" in
+        //    SoundSettingsScreen calls deselect()), the orchestrator
+        //    must cancel + stop. WITHOUT this signal, ExoPlayer would
+        //    keep playing from its in-memory buffer until the loop
+        //    wrapped back to the (now-deleted) file and Errored —
+        //    minutes of audio after the user thought they cleared it.
+        //
+        // Spawn decision happens per-emission (not inside
+        // runSessionLoop) so the retry-budget logic stays intact for
+        // legitimately-muted-and-then-unmuted sessions.
+        combine(
+            walkState,
+            soundsPreferences.soundsEnabled,
+            selectedAssetId,
+        ) { state, enabled, assetId -> Triple(state, enabled, assetId) }
+            .collect { (state, enabled, assetId) ->
+                when (state) {
+                    is WalkState.Meditating -> {
+                        if (!enabled || assetId == null) {
+                            // Either the master toggle is OFF or the
+                            // user cleared their soundscape selection.
+                            // Cancel any in-flight session and stop
+                            // the player. No spawn.
+                            playJob?.cancel(); playJob = null
+                            spawnedAssetId = null
+                            safeStopPlayer()
+                            return@collect
+                        }
+                        // Spawn when (a) no job is active OR (b) the
+                        // user picked a different soundscape and we
+                        // need to swap. Cancel the old job + stop the
+                        // player BEFORE spawning the new one so
+                        // ExoPlayer doesn't briefly play both files.
+                        val needsSwap = playJob?.isActive == true && spawnedAssetId != assetId
+                        if (needsSwap) {
+                            playJob?.cancel()
+                            playJob = null
+                            safeStopPlayer()
+                        }
+                        // `isActive != true` catches (1) first-ever-null,
+                        // (2) cancelled, and (3) completed-but-not-null.
+                        // With the `player.state` observer below keeping
+                        // the job alive for the duration of meditation,
+                        // case (3) is now rare (only if the initial
+                        // eligibility check returns null — e.g., no
+                        // soundscape selected). Stage 5-E lesson.
+                        if (playJob?.isActive != true) {
+                            spawnedAssetId = assetId
+                            playJob = scope.launch { runSessionLoop() }
+                        }
+                    }
+                    is WalkState.Active,
+                    is WalkState.Paused,
+                    WalkState.Idle,
+                    is WalkState.Finished -> {
+                        playJob?.cancel(); playJob = null
+                        spawnedAssetId = null
+                        safeStopPlayer()
                     }
                 }
-                is WalkState.Active,
-                is WalkState.Paused,
-                WalkState.Idle,
-                is WalkState.Finished -> {
-                    playJob?.cancel(); playJob = null
-                    safeStopPlayer()
-                }
             }
-        }
     }
 
     /**
@@ -157,6 +222,15 @@ class SoundscapeOrchestrator @Inject constructor(
             Log.w(TAG, "file vanished during start delay: ${asset.id}")
             return false
         }
+        // Final defensive gate-check immediately before `player.play()`.
+        // The combine-driven cancellation in `observe()` covers the
+        // common case (toggle OFF → playJob.cancel + safeStopPlayer)
+        // but a 1-frame race exists between `delay(START_DELAY_MS)`
+        // resuming and this synchronous block running. Without this
+        // line, a rapid OFF→ON→OFF in that micro-window could let a
+        // burst of audio fire before the cancellation lands. Reading
+        // `.value` on the Eagerly StateFlow is non-suspend and current.
+        if (!soundsPreferences.soundsEnabled.value) return false
         player.play(file)
         return true
     }
@@ -181,6 +255,13 @@ class SoundscapeOrchestrator @Inject constructor(
     private fun safeStopPlayer() {
         try {
             player.stop()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            // Re-throw to preserve structured concurrency. SoundscapePlayer.stop()
+            // is currently non-suspend, but the interface doesn't prevent a future
+            // impl from suspending or launching internally — guard against silent
+            // CE swallowing now per CLAUDE.md's "never silently swallow exceptions"
+            // policy.
+            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "player.stop failed", t)
         }

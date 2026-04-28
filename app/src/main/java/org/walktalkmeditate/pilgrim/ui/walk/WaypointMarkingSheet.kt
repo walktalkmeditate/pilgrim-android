@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -101,6 +102,7 @@ fun WaypointMarkingSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptic = LocalHapticFeedback.current
+    val soundsEnabled = LocalSoundsEnabled.current
     // Key on resetKey so a Cancel + reopen discards the typed-but-not-marked
     // draft. rememberSaveable persists to the screen-wide saveable registry,
     // which outlives the parent's `if (showWaypointMarking) ...` conditional
@@ -162,7 +164,7 @@ fun WaypointMarkingSheet(
                             onClick = {
                                 if (marked) return@PresetChip
                                 marked = true
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onMark(label, chip.iconKey)
                             },
                         )
@@ -180,7 +182,7 @@ fun WaypointMarkingSheet(
                     val trimmed = customText.trim()
                     if (trimmed.isEmpty()) return@CustomNoteRow
                     marked = true
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onMark(trimmed, WAYPOINT_CUSTOM_ICON_KEY)
                 },
             )

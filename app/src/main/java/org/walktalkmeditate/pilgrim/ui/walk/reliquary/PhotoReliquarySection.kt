@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.SubcomposeAsyncImage
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -103,6 +104,7 @@ fun PhotoReliquarySection(
     }
 
     val haptics = LocalHapticFeedback.current
+    val soundsEnabled = LocalSoundsEnabled.current
 
     Column(modifier = modifier.fillMaxWidth()) {
         ReliquaryHeader(
@@ -124,7 +126,7 @@ fun PhotoReliquarySection(
             PhotoGrid(
                 photos = photos,
                 onLongPressTile = { photo ->
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (soundsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     photoToRemove = photo
                 },
             )

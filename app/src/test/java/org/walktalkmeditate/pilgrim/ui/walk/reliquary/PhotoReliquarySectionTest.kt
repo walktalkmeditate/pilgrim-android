@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -170,11 +171,19 @@ class PhotoReliquarySectionTest {
     @Test
     fun `tombstone caption is announced when the image fails to load`() {
         // Under Robolectric, Coil can't resolve content:// URIs — every
-        // SubcomposeAsyncImage fires onError synchronously. The outer
-        // Box's contentDescription flips to the tombstone hint and the
-        // error slot renders the "Photo unavailable" caption. In
-        // production this only fires for genuinely broken pins; device
-        // QA covers the happy-path contentDescription.
+        // SubcomposeAsyncImage fires onError. The outer Box's
+        // contentDescription flips to the tombstone hint and the error
+        // slot renders the "Photo unavailable" caption. In production
+        // this only fires for genuinely broken pins; device QA covers
+        // the happy-path contentDescription.
+        //
+        // **Flake guard:** Coil's onError resolves asynchronously under
+        // Robolectric — the call returns before the error propagates
+        // through SubcomposeAsyncImage. Local runs on fast machines
+        // catch the tombstone in time; CI runners (slower) have failed
+        // intermittently against this same assertion. `waitUntil` polls
+        // until the node appears or the timeout fires, removing the
+        // race entirely.
         val photos = listOf(photo(1L))
         composeRule.setContent {
             PilgrimTheme {
@@ -186,6 +195,12 @@ class PhotoReliquarySectionTest {
                     )
                 }
             }
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule
+                .onAllNodesWithText("Photo unavailable")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
         }
         composeRule.onNodeWithText("Photo unavailable").assertIsDisplayed()
         composeRule.onAllNodesWithContentDescription(

@@ -9,12 +9,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 
 /**
  * Minimal composition smoke tests for [BellPlayer]. Actual audio
  * playback is not asserted — Robolectric's `MediaPlayer.create`
  * returns a stub that may or may not signal completion; real device
- * QA verifies the bell sounds and the ducking behavior.
+ * QA verifies the bell sounds and the ducking behavior. Robolectric's
+ * MediaPlayer stub also doesn't track `setVolume` calls, so we can
+ * only assert the path doesn't throw — the production-vs-stub
+ * divergence is the same shape as `setAudioAttributes` (Stage 5-B).
  *
  * These tests confirm the code path doesn't throw for the operation
  * the production `MeditationBellObserver` invokes.
@@ -31,7 +35,11 @@ class BellPlayerTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         audioManager = context.getSystemService(AudioManager::class.java)
-        player = BellPlayer(context = context, audioManager = audioManager)
+        player = BellPlayer(
+            context = context,
+            audioManager = audioManager,
+            soundsPreferences = FakeSoundsPreferencesRepository(),
+        )
     }
 
     @Test fun `play does not crash when Robolectric grants focus`() {
@@ -40,5 +48,16 @@ class BellPlayerTest {
         // Robolectric may return null or a stub — either path is
         // exercised by BellPlayer and should not throw.
         player.play()
+    }
+
+    @Test fun `play does not crash with custom bellVolume`() {
+        // A non-default volume exercises the setVolume call path; the
+        // Robolectric stub may not store the value but must not throw.
+        val customPlayer = BellPlayer(
+            context = context,
+            audioManager = audioManager,
+            soundsPreferences = FakeSoundsPreferencesRepository(initialBellVolume = 0.25f),
+        )
+        customPlayer.play()
     }
 }

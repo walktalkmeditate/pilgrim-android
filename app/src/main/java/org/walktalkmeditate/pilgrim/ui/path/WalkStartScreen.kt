@@ -45,6 +45,7 @@ import java.time.LocalDate
 import kotlin.random.Random
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.ui.design.BreathingLogo
@@ -259,6 +260,7 @@ private fun ModeSelector(
     onSelect: (WalkMode) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val soundsEnabled = LocalSoundsEnabled.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -270,7 +272,7 @@ private fun ModeSelector(
                     selected = mode == selectedMode,
                     onClick = {
                         if (mode != selectedMode) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onSelect(mode)
                         }
                     },

@@ -54,6 +54,7 @@ fun SettingsScreen(
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
+    val soundsEnabled by viewModel.soundsEnabled.collectAsStateWithLifecycle()
     // rememberLazyListState wraps a rememberSaveable internally — without
     // it, rotating the device would yank the user back to the top of
     // Settings instead of preserving their scroll position.
@@ -98,6 +99,9 @@ fun SettingsScreen(
                 AtmosphereCard(
                     currentMode = appearanceMode,
                     onSelectMode = viewModel::setAppearanceMode,
+                    soundsEnabled = soundsEnabled,
+                    onSetSoundsEnabled = viewModel::setSoundsEnabled,
+                    onAction = onAction,
                 )
             }
             // Voice Guides + Soundscapes are landed here as

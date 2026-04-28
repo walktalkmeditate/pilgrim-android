@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,8 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
+import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -171,11 +174,13 @@ fun MeditationScreen(
     BackHandler { endSession() }
 
     val moss = pilgrimColors.moss
+    val breathRhythm = BreathRhythm.byId(LocalBreathRhythm.current)
     MeditationScreenContent(
         elapsedSeconds = elapsedSeconds,
         mossColor = moss,
         enabled = !didEnd,
         onDone = endSession,
+        breathRhythm = breathRhythm,
     )
 }
 
@@ -190,6 +195,7 @@ internal fun MeditationScreenContent(
     mossColor: Color,
     enabled: Boolean,
     onDone: () -> Unit,
+    breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
 ) {
     Box(
         modifier = Modifier
@@ -203,7 +209,17 @@ internal fun MeditationScreenContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            BreathingCircle(moss = mossColor)
+            // `key(breathRhythm.id)` forces a full re-composition of
+            // BreathingCircle (and its rememberInfiniteTransition) when
+            // the user picks a new rhythm mid-meditation. Without it,
+            // changing rhythms can resume the new keyframe spec at the
+            // old cycle's offset — visually jumping to a nonsensical
+            // phase. The key restart trades a brief snap to
+            // SCALE_EXHALED for a clean, predictable cycle on the new
+            // rhythm.
+            key(breathRhythm.id) {
+                BreathingCircle(moss = mossColor, breathRhythm = breathRhythm)
+            }
             Spacer(Modifier.height(PilgrimSpacing.big))
             Text(
                 text = formatTimer(elapsedSeconds),

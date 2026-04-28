@@ -152,7 +152,17 @@ class WalkLifecycleObserverTest {
         repository.deleteWalkById(walkId)
         stateFlow.value = WalkState.Idle
 
-        Thread.sleep(WAIT_FOR_OBSERVER_MS)
+        // Poll for the observer to react instead of a fixed sleep —
+        // CI runners are slow enough that a hardcoded 1.5s sleep
+        // sometimes lands BEFORE the recorder's stop() completes.
+        // The observer signals completion via audioLevel.value resetting
+        // to 0 (set inside VoiceRecorder.stop()); poll for that.
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (voiceRecorder.audioLevel.value != 0f &&
+            System.currentTimeMillis() < deadline
+        ) {
+            Thread.sleep(20L)
+        }
         // Recorder must have actually stopped (audioLevel resets to 0 in stop()).
         assertEquals(0f, voiceRecorder.audioLevel.value, 0.0001f)
         // No VoiceRecording row inserted (parent walk doesn't exist anymore).
@@ -183,7 +193,13 @@ class WalkLifecycleObserverTest {
         repository.deleteWalkById(walkId)
         stateFlow.value = WalkState.Idle
 
-        Thread.sleep(WAIT_FOR_OBSERVER_MS)
+        // Poll for the observer to react instead of a fixed sleep.
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (voiceRecorder.audioLevel.value != 0f &&
+            System.currentTimeMillis() < deadline
+        ) {
+            Thread.sleep(20L)
+        }
         assertEquals(0f, voiceRecorder.audioLevel.value, 0.0001f)
         val orphanedRows = repository.voiceRecordingsFor(walkId)
         assertTrue(
@@ -235,6 +251,9 @@ class WalkLifecycleObserverTest {
 
     private companion object {
         const val COLLECTOR_ATTACH_WAIT_MS = 300L
-        const val WAIT_FOR_OBSERVER_MS = 1_500L
+        // 5s upper bound so slow CI runners under heavy load have
+        // headroom; the polling loops above exit as soon as the
+        // observer reacts, so on fast machines this never matters.
+        const val WAIT_FOR_OBSERVER_MS = 5_000L
     }
 }

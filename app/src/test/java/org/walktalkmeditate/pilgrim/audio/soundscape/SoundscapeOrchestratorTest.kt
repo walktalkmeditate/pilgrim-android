@@ -36,6 +36,8 @@ import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
@@ -112,7 +114,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -131,7 +133,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -151,7 +153,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         // Before the 800ms delay elapses, no play yet.
@@ -176,7 +178,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -208,7 +210,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         // User bails mid-delay (tap Done at ~400ms).
@@ -234,7 +236,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -257,7 +259,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -289,7 +291,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -329,7 +331,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -380,12 +382,235 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(2_000)
         runCurrent()
         assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `master toggle off prevents soundscape spawn on Meditating`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer,
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
+            s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        // Master sounds toggle is OFF — even though the soundscape is
+        // eligible (selected, manifest hit, file on disk), no spawn.
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `flipping master toggle off mid-session cancels playback`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        // User flips the master toggle OFF mid-meditation.
+        prefs.setSoundsEnabled(false)
+        runCurrent()
+
+        assertTrue(
+            "expected at least one stop after master toggle off, got ${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        s.cancel()
+    }
+
+    @Test fun `master toggle flipped off during start delay does not play`() = runTest {
+        // Covers the combine-driven cancellation path: when the master
+        // toggle flips OFF while a start-delay coroutine is suspended,
+        // `combine(walkState, soundsEnabled)` re-emits with enabled=false
+        // and the orchestrator cancels the in-flight delay coroutine
+        // before `player.play()` runs. Under StandardTestDispatcher the
+        // dispatcher serializes coroutines, so the cancel reliably runs
+        // before the delay resumption — that's what this test asserts.
+        //
+        // The defensive `soundsEnabled.value` check inside `attemptPlay()`
+        // closes the sub-frame race window that can exist on real
+        // dispatchers (where the delay continuation may already be on
+        // the run queue when the cancel arrives). That defensive check
+        // is verified by code review only, not by this test.
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        // Sit inside the start delay (800ms in production). Don't
+        // advance past it yet.
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+
+        // Flip OFF mid-delay; the combine-driven cancel runs.
+        prefs.setSoundsEnabled(false)
+        runCurrent()
+        // Advance past the original delay window. attemptPlay must
+        // NOT have fired player.play() — the defensive gate-check
+        // catches any sub-frame race.
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(
+            "expected zero plays after master toggle off during start delay, got ${capturingPlayer.playCount}",
+            0, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
+    @Test fun `flipping master toggle on mid-session spawns soundscape`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = false)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+
+        // User flips master toggle ON mid-meditation. After the start
+        // delay, the soundscape should fire.
+        prefs.setSoundsEnabled(true)
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(
+            "expected soundscape to spawn after master toggle on, got ${capturingPlayer.playCount}",
+            1, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
+    @Test fun `swapping selected soundscape mid-session restarts playback with new asset`() = runTest {
+        // User opens Settings → Sound Settings → Soundscape row →
+        // picks a different soundscape WHILE actively meditating.
+        // Settings is a separate tab; meditation continues running.
+        // The orchestrator must detect the asset swap and re-spawn
+        // playback with the new file (cancel + stop the old, then
+        // spawn with the new asset).
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals("expected initial spawn", 1, capturingPlayer.playCount)
+        val firstPlayedFile = capturingPlayer.lastPlayedFile
+
+        // User swaps soundscape selection mid-session.
+        selectedAssetId.value = "forest"
+        runCurrent()
+        // Old job cancelled + player stopped.
+        assertTrue(
+            "expected stop on swap, got stopCount=${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        // New job runs through start delay then plays new file.
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals("expected re-spawn with new asset", 2, capturingPlayer.playCount)
+        assertTrue(
+            "expected new file path, was=${capturingPlayer.lastPlayedFile} (was=$firstPlayedFile)",
+            capturingPlayer.lastPlayedFile != firstPlayedFile,
+        )
+        s.cancel()
+    }
+
+    @Test fun `flipping soundscape volume mid-session updates player without restarting`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val prefs = FakeSoundsPreferencesRepository(
+            initialSoundsEnabled = true,
+            initialSoundscapeVolume = 0.4f,
+        )
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, prefs, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        // Initial play has fired and the volume-collector seeded the
+        // player with the initial pref value.
+        assertEquals(1, capturingPlayer.playCount)
+        assertEquals(0.4f, capturingPlayer.lastVolume)
+        val playsBefore = capturingPlayer.playCount
+
+        // User drags the slider to 0.2 mid-meditation.
+        prefs.setSoundscapeVolume(0.2f)
+        runCurrent()
+        advanceTimeBy(50)
+        runCurrent()
+
+        // Volume change applied live — no restart, no extra play() call.
+        assertEquals(
+            "expected no restart when volume changes, got ${capturingPlayer.playCount}",
+            playsBefore, capturingPlayer.playCount,
+        )
+        assertEquals(0.2f, capturingPlayer.lastVolume)
         s.cancel()
     }
 
@@ -396,7 +621,10 @@ class SoundscapeOrchestratorTest {
         override val state: StateFlow<SoundscapePlayer.State> = _state.asStateFlow()
         private val played = CopyOnWriteArrayList<File>()
         @Volatile var stopCount: Int = 0
+        @Volatile var lastVolume: Float = Float.NaN
+        @Volatile var setVolumeCount: Int = 0
         val playCount: Int get() = played.size
+        val lastPlayedFile: File? get() = played.lastOrNull()
 
         override fun play(file: File) {
             played += file
@@ -406,6 +634,11 @@ class SoundscapeOrchestratorTest {
         override fun stop() {
             stopCount += 1
             _state.value = SoundscapePlayer.State.Idle
+        }
+
+        override fun setVolume(volume: Float) {
+            lastVolume = volume
+            setVolumeCount += 1
         }
 
         override fun release() {

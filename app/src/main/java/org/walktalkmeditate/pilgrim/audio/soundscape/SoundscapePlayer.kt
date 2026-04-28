@@ -24,6 +24,14 @@ interface SoundscapePlayer {
     /** Stop playback and abandon audio focus. */
     fun stop()
 
+    /**
+     * Set the playback volume in [0.0, 1.0]. Applies live without
+     * restarting playback. Implementations clamp out-of-range values.
+     * Safe to call from any thread holding a reference; safe to call
+     * before [play] (the next [play] inherits the volume).
+     */
+    fun setVolume(volume: Float)
+
     /** Release native ExoPlayer resources. Safe to call multiple times. */
     fun release()
 

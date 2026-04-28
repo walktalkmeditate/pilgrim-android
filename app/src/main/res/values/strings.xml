@@ -97,6 +97,8 @@
     <string name="settings_appearance_auto">Auto</string>
     <string name="settings_appearance_light">Light</string>
     <string name="settings_appearance_dark">Dark</string>
+    <string name="settings_sounds_label">Sounds</string>
+    <string name="settings_sounds_description">Bells, voice guides, haptics, and ambient soundscapes</string>
 
     <string name="voice_guide_picker_title">Voice guides</string>
     <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
@@ -282,6 +284,30 @@
         <item quantity="one">1 marked</item>
         <item quantity="other">%1$d marked</item>
     </plurals>
+
+    <!-- Stage 10-B: SoundSettingsScreen labels (port of iOS SoundSettingsView). -->
+    <string name="settings_sounds_title">Sounds</string>
+    <string name="settings_sounds_master_label">Sounds</string>
+    <string name="settings_bell_haptic_label">Haptic with bells</string>
+    <string name="settings_section_walk">Walk</string>
+    <string name="settings_section_meditation">Meditation</string>
+    <string name="settings_section_volume">Volume</string>
+    <string name="settings_section_storage">Storage</string>
+    <string name="settings_bell_start_label">Start bell</string>
+    <string name="settings_bell_end_label">End bell</string>
+    <string name="settings_breath_rhythm_label">Breath rhythm</string>
+    <string name="settings_volume_bells">Bells</string>
+    <string name="settings_volume_soundscape">Soundscape</string>
+    <string name="settings_volume_percent_format">%1$d%%</string>
+    <string name="settings_storage_count_format">%1$d sounds</string>
+    <string name="settings_storage_size_format">%1$.1f MB</string>
+    <string name="settings_storage_clear_all">Clear all downloads</string>
+    <string name="settings_bell_picker_title">Choose bell</string>
+    <string name="settings_bell_picker_none">None</string>
+    <string name="settings_breath_rhythm_picker_title">Choose breath rhythm</string>
+    <string name="settings_soundscape_label">Soundscape</string>
+    <string name="settings_atmosphere_bells_soundscapes_row">Bells &amp; Soundscapes</string>
+    <string name="settings_atmosphere_bells_soundscapes_subtitle">Per-event chimes, ambient sound, breath rhythm</string>
 
     <!-- Stage 9.5-D: waypoint marking sheet -->
     <string name="walk_waypoint_marking_title">Drop a Waypoint</string>
