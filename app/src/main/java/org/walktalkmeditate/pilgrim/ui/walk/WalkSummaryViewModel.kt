@@ -36,6 +36,8 @@ import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
@@ -144,6 +146,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val photoAnalysisScheduler: PhotoAnalysisScheduler,
     hemisphereRepository: HemisphereRepository,
     private val cachedShareStore: CachedShareStore,
+    unitsPreferences: UnitsPreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -158,6 +161,15 @@ class WalkSummaryViewModel @Inject constructor(
      * [WalkSummaryUiState.Loaded] payload.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
+
+    /**
+     * Stage 10-C: passthrough of the units preference. The summary
+     * stats card and stats sheet read this to format distance / pace
+     * in the user's chosen unit system. The seal artwork itself
+     * (built once into [WalkSummary.sealSpec]) currently bakes the
+     * metric label at generation time — see TODO in [buildState].
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
@@ -527,7 +539,13 @@ class WalkSummaryViewModel @Inject constructor(
             null
         }
 
-        val distanceLabel = WalkFormat.distanceLabel(distance)
+        // TODO(stage 10-Z): Goshuin seal artwork stays metric for now —
+        // the seal is treated as a permanent record of the walk; re-
+        // rendering on a unit-toggle is a separate concern (cached
+        // bitmaps, share-sheet asset reuse). The surrounding card text
+        // (e.g. WalkSummaryScreen's `walk_stat_distance` row) DOES flip
+        // with [distanceUnits].
+        val distanceLabel = WalkFormat.distanceLabel(distance, UnitSystem.Metric)
         val sealSpec = walk.toSealSpec(
             // Reuse the haversine sum computed above — `toSealSpec`
             // takes the distance directly so both the seal's center
@@ -589,6 +607,7 @@ class WalkSummaryViewModel @Inject constructor(
                 altitudeSamples = altitudeSamples,
                 activityIntervals = activityIntervals,
                 voiceRecordings = voiceRecordings,
+                units = distanceUnits.value,
                 zoneId = ZoneId.systemDefault(),
             )
         }.onFailure {

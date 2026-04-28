@@ -128,6 +128,7 @@ class WalkSummaryViewModelTest {
             photoAnalysisScheduler = photoAnalysisScheduler,
             hemisphereRepository = hemisphereRepo,
             cachedShareStore = cachedShareStore,
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
     }
@@ -633,6 +634,7 @@ class WalkSummaryViewModelTest {
             elevationGainMeters = 0.0,
             topText = null,
             activityMarkers = emptyList(),
+            units = org.walktalkmeditate.pilgrim.data.units.UnitSystem.Metric,
         )
     }
 
