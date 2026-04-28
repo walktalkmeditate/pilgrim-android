@@ -14,16 +14,18 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 
 /**
- * Settings → Atmosphere card. Currently surfaces a 3-option appearance
- * picker; the iOS counterpart also has a Sounds master toggle, which
- * is deferred to a later stage (gating every audio call site is a
- * larger scope). Visually mirrors iOS's flat parchment card (no
- * border) via the shared [settingsCard] modifier.
+ * Settings → Atmosphere card. Surfaces the 3-option appearance picker
+ * and the master Sounds toggle (gates bells + soundscapes; haptic
+ * gates and per-event pickers ship in later stages). Visually mirrors
+ * iOS's flat parchment card (no border) via the shared [settingsCard]
+ * modifier.
  */
 @Composable
 fun AtmosphereCard(
     currentMode: AppearanceMode,
     onSelectMode: (AppearanceMode) -> Unit,
+    soundsEnabled: Boolean,
+    onSetSoundsEnabled: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // `settingsCard()` bakes in both the 16dp horizontal screen indent
@@ -60,6 +62,13 @@ fun AtmosphereCard(
             options = options,
             selected = currentMode,
             onSelect = onSelectMode,
+        )
+        SettingsDivider()
+        SettingToggle(
+            label = stringResource(R.string.settings_sounds_label),
+            description = stringResource(R.string.settings_sounds_description),
+            checked = soundsEnabled,
+            onCheckedChange = onSetSoundsEnabled,
         )
     }
 }
