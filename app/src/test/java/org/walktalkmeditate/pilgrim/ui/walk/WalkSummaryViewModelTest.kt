@@ -102,9 +102,9 @@ class WalkSummaryViewModelTest {
         playback = FakeVoicePlaybackController()
         scheduler = FakeTranscriptionScheduler()
         sweeper = OrphanRecordingSweeper(context, repository, scheduler)
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         hemisphereLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -148,7 +148,7 @@ class WalkSummaryViewModelTest {
     fun tearDown() {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         // Stage 8-A: WalkSummaryViewModel.cachedShareFlow opens the
         // share_cache DataStore eagerly via SharingStarted.Eagerly.
         // Without this cleanup, cached entries from one test would
@@ -745,7 +745,6 @@ class WalkSummaryViewModelTest {
         }
     }
 
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "walk-summary-vm-hemisphere-test"
-    }
+    // UUID-suffixed so parallel test forks can't collide on file path.
+    private val hemisphereStoreName: String = "walk-summary-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 }

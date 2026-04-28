@@ -81,9 +81,9 @@ class HomeViewModelTest {
         clock = FakeHomeClock(initial = 10_000_000L)
         // Hemisphere setup — start clean each test so a prior Southern
         // override from a previous run doesn't leak through.
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         fakeLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -94,7 +94,7 @@ class HomeViewModelTest {
     fun tearDown() {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         Dispatchers.resetMain()
     }
 
@@ -371,9 +371,8 @@ class HomeViewModelTest {
             fileRelativePath = "recordings/test/$start.wav",
         )
 
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "home-vm-hemisphere-test"
-    }
+    // UUID-suffixed so parallel test forks can't collide on file path.
+    private val hemisphereStoreName: String = "home-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 }
 
 private class FakeHomeClock(initial: Long) : Clock {

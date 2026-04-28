@@ -288,7 +288,12 @@ fun ActiveWalkScreen(
         // from the options menu they're currently in. `if` instead of
         // an early-return so the latch stays set in either case (iOS
         // reference is "fire at most once per walk").
-        val anyOtherSheetOpen = showOptions || showLeaveConfirm || showWaypointMarking
+        // Defense-in-depth: include `showPreWalkIntention` even though
+        // the state-change effect dismisses it on Idle→Active before
+        // this delay starts. If a future refactor decouples that
+        // dismissal, the auto-prompt would otherwise stack on top.
+        val anyOtherSheetOpen = showOptions || showLeaveConfirm ||
+            showWaypointMarking || showPreWalkIntention
         if (navWalkState is WalkState.Active && intention == null && !anyOtherSheetOpen) {
             showAutoIntention = true
         }

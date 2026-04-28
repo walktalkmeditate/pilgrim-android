@@ -133,9 +133,9 @@ class WalkViewModelTest {
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         transcriptionScheduler = FakeTranscriptionScheduler()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         hemisphereLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -175,7 +175,7 @@ class WalkViewModelTest {
         hemisphereScope.coroutineContext[Job]?.cancel()
         collectiveScope.coroutineContext[Job]?.cancel()
         collectiveDataStoreScope.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         Dispatchers.resetMain()
     }
 
@@ -617,9 +617,9 @@ class WalkViewModelTest {
             }
         }
         val throwingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+        context.preferencesDataStoreFile(throwingStoreName).delete()
         val throwingDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(THROWING_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(throwingStoreName) },
         )
         val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
         val vm = WalkViewModel(
@@ -638,7 +638,7 @@ class WalkViewModelTest {
         // thrown exception there's no observable signal other than
         // "test reached this line without crashing".
         throwingScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+        context.preferencesDataStoreFile(throwingStoreName).delete()
     }
 
     // --- Stage 10-C: practice prefs passthrough ----------------------
@@ -667,10 +667,12 @@ class WalkViewModelTest {
             }
         }
 
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "walk-vm-hemisphere-test"
-        const val THROWING_STORE_NAME = "walk-vm-hemisphere-throwing-test"
-    }
+    // UUID-suffixed so `maxParallelForks = 2` (CI test parallelism)
+    // can't have two forks colliding on the same DataStore file path
+    // — each test instance gets its own file. Fixed prefixes preserved
+    // for filename greppability if a leak ever leaves stale state.
+    private val hemisphereStoreName: String = "walk-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
+    private val throwingStoreName: String = "walk-vm-hemisphere-throwing-test-${java.util.UUID.randomUUID()}"
 }
 
 private class FakeClock(initial: Long) : Clock {
