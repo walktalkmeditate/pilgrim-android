@@ -17,6 +17,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          # CI doesn't need full git history.
+          fetch-depth: 1
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
