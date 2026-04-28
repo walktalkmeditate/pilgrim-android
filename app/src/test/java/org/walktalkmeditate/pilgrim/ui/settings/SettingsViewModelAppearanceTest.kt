@@ -92,6 +92,8 @@ class SettingsViewModelAppearanceTest {
             collectiveRepository = collectiveRepo,
             appearancePreferences = appearanceRepo,
             soundsPreferences = FakeSoundsPreferencesRepository(),
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
         assertEquals(AppearanceMode.Dark, vm.appearanceMode.first())
     }
@@ -103,6 +105,8 @@ class SettingsViewModelAppearanceTest {
             collectiveRepository = collectiveRepo,
             appearancePreferences = appearanceRepo,
             soundsPreferences = FakeSoundsPreferencesRepository(),
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
         assertEquals(AppearanceMode.System, vm.appearanceMode.first())
         vm.setAppearanceMode(AppearanceMode.Light)

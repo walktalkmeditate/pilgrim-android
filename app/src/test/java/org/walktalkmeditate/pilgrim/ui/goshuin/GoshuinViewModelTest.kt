@@ -91,7 +91,11 @@ class GoshuinViewModelTest {
     }
 
     private fun newViewModel(): GoshuinViewModel =
-        GoshuinViewModel(repository, hemisphereRepo)
+        GoshuinViewModel(
+            repository,
+            hemisphereRepo,
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+        )
 
     @Test
     fun `Empty when repository has no walks`() = runTest(dispatcher) {

@@ -17,6 +17,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
@@ -41,6 +42,7 @@ class WalkStatsSheetMinimizedTest {
                 recorderState = VoiceRecorderUiState.Idle,
                 audioLevel = 0f,
                 recordingsCount = 0,
+                units = UnitSystem.Metric,
                 onPause = {}, onResume = {}, onStartWalk = {},
                 onStartMeditation = {}, onEndMeditation = {},
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
@@ -71,6 +73,7 @@ class WalkStatsSheetMinimizedTest {
                 walkMillis = 0L, talkMillis = 0L, meditateMillis = 0L,
                 recorderState = VoiceRecorderUiState.Idle, audioLevel = 0f,
                 recordingsCount = 0,
+                units = UnitSystem.Metric,
                 onPause = {}, onResume = {}, onStartWalk = {},
                 onStartMeditation = {}, onEndMeditation = {},
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},

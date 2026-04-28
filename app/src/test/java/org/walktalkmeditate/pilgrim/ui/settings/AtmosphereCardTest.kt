@@ -91,7 +91,7 @@ class AtmosphereCardTest {
             }
         }
         composeRule.onNodeWithText("Sounds").assertExists()
-        composeRule.onNodeWithText("Bells, haptics, and ambient soundscapes").assertExists()
+        composeRule.onNodeWithText("Bells, voice guides, haptics, and ambient soundscapes").assertExists()
     }
 
     @Test

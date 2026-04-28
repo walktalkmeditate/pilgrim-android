@@ -19,6 +19,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
@@ -101,8 +102,35 @@ class WalkNotificationFactoryTest {
         val state = WalkState.Active(
             WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_234.0),
         )
-        val text = walkNotificationText(context, state)
+        val text = walkNotificationText(context, state, UnitSystem.Metric)
         assertTrue("expected km in text but got: $text", text.contains("1.23"))
+    }
+
+    @Test
+    fun `notificationText for Active with Imperial uses miles`() {
+        val state = WalkState.Active(
+            WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_609.34),
+        )
+        val text = walkNotificationText(context, state, UnitSystem.Imperial)
+        // ~1 mile.
+        assertTrue("expected mi in text but got: $text", text.contains("1.00 mi"))
+    }
+
+    @Test
+    fun `notificationText for Imperial below 0_1 mi falls back to feet`() {
+        // 100 m ≈ 0.062 mi → below the 0.1 mi threshold. The notification
+        // text MUST use the same <0.1 mi → ft fallback as every other
+        // display surface (WalkStatsSheet, WalkSummaryScreen, widget).
+        // Pre-fix: notification showed "0.06 mi"; the rest of the app
+        // showed "328 ft". The inconsistency was visible early in any
+        // Imperial-mode walk. Locking in the delegation here so a future
+        // refactor can't silently revive the inconsistency.
+        val state = WalkState.Active(
+            WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 100.0),
+        )
+        val text = walkNotificationText(context, state, UnitSystem.Imperial)
+        assertTrue("expected feet in text but got: $text", text.contains(" ft"))
+        assertTrue("expected feet, not miles, in text but got: $text", !text.contains(" mi"))
     }
 
     @Test
@@ -118,7 +146,7 @@ class WalkNotificationFactoryTest {
             meditatingState(),
             finishedState(),
         ).forEach { state ->
-            val text = walkNotificationText(context, state)
+            val text = walkNotificationText(context, state, UnitSystem.Metric)
             assertNotNull("null text for $state", text)
             assertTrue("empty text for $state", text.isNotEmpty())
         }
@@ -128,7 +156,7 @@ class WalkNotificationFactoryTest {
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Pilgrim")
-            .setContentText(walkNotificationText(context, state))
+            .setContentText(walkNotificationText(context, state, UnitSystem.Metric))
         addWalkActionsForState(builder, context, state, actions)
         return builder.build()
     }

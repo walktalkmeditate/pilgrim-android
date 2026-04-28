@@ -133,9 +133,9 @@ class WalkViewModelTest {
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
         transcriptionScheduler = FakeTranscriptionScheduler()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         hemisphereLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -161,7 +161,12 @@ class WalkViewModelTest {
             scope = collectiveScope,
         )
         fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource(), org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository())
+        viewModel = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        )
     }
 
     @After
@@ -170,7 +175,7 @@ class WalkViewModelTest {
         hemisphereScope.coroutineContext[Job]?.cancel()
         collectiveScope.coroutineContext[Job]?.cancel()
         collectiveDataStoreScope.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         Dispatchers.resetMain()
     }
 
@@ -390,7 +395,12 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource(), org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository())
+        viewModel = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        )
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -419,7 +429,12 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource(), org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository())
+        viewModel = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        )
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -524,6 +539,8 @@ class WalkViewModelTest {
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, seededSource,
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -551,6 +568,8 @@ class WalkViewModelTest {
             context, controller, repository, clock, voiceRecorder,
             FakeLocationSource(lastKnown = null),
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -598,14 +617,16 @@ class WalkViewModelTest {
             }
         }
         val throwingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+        context.preferencesDataStoreFile(throwingStoreName).delete()
         val throwingDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(THROWING_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(throwingStoreName) },
         )
         val throwingRepo = HemisphereRepository(throwingDataStore, throwingSource, throwingScope)
         val vm = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -617,7 +638,25 @@ class WalkViewModelTest {
         // thrown exception there's no observable signal other than
         // "test reached this line without crashing".
         throwingScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+        context.preferencesDataStoreFile(throwingStoreName).delete()
+    }
+
+    // --- Stage 10-C: practice prefs passthrough ----------------------
+
+    @Test
+    fun `beginWithIntention reflects practicePreferences setting`() = runTest(dispatcher) {
+        val prefs = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+            initialBeginWithIntention = true,
+        )
+        val vm = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            prefs,
+        )
+        assertTrue(vm.beginWithIntention.value)
+        prefs.setBeginWithIntention(false)
+        assertEquals(false, vm.beginWithIntention.value)
     }
 
     private fun requireActiveWalkId(): Long =
@@ -628,10 +667,12 @@ class WalkViewModelTest {
             }
         }
 
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "walk-vm-hemisphere-test"
-        const val THROWING_STORE_NAME = "walk-vm-hemisphere-throwing-test"
-    }
+    // UUID-suffixed so `maxParallelForks = 2` (CI test parallelism)
+    // can't have two forks colliding on the same DataStore file path
+    // — each test instance gets its own file. Fixed prefixes preserved
+    // for filename greppability if a leak ever leaves stale state.
+    private val hemisphereStoreName: String = "walk-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
+    private val throwingStoreName: String = "walk-vm-hemisphere-throwing-test-${java.util.UUID.randomUUID()}"
 }
 
 private class FakeClock(initial: Long) : Clock {

@@ -41,6 +41,7 @@ class EtegamiIndexAtTimestampTest {
         elevationGainMeters = 0.0,
         topText = null,
         activityMarkers = emptyList(),
+        units = org.walktalkmeditate.pilgrim.data.units.UnitSystem.Metric,
     )
 
     @Test

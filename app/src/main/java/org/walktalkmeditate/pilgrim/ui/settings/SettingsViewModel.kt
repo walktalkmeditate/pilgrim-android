@@ -12,7 +12,11 @@ import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
 /**
  * Stage 8-B: ViewModel for the Settings screen surfaces — currently
@@ -20,20 +24,45 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
  * to [CollectiveRepository]; no UI-only state lives here.
  *
  * Stage 9.5-E adds the appearance-mode passthrough to
- * [AppearancePreferencesRepository] so the new Atmosphere card can
- * render the persisted preference and write user changes back.
+ * [AppearancePreferencesRepository] so the Atmosphere card can render
+ * the persisted preference and write user changes back.
+ *
+ * Stage 10-C Chunk D adds the practice + units passthroughs powering
+ * the new PracticeCard:
+ *  - [beginWithIntention], [celestialAwarenessEnabled], [zodiacSystem],
+ *    [walkReliquaryEnabled] proxy [PracticePreferencesRepository].
+ *  - [distanceUnits] proxies [UnitsPreferencesRepository] (already
+ *    surfaced for CollectiveStatsCard formatting).
+ *  - The "Walk with the collective" toggle in PracticeCard reuses the
+ *    existing [optIn] / [setOptIn] pair — no separate pref needed.
+ *  - The photos-denied note is transient screen-level UI state owned
+ *    by the SettingsScreen composable (rememberSaveable), not the VM.
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val collectiveRepository: CollectiveRepository,
     private val appearancePreferences: AppearancePreferencesRepository,
     private val soundsPreferences: SoundsPreferencesRepository,
+    private val practicePreferences: PracticePreferencesRepository,
+    private val unitsPreferences: UnitsPreferencesRepository,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
     val optIn: StateFlow<Boolean> = collectiveRepository.optIn
     val appearanceMode: StateFlow<AppearanceMode> = appearancePreferences.appearanceMode
     val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
+
+    /**
+     * Stage 10-C: passthrough so [CollectiveStatsCard] can format
+     * the community totals in the user's preferred units, and so the
+     * Practice card can drive its segmented Units row + caption.
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
+    val beginWithIntention: StateFlow<Boolean> = practicePreferences.beginWithIntention
+    val celestialAwarenessEnabled: StateFlow<Boolean> = practicePreferences.celestialAwarenessEnabled
+    val zodiacSystem: StateFlow<ZodiacSystem> = practicePreferences.zodiacSystem
+    val walkReliquaryEnabled: StateFlow<Boolean> = practicePreferences.walkReliquaryEnabled
 
     fun setOptIn(value: Boolean) {
         viewModelScope.launch { collectiveRepository.setOptIn(value) }
@@ -61,6 +90,41 @@ class SettingsViewModel @Inject constructor(
             // reverts to the persisted value via the StateFlow re-emit.
             runCatching { soundsPreferences.setSoundsEnabled(value) }
                 .onFailure { Log.w(TAG, "failed to persist sounds toggle", it) }
+        }
+    }
+
+    fun setBeginWithIntention(value: Boolean) {
+        viewModelScope.launch {
+            runCatching { practicePreferences.setBeginWithIntention(value) }
+                .onFailure { Log.w(TAG, "failed to persist beginWithIntention", it) }
+        }
+    }
+
+    fun setCelestialAwarenessEnabled(value: Boolean) {
+        viewModelScope.launch {
+            runCatching { practicePreferences.setCelestialAwarenessEnabled(value) }
+                .onFailure { Log.w(TAG, "failed to persist celestialAwarenessEnabled", it) }
+        }
+    }
+
+    fun setZodiacSystem(value: ZodiacSystem) {
+        viewModelScope.launch {
+            runCatching { practicePreferences.setZodiacSystem(value) }
+                .onFailure { Log.w(TAG, "failed to persist zodiacSystem", it) }
+        }
+    }
+
+    fun setDistanceUnits(value: UnitSystem) {
+        viewModelScope.launch {
+            runCatching { unitsPreferences.setDistanceUnits(value) }
+                .onFailure { Log.w(TAG, "failed to persist distanceUnits", it) }
+        }
+    }
+
+    fun setWalkReliquaryEnabled(value: Boolean) {
+        viewModelScope.launch {
+            runCatching { practicePreferences.setWalkReliquaryEnabled(value) }
+                .onFailure { Log.w(TAG, "failed to persist walkReliquaryEnabled", it) }
         }
     }
 

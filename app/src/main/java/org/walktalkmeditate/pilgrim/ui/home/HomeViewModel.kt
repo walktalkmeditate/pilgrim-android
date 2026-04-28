@@ -9,10 +9,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -40,6 +42,7 @@ class HomeViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val clock: Clock,
     hemisphereRepository: HemisphereRepository,
+    unitsPreferences: UnitsPreferencesRepository,
 ) : ViewModel() {
 
     /**
@@ -60,15 +63,29 @@ class HomeViewModel @Inject constructor(
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 
-    val uiState: StateFlow<HomeUiState> = repository.observeAllWalks()
-        .map { walks ->
-            val finished = walks.filter { it.endTimestamp != null }
-            if (finished.isEmpty()) {
-                HomeUiState.Empty
-            } else {
-                HomeUiState.Loaded(finished.map { mapToRow(it) })
-            }
+    /**
+     * Stage 10-C: passthrough of the units preference. Combined into
+     * the row-mapping flow below so distance text re-formats as soon
+     * as the user toggles units in Settings — no manual refresh.
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
+    val uiState: StateFlow<HomeUiState> = combine(
+        repository.observeAllWalks(),
+        unitsPreferences.distanceUnits,
+    ) { walks, units ->
+        val finished = walks.filter { it.endTimestamp != null }
+        if (finished.isEmpty()) {
+            HomeUiState.Empty
+        } else {
+            // Iterable.map's lambda is non-suspend, so we step through
+            // the list manually — `mapToRow` is a `suspend fun` (it
+            // reads route samples + recording counts off the IO
+            // dispatcher).
+            val rows = finished.map { mapToRow(it, units) }
+            HomeUiState.Loaded(rows)
         }
+    }
         .stateIn(
             scope = viewModelScope,
             // WhileSubscribed matches Stage 2-E's pattern: unit tests
@@ -79,7 +96,7 @@ class HomeViewModel @Inject constructor(
             initialValue = HomeUiState.Loading,
         )
 
-    private suspend fun mapToRow(walk: Walk): HomeWalkRow {
+    private suspend fun mapToRow(walk: Walk, units: UnitSystem): HomeWalkRow {
         val endMs = walk.endTimestamp ?: clock.now()
         val elapsedMs = endMs - walk.startTimestamp
         val samples = repository.locationSamplesFor(walk.id).map {
@@ -99,7 +116,7 @@ class HomeViewModel @Inject constructor(
                 nowMs = clock.now(),
             ),
             durationText = WalkFormat.duration(elapsedMs),
-            distanceText = WalkFormat.distance(distance),
+            distanceText = WalkFormat.distance(distance, units),
             recordingCountText = HomeFormat.recordingCountLabel(context, recordingCount),
             intention = walk.intention?.takeIf { it.isNotBlank() },
         )

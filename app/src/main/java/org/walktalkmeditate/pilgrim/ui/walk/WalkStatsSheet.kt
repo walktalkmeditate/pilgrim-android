@@ -69,6 +69,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
@@ -100,6 +101,7 @@ fun WalkStatsSheet(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    units: UnitSystem,
     intention: String? = null,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -231,6 +233,7 @@ fun WalkStatsSheet(
                     MinimizedContent(
                         totalElapsedMillis = totalElapsedMillis,
                         distanceMeters = distanceMeters,
+                        units = units,
                         onTap = { onStateChange(SheetState.Expanded) },
                     )
                 },
@@ -245,6 +248,7 @@ fun WalkStatsSheet(
                         recorderState = recorderState,
                         audioLevel = audioLevel,
                         recordingsCount = recordingsCount,
+                        units = units,
                         intention = intention,
                         onPause = onPause,
                         onResume = onResume,
@@ -316,6 +320,7 @@ private fun DragHandle(canDrag: Boolean) {
 private fun MinimizedContent(
     totalElapsedMillis: Long,
     distanceMeters: Double,
+    units: UnitSystem,
     onTap: () -> Unit,
 ) {
     Row(
@@ -335,7 +340,7 @@ private fun MinimizedContent(
             label = stringResource(R.string.walk_stat_time),
         )
         StatColumn(
-            value = WalkFormat.distance(distanceMeters),
+            value = WalkFormat.distance(distanceMeters, units),
             label = stringResource(R.string.walk_stat_distance),
         )
         StatColumn(
@@ -379,6 +384,7 @@ private fun ExpandedContent(
     recorderState: VoiceRecorderUiState,
     audioLevel: Float,
     recordingsCount: Int,
+    units: UnitSystem,
     intention: String?,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -433,7 +439,7 @@ private fun ExpandedContent(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             StatColumn(
-                value = WalkFormat.distance(distanceMeters),
+                value = WalkFormat.distance(distanceMeters, units),
                 label = stringResource(R.string.walk_stat_distance),
                 modifier = Modifier.weight(1f),
             )

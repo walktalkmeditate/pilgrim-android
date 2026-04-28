@@ -102,9 +102,9 @@ class WalkSummaryViewModelTest {
         playback = FakeVoicePlaybackController()
         scheduler = FakeTranscriptionScheduler()
         sweeper = OrphanRecordingSweeper(context, repository, scheduler)
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
+            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         hemisphereLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -113,7 +113,17 @@ class WalkSummaryViewModelTest {
 
     private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
 
-    private fun newViewModel(walkId: Long): WalkSummaryViewModel {
+    private fun newViewModel(
+        walkId: Long,
+        practicePreferences: org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository =
+            // Stage 10-C: light reading is gated on celestialAwarenessEnabled.
+            // The legacy tests in this file all assert non-null lightReading
+            // (or don't care) — flip the default ON so they pass without
+            // changes. The OFF-suppression path has its own dedicated test.
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+                initialCelestialAwarenessEnabled = true,
+            ),
+    ): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
         val json = kotlinx.serialization.json.Json {
             ignoreUnknownKeys = true
@@ -128,6 +138,8 @@ class WalkSummaryViewModelTest {
             photoAnalysisScheduler = photoAnalysisScheduler,
             hemisphereRepository = hemisphereRepo,
             cachedShareStore = cachedShareStore,
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            practicePreferences = practicePreferences,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
     }
@@ -136,7 +148,7 @@ class WalkSummaryViewModelTest {
     fun tearDown() {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
+        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         // Stage 8-A: WalkSummaryViewModel.cachedShareFlow opens the
         // share_cache DataStore eagerly via SharingStarted.Eagerly.
         // Without this cleanup, cached entries from one test would
@@ -390,6 +402,37 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
+    fun `celestialAwarenessEnabled = false suppresses lightReadingDisplay`() = runTest(dispatcher) {
+        // Stage 10-C: the underlying lightReading is ALWAYS computed
+        // (so the toggle is observable while the summary is open) but
+        // the VM exposes a separate `lightReadingDisplay` flow that
+        // gates on `celestialAwarenessEnabled`. The screen renders
+        // from this flow, not from `summary.lightReading`.
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 48.8566, longitude = 2.3522),
+        )
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(
+            walkId = walk.id,
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+                initialCelestialAwarenessEnabled = false,
+            ),
+        )
+
+        vm.lightReadingDisplay.test {
+            // The display flow seeds with null (initialValue) and
+            // stays null because the gate is OFF.
+            assertNull(
+                "celestialAwarenessEnabled = false should suppress lightReadingDisplay",
+                awaitItem(),
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `hemisphere StateFlow proxies the repository`() = runTest(dispatcher) {
         val walk = repository.startWalk(startTimestamp = 5_000_000L)
         repository.finishWalk(walk, endTimestamp = 5_600_000L)
@@ -633,6 +676,7 @@ class WalkSummaryViewModelTest {
             elevationGainMeters = 0.0,
             topText = null,
             activityMarkers = emptyList(),
+            units = org.walktalkmeditate.pilgrim.data.units.UnitSystem.Metric,
         )
     }
 
@@ -701,7 +745,6 @@ class WalkSummaryViewModelTest {
         }
     }
 
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "walk-summary-vm-hemisphere-test"
-    }
+    // UUID-suffixed so parallel test forks can't collide on file path.
+    private val hemisphereStoreName: String = "walk-summary-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 }

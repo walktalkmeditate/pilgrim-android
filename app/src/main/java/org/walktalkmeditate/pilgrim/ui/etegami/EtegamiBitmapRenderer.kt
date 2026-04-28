@@ -388,7 +388,7 @@ object EtegamiBitmapRenderer {
             color = palette.ink.copy(alpha = 0.4f).toArgb()
         }
         val parts = buildList {
-            add(WalkFormat.distance(spec.distanceMeters))
+            add(WalkFormat.distance(spec.distanceMeters, spec.units))
             add(WalkFormat.duration(spec.durationMillis))
             // `isFinite()` guard is redundant with `elevationGain()`'s
             // source-side NaN filter, but cheap defense-in-depth —
@@ -396,7 +396,7 @@ object EtegamiBitmapRenderer {
             // here silently erases the whole postcard via
             // WalkEtegamiCard's Throwable catch.
             if (spec.elevationGainMeters > 1.0 && spec.elevationGainMeters.isFinite()) {
-                add("${spec.elevationGainMeters.roundToInt()}m ↑")
+                add("${WalkFormat.altitude(spec.elevationGainMeters, spec.units)} ↑")
             }
         }
         val text = parts.joinToString(" · ")

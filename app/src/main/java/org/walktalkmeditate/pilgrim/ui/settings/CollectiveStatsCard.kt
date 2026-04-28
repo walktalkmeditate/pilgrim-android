@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -34,6 +35,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @Composable
 fun CollectiveStatsCard(
     stats: CollectiveStats?,
+    units: UnitSystem,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -58,16 +60,35 @@ fun CollectiveStatsCard(
                     // Locale.ROOT for both: ASCII digits + grouping
                     // commas, no shared mutable NumberFormat instance.
                     val walksFmt = String.format(Locale.ROOT, "%,d", stats.totalWalks)
-                    val kmFmt = String.format(Locale.ROOT, "%.0f", stats.totalDistanceKm)
-                    if (stats.totalWalks == 1) {
-                        stringResource(R.string.collective_stats_one_walk, walksFmt, kmFmt)
-                    } else {
-                        stringResource(
-                            R.string.collective_stats_walks_distance,
-                            walksFmt,
-                            kmFmt,
-                        )
+                    // Stage 10-C: convert backend's metric km to the
+                    // user's preferred unit at display time. Backend
+                    // contract stays metric (Stage 8-B); the conversion
+                    // is purely cosmetic. The string resources still
+                    // hard-code "km" — choose between two distinct
+                    // labels per unit so we don't post-hoc replace
+                    // the unit suffix in a localized string.
+                    val (distanceFmt, distanceRes) = when (units) {
+                        UnitSystem.Metric -> {
+                            val km = stats.totalDistanceKm
+                            String.format(Locale.ROOT, "%.0f", km) to
+                                if (stats.totalWalks == 1) {
+                                    R.string.collective_stats_one_walk
+                                } else {
+                                    R.string.collective_stats_walks_distance
+                                }
+                        }
+                        UnitSystem.Imperial -> {
+                            // 1 km = 0.621371 mi.
+                            val mi = stats.totalDistanceKm * 0.621371
+                            String.format(Locale.ROOT, "%.0f", mi) to
+                                if (stats.totalWalks == 1) {
+                                    R.string.collective_stats_one_walk_mi
+                                } else {
+                                    R.string.collective_stats_walks_distance_mi
+                                }
+                        }
                     }
+                    stringResource(distanceRes, walksFmt, distanceFmt)
                 }
             }
             Text(text = text, style = pilgrimType.body)

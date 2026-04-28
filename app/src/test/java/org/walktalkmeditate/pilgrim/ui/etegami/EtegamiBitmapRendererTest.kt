@@ -51,6 +51,7 @@ class EtegamiBitmapRendererTest {
         elevationGainMeters = 42.0,
         topText = topText,
         activityMarkers = activityMarkers,
+        units = org.walktalkmeditate.pilgrim.data.units.UnitSystem.Metric,
     )
 
     @Test

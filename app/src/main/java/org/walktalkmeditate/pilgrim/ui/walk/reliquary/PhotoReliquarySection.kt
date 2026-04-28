@@ -64,6 +64,12 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * the same action via a `customActions` semantic on each tile (the
  * `pointerInput` gesture alone is invisible to the accessibility tree,
  * per Stage 6-B's lesson).
+ *
+ * **TODO (Stage 10-C+):** When the post-walk photo auto-suggestion
+ * lands (iOS gates this on `walkReliquaryEnabled`), the auto-launch
+ * should read `PracticePreferencesRepository.walkReliquaryEnabled`
+ * and skip the auto-suggestion when off. The pref already persists
+ * via Stage 10-C; user-initiated picker (FAB tap) is unaffected.
  */
 @Composable
 fun PhotoReliquarySection(

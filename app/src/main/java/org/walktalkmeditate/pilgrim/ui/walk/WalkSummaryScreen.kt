@@ -57,6 +57,8 @@ fun WalkSummaryScreen(
     val playbackUiState by viewModel.playbackUiState.collectAsStateWithLifecycle()
     val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
+    val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val lightReadingDisplay by viewModel.lightReadingDisplay.collectAsStateWithLifecycle()
     // Stage 8-A: must be collected unconditionally here, not inside
     // the Loaded branch's `if (routePoints.size >= 2)` nested block.
     // `collectAsStateWithLifecycle` calls `remember` internally, and
@@ -158,7 +160,7 @@ fun WalkSummaryScreen(
                 is WalkSummaryUiState.Loaded -> {
                     SummaryMap(points = s.summary.routePoints)
                     Spacer(Modifier.height(PilgrimSpacing.big))
-                    SummaryStats(summary = s.summary)
+                    SummaryStats(summary = s.summary, units = distanceUnits)
                     // Stage 7-A: the reliquary sits between the
                     // objective stats and the interpretive Light
                     // Reading — tangible artifacts first, felt content
@@ -177,7 +179,12 @@ fun WalkSummaryScreen(
                     // render. Room's autoGenerate guarantees the
                     // walkId > 0 precondition LightReading.from needs,
                     // so null is unreachable in production today.
-                    s.summary.lightReading?.let { reading ->
+                    //
+                    // Stage 10-C: read from `lightReadingDisplay` (live
+                    // combine of summary + celestialAwarenessEnabled
+                    // pref) so toggling the pref while the summary is
+                    // open immediately shows / hides the card.
+                    lightReadingDisplay?.let { reading ->
                         Spacer(Modifier.height(PilgrimSpacing.big))
                         WalkLightReadingCard(reading = reading)
                     }
@@ -352,7 +359,10 @@ private fun SummaryMapPlaceholder() {
 }
 
 @Composable
-private fun SummaryStats(summary: WalkSummary) {
+private fun SummaryStats(
+    summary: WalkSummary,
+    units: org.walktalkmeditate.pilgrim.data.units.UnitSystem,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal)) {
         SummaryRow(
             label = stringResource(R.string.walk_stat_duration),
@@ -364,11 +374,11 @@ private fun SummaryStats(summary: WalkSummary) {
         )
         SummaryRow(
             label = stringResource(R.string.walk_stat_distance),
-            value = WalkFormat.distance(summary.distanceMeters),
+            value = WalkFormat.distance(summary.distanceMeters, units),
         )
         SummaryRow(
             label = stringResource(R.string.walk_stat_pace),
-            value = WalkFormat.pace(summary.paceSecondsPerKm),
+            value = WalkFormat.pace(summary.paceSecondsPerKm, units),
         )
         if (summary.totalPausedMillis > 0) {
             SummaryRow(

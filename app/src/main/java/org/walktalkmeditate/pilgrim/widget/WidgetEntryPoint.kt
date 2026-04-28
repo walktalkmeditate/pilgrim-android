@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.widget
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
 /**
  * Hilt EntryPoint bridge for the Glance composable. Glance widgets are
@@ -16,4 +17,5 @@ import dagger.hilt.components.SingletonComponent
 @InstallIn(SingletonComponent::class)
 interface WidgetEntryPoint {
     fun widgetStateRepository(): WidgetStateRepository
+    fun unitsPreferencesRepository(): UnitsPreferencesRepository
 }
