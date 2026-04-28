@@ -28,4 +28,6 @@ class FakeVoicePreferencesRepository(
     override suspend fun setAutoTranscribe(enabled: Boolean) {
         _autoTranscribe.value = enabled
     }
+
+    override suspend fun awaitAutoTranscribe(): Boolean = _autoTranscribe.value
 }

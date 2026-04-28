@@ -54,6 +54,31 @@ class WaveformLoaderTest {
         samples.forEach { assertEquals(0f, it, 0.001f) }
     }
 
+    @Test fun `streams a 60-second WAV without holding it all in memory`() {
+        // 60 s mono 16 kHz 16-bit ≈ 1.83 MB of PCM. Each bar's bucket is
+        // ~30 KB — well above the 8 KB read buffer, so this exercises the
+        // multi-read-per-bucket path of the streaming loader.
+        val sampleRate = 16_000
+        val numSamples = sampleRate * 60
+        val pcm = ByteArray(numSamples * 2)
+        val bb = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until numSamples) {
+            val t = i.toDouble() / sampleRate
+            val v = (Math.sin(2.0 * Math.PI * 220.0 * t) * 16_384).toInt().toShort()
+            bb.putShort(v)
+        }
+        val wav = buildWavFile(pcm, sampleRate)
+        val f = tmp.newFile("long.wav")
+        f.writeBytes(wav)
+
+        val samples = WaveformLoader.load(f, barCount = 64)
+        assertEquals(64, samples.size)
+        samples.forEach { assertTrue("sample out of range: $it", it in 0f..1f) }
+        // Constant-amplitude sine ⇒ all bars within a tight band of the mean.
+        val avg = samples.average().toFloat()
+        samples.forEach { assertTrue(Math.abs(it - avg) < 0.2f) }
+    }
+
     /** Wrap [pcm] in a minimal RIFF WAV header (16-bit mono). */
     private fun buildWavFile(pcm: ByteArray, sampleRate: Int): ByteArray {
         val byteRate = sampleRate * 2

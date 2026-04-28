@@ -10,6 +10,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -111,15 +112,45 @@ class RecordingsListViewModel @Inject constructor(
      */
     private val fileSystemVersion = MutableStateFlow(0L)
 
+    private val recordingsFlow = walkRepository.observeAllVoiceRecordings()
+    private val walksFlow = walkRepository.observeAllWalks()
+
+    /**
+     * Slow-moving file-existence map keyed on recording id. Recomputes only
+     * when the recordings list changes upstream OR a delete handler bumps
+     * [fileSystemVersion]. The fast-moving 100 ms playback-position tick in
+     * the main `state` combine reads this cached map, NOT the file system —
+     * that earlier shape ran `fileSystem.fileExists` per recording on every
+     * tick (50 recordings × 10 ticks/sec = 500 syscalls/sec on Main during
+     * playback). Cost is now O(N×deletes) instead of O(N×ticks).
+     *
+     * Computation runs on whichever dispatcher the consuming combine is
+     * collected on (Main, by design — see the kdoc on the main `state` flow
+     * below). That's safe because the syscalls only fire on the slow path
+     * (recording list change or delete), not per playback tick. Routing
+     * via `flowOn(Dispatchers.IO)` would help further but breaks the
+     * test-dispatcher invariant the existing test suite relies on.
+     */
+    private val fileExistenceFlow: Flow<Map<Long, Boolean>> = combine(
+        recordingsFlow,
+        fileSystemVersion,
+    ) { recordings, _ ->
+        val map = HashMap<Long, Boolean>(recordings.size)
+        for (rec in recordings) {
+            map[rec.id] = fileSystem.fileExists(rec.fileRelativePath)
+        }
+        map
+    }
+
     val state: StateFlow<RecordingsListUiState> = combine(
-        walkRepository.observeAllVoiceRecordings(),
-        walkRepository.observeAllWalks(),
+        recordingsFlow,
+        walksFlow,
         searchQuery,
         playbackController.state,
         playbackController.playbackSpeed,
         playbackController.playbackPositionMillis,
         editingRecordingId,
-        fileSystemVersion,
+        fileExistenceFlow,
     ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
         val recordings = args[0] as List<VoiceRecording>
@@ -130,11 +161,8 @@ class RecordingsListViewModel @Inject constructor(
         val speed = args[4] as Float
         val posMs = args[5] as Long
         val editingId = args[6] as Long?
-        // `fileSystemVersion` (args[7]) is read for its dependency
-        // effect — incrementing it forces the combine to re-run, which
-        // re-reads `fileSystem.fileExists` for every recording below.
-        @Suppress("UNUSED_VARIABLE")
-        val version = args[7] as Long
+        @Suppress("UNCHECKED_CAST")
+        val existence = args[7] as Map<Long, Boolean>
 
         val sections = walks
             .filter { walk -> recordings.any { it.walkId == walk.id } }
@@ -166,16 +194,6 @@ class RecordingsListViewModel @Inject constructor(
             (posMs.toFloat() / playingRecording.durationMillis.toFloat()).coerceIn(0f, 1f)
         } else {
             0f
-        }
-
-        // Re-resolve file existence per recording id. Cheap (one
-        // `File.exists()` per row, dozens of rows), keeps the row
-        // composable free of per-recompose syscalls, and gives delete
-        // handlers a single seam for invalidation via [fileSystemVersion].
-        val existence = HashMap<Long, Boolean>(recordings.size).apply {
-            for (rec in recordings) {
-                put(rec.id, fileSystem.fileExists(rec.fileRelativePath))
-            }
         }
 
         RecordingsListUiState.Loaded(

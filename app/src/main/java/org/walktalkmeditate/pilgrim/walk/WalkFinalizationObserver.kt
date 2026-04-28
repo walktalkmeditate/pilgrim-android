@@ -117,10 +117,12 @@ class WalkFinalizationObserver @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "hemisphere refresh failed", t)
         }
-        // Stage 10-D: read .value live at finalize time. autoTranscribe
-        // StateFlow is Eagerly so this is current even from background
-        // contexts.
-        if (voicePreferences.autoTranscribe.value) {
+        // Stage 10-D: await disk-loaded value rather than the
+        // Eagerly-seeded StateFlow `.value`. Closes a race where a
+        // process-restart-mid-walk + immediate Finish-from-notification
+        // could read the default `false` before DataStore loaded the
+        // user's actual preference.
+        if (voicePreferences.awaitAutoTranscribe()) {
             try {
                 transcriptionScheduler.scheduleForWalk(walkId)
             } catch (cancel: CancellationException) {

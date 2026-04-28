@@ -16,4 +16,16 @@ interface VoicePreferencesRepository {
     val autoTranscribe: StateFlow<Boolean>
     suspend fun setVoiceGuideEnabled(enabled: Boolean)
     suspend fun setAutoTranscribe(enabled: Boolean)
+
+    /**
+     * Suspend-await the disk-loaded value of `autoTranscribe`. Use from
+     * background contexts (foreground service finalize, WorkManager
+     * coroutines) where the synchronous `.value` read on the Eagerly
+     * StateFlow could return the default seed (`false`) before DataStore
+     * has finished loading from disk.
+     *
+     * Latency: typically <50 ms on first call after process start;
+     * effectively zero on subsequent calls (DataStore caches in memory).
+     */
+    suspend fun awaitAutoTranscribe(): Boolean
 }

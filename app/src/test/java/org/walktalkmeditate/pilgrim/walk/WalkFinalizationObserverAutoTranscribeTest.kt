@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -173,6 +174,41 @@ class WalkFinalizationObserverAutoTranscribeTest {
         )
         Thread.sleep(WAIT_FOR_GRACE_MS)
         assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
+    }
+
+    @Test
+    fun `runFinalize awaits autoTranscribe disk value, ignores synchronous seed`() = runBlocking {
+        // Simulates the Eagerly-seed-vs-disk-load race window: the
+        // StateFlow .value reports `false` (the default seed) while
+        // the disk-loaded value is `true` (the user's actual pref).
+        // The observer must read awaitAutoTranscribe(), NOT .value.
+        val voicePrefs = object : VoicePreferencesRepository {
+            override val voiceGuideEnabled = MutableStateFlow(false)
+            override val autoTranscribe = MutableStateFlow(false)
+            override suspend fun setVoiceGuideEnabled(enabled: Boolean) = Unit
+            override suspend fun setAutoTranscribe(enabled: Boolean) = Unit
+            override suspend fun awaitAutoTranscribe(): Boolean = true
+        }
+        val observer = WalkFinalizationObserver(
+            walkState = stateFlow,
+            scope = observerScope,
+            repository = repository,
+            transcriptionScheduler = transcriptionScheduler,
+            hemisphereRepository = hemisphereRepo,
+            collectiveRepository = collectiveRepository,
+            widgetRefreshScheduler = widgetRefreshScheduler,
+            voicePreferences = voicePrefs,
+        )
+        @Suppress("UNUSED_VARIABLE") val keepAlive = observer
+        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
+        val walkId = 44L
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
+            endedAt = 1_000L,
+        )
+        Thread.sleep(WAIT_FOR_GRACE_MS)
+        assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
     }
 
     @Test

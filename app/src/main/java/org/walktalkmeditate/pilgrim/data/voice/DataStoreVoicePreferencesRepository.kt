@@ -59,6 +59,11 @@ class DataStoreVoicePreferencesRepository @Inject constructor(
         dataStore.edit { it[AUTO_TRANSCRIBE] = enabled }
     }
 
+    override suspend fun awaitAutoTranscribe(): Boolean {
+        val prefs = dataStore.data.first()
+        return prefs[AUTO_TRANSCRIBE] ?: DEFAULT_AUTO_TRANSCRIBE
+    }
+
     /**
      * Stage 10-D autoTranscribe migration. Android currently auto-transcribes every
      * recording (via WalkFinalizationObserver). iOS default is false. To preserve

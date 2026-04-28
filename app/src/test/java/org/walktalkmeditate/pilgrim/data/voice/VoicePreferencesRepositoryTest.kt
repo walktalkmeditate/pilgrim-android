@@ -102,6 +102,18 @@ class VoicePreferencesRepositoryTest {
     }
 
     @Test
+    fun `awaitAutoTranscribe returns disk-loaded value, bypasses Eagerly seed`() = runTest {
+        // Pre-seed disk with autoTranscribe=true, then construct a fresh
+        // repo (simulates process-restart). awaitAutoTranscribe should
+        // return the disk value even before the StateFlow has had time
+        // to load — that's the whole point of the suspend variant.
+        dataStore.edit { it[booleanPreferencesKey("autoTranscribe")] = true }
+        val repo = DataStoreVoicePreferencesRepository(dataStore, scope)
+        // Don't wait for StateFlow — call awaitAutoTranscribe immediately.
+        assertTrue(repo.awaitAutoTranscribe())
+    }
+
+    @Test
     fun `autoTranscribe migration — explicit user write preserved`() = runTest {
         // Pre-seed: previous user explicitly set autoTranscribe=false (overriding any seed).
         dataStore.edit { it[booleanPreferencesKey("autoTranscribe")] = false }
