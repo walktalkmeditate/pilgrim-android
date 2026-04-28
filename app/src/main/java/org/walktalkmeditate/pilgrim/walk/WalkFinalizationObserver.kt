@@ -13,6 +13,7 @@ import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
+import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
@@ -63,6 +64,7 @@ class WalkFinalizationObserver @Inject constructor(
     private val hemisphereRepository: HemisphereRepository,
     private val collectiveRepository: CollectiveRepository,
     private val widgetRefreshScheduler: WidgetRefreshScheduler,
+    private val voicePreferences: VoicePreferencesRepository,
 ) {
     // Set is unbounded by design — one Long per finished walk for the
     // process lifetime. 8 bytes × 100k walks = 800 KB worst case;
@@ -115,12 +117,17 @@ class WalkFinalizationObserver @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "hemisphere refresh failed", t)
         }
-        try {
-            transcriptionScheduler.scheduleForWalk(walkId)
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (t: Throwable) {
-            Log.w(TAG, "scheduleForWalk($walkId) failed", t)
+        // Stage 10-D: read .value live at finalize time. autoTranscribe
+        // StateFlow is Eagerly so this is current even from background
+        // contexts.
+        if (voicePreferences.autoTranscribe.value) {
+            try {
+                transcriptionScheduler.scheduleForWalk(walkId)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "scheduleForWalk($walkId) failed", t)
+            }
         }
         try {
             val talkMin = (

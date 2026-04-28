@@ -15,13 +15,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,7 +34,6 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
-import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -46,18 +43,18 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 
 /**
- * Tests the post-finish side-effect bundle that Stage 9-B moved out of
- * [org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel.finishWalk] so the
- * notification-Finish path gets the same treatment as the in-app path.
+ * Stage 10-D: tests the autoTranscribe gate added to
+ * [WalkFinalizationObserver]. The pref reflects iOS parity (default OFF for
+ * fresh installs, ON for upgraders via the migration in Task 1). Each test
+ * exercises a different pref state at finalize time.
  *
- * Wall-clock timing: the observer runs side-effects synchronously on
- * Finished (no fixed grace delay since I-1's removal of the VM-side
- * auto-stop race). Tests poll up to 1.5 s for the launched coroutines
- * to complete.
+ * Critical case: `autoTranscribe flip mid-finalize uses value at scheduling
+ * time` proves the observer reads `voicePreferences.autoTranscribe.value`
+ * LIVE when scheduling, not at construction time.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
-class WalkFinalizationObserverTest {
+class WalkFinalizationObserverAutoTranscribeTest {
 
     private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
@@ -70,12 +67,11 @@ class WalkFinalizationObserverTest {
     private lateinit var collectiveDataStore: DataStore<Preferences>
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
-    private lateinit var fakeCollectiveService: FakeCollectiveCounterService
+    private lateinit var fakeCollectiveService: FakeCollectiveCounterServiceForAutoTranscribe
     private lateinit var collectiveRepository: CollectiveRepository
-    private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
+    private lateinit var widgetRefreshScheduler: NoopWidgetRefreshScheduler
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
-    private lateinit var observer: WalkFinalizationObserver
 
     @Before
     fun setUp() {
@@ -110,35 +106,17 @@ class WalkFinalizationObserverTest {
         )
         val collectiveJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
         collectiveCacheStore = CollectiveCacheStore(collectiveDataStore, collectiveJson)
-        fakeCollectiveService = FakeCollectiveCounterService(context, collectiveJson)
+        fakeCollectiveService = FakeCollectiveCounterServiceForAutoTranscribe(context, collectiveJson)
         collectiveScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         collectiveRepository = CollectiveRepository(
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
         )
-        widgetRefreshScheduler = CountingWidgetRefreshScheduler()
+        widgetRefreshScheduler = NoopWidgetRefreshScheduler()
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        observer = WalkFinalizationObserver(
-            walkState = stateFlow,
-            scope = observerScope,
-            repository = repository,
-            transcriptionScheduler = transcriptionScheduler,
-            hemisphereRepository = hemisphereRepo,
-            collectiveRepository = collectiveRepository,
-            widgetRefreshScheduler = widgetRefreshScheduler,
-            voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
-        )
-        // The observer's `init { scope.launch { walkState.collect } }`
-        // attaches asynchronously on Dispatchers.IO. If a test mutates
-        // stateFlow.value before that collector attaches, the collector's
-        // first observed value is the LATEST set (StateFlow conflation),
-        // and the firstEmission skip eats it — side-effects never fire.
-        // Sleep briefly so the collector definitely attaches and consumes
-        // the initial Idle value.
-        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
     }
 
     @After
@@ -151,147 +129,84 @@ class WalkFinalizationObserverTest {
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
     }
 
-    @Test
-    fun `Idle initial emission does not fire side-effects`() = runBlocking {
-        // Wait beyond GRACE so any spurious launch would have completed.
-        Thread.sleep(WAIT_FOR_GRACE_MS)
-        assertEquals(0, widgetRefreshScheduler.callCount)
-        assertEquals(0, transcriptionScheduler.scheduledWalkIds.size)
+    private fun buildObserver(voicePrefs: FakeVoicePreferencesRepository): WalkFinalizationObserver {
+        val observer = WalkFinalizationObserver(
+            walkState = stateFlow,
+            scope = observerScope,
+            repository = repository,
+            transcriptionScheduler = transcriptionScheduler,
+            hemisphereRepository = hemisphereRepo,
+            collectiveRepository = collectiveRepository,
+            widgetRefreshScheduler = widgetRefreshScheduler,
+            voicePreferences = voicePrefs,
+        )
+        // Sleep so the IO-attached collector consumes the initial Idle
+        // before we start mutating stateFlow. Same pattern + value as the
+        // sibling WalkFinalizationObserverTest.
+        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
+        return observer
     }
 
     @Test
-    fun `Active to Finished transition fires all four side-effects`() = runBlocking {
-        val walkId = 42L
+    fun `autoTranscribe = true schedules transcription`() = runBlocking {
+        val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = true)
+        buildObserver(voicePrefs)
+        val walkId = 11L
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
-            WalkAccumulator(
-                walkId = walkId,
-                startedAt = 0L,
-                distanceMeters = 1_500.0,
-                totalMeditatedMillis = 60_000L,
-            ),
-            endedAt = 5_000L,
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
+            endedAt = 1_000L,
         )
         Thread.sleep(WAIT_FOR_GRACE_MS)
         assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
-        assertEquals(1, widgetRefreshScheduler.callCount)
     }
 
     @Test
-    fun `repeated Finished emission for same walkId only fires side-effects once`() = runBlocking {
-        val walkId = 99L
-        val active = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        val finished = WalkState.Finished(
-            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
-            endedAt = 1_000L,
-        )
-        stateFlow.value = active
-        stateFlow.value = finished
-        // StateFlow conflates equal emissions, but force a second
-        // Finished by toggling through Active and back. Tests the
-        // dedup-by-walkId guard.
-        stateFlow.value = active
-        stateFlow.value = finished
-        Thread.sleep(WAIT_FOR_GRACE_MS)
-        assertEquals(
-            "transcription scheduled exactly once per walkId",
-            listOf(walkId),
-            transcriptionScheduler.scheduledWalkIds,
-        )
-        assertEquals(
-            "widget refresh enqueued exactly once per walkId",
-            1,
-            widgetRefreshScheduler.callCount,
-        )
-    }
-
-    @Test
-    fun `collective recordWalk includes talkMin from voiceRecordingsFor`() = runBlocking {
-        collectiveCacheStore.setOptIn(true)
-        collectiveRepository.optIn.first { it }
-        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
-        repository.recordVoice(
-            VoiceRecording(
-                walkId = walkId,
-                startTimestamp = 1_000L,
-                endTimestamp = 121_000L,
-                durationMillis = 120_000L, // 2 minutes → talkMin = 2
-                fileRelativePath = "fake.wav",
-            ),
-        )
-        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        stateFlow.value = WalkState.Finished(
-            WalkAccumulator(
-                walkId = walkId,
-                startedAt = 0L,
-                distanceMeters = 2_500.0,
-                totalMeditatedMillis = 180_000L, // 3 minutes
-            ),
-            endedAt = 200_000L,
-        )
-        val deadline = System.currentTimeMillis() + 3_000L
-        while (fakeCollectiveService.recordedPosts.isEmpty() &&
-            System.currentTimeMillis() < deadline
-        ) {
-            Thread.sleep(50L)
-        }
-        assertEquals(1, fakeCollectiveService.recordedPosts.size)
-        val posted = fakeCollectiveService.recordedPosts.single()
-        assertEquals(1, posted.walks)
-        assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
-        assertEquals(3, posted.meditationMin)
-        assertEquals(2, posted.talkMin)
-    }
-
-    // Voice auto-stop on Finished moved to WalkLifecycleObserver in
-    // Stage 9.5-C — see WalkLifecycleObserverTest for the equivalent
-    // assertion (Active→Finished stops + commits the row).
-
-    @Test
-    fun `collective is not POSTed when opt-in is OFF`() = runBlocking {
-        // Default opt-in is OFF — the repo gates the actual POST.
-        val walkId = 17L
+    fun `autoTranscribe = false skips scheduling`() = runBlocking {
+        val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = false)
+        buildObserver(voicePrefs)
+        val walkId = 22L
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
             endedAt = 1_000L,
         )
         Thread.sleep(WAIT_FOR_GRACE_MS)
-        assertTrue(
-            "collective should not POST when opt-in OFF; recorded=${fakeCollectiveService.recordedPosts}",
-            fakeCollectiveService.recordedPosts.isEmpty(),
+        assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
+    }
+
+    @Test
+    fun `autoTranscribe flip mid-finalize uses value at scheduling time`() = runBlocking {
+        val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = false)
+        buildObserver(voicePrefs)
+        // Flip BEFORE the Finished transition. If the observer captured
+        // the construction-time value, this test fails — the gate must
+        // read .value live at finalize.
+        voicePrefs.setAutoTranscribe(true)
+        val walkId = 33L
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
+            endedAt = 1_000L,
         )
-        // The other side-effects still fire.
-        assertEquals(1, widgetRefreshScheduler.callCount)
+        Thread.sleep(WAIT_FOR_GRACE_MS)
+        assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
     }
 
     private companion object {
-        const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize"
-        // Cushion for VOICE_INSERT_GRACE_MS (200 ms) + collective-repo's
-        // launched POST coroutine + any CI thread contention. Bumped to
-        // 3 s in Stage 10-D after observing whichever test JUnit happens
-        // to run first in the class pays Robolectric class-init cost
-        // (~5 s on a cold JVM), eating into the in-flight runFinalize's
-        // hemisphere refresh + collective POST + widget schedule.
+        const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize_autotranscribe"
+        // Bumped to 3 s — see WalkFinalizationObserverTest companion comment.
         const val WAIT_FOR_GRACE_MS = 3_000L
-        // The observer's collector attaches asynchronously on
-        // Dispatchers.IO. Removing this delay (or shortening it
-        // significantly) WILL break tests on CI as the collector
-        // misses its first emission via StateFlow conflation. Verified
-        // against the regression — do not lower without re-testing.
         const val COLLECTOR_ATTACH_WAIT_MS = 300L
     }
 }
 
-private class CountingWidgetRefreshScheduler : WidgetRefreshScheduler {
-    @Volatile var callCount: Int = 0
-    override fun scheduleRefresh() {
-        callCount += 1
-    }
+private class NoopWidgetRefreshScheduler : WidgetRefreshScheduler {
+    override fun scheduleRefresh() = Unit
     override fun scheduleMidnightRefresh() = Unit
 }
 
-private class FakeCollectiveCounterService(
+private class FakeCollectiveCounterServiceForAutoTranscribe(
     context: Context,
     json: Json,
 ) : CollectiveCounterService(
