@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.soundscape.SoundscapePickerScreen
+import org.walktalkmeditate.pilgrim.ui.settings.sounds.SoundSettingsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailViewModel
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePickerScreen
@@ -62,6 +63,7 @@ object Routes {
     fun voiceGuideDetail(packId: String): String = "$VOICE_GUIDE_DETAIL_PREFIX/$packId"
 
     const val SOUNDSCAPE_PICKER = "soundscapes"
+    const val SOUND_SETTINGS = "sound_settings"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -190,6 +192,21 @@ fun PilgrimNavHost(
         }
         composable(Routes.SOUNDSCAPE_PICKER) {
             SoundscapePickerScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.SOUND_SETTINGS) {
+            // Stage 10-B: Bells & Soundscapes sub-screen. Routed from
+            // AtmosphereCard's conditional nav row via
+            // SettingsAction.OpenBellsAndSoundscapes. The screen reuses
+            // SettingsAction.OpenSoundscapes for its embedded
+            // soundscape selector, hopping into the existing
+            // SoundscapePickerScreen rather than duplicating that UI.
+            val soundsContext = LocalContext.current
+            SoundSettingsScreen(
+                onAction = { action ->
+                    handleSettingsAction(action, navController, soundsContext)
+                },
                 onBack = { navController.popBackStack() },
             )
         }
@@ -471,15 +488,16 @@ private fun handleSettingsAction(
             navController.navigate(Routes.VOICE_GUIDE_PICKER) { launchSingleTop = true }
         SettingsAction.OpenSoundscapes ->
             navController.navigate(Routes.SOUNDSCAPE_PICKER) { launchSingleTop = true }
+        SettingsAction.OpenBellsAndSoundscapes ->
+            navController.navigate(Routes.SOUND_SETTINGS) { launchSingleTop = true }
         // The remaining destinations are introduced in subsequent stages
-        // (10-B onward). Keeping them in the sealed interface NOW lets
+        // (10-D onward). Keeping them in the sealed interface NOW lets
         // each card author drop in its own action without re-touching
         // the SettingsScreen signature; the routing handler grows
         // exhaustively as cards land. The Log.w turns silent swallowing
         // into a discoverable signal during manual QA — if a future
         // card author wires a row but forgets to update this hub, the
         // tap will log instead of vanishing into the void.
-        SettingsAction.OpenBellsAndSoundscapes, // STAGE 10-B
         SettingsAction.OpenRecordings,          // STAGE 10-D
         SettingsAction.OpenAppPermissionSettings, // STAGE 10-E
         SettingsAction.OpenExportImport,        // STAGE 10-G

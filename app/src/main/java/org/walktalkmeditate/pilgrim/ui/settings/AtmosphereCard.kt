@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -14,16 +19,24 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 
 /**
- * Settings → Atmosphere card. Currently surfaces a 3-option appearance
- * picker; the iOS counterpart also has a Sounds master toggle, which
- * is deferred to a later stage (gating every audio call site is a
- * larger scope). Visually mirrors iOS's flat parchment card (no
- * border) via the shared [settingsCard] modifier.
+ * Settings → Atmosphere card. Surfaces the 3-option appearance picker,
+ * the master Sounds toggle, and (when sounds are enabled) a nav row
+ * leading into the Bells & Soundscapes sub-screen. Visually mirrors
+ * iOS's flat parchment card (no border) via the shared [settingsCard]
+ * modifier.
+ *
+ * Stage 10-B added the conditional nav row. The row is only visible
+ * when [soundsEnabled] is true — when the master toggle is off there
+ * is nothing to configure inside, so iOS hides the affordance to
+ * avoid leading the user into a dead-end sub-screen.
  */
 @Composable
 fun AtmosphereCard(
     currentMode: AppearanceMode,
     onSelectMode: (AppearanceMode) -> Unit,
+    soundsEnabled: Boolean,
+    onSetSoundsEnabled: (Boolean) -> Unit,
+    onAction: (SettingsAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // `settingsCard()` bakes in both the 16dp horizontal screen indent
@@ -61,6 +74,35 @@ fun AtmosphereCard(
             selected = currentMode,
             onSelect = onSelectMode,
         )
+        SettingsDivider()
+        SettingToggle(
+            label = stringResource(R.string.settings_sounds_label),
+            description = stringResource(R.string.settings_sounds_description),
+            checked = soundsEnabled,
+            onCheckedChange = onSetSoundsEnabled,
+        )
+        // Stage 10-B: when sounds are enabled, surface the nav row to
+        // the SoundSettingsScreen sub-surface. AnimatedVisibility
+        // matches iOS's easeInOut(0.2) reveal — same animation spec as
+        // the SoundSettingsScreen's section gating, so toggling the
+        // master from inside Atmosphere feels consistent with toggling
+        // it from inside the sub-screen.
+        AnimatedVisibility(
+            visible = soundsEnabled,
+            enter = fadeIn(animationSpec = tween(200)) +
+                expandVertically(animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(200)) +
+                shrinkVertically(animationSpec = tween(200)),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SettingsDivider()
+                SettingNavRow(
+                    label = stringResource(R.string.settings_atmosphere_bells_soundscapes_row),
+                    detail = stringResource(R.string.settings_atmosphere_bells_soundscapes_subtitle),
+                    onClick = { onAction(SettingsAction.OpenBellsAndSoundscapes) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
-

@@ -68,6 +68,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
@@ -113,6 +114,7 @@ fun WalkStatsSheet(
 ) {
     val canDrag = walkState is WalkState.Active
     val haptic = LocalHapticFeedback.current
+    val soundsEnabled = LocalSoundsEnabled.current
     val density = LocalDensity.current
     val thresholdPx = remember(density) { with(density) { DRAG_THRESHOLD_DP.toPx() } }
     val flickPx = remember(density) { with(density) { DRAG_FLICK_VELOCITY_DP.toPx() } }
@@ -168,7 +170,7 @@ fun WalkStatsSheet(
                         (dragOffset.value > thresholdPx || velocity > flickPx)
                     when {
                         shouldExpand -> {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             // Instant snap so the state-change recomposition
                             // (which grows the sheet from ~88dp → ~340dp)
                             // is the only visible transition. Animating
@@ -179,7 +181,7 @@ fun WalkStatsSheet(
                             currentOnStateChange(SheetState.Expanded)
                         }
                         shouldCollapse -> {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             dragOffset.snapTo(0f)
                             currentOnStateChange(SheetState.Minimized)
                         }

@@ -12,6 +12,7 @@ import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 
 /**
  * Stage 8-B: ViewModel for the Settings screen surfaces — currently
@@ -26,11 +27,13 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 class SettingsViewModel @Inject constructor(
     private val collectiveRepository: CollectiveRepository,
     private val appearancePreferences: AppearancePreferencesRepository,
+    private val soundsPreferences: SoundsPreferencesRepository,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
     val optIn: StateFlow<Boolean> = collectiveRepository.optIn
     val appearanceMode: StateFlow<AppearanceMode> = appearancePreferences.appearanceMode
+    val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
 
     fun setOptIn(value: Boolean) {
         viewModelScope.launch { collectiveRepository.setOptIn(value) }
@@ -48,6 +51,16 @@ class SettingsViewModel @Inject constructor(
             // failure to the user without crashing.
             runCatching { appearancePreferences.setAppearanceMode(mode) }
                 .onFailure { Log.w(TAG, "failed to persist appearance mode", it) }
+        }
+    }
+
+    fun setSoundsEnabled(value: Boolean) {
+        viewModelScope.launch {
+            // Same swallow-and-log pattern as setAppearanceMode: on a
+            // DataStore write failure, the UI's optimistic checked state
+            // reverts to the persisted value via the StateFlow re-emit.
+            runCatching { soundsPreferences.setSoundsEnabled(value) }
+                .onFailure { Log.w(TAG, "failed to persist sounds toggle", it) }
         }
     }
 

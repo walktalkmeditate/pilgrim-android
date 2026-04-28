@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 
 /**
  * SettingsViewModel is a thin passthrough to [CollectiveRepository]:
@@ -85,7 +86,7 @@ class SettingsViewModelTest {
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         repo = CollectiveRepository(cacheStore, fakeService, scope)
-        vm = SettingsViewModel(repo, FakeAppearancePreferencesRepository())
+        vm = SettingsViewModel(repo, FakeAppearancePreferencesRepository(), FakeSoundsPreferencesRepository())
     }
 
     @After

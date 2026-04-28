@@ -12,7 +12,9 @@ package org.walktalkmeditate.pilgrim.audio
  */
 interface BellPlaying {
     /**
-     * Fire the bell once. Non-blocking. No-op if audio focus is
+     * Fire the bell once at the user's configured bell volume (read
+     * from [org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository.bellVolume]
+     * by the implementation). Non-blocking. No-op if audio focus is
      * denied. Safe to call at any time.
      */
     fun play()

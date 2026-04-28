@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 
 /**
  * Unit-tests the appearance-mode passthrough on [SettingsViewModel]:
@@ -90,6 +91,7 @@ class SettingsViewModelAppearanceTest {
         val vm = SettingsViewModel(
             collectiveRepository = collectiveRepo,
             appearancePreferences = appearanceRepo,
+            soundsPreferences = FakeSoundsPreferencesRepository(),
         )
         assertEquals(AppearanceMode.Dark, vm.appearanceMode.first())
     }
@@ -100,6 +102,7 @@ class SettingsViewModelAppearanceTest {
         val vm = SettingsViewModel(
             collectiveRepository = collectiveRepo,
             appearancePreferences = appearanceRepo,
+            soundsPreferences = FakeSoundsPreferencesRepository(),
         )
         assertEquals(AppearanceMode.System, vm.appearanceMode.first())
         vm.setAppearanceMode(AppearanceMode.Light)

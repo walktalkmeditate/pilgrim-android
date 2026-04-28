@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -57,10 +58,11 @@ fun WalkLightReadingCard(
 ) {
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
+    val soundsEnabled = LocalSoundsEnabled.current
 
     val copyKoan = {
         clipboard.setText(AnnotatedString(reading.koan.text))
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
     Card(

@@ -12,8 +12,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voiceguide.PromptDensity
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideFileStore
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestService
@@ -73,6 +75,7 @@ class VoiceGuideOrchestrator @Inject constructor(
     private val fileStore: VoiceGuideFileStore,
     private val player: VoiceGuidePlayer,
     private val clock: Clock,
+    private val soundsPreferences: SoundsPreferencesRepository,
     @VoiceGuidePlaybackScope private val scope: CoroutineScope,
 ) {
     fun start() {
@@ -84,10 +87,36 @@ class VoiceGuideOrchestrator @Inject constructor(
         var meditationJob: Job? = null
         var exitingMeditation = false
 
-        walkState.collect { state ->
+        // Stage 10-B master sounds toggle: combine walkState with the
+        // soundsEnabled flag so flipping the toggle mid-walk cancels
+        // any active scheduler loop and prevents new spawns while
+        // muted. Same pattern as SoundscapeOrchestrator.
+        //
+        // **Divergence from iOS:** iOS's `soundsEnabled` does NOT gate
+        // voice guides — that's a separate `voiceGuideEnabled` toggle
+        // inside the iOS VoiceCard. Android gates voice guides here as
+        // a "panic mute" so the user has one switch that silences
+        // everything during the transitional period before Stage 10-D
+        // ships the dedicated `voiceGuideEnabled` toggle. When 10-D
+        // lands, revisit whether to keep this gate (Android-only
+        // panic mute) or remove it (strict iOS parity, two separate
+        // toggles required for full silence).
+        combine(walkState, soundsPreferences.soundsEnabled) { state, enabled ->
+            state to enabled
+        }.collect { (state, enabled) ->
             when (state) {
                 is WalkState.Active -> {
                     meditationJob?.cancel(); meditationJob = null
+                    if (!enabled) {
+                        // Master toggle is OFF — cancel any in-flight
+                        // walk scheduler and stop the player. Preserve
+                        // `exitingMeditation` so that re-enabling
+                        // mid-walk (after a Meditating exit) still
+                        // honors the post-meditation silence window.
+                        walkJob?.cancel(); walkJob = null
+                        safeStopPlayer()
+                        return@collect
+                    }
                     // `walkJob?.isActive != true` catches three cases:
                     // (1) null — first-ever spawn, (2) cancelled, and
                     // CRITICAL (3) completed-but-not-null. Plain
@@ -131,7 +160,20 @@ class VoiceGuideOrchestrator @Inject constructor(
                 }
                 is WalkState.Meditating -> {
                     walkJob?.cancel(); walkJob = null
-                    exitingMeditation = true
+                    if (!enabled) {
+                        // Master toggle is OFF — cancel any in-flight
+                        // meditation scheduler and stop the player.
+                        // Do NOT arm `exitingMeditation` here: if the
+                        // user keeps sounds OFF for the entire session,
+                        // no meditation prompts ever played, so there's
+                        // no rationale for a post-meditation silence
+                        // window when sounds are re-enabled. The flag
+                        // is only armed when a meditation scheduler
+                        // actually spawned (see below).
+                        meditationJob?.cancel(); meditationJob = null
+                        safeStopPlayer()
+                        return@collect
+                    }
                     if (meditationJob?.isActive != true) {
                         val pack = eligiblePackOrNullSync()
                         // Only spawn when BOTH pack-is-eligible AND
@@ -139,6 +181,13 @@ class VoiceGuideOrchestrator @Inject constructor(
                         // treat as a silent meditation session.
                         if (pack != null && pack.meditationPrompts != null &&
                             pack.meditationScheduling != null) {
+                            // Arm `exitingMeditation` ONLY now that we
+                            // know a real meditation scheduler is about
+                            // to run. The Active branch's silence
+                            // window only makes sense if the user
+                            // actually heard prompts during the
+                            // session.
+                            exitingMeditation = true
                             meditationJob = scope.launch {
                                 try {
                                     runSchedulerLoop(
@@ -202,6 +251,16 @@ class VoiceGuideOrchestrator @Inject constructor(
         prompt: VoiceGuidePrompt,
         sched: VoiceGuideScheduler,
     ) {
+        // Final defensive gate-check immediately before `player.play()`.
+        // The combine-driven cancellation in `observe()` covers the
+        // common case (toggle OFF → walkJob/meditationJob.cancel +
+        // safeStopPlayer) but a 1-frame race exists between
+        // `delay(TICK_INTERVAL_MS)` resuming and this synchronous block
+        // running. Without this line, a rapid OFF→ON→OFF in that
+        // micro-window could let a prompt fire before the cancellation
+        // lands. Reading `.value` on the Eagerly StateFlow is
+        // non-suspend and current. Mirrors SoundscapeOrchestrator.attemptPlay.
+        if (!soundsPreferences.soundsEnabled.value) return
         // Filesystem read here is a few `exists + length` syscalls —
         // cheap, and the orchestrator scope is `Dispatchers.Default`
         // (CPU pool), not Main, so there's no ANR risk. Avoiding a

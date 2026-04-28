@@ -55,20 +55,64 @@ class SoundscapeSelectionRepository @Inject constructor(
             Log.w(TAG, "selection datastore read failed; emitting empty", t)
             emit(emptyPreferences())
         }
-        .map { it[KEY_SELECTED] }
+        .map { prefs ->
+            // One-shot migration from the legacy snake_case key to the
+            // iOS-faithful camelCase key. Read the new key first; if
+            // absent and the legacy key has a value, fall back to it.
+            // Writes go to the new key only (legacy key is cleared on
+            // first write — see select / deselect). This keeps existing
+            // users' selections live across the migration without a
+            // separate migration job.
+            prefs[KEY_SELECTED] ?: prefs[KEY_SELECTED_LEGACY]
+        }
         .distinctUntilChanged()
         .stateIn(scope, SharingStarted.Eagerly, null)
 
+    /**
+     * **Migration contract — DO NOT remove the legacy-key cleanup.**
+     *
+     * Stage 10-B switched the storage key from snake_case
+     * `"selected_soundscape_id"` to iOS-faithful camelCase
+     * `"selectedSoundscapeId"`. The first `select()` after upgrade
+     * writes the new key AND clears the legacy key so the user has
+     * exactly one source of truth going forward. Removing the
+     * `prefs.remove(KEY_SELECTED_LEGACY)` line would leave both keys
+     * populated indefinitely; the `selectedSoundscapeId` flow's
+     * fallback (`prefs[KEY_SELECTED] ?: prefs[KEY_SELECTED_LEGACY]`)
+     * would still read correctly, but a future code change that
+     * inverts the precedence (or another stage that introduces a
+     * different read order) could silently surface stale data.
+     *
+     * One-way semantics are intentional: a downgrade past Stage 10-B
+     * after the user has saved a new selection will lose that
+     * selection. This is acceptable because (a) downgrades are
+     * vanishingly rare on Android, (b) the .pilgrim ZIP round-trip
+     * with iOS is more important than backward compatibility with
+     * pre-10-B Android builds, and (c) the user can always re-pick
+     * their soundscape post-downgrade.
+     */
     suspend fun select(assetId: String) {
-        dataStore.edit { it[KEY_SELECTED] = assetId }
+        dataStore.edit { prefs ->
+            prefs[KEY_SELECTED] = assetId
+            prefs.remove(KEY_SELECTED_LEGACY)
+        }
     }
 
     suspend fun deselect() {
-        dataStore.edit { it.remove(KEY_SELECTED) }
+        dataStore.edit { prefs ->
+            prefs.remove(KEY_SELECTED)
+            prefs.remove(KEY_SELECTED_LEGACY)
+        }
     }
 
     private companion object {
         const val TAG = "SoundscapeSelection"
-        val KEY_SELECTED = stringPreferencesKey("selected_soundscape_id")
+        // iOS UserDefaults key — matches verbatim for cross-platform
+        // .pilgrim ZIP round-trip. See iOS UserPreferences.swift line 51.
+        val KEY_SELECTED = stringPreferencesKey("selectedSoundscapeId")
+        // Legacy snake_case key from before Stage 10-B. Read on
+        // migration so existing users don't lose their selection;
+        // cleared on the next select / deselect.
+        val KEY_SELECTED_LEGACY = stringPreferencesKey("selected_soundscape_id")
     }
 }

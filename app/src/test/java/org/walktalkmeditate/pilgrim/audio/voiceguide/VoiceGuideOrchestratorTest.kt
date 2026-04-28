@@ -31,6 +31,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voiceguide.PromptDensity
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideFileStore
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifest
@@ -132,7 +133,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -149,7 +151,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -179,7 +182,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
 
@@ -224,7 +228,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         assertEquals("no spawn before files exist", 0, capturingPlayer.playCount)
@@ -253,7 +258,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         assertTrue(
@@ -272,7 +278,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         val baseline = capturingPlayer.playCount
@@ -296,7 +303,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
 
@@ -318,7 +326,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
         advanceTimeBy(60_000)
@@ -347,7 +356,8 @@ class VoiceGuideOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         VoiceGuideOrchestrator(
             walkState, selectedPackId, manifestService, fileStore,
-            capturingPlayer, FixedClock(), s,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
         ).start()
         runCurrent()
 
@@ -359,6 +369,98 @@ class VoiceGuideOrchestratorTest {
         assertTrue(
             "expected meditation r2Key, got ${lastFile?.path}",
             lastFile?.path?.endsWith("p/m1.aac") == true,
+        )
+        s.cancel()
+    }
+
+    @Test fun `master toggle off prevents voice guide spawn on Active`() = runTest {
+        val pk = pack()
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        VoiceGuideOrchestrator(
+            walkState, selectedPackId, manifestService, fileStore,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = false), s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(60_000)
+        runCurrent()
+        // Master sounds toggle is OFF — even though pack is eligible
+        // (selected, manifest hit, files on disk), no spawn.
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `master toggle off prevents voice guide spawn on Meditating`() = runTest {
+        val medDensity = PromptDensity(
+            densityMinSec = 10, densityMaxSec = 20,
+            minSpacingSec = 0, initialDelaySec = 0, walkEndBufferSec = 0,
+        )
+        val medPrompts = listOf(prompt("pm1", "p/m1.aac"))
+        val pk = pack(
+            prompts = listOf(prompt("pw1", "p/w1.aac")),
+            meditationPrompts = medPrompts,
+            meditationScheduling = medDensity,
+        )
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        VoiceGuideOrchestrator(
+            walkState, selectedPackId, manifestService, fileStore,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = false), s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(60_000)
+        runCurrent()
+        // Master sounds toggle is OFF — meditation guide must not
+        // spawn even though the pack carries meditation prompts.
+        assertEquals(0, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `flipping master toggle off mid-walk cancels voice guide playback`() = runTest {
+        val pk = pack()
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = true)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        VoiceGuideOrchestrator(
+            walkState, selectedPackId, manifestService, fileStore,
+            capturingPlayer, FixedClock(),
+            prefs, s,
+        ).start()
+        runCurrent()
+        assertTrue(
+            "expected at least 1 play before toggle, got ${capturingPlayer.playCount}",
+            capturingPlayer.playCount >= 1,
+        )
+        val baseline = capturingPlayer.playCount
+
+        // User flips the master toggle OFF mid-walk.
+        prefs.setSoundsEnabled(false)
+        runCurrent()
+        // Advance past several scheduler ticks. The walk job should be
+        // cancelled and no further plays should fire.
+        advanceTimeBy(120_000)
+        runCurrent()
+
+        assertEquals(
+            "expected zero plays after master toggle off, got ${capturingPlayer.playCount - baseline}",
+            baseline, capturingPlayer.playCount,
+        )
+        assertTrue(
+            "expected at least one stop after master toggle off, got ${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
         )
         s.cancel()
     }

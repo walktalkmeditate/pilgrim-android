@@ -29,6 +29,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 /**
@@ -68,6 +69,7 @@ fun SealRevealOverlay(
 ) {
     var phase by remember { mutableStateOf(SealRevealPhase.Hidden) }
     val haptic = LocalHapticFeedback.current
+    val soundsEnabled = LocalSoundsEnabled.current
     // Snapshot the latest [onDismiss] so a parent that passes a fresh
     // lambda each recomposition doesn't leave us firing a stale
     // closure when the already-running LaunchedEffect resumes after
@@ -119,7 +121,7 @@ fun SealRevealOverlay(
         }
         delay(PRESS_DURATION_MS.toLong())
         if (phase != SealRevealPhase.Pressing) return@LaunchedEffect
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (isMilestone) {
             // Stage 4-D milestone celebration: 2nd pulse 120ms after
             // the first. The body reads the double-tap as distinct
@@ -131,7 +133,7 @@ fun SealRevealOverlay(
             // the inter-pulse window. Same belt-and-suspenders policy
             // as the press-phase tap guard above.
             if (phase != SealRevealPhase.Pressing) return@LaunchedEffect
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         }
         phase = SealRevealPhase.Revealed
         val hold = HOLD_DURATION_MS + if (isMilestone) MILESTONE_HOLD_BONUS_MS else 0L
