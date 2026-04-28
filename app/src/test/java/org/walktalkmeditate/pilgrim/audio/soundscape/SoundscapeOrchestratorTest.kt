@@ -527,6 +527,52 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `swapping selected soundscape mid-session restarts playback with new asset`() = runTest {
+        // User opens Settings → Sound Settings → Soundscape row →
+        // picks a different soundscape WHILE actively meditating.
+        // Settings is a separate tab; meditation continues running.
+        // The orchestrator must detect the asset swap and re-spawn
+        // playback with the new file (cancel + stop the old, then
+        // spawn with the new asset).
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals("expected initial spawn", 1, capturingPlayer.playCount)
+        val firstPlayedFile = capturingPlayer.lastPlayedFile
+
+        // User swaps soundscape selection mid-session.
+        selectedAssetId.value = "forest"
+        runCurrent()
+        // Old job cancelled + player stopped.
+        assertTrue(
+            "expected stop on swap, got stopCount=${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        // New job runs through start delay then plays new file.
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals("expected re-spawn with new asset", 2, capturingPlayer.playCount)
+        assertTrue(
+            "expected new file path, was=${capturingPlayer.lastPlayedFile} (was=$firstPlayedFile)",
+            capturingPlayer.lastPlayedFile != firstPlayedFile,
+        )
+        s.cancel()
+    }
+
     @Test fun `flipping soundscape volume mid-session updates player without restarting`() = runTest {
         val a = asset("rain")
         seedManifest(listOf(a))
@@ -578,6 +624,7 @@ class SoundscapeOrchestratorTest {
         @Volatile var lastVolume: Float = Float.NaN
         @Volatile var setVolumeCount: Int = 0
         val playCount: Int get() = played.size
+        val lastPlayedFile: File? get() = played.lastOrNull()
 
         override fun play(file: File) {
             played += file

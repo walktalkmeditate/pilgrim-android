@@ -92,6 +92,13 @@ class SoundscapeOrchestrator @Inject constructor(
 
     private suspend fun observe() {
         var playJob: Job? = null
+        // Track which asset is currently spawned so a mid-meditation
+        // X→Y selection swap (user opens Settings → Sound Settings →
+        // Soundscape → picks a different one — Settings is a tab and
+        // does NOT exit meditation) actually re-spawns playback with
+        // the new asset. Without this, the new assetId would be silently
+        // ignored because `playJob?.isActive == true` for the old one.
+        var spawnedAssetId: String? = null
 
         // Combine three signals:
         //  - walkState: Meditating triggers spawn; anything else stops.
@@ -121,8 +128,20 @@ class SoundscapeOrchestrator @Inject constructor(
                             // Cancel any in-flight session and stop
                             // the player. No spawn.
                             playJob?.cancel(); playJob = null
+                            spawnedAssetId = null
                             safeStopPlayer()
                             return@collect
+                        }
+                        // Spawn when (a) no job is active OR (b) the
+                        // user picked a different soundscape and we
+                        // need to swap. Cancel the old job + stop the
+                        // player BEFORE spawning the new one so
+                        // ExoPlayer doesn't briefly play both files.
+                        val needsSwap = playJob?.isActive == true && spawnedAssetId != assetId
+                        if (needsSwap) {
+                            playJob?.cancel()
+                            playJob = null
+                            safeStopPlayer()
                         }
                         // `isActive != true` catches (1) first-ever-null,
                         // (2) cancelled, and (3) completed-but-not-null.
@@ -132,6 +151,7 @@ class SoundscapeOrchestrator @Inject constructor(
                         // eligibility check returns null — e.g., no
                         // soundscape selected). Stage 5-E lesson.
                         if (playJob?.isActive != true) {
+                            spawnedAssetId = assetId
                             playJob = scope.launch { runSessionLoop() }
                         }
                     }
@@ -140,6 +160,7 @@ class SoundscapeOrchestrator @Inject constructor(
                     WalkState.Idle,
                     is WalkState.Finished -> {
                         playJob?.cancel(); playJob = null
+                        spawnedAssetId = null
                         safeStopPlayer()
                     }
                 }
