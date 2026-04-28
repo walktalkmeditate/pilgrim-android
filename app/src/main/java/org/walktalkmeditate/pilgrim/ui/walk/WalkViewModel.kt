@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -74,6 +75,7 @@ class WalkViewModel @Inject constructor(
     private val walkRecoveryRepository:
         org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository,
     unitsPreferences: UnitsPreferencesRepository,
+    practicePreferences: PracticePreferencesRepository,
 ) : ViewModel() {
 
     /**
@@ -82,6 +84,16 @@ class WalkViewModel @Inject constructor(
      * pace formatting.
      */
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
+    /**
+     * Stage 10-C: passthrough of the "Begin with Intention" practice
+     * preference. ActiveWalkScreen observes this together with the
+     * walk state + current intention to auto-prompt the intention
+     * dialog 0.5s after entering Active when the pref is on AND no
+     * intention has been set yet (mirrors iOS
+     * `ActiveWalkView.swift:374`).
+     */
+    val beginWithIntention: StateFlow<Boolean> = practicePreferences.beginWithIntention
 
     /**
      * Id of a walk that was auto-finalized by `WalkTrackingService.onTaskRemoved`

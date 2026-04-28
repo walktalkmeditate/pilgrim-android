@@ -161,7 +161,12 @@ class WalkViewModelTest {
             scope = collectiveScope,
         )
         fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource(), org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(), org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository())
+        viewModel = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        )
     }
 
     @After
@@ -390,7 +395,12 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(bursts = emptyList())
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource(), org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(), org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository())
+        viewModel = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        )
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -419,7 +429,12 @@ class WalkViewModelTest {
         fakeAudioCapture = FakeAudioCapture(startThrowable = IllegalStateException("mic busy"))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
-        viewModel = WalkViewModel(context, controller, repository, clock, voiceRecorder, FakeLocationSource(), org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(), org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository())
+        viewModel = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+        )
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -525,6 +540,7 @@ class WalkViewModelTest {
             context, controller, repository, clock, voiceRecorder, seededSource,
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -553,6 +569,7 @@ class WalkViewModelTest {
             FakeLocationSource(lastKnown = null),
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -609,6 +626,7 @@ class WalkViewModelTest {
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -621,6 +639,24 @@ class WalkViewModelTest {
         // "test reached this line without crashing".
         throwingScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(THROWING_STORE_NAME).delete()
+    }
+
+    // --- Stage 10-C: practice prefs passthrough ----------------------
+
+    @Test
+    fun `beginWithIntention reflects practicePreferences setting`() = runTest(dispatcher) {
+        val prefs = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+            initialBeginWithIntention = true,
+        )
+        val vm = WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            prefs,
+        )
+        assertTrue(vm.beginWithIntention.value)
+        prefs.setBeginWithIntention(false)
+        assertEquals(false, vm.beginWithIntention.value)
     }
 
     private fun requireActiveWalkId(): Long =
