@@ -100,11 +100,13 @@ class DataStoreVoicePreferencesRepository @Inject constructor(
             booleanPreferencesKey("walkReliquaryEnabled"),          // Stage 10-C
         )
         val UPGRADE_PROBE_STRING_KEYS = listOf(
-            stringPreferencesKey("appearance_mode"),                 // Stage 9.5-E (snake_case in DataStore)
+            stringPreferencesKey("appearance_mode"),                 // Stage 9.5-E (snake_case)
             stringPreferencesKey("selected_voice_guide_pack_id"),    // Stage 5-D pre-rename
-            stringPreferencesKey("selectedVoiceGuidePackId"),        // post-rename
+            stringPreferencesKey("selectedVoiceGuidePackId"),        // Stage 10-D post-rename
             stringPreferencesKey("zodiacSystem"),                    // Stage 10-C
-            stringPreferencesKey("distanceUnits"),                   // Stage 10-C
+            stringPreferencesKey("distanceMeasurementType"),         // Stage 10-C (iOS-faithful key)
+            stringPreferencesKey("selectedSoundscapeId"),            // Stage 10-B
+            stringPreferencesKey("selected_soundscape_id"),          // Stage 10-B legacy snake_case
         )
     }
 }
