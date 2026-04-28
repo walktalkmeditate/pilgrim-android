@@ -12,8 +12,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voiceguide.PromptDensity
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideFileStore
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestService
@@ -73,6 +75,7 @@ class VoiceGuideOrchestrator @Inject constructor(
     private val fileStore: VoiceGuideFileStore,
     private val player: VoiceGuidePlayer,
     private val clock: Clock,
+    private val soundsPreferences: SoundsPreferencesRepository,
     @VoiceGuidePlaybackScope private val scope: CoroutineScope,
 ) {
     fun start() {
@@ -84,10 +87,26 @@ class VoiceGuideOrchestrator @Inject constructor(
         var meditationJob: Job? = null
         var exitingMeditation = false
 
-        walkState.collect { state ->
+        // Stage 10-B master sounds toggle: combine walkState with the
+        // soundsEnabled flag so flipping the toggle mid-walk cancels
+        // any active scheduler loop and prevents new spawns while
+        // muted. Same pattern as SoundscapeOrchestrator.
+        combine(walkState, soundsPreferences.soundsEnabled) { state, enabled ->
+            state to enabled
+        }.collect { (state, enabled) ->
             when (state) {
                 is WalkState.Active -> {
                     meditationJob?.cancel(); meditationJob = null
+                    if (!enabled) {
+                        // Master toggle is OFF — cancel any in-flight
+                        // walk scheduler and stop the player. Preserve
+                        // `exitingMeditation` so that re-enabling
+                        // mid-walk (after a Meditating exit) still
+                        // honors the post-meditation silence window.
+                        walkJob?.cancel(); walkJob = null
+                        safeStopPlayer()
+                        return@collect
+                    }
                     // `walkJob?.isActive != true` catches three cases:
                     // (1) null — first-ever spawn, (2) cancelled, and
                     // CRITICAL (3) completed-but-not-null. Plain
@@ -132,6 +151,16 @@ class VoiceGuideOrchestrator @Inject constructor(
                 is WalkState.Meditating -> {
                     walkJob?.cancel(); walkJob = null
                     exitingMeditation = true
+                    if (!enabled) {
+                        // Master toggle is OFF — cancel any in-flight
+                        // meditation scheduler and stop the player.
+                        // `exitingMeditation` stays true so the next
+                        // Active spawn (on toggle ON or state change)
+                        // still applies the silence window.
+                        meditationJob?.cancel(); meditationJob = null
+                        safeStopPlayer()
+                        return@collect
+                    }
                     if (meditationJob?.isActive != true) {
                         val pack = eligiblePackOrNullSync()
                         // Only spawn when BOTH pack-is-eligible AND
@@ -202,6 +231,16 @@ class VoiceGuideOrchestrator @Inject constructor(
         prompt: VoiceGuidePrompt,
         sched: VoiceGuideScheduler,
     ) {
+        // Final defensive gate-check immediately before `player.play()`.
+        // The combine-driven cancellation in `observe()` covers the
+        // common case (toggle OFF → walkJob/meditationJob.cancel +
+        // safeStopPlayer) but a 1-frame race exists between
+        // `delay(TICK_INTERVAL_MS)` resuming and this synchronous block
+        // running. Without this line, a rapid OFF→ON→OFF in that
+        // micro-window could let a prompt fire before the cancellation
+        // lands. Reading `.value` on the Eagerly StateFlow is
+        // non-suspend and current. Mirrors SoundscapeOrchestrator.attemptPlay.
+        if (!soundsPreferences.soundsEnabled.value) return
         // Filesystem read here is a few `exists + length` syscalls —
         // cheap, and the orchestrator scope is `Dispatchers.Default`
         // (CPU pool), not Main, so there's no ANR risk. Avoiding a
