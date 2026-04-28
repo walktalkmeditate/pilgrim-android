@@ -105,4 +105,146 @@ class DataStoreSoundsPreferencesRepositoryTest {
         repo2.setSoundsEnabled(false)
         assertTrue(repo2.soundsEnabled.first { it == false } == false)
     }
+
+    // ─── Defaults (one per new pref) ──────────────────────────────────
+
+    @Test
+    fun `bellHapticEnabled default is true`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(true, repo.bellHapticEnabled.first())
+    }
+
+    @Test
+    fun `bellVolume default is 0_7`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(0.7f, repo.bellVolume.first())
+    }
+
+    @Test
+    fun `soundscapeVolume default is 0_4`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(0.4f, repo.soundscapeVolume.first())
+    }
+
+    @Test
+    fun `walkStartBellId default is null`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo.walkStartBellId.first())
+    }
+
+    @Test
+    fun `walkEndBellId default is null`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo.walkEndBellId.first())
+    }
+
+    @Test
+    fun `meditationStartBellId default is null`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo.meditationStartBellId.first())
+    }
+
+    @Test
+    fun `meditationEndBellId default is null`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo.meditationEndBellId.first())
+    }
+
+    @Test
+    fun `breathRhythm default is 0`() = runTest(dispatcher) {
+        val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(0, repo.breathRhythm.first())
+    }
+
+    // ─── Round-trip persistence (non-default values) ──────────────────
+
+    @Test
+    fun `bellHapticEnabled round-trips through DataStore`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setBellHapticEnabled(false)
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(false, repo2.bellHapticEnabled.first { it == false })
+    }
+
+    @Test
+    fun `bellVolume round-trips through DataStore`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setBellVolume(0.25f)
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(0.25f, repo2.bellVolume.first { it == 0.25f })
+    }
+
+    @Test
+    fun `soundscapeVolume round-trips through DataStore`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setSoundscapeVolume(0.9f)
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(0.9f, repo2.soundscapeVolume.first { it == 0.9f })
+    }
+
+    @Test
+    fun `breathRhythm round-trips through DataStore`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setBreathRhythm(3)
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(3, repo2.breathRhythm.first { it == 3 })
+    }
+
+    // ─── Nullable bell IDs: write, then write null = removed ─────────
+
+    @Test
+    fun `walkStartBellId round-trips a value then clears to null`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setWalkStartBellId("temple-bell")
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals("temple-bell", repo2.walkStartBellId.first { it == "temple-bell" })
+
+        repo2.setWalkStartBellId(null)
+        val repo3 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo3.walkStartBellId.first { it == null })
+    }
+
+    @Test
+    fun `walkEndBellId round-trips a value then clears to null`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setWalkEndBellId("brass-bowl")
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals("brass-bowl", repo2.walkEndBellId.first { it == "brass-bowl" })
+
+        repo2.setWalkEndBellId(null)
+        val repo3 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo3.walkEndBellId.first { it == null })
+    }
+
+    @Test
+    fun `meditationStartBellId round-trips a value then clears to null`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setMeditationStartBellId("singing-bowl")
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals("singing-bowl", repo2.meditationStartBellId.first { it == "singing-bowl" })
+
+        repo2.setMeditationStartBellId(null)
+        val repo3 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo3.meditationStartBellId.first { it == null })
+    }
+
+    @Test
+    fun `meditationEndBellId round-trips a value then clears to null`() = runTest(dispatcher) {
+        val repo1 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        repo1.setMeditationEndBellId("kane")
+
+        val repo2 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals("kane", repo2.meditationEndBellId.first { it == "kane" })
+
+        repo2.setMeditationEndBellId(null)
+        val repo3 = DataStoreSoundsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo3.meditationEndBellId.first { it == null })
+    }
 }
