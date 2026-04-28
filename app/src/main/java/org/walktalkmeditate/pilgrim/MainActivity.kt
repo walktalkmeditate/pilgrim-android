@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +17,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -35,6 +38,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var walkController: WalkController
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
     @Inject lateinit var appearancePreferences: AppearancePreferencesRepository
+    @Inject lateinit var soundsPreferences: SoundsPreferencesRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,29 +65,32 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val appearanceMode by appearancePreferences.appearanceMode.collectAsStateWithLifecycle()
+            val soundsEnabled by soundsPreferences.soundsEnabled.collectAsStateWithLifecycle()
             PilgrimTheme(appearanceMode = appearanceMode) {
-                // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
-                // the chain. MainActivity's previous Scaffold was
-                // double-counting insets (parent + child both consuming
-                // status/nav-bar padding) and would have produced bottom-
-                // bar gaps above the gesture inset.
-                val deepLink by pendingDeepLink
-                PilgrimNavHost(
-                    pendingDeepLink = deepLink,
-                    onDeepLinkConsumed = {
-                        pendingDeepLink.value = null
-                        // Strip the deep-link extras from the attached
-                        // intent so a config change (rotation, locale)
-                        // doesn't re-parse + re-navigate them.
-                        // setIntent persists the mutation across
-                        // activity recreation.
-                        val cleared = intent.apply {
-                            removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
-                            removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
-                        }
-                        setIntent(cleared)
-                    },
-                )
+                CompositionLocalProvider(LocalSoundsEnabled provides soundsEnabled) {
+                    // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
+                    // the chain. MainActivity's previous Scaffold was
+                    // double-counting insets (parent + child both consuming
+                    // status/nav-bar padding) and would have produced bottom-
+                    // bar gaps above the gesture inset.
+                    val deepLink by pendingDeepLink
+                    PilgrimNavHost(
+                        pendingDeepLink = deepLink,
+                        onDeepLinkConsumed = {
+                            pendingDeepLink.value = null
+                            // Strip the deep-link extras from the attached
+                            // intent so a config change (rotation, locale)
+                            // doesn't re-parse + re-navigate them.
+                            // setIntent persists the mutation across
+                            // activity recreation.
+                            val cleared = intent.apply {
+                                removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
+                                removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
+                            }
+                            setIntent(cleared)
+                        },
+                    )
+                }
             }
         }
     }
