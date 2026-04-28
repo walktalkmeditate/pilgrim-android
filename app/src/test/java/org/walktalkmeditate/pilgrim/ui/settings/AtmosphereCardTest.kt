@@ -32,6 +32,7 @@ class AtmosphereCardTest {
                     onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
+                    onAction = {},
                 )
             }
         }
@@ -49,6 +50,7 @@ class AtmosphereCardTest {
                     onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
+                    onAction = {},
                 )
             }
         }
@@ -65,6 +67,7 @@ class AtmosphereCardTest {
                     onSelectMode = { picked = it },
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
+                    onAction = {},
                 )
             }
         }
@@ -83,6 +86,7 @@ class AtmosphereCardTest {
                     onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
+                    onAction = {},
                 )
             }
         }
@@ -100,6 +104,7 @@ class AtmosphereCardTest {
                     onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = { lastValue = it },
+                    onAction = {},
                 )
             }
         }
@@ -109,6 +114,58 @@ class AtmosphereCardTest {
         composeRule.onNode(isToggleable()).performClick()
         composeRule.runOnIdle {
             assertEquals(false, lastValue)
+        }
+    }
+
+    @Test
+    fun `bells and soundscapes nav row is visible when sounds enabled`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                AtmosphereCard(
+                    currentMode = AppearanceMode.System,
+                    onSelectMode = {},
+                    soundsEnabled = true,
+                    onSetSoundsEnabled = {},
+                    onAction = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("Bells & Soundscapes").assertExists()
+    }
+
+    @Test
+    fun `bells and soundscapes nav row is hidden when sounds disabled`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                AtmosphereCard(
+                    currentMode = AppearanceMode.System,
+                    onSelectMode = {},
+                    soundsEnabled = false,
+                    onSetSoundsEnabled = {},
+                    onAction = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("Bells & Soundscapes").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tapping bells and soundscapes row fires OpenBellsAndSoundscapes`() {
+        var fired: SettingsAction? = null
+        composeRule.setContent {
+            PilgrimTheme {
+                AtmosphereCard(
+                    currentMode = AppearanceMode.System,
+                    onSelectMode = {},
+                    soundsEnabled = true,
+                    onSetSoundsEnabled = {},
+                    onAction = { fired = it },
+                )
+            }
+        }
+        composeRule.onNodeWithText("Bells & Soundscapes").performClick()
+        composeRule.runOnIdle {
+            assertEquals(SettingsAction.OpenBellsAndSoundscapes, fired)
         }
     }
 }

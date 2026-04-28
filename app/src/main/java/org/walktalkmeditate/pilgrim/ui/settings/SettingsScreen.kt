@@ -101,6 +101,7 @@ fun SettingsScreen(
                     onSelectMode = viewModel::setAppearanceMode,
                     soundsEnabled = soundsEnabled,
                     onSetSoundsEnabled = viewModel::setSoundsEnabled,
+                    onAction = onAction,
                 )
             }
             // Voice Guides + Soundscapes are landed here as
