@@ -102,6 +102,28 @@
     <string name="settings_sounds_label">Sounds</string>
     <string name="settings_sounds_description">Bells, voice guides, haptics, and ambient soundscapes</string>
 
+    <!-- Stage 10-C PracticeCard -->
+    <string name="settings_practice_title">Practice</string>
+    <string name="settings_practice_subtitle">How you walk</string>
+    <string name="settings_begin_with_intention_label">Begin with intention</string>
+    <string name="settings_begin_with_intention_description">Set an intention before each walk</string>
+    <string name="settings_celestial_awareness_label">Celestial awareness</string>
+    <string name="settings_celestial_awareness_description">Moon phases, planetary hours, and zodiac during walks</string>
+    <string name="settings_zodiac_system_label">Zodiac system</string>
+    <string name="settings_zodiac_tropical">Tropical</string>
+    <string name="settings_zodiac_sidereal">Sidereal</string>
+    <string name="settings_units_label">Units</string>
+    <string name="settings_units_metric">Metric</string>
+    <string name="settings_units_imperial">Imperial</string>
+    <string name="settings_units_caption_metric">km · min/km · m · °C</string>
+    <string name="settings_units_caption_imperial">mi · min/mi · ft · °F</string>
+    <string name="settings_collective_label">Walk with the collective</string>
+    <string name="settings_collective_description">Add your footsteps to the path</string>
+    <string name="settings_walk_reliquary_label">Gather walk photos</string>
+    <!-- Photos copy adapted for Android: "Apple Photos" -> "your photo gallery"; "iOS Settings -> Pilgrim" -> "Android Settings -> Apps -> Pilgrim -> Permissions". -->
+    <string name="settings_walk_reliquary_description">Find photos you took along each walk and pin them to the route. Photos stay in your gallery — never copied or uploaded.</string>
+    <string name="settings_walk_reliquary_photos_denied_note">Photo access was declined. To enable the reliquary, grant photo access in Android Settings → Apps → Pilgrim → Permissions.</string>
+
     <string name="voice_guide_picker_title">Voice guides</string>
     <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>
