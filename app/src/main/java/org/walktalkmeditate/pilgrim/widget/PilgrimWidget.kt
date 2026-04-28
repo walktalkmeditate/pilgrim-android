@@ -44,6 +44,8 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
  * Stage 9-A: Pilgrim home-screen widget.
@@ -70,18 +72,27 @@ class PilgrimWidget : GlanceAppWidget() {
             WidgetEntryPoint::class.java,
         )
         val repository = entryPoint.widgetStateRepository()
+        val unitsRepo = entryPoint.unitsPreferencesRepository()
         val mantras = context.getString(R.string.widget_mantras)
         // Pre-read the first DataStore emission BEFORE provideContent so
         // the composable's `collectAsState(initial = ...)` snapshots the
         // real state on first render — avoids a flash-of-Empty for the
         // user when last-walk content is what should appear.
         val initial = repository.stateFlow.first()
+        // Stage 10-C: snapshot unit preference at provide time. Glance's
+        // composable runs in a remote process, so we read `.value` once
+        // here rather than collecting the flow inside `Body` (the worker
+        // re-issues `updateAll` on relevant changes; UnitsPreferences is
+        // not yet wired through that path, but a Settings flip will
+        // refresh the widget within the worker's next interval).
+        val initialUnits = unitsRepo.distanceUnits.value
 
         provideContent {
             Body(
                 stateFlow = repository.stateFlow,
                 initial = initial,
                 mantras = mantras,
+                units = initialUnits,
                 today = remember { LocalDate.now() },
             )
         }
@@ -93,6 +104,7 @@ private fun Body(
     stateFlow: kotlinx.coroutines.flow.Flow<WidgetState>,
     initial: WidgetState,
     mantras: String,
+    units: UnitSystem,
     today: LocalDate,
 ) {
     val state by stateFlow.collectAsState(initial = initial)
@@ -100,7 +112,7 @@ private fun Body(
     val description = when (val s = state) {
         is WidgetState.LastWalk -> context.getString(
             R.string.widget_a11y_last_walk,
-            formatDistance(s.distanceMeters),
+            formatDistance(s.distanceMeters, units),
             formatDuration(s.activeDurationMs),
             relativeDateLabel(context, s.endTimestampMs, today),
         )
@@ -117,17 +129,21 @@ private fun Body(
         contentAlignment = Alignment.Center,
     ) {
         when (val s = state) {
-            is WidgetState.LastWalk -> LastWalkContent(s, today)
+            is WidgetState.LastWalk -> LastWalkContent(s, today, units)
             WidgetState.Empty -> MantraContent(mantras = mantras, today = today)
         }
     }
 }
 
 @Composable
-private fun LastWalkContent(state: WidgetState.LastWalk, today: LocalDate) {
+private fun LastWalkContent(
+    state: WidgetState.LastWalk,
+    today: LocalDate,
+    units: UnitSystem,
+) {
     val context = LocalContext.current
     val isMedium = LocalSize.current.width >= 200.dp
-    val distanceLabel = formatDistance(state.distanceMeters)
+    val distanceLabel = formatDistance(state.distanceMeters, units)
     val durationLabel = formatDuration(state.activeDurationMs)
     val relativeLabel = relativeDateLabel(context, state.endTimestampMs, today)
 
@@ -263,14 +279,26 @@ internal fun relativeDateLabel(context: Context, endTimestampMs: Long, today: Lo
     }
 }
 
-internal fun formatDistance(meters: Double): String {
-    val km = meters / 1000.0
-    return if (km >= 10.0) {
-        String.format(Locale.ROOT, "%.0f km", km)
-    } else {
-        String.format(Locale.ROOT, "%.2f km", km)
+/**
+ * Stage 10-C: Glance widget distance label. Delegates to [WalkFormat]
+ * so the widget honors the user's units preference. Above 10 km the
+ * widget previously rounded to whole km for character-budget reasons;
+ * we preserve that special case in metric (matches the Stage 9-A look).
+ * Imperial uses [WalkFormat.distance]'s standard "0.62 mi" / "164 ft"
+ * presentation — the widget's space is already proven to fit it.
+ */
+internal fun formatDistance(meters: Double, units: UnitSystem): String =
+    when (units) {
+        UnitSystem.Metric -> {
+            val km = meters / 1000.0
+            if (km >= 10.0) {
+                String.format(Locale.ROOT, "%.0f km", km)
+            } else {
+                String.format(Locale.ROOT, "%.2f km", km)
+            }
+        }
+        UnitSystem.Imperial -> WalkFormat.distance(meters, UnitSystem.Imperial)
     }
-}
 
 internal fun formatDuration(durationMs: Long): String {
     val totalMinutes = (durationMs / 60_000L).coerceAtLeast(0)
