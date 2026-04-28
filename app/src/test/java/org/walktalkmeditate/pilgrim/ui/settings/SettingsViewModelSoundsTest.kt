@@ -92,6 +92,7 @@ class SettingsViewModelSoundsTest {
             collectiveRepository = collectiveRepo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
             soundsPreferences = soundsRepo,
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
         assertEquals(false, vm.soundsEnabled.first())
     }
@@ -103,6 +104,7 @@ class SettingsViewModelSoundsTest {
             collectiveRepository = collectiveRepo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
             soundsPreferences = soundsRepo,
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
         assertEquals(true, vm.soundsEnabled.first())
         vm.setSoundsEnabled(false)
@@ -118,6 +120,7 @@ class SettingsViewModelSoundsTest {
             collectiveRepository = collectiveRepo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
             soundsPreferences = throwingRepo,
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
         )
         // Calling the setter must NOT throw — runCatching inside the
         // VM swallows the IOException and logs it.

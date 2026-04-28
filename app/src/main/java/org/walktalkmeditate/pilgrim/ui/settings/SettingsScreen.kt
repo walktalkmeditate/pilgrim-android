@@ -55,6 +55,7 @@ fun SettingsScreen(
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
     val soundsEnabled by viewModel.soundsEnabled.collectAsStateWithLifecycle()
+    val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
     // rememberLazyListState wraps a rememberSaveable internally — without
     // it, rotating the device would yank the user back to the top of
     // Settings instead of preserving their scroll position.
@@ -90,7 +91,7 @@ fun SettingsScreen(
                 )
             }
             item {
-                CollectiveStatsCard(stats = stats)
+                CollectiveStatsCard(stats = stats, units = distanceUnits)
             }
             item {
                 CollectiveOptInRow(checked = optIn, onCheckedChange = viewModel::setOptIn)

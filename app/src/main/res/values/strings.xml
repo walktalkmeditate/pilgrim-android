@@ -6,6 +6,8 @@
     <string name="walk_notification_channel_description">Ongoing notification while a walk is being recorded.</string>
     <string name="walk_notification_starting">Preparing your walk&#8230;</string>
     <string name="walk_notification_active">Walking — %1$.2f km</string>
+    <!-- Stage 10-C: Imperial variant of the above. -->
+    <string name="walk_notification_active_mi">Walking — %1$.2f mi</string>
     <string name="walk_notification_paused">Walk paused.</string>
     <string name="walk_notification_meditating">Meditating.</string>
     <string name="walk_notification_finished">Walk complete.</string>
@@ -206,6 +208,10 @@
     <string name="collective_opt_in_description">Add your footsteps to the path</string>
     <string name="collective_stats_walks_distance">%1$s walks · %2$s km</string>
     <string name="collective_stats_one_walk">%1$s walk · %2$s km</string>
+    <!-- Stage 10-C: Imperial variants of the above. Identical structure
+         with `mi` suffix instead of `km`. -->
+    <string name="collective_stats_walks_distance_mi">%1$s walks · %2$s mi</string>
+    <string name="collective_stats_one_walk_mi">%1$s walk · %2$s mi</string>
     <string name="collective_stats_loading">Loading the collective…</string>
     <string name="collective_stats_unavailable">The collective is resting.</string>
 

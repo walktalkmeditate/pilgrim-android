@@ -13,6 +13,8 @@ import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesReposit
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
 /**
  * Stage 8-B: ViewModel for the Settings screen surfaces — currently
@@ -28,12 +30,19 @@ class SettingsViewModel @Inject constructor(
     private val collectiveRepository: CollectiveRepository,
     private val appearancePreferences: AppearancePreferencesRepository,
     private val soundsPreferences: SoundsPreferencesRepository,
+    unitsPreferences: UnitsPreferencesRepository,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
     val optIn: StateFlow<Boolean> = collectiveRepository.optIn
     val appearanceMode: StateFlow<AppearanceMode> = appearancePreferences.appearanceMode
     val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
+
+    /**
+     * Stage 10-C: passthrough so [CollectiveStatsCard] can format
+     * the community totals in the user's preferred units.
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
     fun setOptIn(value: Boolean) {
         viewModelScope.launch { collectiveRepository.setOptIn(value) }

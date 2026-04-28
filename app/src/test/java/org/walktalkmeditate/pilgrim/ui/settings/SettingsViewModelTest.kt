@@ -86,7 +86,12 @@ class SettingsViewModelTest {
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         repo = CollectiveRepository(cacheStore, fakeService, scope)
-        vm = SettingsViewModel(repo, FakeAppearancePreferencesRepository(), FakeSoundsPreferencesRepository())
+        vm = SettingsViewModel(
+            repo,
+            FakeAppearancePreferencesRepository(),
+            FakeSoundsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+        )
     }
 
     @After
