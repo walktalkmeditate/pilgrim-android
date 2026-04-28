@@ -5,9 +5,11 @@
     <string name="walk_notification_channel_name">Walk tracking</string>
     <string name="walk_notification_channel_description">Ongoing notification while a walk is being recorded.</string>
     <string name="walk_notification_starting">Preparing your walk&#8230;</string>
-    <string name="walk_notification_active">Walking — %1$.2f km</string>
-    <!-- Stage 10-C: Imperial variant of the above. -->
-    <string name="walk_notification_active_mi">Walking — %1$.2f mi</string>
+    <!-- Stage 10-C: distance is pre-formatted by WalkFormat (km/m or mi/ft
+         depending on the user's UnitSystem preference + value) and
+         substituted as a single string so notification text honors the
+         same <0.1 mi → feet fallback the rest of the app uses. -->
+    <string name="walk_notification_active">Walking — %1$s</string>
     <string name="walk_notification_paused">Walk paused.</string>
     <string name="walk_notification_meditating">Meditating.</string>
     <string name="walk_notification_finished">Walk complete.</string>

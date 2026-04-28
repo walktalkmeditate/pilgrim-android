@@ -117,6 +117,23 @@ class WalkNotificationFactoryTest {
     }
 
     @Test
+    fun `notificationText for Imperial below 0_1 mi falls back to feet`() {
+        // 100 m ≈ 0.062 mi → below the 0.1 mi threshold. The notification
+        // text MUST use the same <0.1 mi → ft fallback as every other
+        // display surface (WalkStatsSheet, WalkSummaryScreen, widget).
+        // Pre-fix: notification showed "0.06 mi"; the rest of the app
+        // showed "328 ft". The inconsistency was visible early in any
+        // Imperial-mode walk. Locking in the delegation here so a future
+        // refactor can't silently revive the inconsistency.
+        val state = WalkState.Active(
+            WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 100.0),
+        )
+        val text = walkNotificationText(context, state, UnitSystem.Imperial)
+        assertTrue("expected feet in text but got: $text", text.contains(" ft"))
+        assertTrue("expected feet, not miles, in text but got: $text", !text.contains(" mi"))
+    }
+
+    @Test
     fun `notificationText covers every WalkState branch without crashing`() {
         // Belt-and-braces: walkNotificationText is a when() over a sealed
         // class. If any future branch is added without updating the helper,

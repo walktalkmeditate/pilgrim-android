@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
@@ -170,24 +171,35 @@ class WalkTrackingService : Service() {
         }
 
         notificationJob = scope.launch {
-            controller.state.collect { state ->
-                val (nextLatch, action) = decideStateAction(state, hasBeenActive)
-                hasBeenActive = nextLatch
-                when (action) {
-                    StateAction.SelfStop -> {
-                        // Skip the Finished render — onDestroy's
-                        // stopForeground(REMOVE) is about to clear the
-                        // notification anyway, and posting a "Walk
-                        // complete." rebuild here just lets the user
-                        // briefly see it flash on slower devices.
-                        // For Idle-after-in-progress (Stage 9.5-C
-                        // discard), same reasoning: the walk row was
-                        // just cascade-deleted, no point re-rendering.
-                        stopSelf()
+            // Observe controller state AND units preference: a Settings
+            // toggle from Metric→Imperial mid-walk must re-render the
+            // notification text immediately, not wait for the next GPS
+            // fix to push a fresh `controller.state` emission. The
+            // fingerprint already includes the units ordinal — combining
+            // here ensures the collector actually fires when units flip.
+            // Combining a `_` for units (we don't use the value here;
+            // `notificationFingerprint` reads `unitsPreferences.distanceUnits.value`
+            // synchronously) keeps the existing decideStateAction path
+            // untouched.
+            combine(controller.state, unitsPreferences.distanceUnits) { state, _ -> state }
+                .collect { state ->
+                    val (nextLatch, action) = decideStateAction(state, hasBeenActive)
+                    hasBeenActive = nextLatch
+                    when (action) {
+                        StateAction.SelfStop -> {
+                            // Skip the Finished render — onDestroy's
+                            // stopForeground(REMOVE) is about to clear the
+                            // notification anyway, and posting a "Walk
+                            // complete." rebuild here just lets the user
+                            // briefly see it flash on slower devices.
+                            // For Idle-after-in-progress (Stage 9.5-C
+                            // discard), same reasoning: the walk row was
+                            // just cascade-deleted, no point re-rendering.
+                            stopSelf()
+                        }
+                        StateAction.UpdateNotification -> updateNotification(state)
                     }
-                    StateAction.UpdateNotification -> updateNotification(state)
                 }
-            }
         }
     }
 

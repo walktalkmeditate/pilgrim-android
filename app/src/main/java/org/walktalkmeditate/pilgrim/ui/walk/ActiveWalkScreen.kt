@@ -292,8 +292,15 @@ fun ActiveWalkScreen(
         // the state-change effect dismisses it on Idle→Active before
         // this delay starts. If a future refactor decouples that
         // dismissal, the auto-prompt would otherwise stack on top.
+        // Also include `showAutoIntention` itself — closes the re-entrancy
+        // window where a `remember(activeWalkId)` reset (brief walkId flip
+        // mid-delay) could let a second auto-prompt stack atop a still-
+        // visible first one. The latch is set before the delay, so the
+        // realistic failure path is small, but the guard cost is one
+        // boolean OR.
         val anyOtherSheetOpen = showOptions || showLeaveConfirm ||
-            showWaypointMarking || showPreWalkIntention
+            showWaypointMarking || showPreWalkIntention ||
+            showAutoIntention
         if (navWalkState is WalkState.Active && intention == null && !anyOtherSheetOpen) {
             showAutoIntention = true
         }
