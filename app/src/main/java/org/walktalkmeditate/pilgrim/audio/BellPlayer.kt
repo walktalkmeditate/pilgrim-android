@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 
 /**
  * Plays the bundled temple-bell asset once per [play] call. Used by
@@ -61,6 +62,7 @@ import org.walktalkmeditate.pilgrim.R
 class BellPlayer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val audioManager: AudioManager,
+    private val soundsPreferences: SoundsPreferencesRepository,
 ) : BellPlaying {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -177,6 +179,22 @@ class BellPlayer @Inject constructor(
             true
         }
         mainHandler.postDelayed(safetyNet, SAFETY_NET_MS)
+
+        // Apply user's bellVolume preference (Eagerly StateFlow — `.value`
+        // is the current cached pref, no suspend hop needed). MediaPlayer's
+        // setVolume is legal in the Prepared state per the docs, but
+        // calling it AFTER start() would briefly play at 1.0f before
+        // the volume change lands; setting it here avoids that flash.
+        // Coerced into [0, 1] defensively even though the repository
+        // already clamps writes — guards against future repo refactors.
+        val bellVolume = soundsPreferences.bellVolume.value.coerceIn(0f, 1f)
+        try {
+            player.setVolume(bellVolume, bellVolume)
+        } catch (t: Throwable) {
+            Log.w(TAG, "MediaPlayer setVolume failed", t)
+            // Non-fatal: the bell will still play at the player's default
+            // volume. Continue to start().
+        }
 
         try {
             player.start()
