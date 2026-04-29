@@ -142,10 +142,17 @@ private fun JourneyWebView(walksJson: String, manifestJson: String) {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (injected || view == null) return
                         injected = true
-                        val safeWalks = escapeJsBoundary(walksJson)
-                        val safeManifest = escapeJsBoundary(manifestJson)
-                        val payload = """{"walks":$safeWalks,"manifest":$safeManifest}"""
-                        view.evaluateJavascript("window.pilgrimViewer.loadData($payload);", null)
+                        // iOS uses a 1-second delay after onPageFinished
+                        // before injecting because the viewer's JS may
+                        // attach `window.pilgrimViewer` asynchronously
+                        // after DOM load. Mirror that here.
+                        // JourneyViewerView.swift:201.
+                        view.postDelayed({
+                            val safeWalks = escapeJsBoundary(walksJson)
+                            val safeManifest = escapeJsBoundary(manifestJson)
+                            val payload = """{"walks":$safeWalks,"manifest":$safeManifest}"""
+                            view.evaluateJavascript("window.pilgrimViewer.loadData($payload);", null)
+                        }, INJECTION_DELAY_MS)
                     }
                 }
                 loadUrl(VIEWER_URL)
@@ -166,3 +173,5 @@ private fun escapeJsBoundary(json: String): String =
     json.replace(" ", "\\u2028").replace(" ", "\\u2029")
 
 private const val VIEWER_URL = "https://view.pilgrimapp.org"
+
+private const val INJECTION_DELAY_MS = 1_000L
