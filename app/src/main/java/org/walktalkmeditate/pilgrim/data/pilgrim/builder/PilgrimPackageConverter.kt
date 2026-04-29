@@ -231,7 +231,7 @@ object PilgrimPackageConverter {
             id = 0L,
             uuid = pilgrim.id,
             startTimestamp = pilgrim.startDate.toEpochMilli(),
-            endTimestamp = pilgrim.endDate.toEpochMilli(),
+            endTimestamp = if (pilgrim.finishedRecording) pilgrim.endDate.toEpochMilli() else null,
             intention = pilgrim.intention,
             favicon = pilgrim.favicon,
             notes = null,

@@ -314,6 +314,21 @@ class PilgrimPackageConverterTest {
     }
 
     @Test
+    fun `convertToImport respects finishedRecording false`() {
+        val pilgrimWalk = synthesizePilgrimWalk(uuid = UUID.randomUUID().toString())
+            .copy(finishedRecording = false)
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertNull(pending.walk.endTimestamp)
+    }
+
+    @Test
+    fun `convertToImport sets endTimestamp when finishedRecording true`() {
+        val pilgrimWalk = synthesizePilgrimWalk(uuid = UUID.randomUUID().toString())
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(pilgrimWalk.endDate.toEpochMilli(), pending.walk.endTimestamp)
+    }
+
+    @Test
     fun `convertToImport meditation activity maps to MEDITATING domain enum`() {
         val pilgrimWalk = synthesizePilgrimWalk(
             activities = listOf(
