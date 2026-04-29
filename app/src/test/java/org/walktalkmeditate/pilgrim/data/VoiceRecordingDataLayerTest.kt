@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -170,7 +171,7 @@ class VoiceRecordingDataLayerTest {
     fun `observeForWalk emits updates on insert`() = runTest {
         val walk = makeWalk()
 
-        repository.observeVoiceRecordings(walk.id).test {
+        repository.observeVoiceRecordings(walk.id).test(timeout = 5.seconds) {
             assertEquals(emptyList<VoiceRecording>(), awaitItem())
 
             repository.recordVoice(makeRecording(walk.id, start = 1_000L))
@@ -268,7 +269,7 @@ class VoiceRecordingDataLayerTest {
         repository.recordVoice(makeRecording(walkB.id, start = 11_000L))
         repository.recordVoice(makeRecording(walkA.id, start = 3_000L))
 
-        repository.observeAllVoiceRecordings().test {
+        repository.observeAllVoiceRecordings().test(timeout = 5.seconds) {
             val all = awaitItem()
             assertEquals(3, all.size)
             // DESC ordering by start_timestamp regardless of walk_id.

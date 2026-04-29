@@ -17,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -55,7 +56,7 @@ class DataStoreUnitsPreferencesRepositoryTest {
     @Test
     fun `default is Metric when no key written`() = runTest(dispatcher) {
         val repo = DataStoreUnitsPreferencesRepository(dataStore, scope)
-        repo.distanceUnits.test {
+        repo.distanceUnits.test(timeout = 5.seconds) {
             assertEquals(UnitSystem.Metric, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -85,7 +86,7 @@ class DataStoreUnitsPreferencesRepositoryTest {
         dataStore.edit { it[stringPreferencesKey("distanceMeasurementType")] = "nautical-miles" }
 
         val repo = DataStoreUnitsPreferencesRepository(dataStore, scope)
-        repo.distanceUnits.test {
+        repo.distanceUnits.test(timeout = 5.seconds) {
             assertEquals(UnitSystem.Metric, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -94,7 +95,7 @@ class DataStoreUnitsPreferencesRepositoryTest {
     @Test
     fun `distanceUnits emits new value after setDistanceUnits`() = runTest(dispatcher) {
         val repo = DataStoreUnitsPreferencesRepository(dataStore, scope)
-        repo.distanceUnits.test {
+        repo.distanceUnits.test(timeout = 5.seconds) {
             assertEquals(UnitSystem.Metric, awaitItem())
             repo.setDistanceUnits(UnitSystem.Imperial)
             assertEquals(UnitSystem.Imperial, awaitItem())

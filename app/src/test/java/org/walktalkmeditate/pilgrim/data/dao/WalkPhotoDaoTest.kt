@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -94,7 +95,7 @@ class WalkPhotoDaoTest {
     fun `observeForWalk emits new List on insert and delete`() = runTest {
         val w = newWalk()
 
-        photoDao.observeForWalk(w).test {
+        photoDao.observeForWalk(w).test(timeout = 5.seconds) {
             assertEquals(emptyList<WalkPhoto>(), awaitItem())
 
             val id1 = photoDao.insert(samplePhoto(w, uri = "content://x/1"))

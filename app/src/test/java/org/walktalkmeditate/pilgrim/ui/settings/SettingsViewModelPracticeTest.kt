@@ -7,6 +7,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.IOException
 import java.util.UUID
@@ -31,6 +32,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
@@ -46,6 +49,8 @@ import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 
 /**
  * Unit-tests the Stage 10-C Chunk D practice + units passthroughs on
@@ -70,6 +75,9 @@ class SettingsViewModelPracticeTest {
     private lateinit var fakeService: FakeCounterService
     private lateinit var scope: CoroutineScope
     private lateinit var collectiveRepo: CollectiveRepository
+    private lateinit var db: PilgrimDatabase
+    private lateinit var walkRepository: WalkRepository
+    private lateinit var voiceFs: VoiceRecordingFileSystem
 
     @Before
     fun setUp() {
@@ -84,10 +92,26 @@ class SettingsViewModelPracticeTest {
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope)
+        db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        walkRepository = WalkRepository(
+            database = db,
+            walkDao = db.walkDao(),
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = db.walkEventDao(),
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+        )
+        voiceFs = VoiceRecordingFileSystem(context)
     }
 
     @After
     fun tearDown() {
+        db.close()
         scope.cancel()
         dataStoreScope.cancel()
         Dispatchers.resetMain()
@@ -102,6 +126,9 @@ class SettingsViewModelPracticeTest {
         soundsPreferences = FakeSoundsPreferencesRepository(),
         practicePreferences = practiceRepo,
         unitsPreferences = unitsRepo,
+        voicePreferences = FakeVoicePreferencesRepository(),
+        walkRepository = walkRepository,
+        voiceRecordingFileSystem = voiceFs,
     )
 
     @Test

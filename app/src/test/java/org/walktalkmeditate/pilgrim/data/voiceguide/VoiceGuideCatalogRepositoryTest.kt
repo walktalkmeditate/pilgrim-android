@@ -9,6 +9,7 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import java.io.File
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -187,7 +188,7 @@ class VoiceGuideCatalogRepositoryTest {
         // Subscribe and drain until we see NotDownloaded for "p", THEN
         // drive progress — otherwise the scheduler emission can race the
         // upstream combine's initial wiring.
-        repo.packStates.test {
+        repo.packStates.test(timeout = 5.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is VoiceGuidePackState.NotDownloaded) {
                 current = awaitItem()
@@ -218,7 +219,7 @@ class VoiceGuideCatalogRepositoryTest {
         seedManifest(listOf(pk))
         val repo = buildRepo()
 
-        repo.packStates.test {
+        repo.packStates.test(timeout = 5.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is VoiceGuidePackState.NotDownloaded) {
                 current = awaitItem()

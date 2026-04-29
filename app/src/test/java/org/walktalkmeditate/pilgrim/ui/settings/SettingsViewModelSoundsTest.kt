@@ -7,6 +7,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
@@ -41,6 +44,8 @@ import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 
 /**
  * Unit-tests the soundsEnabled passthrough on [SettingsViewModel]:
@@ -62,6 +67,9 @@ class SettingsViewModelSoundsTest {
     private lateinit var fakeService: FakeCounterService
     private lateinit var scope: CoroutineScope
     private lateinit var collectiveRepo: CollectiveRepository
+    private lateinit var db: PilgrimDatabase
+    private lateinit var walkRepository: WalkRepository
+    private lateinit var voiceFs: VoiceRecordingFileSystem
 
     @Before
     fun setUp() {
@@ -76,10 +84,26 @@ class SettingsViewModelSoundsTest {
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope)
+        db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        walkRepository = WalkRepository(
+            database = db,
+            walkDao = db.walkDao(),
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = db.walkEventDao(),
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+        )
+        voiceFs = VoiceRecordingFileSystem(context)
     }
 
     @After
     fun tearDown() {
+        db.close()
         scope.cancel()
         dataStoreScope.cancel()
         Dispatchers.resetMain()
@@ -94,6 +118,9 @@ class SettingsViewModelSoundsTest {
             soundsPreferences = soundsRepo,
             practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            voicePreferences = FakeVoicePreferencesRepository(),
+            walkRepository = walkRepository,
+            voiceRecordingFileSystem = voiceFs,
         )
         assertEquals(false, vm.soundsEnabled.first())
     }
@@ -107,6 +134,9 @@ class SettingsViewModelSoundsTest {
             soundsPreferences = soundsRepo,
             practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            voicePreferences = FakeVoicePreferencesRepository(),
+            walkRepository = walkRepository,
+            voiceRecordingFileSystem = voiceFs,
         )
         assertEquals(true, vm.soundsEnabled.first())
         vm.setSoundsEnabled(false)
@@ -124,6 +154,9 @@ class SettingsViewModelSoundsTest {
             soundsPreferences = throwingRepo,
             practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            voicePreferences = FakeVoicePreferencesRepository(),
+            walkRepository = walkRepository,
+            voiceRecordingFileSystem = voiceFs,
         )
         // Calling the setter must NOT throw — runCatching inside the
         // VM swallows the IOException and logs it.

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voiceguide.PromptDensity
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideFileStore
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestService
@@ -23,6 +24,14 @@ import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePack
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePrompt
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkState
+
+/**
+ * Stage 10-D: meditation-guide gate is hardcoded ON pending a future MeditationView
+ * parity stage that adds both the per-session UI toggle and the DataStore-backed
+ * `meditationGuideEnabled` preference. iOS toggles this only inside the meditation
+ * options sheet (not in Settings).
+ */
+private const val MEDITATION_GUIDE_ALWAYS_ENABLED = true
 
 /**
  * App-scoped coordinator that observes the walk-state flow and
@@ -76,6 +85,7 @@ class VoiceGuideOrchestrator @Inject constructor(
     private val player: VoiceGuidePlayer,
     private val clock: Clock,
     private val soundsPreferences: SoundsPreferencesRepository,
+    private val voicePreferences: VoicePreferencesRepository,
     @VoiceGuidePlaybackScope private val scope: CoroutineScope,
 ) {
     fun start() {
@@ -87,23 +97,21 @@ class VoiceGuideOrchestrator @Inject constructor(
         var meditationJob: Job? = null
         var exitingMeditation = false
 
-        // Stage 10-B master sounds toggle: combine walkState with the
-        // soundsEnabled flag so flipping the toggle mid-walk cancels
-        // any active scheduler loop and prevents new spawns while
-        // muted. Same pattern as SoundscapeOrchestrator.
-        //
-        // **Divergence from iOS:** iOS's `soundsEnabled` does NOT gate
-        // voice guides — that's a separate `voiceGuideEnabled` toggle
-        // inside the iOS VoiceCard. Android gates voice guides here as
-        // a "panic mute" so the user has one switch that silences
-        // everything during the transitional period before Stage 10-D
-        // ships the dedicated `voiceGuideEnabled` toggle. When 10-D
-        // lands, revisit whether to keep this gate (Android-only
-        // panic mute) or remove it (strict iOS parity, two separate
-        // toggles required for full silence).
-        combine(walkState, soundsPreferences.soundsEnabled) { state, enabled ->
-            state to enabled
-        }.collect { (state, enabled) ->
+        // Stage 10-B master sounds toggle + Stage 10-D voiceGuide toggle:
+        // combine walkState with both flags so flipping either toggle
+        // mid-walk cancels any active scheduler loop and prevents new
+        // spawns while muted. `enabled = soundsOk && voiceOk` — the
+        // master sounds toggle remains a "panic mute" that silences
+        // everything; the voiceGuide toggle is the iOS-parity per-card
+        // switch.
+        combine(
+            walkState,
+            soundsPreferences.soundsEnabled,
+            voicePreferences.voiceGuideEnabled,
+        ) { state, soundsOk, voiceOk ->
+            Triple(state, soundsOk, voiceOk)
+        }.collect { (state, soundsOk, voiceOk) ->
+            val enabled = soundsOk && voiceOk
             when (state) {
                 is WalkState.Active -> {
                     meditationJob?.cancel(); meditationJob = null
@@ -160,7 +168,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                 }
                 is WalkState.Meditating -> {
                     walkJob?.cancel(); walkJob = null
-                    if (!enabled) {
+                    if (!enabled || !MEDITATION_GUIDE_ALWAYS_ENABLED) {
                         // Master toggle is OFF — cancel any in-flight
                         // meditation scheduler and stop the player.
                         // Do NOT arm `exitingMeditation` here: if the
@@ -260,7 +268,7 @@ class VoiceGuideOrchestrator @Inject constructor(
         // micro-window could let a prompt fire before the cancellation
         // lands. Reading `.value` on the Eagerly StateFlow is
         // non-suspend and current. Mirrors SoundscapeOrchestrator.attemptPlay.
-        if (!soundsPreferences.soundsEnabled.value) return
+        if (!soundsPreferences.soundsEnabled.value || !voicePreferences.voiceGuideEnabled.value) return
         // Filesystem read here is a few `exists + length` syscalls —
         // cheap, and the orchestrator scope is `Dispatchers.Default`
         // (CPU pool), not Main, so there's no ANR risk. Avoiding a

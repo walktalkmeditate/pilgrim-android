@@ -13,10 +13,18 @@ class FakeVoicePlaybackController : VoicePlaybackController {
     private val _state = MutableStateFlow<PlaybackState>(PlaybackState.Idle)
     override val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
+    private val _playbackSpeed = MutableStateFlow(1.0f)
+    override val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
+
+    private val _playbackPositionMillis = MutableStateFlow(0L)
+    override val playbackPositionMillis: StateFlow<Long> = _playbackPositionMillis.asStateFlow()
+
     val playCalls: MutableList<Long> = Collections.synchronizedList(mutableListOf())
     val pauseCalls = AtomicInteger(0)
     val stopCalls = AtomicInteger(0)
     val releaseCalls = AtomicInteger(0)
+    val setSpeedCalls: MutableList<Float> = Collections.synchronizedList(mutableListOf())
+    val seekCalls: MutableList<Float> = Collections.synchronizedList(mutableListOf())
 
     override fun play(recording: VoiceRecording) {
         playCalls.add(recording.id)
@@ -32,15 +40,27 @@ class FakeVoicePlaybackController : VoicePlaybackController {
     override fun stop() {
         stopCalls.incrementAndGet()
         _state.value = PlaybackState.Idle
+        _playbackPositionMillis.value = 0L
     }
 
     override fun release() {
         releaseCalls.incrementAndGet()
         _state.value = PlaybackState.Idle
+        _playbackPositionMillis.value = 0L
+    }
+
+    override fun setPlaybackSpeed(rate: Float) {
+        setSpeedCalls.add(rate)
+        _playbackSpeed.value = rate.coerceIn(0.5f, 2.0f)
+    }
+
+    override fun seek(fraction: Float) {
+        seekCalls.add(fraction)
     }
 
     /** Test helper: simulate the player reaching STATE_ENDED. */
     fun completePlayback() {
         _state.value = PlaybackState.Idle
+        _playbackPositionMillis.value = 0L
     }
 }

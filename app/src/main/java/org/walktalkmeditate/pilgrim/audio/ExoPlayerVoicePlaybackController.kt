@@ -9,6 +9,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 
 /**
  * Production [VoicePlaybackController] backed by androidx.media3
@@ -35,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 class ExoPlayerVoicePlaybackController @Inject constructor(
     @ApplicationContext private val context: Context,
     private val audioFocus: AudioFocusCoordinator,
+    private val fileSystem: VoiceRecordingFileSystem,
 ) : VoicePlaybackController {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -42,18 +45,50 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
     private val _state = MutableStateFlow<PlaybackState>(PlaybackState.Idle)
     override val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
+    private val _playbackSpeed = MutableStateFlow(1.0f)
+    override val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
+
+    private val _playbackPositionMillis = MutableStateFlow(0L)
+    override val playbackPositionMillis: StateFlow<Long> = _playbackPositionMillis.asStateFlow()
+
     // Player + currentRecordingId are only read/written on the main
     // thread (mainHandler-serialized), so no additional synchronization
     // is needed beyond that contract.
     private var player: ExoPlayer? = null
     private var currentRecordingId: Long? = null
 
+    // Re-posts itself every POSITION_TICK_MS while the player is in
+    // STATE_READY + playing. Started/stopped from onPlaybackStateChanged
+    // and onIsPlayingChanged. mainHandler.removeCallbacks(this) is the
+    // canonical cancel — the Runnable instance is the cancellation key.
+    private val positionTick = object : Runnable {
+        override fun run() {
+            val p = player ?: return
+            _playbackPositionMillis.value = p.currentPosition
+            mainHandler.postDelayed(this, POSITION_TICK_MS)
+        }
+    }
+
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
                 audioFocus.abandon()
                 currentRecordingId = null
+                stopPositionTicks()
+                _playbackPositionMillis.value = 0L
                 _state.value = PlaybackState.Idle
+            }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying) {
+                startPositionTicks()
+            } else {
+                stopPositionTicks()
+                // Sample one final position so a paused player surfaces
+                // its true position (the last tick may have fired up to
+                // POSITION_TICK_MS ago).
+                player?.let { _playbackPositionMillis.value = it.currentPosition }
             }
         }
 
@@ -65,6 +100,8 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             // the next frame can't transition state into Paused on a
             // player that ExoPlayer has already reset to STATE_IDLE.
             currentRecordingId = null
+            stopPositionTicks()
+            _playbackPositionMillis.value = 0L
             _state.value = PlaybackState.Error(id, error.message ?: "playback failed")
         }
     }
@@ -88,8 +125,13 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
                 return@post
             }
             val p = player ?: createPlayer().also { player = it }
+            // Switching recording — reset the previous position before
+            // ExoPlayer reports `currentPosition` for the new media item.
+            // Otherwise UI bound to playbackPositionMillis would briefly
+            // show the old recording's tail before the first tick fires.
+            _playbackPositionMillis.value = 0L
             currentRecordingId = recording.id
-            val absoluteFile = java.io.File(context.filesDir, recording.fileRelativePath)
+            val absoluteFile = fileSystem.absolutePath(recording.fileRelativePath)
             p.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(absoluteFile)))
             p.prepare()
             p.play()
@@ -111,19 +153,64 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             player?.stop()
             audioFocus.abandon()
             currentRecordingId = null
+            stopPositionTicks()
+            _playbackPositionMillis.value = 0L
             _state.value = PlaybackState.Idle
         }
     }
 
     override fun release() {
         mainHandler.post {
+            stopPositionTicks()
             player?.removeListener(listener)
             player?.release()
             player = null
             audioFocus.abandon()
             currentRecordingId = null
+            _playbackPositionMillis.value = 0L
             _state.value = PlaybackState.Idle
         }
+    }
+
+    override fun setPlaybackSpeed(rate: Float) {
+        mainHandler.post {
+            val coerced = rate.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)
+            // pitch = 1.0f is intentional — without it ExoPlayer pitch-shifts
+            // (chipmunk effect at >1.0). Default is 1.0 already, but passing
+            // it explicitly documents intent.
+            player?.setPlaybackParameters(PlaybackParameters(coerced, 1.0f))
+            // Storing the COERCED value: observers should see what's actually
+            // playing, not what the caller asked for. UI bindings expecting
+            // their `setPlaybackSpeed(2.5f)` to round-trip will see 2.0f.
+            _playbackSpeed.value = coerced
+        }
+    }
+
+    override fun seek(fraction: Float) {
+        mainHandler.post {
+            val p = player ?: return@post
+            // Both guards are necessary: a player with no media item has an
+            // undefined duration, and `C.TIME_UNSET == Long.MIN_VALUE` —
+            // multiplying by a fraction produces a garbage seek target that
+            // crashes ExoPlayer.
+            if (p.currentMediaItem == null) return@post
+            val dur = p.duration
+            if (dur == C.TIME_UNSET) return@post
+            val target = (fraction.coerceIn(0f, 1f) * dur).toLong().coerceIn(0L, dur)
+            p.seekTo(target)
+            // Keep the StateFlow in sync immediately so the UI doesn't lag
+            // a tick behind the user's drag-release gesture.
+            _playbackPositionMillis.value = target
+        }
+    }
+
+    private fun startPositionTicks() {
+        mainHandler.removeCallbacks(positionTick)
+        mainHandler.post(positionTick)
+    }
+
+    private fun stopPositionTicks() {
+        mainHandler.removeCallbacks(positionTick)
     }
 
     /**
@@ -163,5 +250,8 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
     private companion object {
         const val TAG = "VoicePlayback"
+        const val POSITION_TICK_MS = 100L
+        const val MIN_PLAYBACK_SPEED = 0.5f
+        const val MAX_PLAYBACK_SPEED = 2.0f
     }
 }

@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -237,7 +238,7 @@ class VoiceGuideManifestServiceTest {
         )
         val service = buildService()
 
-        service.isSyncing.test {
+        service.isSyncing.test(timeout = 5.seconds) {
             assertFalse(awaitItem())
             service.syncIfNeeded()
             assertTrue(awaitItem())

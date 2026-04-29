@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -128,6 +129,7 @@ class WalkFinalizationObserverTest {
             hemisphereRepository = hemisphereRepo,
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
+            voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
         )
         // The observer's `init { scope.launch { walkState.collect } }`
         // attaches asynchronously on Dispatchers.IO. If a test mutates
@@ -266,8 +268,12 @@ class WalkFinalizationObserverTest {
     private companion object {
         const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize"
         // Cushion for VOICE_INSERT_GRACE_MS (200 ms) + collective-repo's
-        // launched POST coroutine + any CI thread contention.
-        const val WAIT_FOR_GRACE_MS = 1_500L
+        // launched POST coroutine + any CI thread contention. Bumped to
+        // 3 s in Stage 10-D after observing whichever test JUnit happens
+        // to run first in the class pays Robolectric class-init cost
+        // (~5 s on a cold JVM), eating into the in-flight runFinalize's
+        // hemisphere refresh + collective POST + widget schedule.
+        const val WAIT_FOR_GRACE_MS = 3_000L
         // The observer's collector attaches asynchronously on
         // Dispatchers.IO. Removing this delay (or shortening it
         // significantly) WILL break tests on CI as the collector

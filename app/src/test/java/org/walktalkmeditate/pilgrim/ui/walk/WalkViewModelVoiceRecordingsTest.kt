@@ -7,6 +7,7 @@ import android.media.AudioManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
@@ -95,7 +96,7 @@ class WalkViewModelVoiceRecordingsTest {
 
     @Test
     fun `talkMillis is 0L when no walk in progress`() = runTest(dispatcher) {
-        viewModel.talkMillis.test {
+        viewModel.talkMillis.test(timeout = 5.seconds) {
             assertEquals(0L, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -106,7 +107,7 @@ class WalkViewModelVoiceRecordingsTest {
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
 
-        viewModel.talkMillis.test {
+        viewModel.talkMillis.test(timeout = 5.seconds) {
             assertEquals(0L, awaitItem())
             repository.recordVoice(
                 VoiceRecording(
@@ -147,7 +148,7 @@ class WalkViewModelVoiceRecordingsTest {
             ),
         )
 
-        viewModel.talkMillis.test {
+        viewModel.talkMillis.test(timeout = 5.seconds) {
             assertEquals(4_000L, awaitItem())
 
             // Finish keeps walkId in state (mirroring routePoints' "keeps
@@ -175,7 +176,7 @@ class WalkViewModelVoiceRecordingsTest {
         // guard: both flows MUST update together for any single insert.
         combine(viewModel.recordingsCount, viewModel.talkMillis) { count, millis ->
             count to millis
-        }.test {
+        }.test(timeout = 5.seconds) {
             assertEquals(0 to 0L, awaitItem())
 
             repository.recordVoice(

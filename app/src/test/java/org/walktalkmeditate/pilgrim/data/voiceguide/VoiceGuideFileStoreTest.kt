@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import java.io.File
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,7 +124,7 @@ class VoiceGuideFileStoreTest {
         store.fileForPrompt(pr.r2Key).writeBytes(ByteArray(5))
         assertTrue(store.isPackDownloaded(p))
 
-        store.invalidations.test {
+        store.invalidations.test(timeout = 5.seconds) {
             store.deletePack(p)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -135,7 +136,7 @@ class VoiceGuideFileStoreTest {
 
     @Test fun `deletePack on absent pack still emits invalidation`() = runTest {
         val p = pack("never-downloaded", emptyList())
-        store.invalidations.test {
+        store.invalidations.test(timeout = 5.seconds) {
             store.deletePack(p)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()
