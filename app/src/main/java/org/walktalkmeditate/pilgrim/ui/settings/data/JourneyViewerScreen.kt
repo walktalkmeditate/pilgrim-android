@@ -142,7 +142,9 @@ private fun JourneyWebView(walksJson: String, manifestJson: String) {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (injected || view == null) return
                         injected = true
-                        val payload = """{"walks":$walksJson,"manifest":$manifestJson}"""
+                        val safeWalks = escapeJsBoundary(walksJson)
+                        val safeManifest = escapeJsBoundary(manifestJson)
+                        val payload = """{"walks":$safeWalks,"manifest":$safeManifest}"""
                         view.evaluateJavascript("window.pilgrimViewer.loadData($payload);", null)
                     }
                 }
@@ -152,5 +154,15 @@ private fun JourneyWebView(walksJson: String, manifestJson: String) {
         update = { },
     )
 }
+
+/**
+ * Defense in depth: U+2028 (line separator) and U+2029 (paragraph
+ * separator) are valid in JSON but illegal in pre-ES2019 JS string
+ * literals. Modern WebView (Chromium ≥ M58) handles them, but a
+ * downlevel runtime would throw on any user-supplied transcription
+ * or intention containing those code points.
+ */
+private fun escapeJsBoundary(json: String): String =
+    json.replace(" ", "\\u2028").replace(" ", "\\u2029")
 
 private const val VIEWER_URL = "https://view.pilgrimapp.org"
