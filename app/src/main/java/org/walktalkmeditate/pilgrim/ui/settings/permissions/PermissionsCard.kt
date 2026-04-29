@@ -23,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,17 +67,22 @@ fun PermissionsCard(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val locationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { viewModel.onPermissionResult(PermissionAskedStore.Key.Location) }
+    // Hoist contracts so registry identity is stable across recompose;
+    // Stage 7-A photo-picker race precedent.
+    val locationContract = remember { ActivityResultContracts.RequestPermission() }
+    val locationLauncher = rememberLauncherForActivityResult(locationContract) {
+        viewModel.onPermissionResult(PermissionAskedStore.Key.Location)
+    }
 
-    val microphoneLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { viewModel.onPermissionResult(PermissionAskedStore.Key.Microphone) }
+    val microphoneContract = remember { ActivityResultContracts.RequestPermission() }
+    val microphoneLauncher = rememberLauncherForActivityResult(microphoneContract) {
+        viewModel.onPermissionResult(PermissionAskedStore.Key.Microphone)
+    }
 
-    val motionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { viewModel.onPermissionResult(PermissionAskedStore.Key.Motion) }
+    val motionContract = remember { ActivityResultContracts.RequestPermission() }
+    val motionLauncher = rememberLauncherForActivityResult(motionContract) {
+        viewModel.onPermissionResult(PermissionAskedStore.Key.Motion)
+    }
 
     Column(
         modifier = modifier.fillMaxWidth().settingsCard(),
