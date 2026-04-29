@@ -27,6 +27,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
@@ -509,6 +510,8 @@ private fun handleSettingsAction(
             navController.navigate(Routes.SOUND_SETTINGS) { launchSingleTop = true }
         SettingsAction.OpenRecordings ->
             navController.navigate(Routes.RECORDINGS_LIST) { launchSingleTop = true }
+        SettingsAction.OpenAppPermissionSettings ->
+            context.startActivity(AppSettings.openDetailsIntent(context))
         // The remaining destinations are introduced in subsequent stages
         // (10-D onward). Keeping them in the sealed interface NOW lets
         // each card author drop in its own action without re-touching
@@ -517,7 +520,6 @@ private fun handleSettingsAction(
         // into a discoverable signal during manual QA — if a future
         // card author wires a row but forgets to update this hub, the
         // tap will log instead of vanishing into the void.
-        SettingsAction.OpenAppPermissionSettings, // STAGE 10-E
         SettingsAction.OpenExportImport,        // STAGE 10-G
         SettingsAction.OpenJourneyViewer,       // STAGE 10-G
         SettingsAction.OpenFeedback,            // STAGE 10-F
