@@ -39,6 +39,15 @@ interface WalkPhotoDao {
     suspend fun countForWalk(walkId: Long): Int
 
     /**
+     * Stage 10-I: live total of pinned photos across ALL walks. Drives
+     * the export-confirmation sheet's "≈X photos" line so the user
+     * sees an accurate count without an explicit re-query whenever
+     * they pin/unpin a photo on another screen.
+     */
+    @Query("SELECT COUNT(*) FROM walk_photos")
+    fun observeAllCount(): Flow<Int>
+
+    /**
      * Count rows referencing [photoUri] across ALL walks. Used by
      * `WalkRepository.unpinPhoto` to decide whether the persistable
      * URI grant is safe to release: grants are shared app-wide, so

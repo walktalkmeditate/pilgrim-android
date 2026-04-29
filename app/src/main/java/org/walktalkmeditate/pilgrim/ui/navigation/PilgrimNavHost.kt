@@ -232,8 +232,12 @@ fun PilgrimNavHost(
             )
         }
         composable(Routes.DATA_SETTINGS) {
+            val dataSettingsContext = LocalContext.current
             org.walktalkmeditate.pilgrim.ui.settings.data.DataSettingsScreen(
                 onBack = { navController.popBackStack() },
+                onAction = { action ->
+                    handleSettingsAction(action, navController, dataSettingsContext)
+                },
             )
         }
         composable(Routes.FEEDBACK) {

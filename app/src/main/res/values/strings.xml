@@ -473,6 +473,14 @@
     <string name="export_confirmation_photos_caption">Photos travel with the file. Anyone you share it with will see them as map markers.</string>
     <string name="export_confirmation_cancel">Cancel</string>
     <string name="export_confirmation_export">Export</string>
+    <!-- Stage 10-I: DataSettings export/import surface -->
+    <string name="data_pilgrim_export_no_walks">No walks found to export.</string>
+    <string name="data_pilgrim_export_failed">Couldn\'t create the archive — please try again.</string>
+    <string name="data_pilgrim_export_partial">Some photos couldn\'t be embedded — they may have been deleted.</string>
+    <string name="data_pilgrim_import_imported_one">1 walk imported.</string>
+    <string name="data_pilgrim_import_imported_many">%1$d walks imported.</string>
+    <string name="data_pilgrim_import_failed_unsupported_version">Unsupported file version. Update Pilgrim and try again.</string>
+    <string name="data_pilgrim_import_failed_generic">Couldn\'t read the archive — please try again.</string>
     <!-- Stage 10-I: Journey viewer -->
     <string name="journey_viewer_title">My Journey</string>
     <string name="journey_viewer_back">Back</string>
