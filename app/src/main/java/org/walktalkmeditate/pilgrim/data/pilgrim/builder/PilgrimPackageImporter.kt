@@ -83,21 +83,13 @@ class PilgrimPackageImporter @Inject constructor(
             ?: throw PilgrimPackageError.InvalidPackage
         try {
             ZipInputStream(inputStream.buffered()).use { zip ->
-                val tempCanon = tempDir.canonicalFile
                 while (true) {
                     val entry = zip.nextEntry ?: break
+                    val target = resolveSafeEntryFile(tempDir, entry.name)
                     if (entry.isDirectory) {
-                        File(tempDir, entry.name).mkdirs()
+                        target.mkdirs()
                         zip.closeEntry()
                         continue
-                    }
-                    // Defensive zip-slip guard: reject entries whose
-                    // resolved path escapes tempDir.
-                    val target = File(tempDir, entry.name).canonicalFile
-                    if (!target.path.startsWith(tempCanon.path + File.separator) &&
-                        target.path != tempCanon.path
-                    ) {
-                        throw PilgrimPackageError.InvalidPackage
                     }
                     target.parentFile?.mkdirs()
                     FileOutputStream(target).use { out ->
@@ -111,6 +103,23 @@ class PilgrimPackageImporter @Inject constructor(
         } catch (e: Throwable) {
             throw PilgrimPackageError.InvalidPackage
         }
+    }
+
+    /**
+     * Defensive zip-slip guard: rejects archive entries (file OR
+     * directory) whose resolved path escapes [tempDir]. Without this,
+     * a malicious archive with `../../foo` could create empty dirs or
+     * write payloads outside the import sandbox.
+     */
+    private fun resolveSafeEntryFile(tempDir: File, entryName: String): File {
+        val target = File(tempDir, entryName).canonicalFile
+        val tempCanon = tempDir.canonicalFile
+        if (!target.path.startsWith(tempCanon.path + File.separator) &&
+            target.path != tempCanon.path
+        ) {
+            throw PilgrimPackageError.InvalidPackage
+        }
+        return target
     }
 
     private fun readManifest(tempDir: File): PilgrimManifest {
