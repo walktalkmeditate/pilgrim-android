@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.settings.connect.ConnectCard
+import org.walktalkmeditate.pilgrim.ui.settings.data.DataCard
+import org.walktalkmeditate.pilgrim.ui.settings.permissions.PermissionsCard
 import org.walktalkmeditate.pilgrim.ui.settings.practice.PracticeCard
 import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCard
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -138,6 +141,15 @@ fun SettingsScreen(
                     onSetSoundsEnabled = viewModel::setSoundsEnabled,
                     onAction = onAction,
                 )
+            }
+            item {
+                PermissionsCard(onAction = onAction)
+            }
+            item {
+                DataCard(onAction = onAction)
+            }
+            item {
+                ConnectCard(onAction = onAction)
             }
             // Soundscapes is landed here as a SettingNavRow
             // stand-in inside a settingsCard wrapper to share
