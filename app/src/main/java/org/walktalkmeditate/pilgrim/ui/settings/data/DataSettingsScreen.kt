@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings.data
 
+import android.content.ClipData
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -67,12 +68,20 @@ fun DataSettingsScreen(
             when (event) {
                 is RecordingsExportResult.Success -> {
                     val uri = FileProvider.getUriForFile(context, authority, event.file)
-                    val intent = Intent(Intent.ACTION_SEND).apply {
+                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "application/zip"
                         putExtra(Intent.EXTRA_STREAM, uri)
+                        // ClipData + flag are MANDATORY on all APIs — without them,
+                        // modern receiving apps (Drive, Gmail, Slack) can fail to
+                        // resolve the URI grant through Intent.createChooser. Same
+                        // pattern as EtegamiShareIntentFactory (Stage 7-D).
+                        clipData = ClipData.newRawUri(event.file.name, uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                    context.startActivity(Intent.createChooser(intent, null))
+                    val chooser = Intent.createChooser(sendIntent, null).apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(chooser)
                 }
                 RecordingsExportResult.Empty -> {
                     scope.launch { snackbarHostState.showSnackbar(emptyMsg) }
