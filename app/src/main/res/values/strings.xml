@@ -467,4 +467,10 @@
     <string name="about_link_rate">Rate Pilgrim</string>
     <string name="about_motto">Slow and chill is the motto.\nRelax and release is the practice.\nPeace and harmony is the way.</string>
     <string name="settings_about_pilgrim">About Pilgrim</string>
+    <!-- Stage 10-I: Export confirmation sheet -->
+    <string name="export_confirmation_title">Export Walks</string>
+    <string name="export_confirmation_include_photos">Include pinned photos</string>
+    <string name="export_confirmation_photos_caption">Photos travel with the file. Anyone you share it with will see them as map markers.</string>
+    <string name="export_confirmation_cancel">Cancel</string>
+    <string name="export_confirmation_export">Export</string>
 </resources>
