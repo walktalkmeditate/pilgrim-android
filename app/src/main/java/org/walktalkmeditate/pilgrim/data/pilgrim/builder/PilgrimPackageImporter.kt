@@ -178,51 +178,62 @@ class PilgrimPackageImporter @Inject constructor(
                     Log.d(TAG, "Skipping duplicate walk uuid=${pilgrimWalk.id}")
                     continue
                 }
-                val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
-                val newWalkId = walkDao.insert(pending.walk)
-                if (newWalkId <= 0) {
-                    Log.w(TAG, "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}; skipping children")
-                    continue
-                }
-
-                pending.routeSamples
-                    .map { it.copy(walkId = newWalkId) }
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { routeDao.insertAll(it) }
-
-                for (waypoint in pending.waypoints) {
-                    waypointDao.insert(waypoint.copy(walkId = newWalkId))
-                }
-
-                for (event in pending.walkEvents) {
-                    eventDao.insert(event.copy(walkId = newWalkId))
-                }
-
-                pending.activityIntervals
-                    .map { it.copy(walkId = newWalkId) }
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { activityDao.insertAll(it) }
-
-                for (recording in pending.voiceRecordings) {
-                    voiceDao.insert(recording.copy(walkId = newWalkId))
-                }
-
-                // Construct WalkPhoto with the real walkId (Stage 7-A
-                // invariant requires walkId > 0, so we couldn't carry
-                // them through the PendingImport bundle directly).
-                pending.walkPhotos
-                    .map { pendingPhoto ->
-                        WalkPhoto(
-                            walkId = newWalkId,
-                            photoUri = pendingPhoto.photoUri,
-                            pinnedAt = pendingPhoto.pinnedAt,
-                            takenAt = pendingPhoto.takenAt,
-                        )
+                try {
+                    val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+                    val newWalkId = walkDao.insert(pending.walk)
+                    if (newWalkId <= 0) {
+                        Log.w(TAG, "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}; skipping children")
+                        continue
                     }
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { photoDao.insertAll(it) }
 
-                inserted += 1
+                    pending.routeSamples
+                        .map { it.copy(walkId = newWalkId) }
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { routeDao.insertAll(it) }
+
+                    for (waypoint in pending.waypoints) {
+                        waypointDao.insert(waypoint.copy(walkId = newWalkId))
+                    }
+
+                    for (event in pending.walkEvents) {
+                        eventDao.insert(event.copy(walkId = newWalkId))
+                    }
+
+                    pending.activityIntervals
+                        .map { it.copy(walkId = newWalkId) }
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { activityDao.insertAll(it) }
+
+                    for (recording in pending.voiceRecordings) {
+                        voiceDao.insert(recording.copy(walkId = newWalkId))
+                    }
+
+                    // Construct WalkPhoto with the real walkId (Stage 7-A
+                    // invariant requires walkId > 0, so we couldn't carry
+                    // them through the PendingImport bundle directly).
+                    pending.walkPhotos
+                        .map { pendingPhoto ->
+                            WalkPhoto(
+                                walkId = newWalkId,
+                                photoUri = pendingPhoto.photoUri,
+                                pinnedAt = pendingPhoto.pinnedAt,
+                                takenAt = pendingPhoto.takenAt,
+                            )
+                        }
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { photoDao.insertAll(it) }
+
+                    inserted += 1
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // Per-walk isolation: a malformed walk (e.g. WalkPhoto's
+                    // pinnedAt > 0 invariant from Stage 7-A, or VoiceRecording's
+                    // endTimestamp >= startTimestamp invariant) shouldn't drop
+                    // the entire batch. Log + skip; the transaction still
+                    // commits the good walks.
+                    Log.w(TAG, "Skipping walk uuid=${pilgrimWalk.id}: ${e.message}", e)
+                }
             }
         }
         return inserted
