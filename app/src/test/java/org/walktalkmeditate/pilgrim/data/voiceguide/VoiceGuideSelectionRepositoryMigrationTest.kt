@@ -18,6 +18,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -49,21 +51,49 @@ class VoiceGuideSelectionRepositoryMigrationTest {
         storeFile.delete()
     }
 
+    /**
+     * Wall-clock poll for an async repo state change. The fixed `delay(100)`
+     * pattern this replaced flaked on slow CI runners (the migration's
+     * `dataStore.edit` coroutine occasionally takes >100ms there). Polling
+     * with a generous deadline is deterministic across machines.
+     */
+    private suspend fun awaitSelectedPackId(
+        repo: VoiceGuideSelectionRepository,
+        expected: String?,
+    ) {
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000L) {
+                while (repo.selectedPackId.value != expected) {
+                    delay(25)
+                }
+            }
+        }
+    }
+
+    private suspend fun awaitDataStoreKey(key: String, expected: String?) {
+        val prefKey = stringPreferencesKey(key)
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000L) {
+                while (dataStore.data.first()[prefKey] != expected) {
+                    delay(25)
+                }
+            }
+        }
+    }
+
     @Test
     fun `legacy snake_case key value is read on first construction`() = runTest {
         dataStore.edit { it[stringPreferencesKey("selected_voice_guide_pack_id")] = "pack-a" }
-        runBlocking { delay(50) }
         val repo = VoiceGuideSelectionRepository(dataStore, scope)
-        runBlocking { delay(100) }
+        awaitSelectedPackId(repo, "pack-a")
         assertEquals("pack-a", repo.selectedPackId.value)
     }
 
     @Test
     fun `legacy key copied into new key after migration`() = runTest {
         dataStore.edit { it[stringPreferencesKey("selected_voice_guide_pack_id")] = "pack-b" }
-        runBlocking { delay(50) }
         val repo = VoiceGuideSelectionRepository(dataStore, scope)
-        runBlocking { delay(100) }
+        awaitDataStoreKey("selectedVoiceGuidePackId", "pack-b")
         val prefs = dataStore.data.first()
         assertEquals("pack-b", prefs[stringPreferencesKey("selectedVoiceGuidePackId")])
     }
@@ -74,9 +104,8 @@ class VoiceGuideSelectionRepositoryMigrationTest {
             prefs[stringPreferencesKey("selected_voice_guide_pack_id")] = "old"
             prefs[stringPreferencesKey("selectedVoiceGuidePackId")] = "new"
         }
-        runBlocking { delay(50) }
         val repo = VoiceGuideSelectionRepository(dataStore, scope)
-        runBlocking { delay(100) }
+        awaitSelectedPackId(repo, "new")
         assertEquals("new", repo.selectedPackId.value)
     }
 
@@ -84,7 +113,7 @@ class VoiceGuideSelectionRepositoryMigrationTest {
     fun `select writes only to new camelCase key`() = runTest {
         val repo = VoiceGuideSelectionRepository(dataStore, scope)
         repo.select("pack-c")
-        runBlocking { delay(50) }
+        awaitDataStoreKey("selectedVoiceGuidePackId", "pack-c")
         val prefs = dataStore.data.first()
         assertEquals("pack-c", prefs[stringPreferencesKey("selectedVoiceGuidePackId")])
     }
@@ -92,7 +121,10 @@ class VoiceGuideSelectionRepositoryMigrationTest {
     @Test
     fun `fresh install — both keys absent yields null`() = runTest {
         val repo = VoiceGuideSelectionRepository(dataStore, scope)
-        runBlocking { delay(100) }
+        // Give the Eagerly StateFlow a moment to emit; on fresh install
+        // the value should remain null. Use a brief real-time wait so
+        // the negative assertion is meaningful.
+        runBlocking { delay(200) }
         assertNull(repo.selectedPackId.value)
     }
 }
