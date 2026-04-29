@@ -148,6 +148,17 @@ private fun JourneyWebView(walksJson: String, manifestJson: String) {
                         // after DOM load. Mirror that here.
                         // JourneyViewerView.swift:201.
                         view.postDelayed({
+                            // Defensive: the WebView may have been
+                            // destroyed (user navigated away, screen
+                            // disposed) before the delay elapses.
+                            // `evaluateJavascript` on a destroyed
+                            // WebView throws IllegalStateException.
+                            // `view.parent` is the cheapest still-attached
+                            // signal (postDelayed runs on the View's
+                            // handler — if the View is destroyed, the
+                            // runnable is removed from the queue, but
+                            // belt-and-suspenders).
+                            if (view.parent == null) return@postDelayed
                             val safeWalks = escapeJsBoundary(walksJson)
                             val safeManifest = escapeJsBoundary(manifestJson)
                             val payload = """{"walks":$safeWalks,"manifest":$safeManifest}"""
@@ -159,6 +170,16 @@ private fun JourneyWebView(walksJson: String, manifestJson: String) {
             }
         },
         update = { },
+        onRelease = { webView ->
+            // Stop in-flight loads, drop callback handlers, then destroy
+            // the renderer process. Without this, AndroidView leaks the
+            // WebView (Chromium renderer + JS engine + DOM storage)
+            // every time the user enters/exits Journey Viewer.
+            webView.stopLoading()
+            webView.webViewClient = WebViewClient()
+            webView.removeAllViews()
+            webView.destroy()
+        },
     )
 }
 
