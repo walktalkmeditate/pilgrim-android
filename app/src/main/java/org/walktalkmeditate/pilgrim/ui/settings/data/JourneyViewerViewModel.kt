@@ -19,6 +19,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimManifest
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
+import org.walktalkmeditate.pilgrim.data.pilgrim.builder.AndroidPilgrimPhotoEmbedder
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.WalkExportBundle
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
@@ -38,6 +39,7 @@ class JourneyViewerViewModel @Inject constructor(
     private val walkPhotoDao: WalkPhotoDao,
     private val practicePreferences: PracticePreferencesRepository,
     private val unitsPreferences: UnitsPreferencesRepository,
+    private val photoEmbedder: AndroidPilgrimPhotoEmbedder,
     @PilgrimJson private val json: Json,
 ) : ViewModel() {
 
@@ -78,9 +80,24 @@ class JourneyViewerViewModel @Inject constructor(
             PilgrimPackageConverter.convert(bundle, includePhotos = true).walk
         }
 
+        val enrichedWalks = pilgrimWalks.map { walk ->
+            val photos = walk.photos ?: return@map walk
+            val enrichedPhotos = photos.map { photo ->
+                val dataUrl = try {
+                    photoEmbedder.encodeAsDataUrl(photo.localIdentifier)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    null
+                }
+                if (dataUrl != null) photo.copy(inlineUrl = dataUrl) else photo
+            }
+            walk.copy(photos = enrichedPhotos)
+        }
+
         val manifest = PilgrimPackageConverter.buildManifest(
             appVersion = BuildConfig.VERSION_NAME.removeSuffix("-debug"),
-            walkCount = pilgrimWalks.size,
+            walkCount = enrichedWalks.size,
             distanceUnits = unitsPreferences.distanceUnits.value,
             celestialAwareness = practicePreferences.celestialAwarenessEnabled.value,
             zodiacSystem = practicePreferences.zodiacSystem.value.storageValue(),
@@ -90,7 +107,7 @@ class JourneyViewerViewModel @Inject constructor(
 
         val walksJson = json.encodeToString(
             kotlinx.serialization.builtins.ListSerializer(PilgrimWalk.serializer()),
-            pilgrimWalks,
+            enrichedWalks,
         )
         val manifestJson = json.encodeToString(PilgrimManifest.serializer(), manifest)
 
