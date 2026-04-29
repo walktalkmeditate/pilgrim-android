@@ -404,4 +404,24 @@
     <string name="settings_permissions_action_settings">Settings</string>
     <string name="settings_permissions_status_restricted">Restricted</string>
     <string name="settings_permissions_status_granted_content_description">Permission granted</string>
+
+    <!-- Stage 10-F: ConnectCard / FeedbackScreen -->
+    <string name="settings_connect_title">Connect</string>
+    <string name="settings_connect_subtitle">Share the path</string>
+    <string name="settings_connect_podcast">Pilgrim on the Path</string>
+    <string name="settings_connect_feedback">Leave a Trail Note</string>
+    <string name="settings_connect_rate">Rate Pilgrim</string>
+    <string name="settings_connect_share">Share Pilgrim</string>
+    <string name="feedback_principal_title">Leave a Trail Note</string>
+    <string name="feedback_back_content_description">Back</string>
+    <string name="feedback_category_bug">Something\'s broken</string>
+    <string name="feedback_category_feature">I wish it could&#8230;</string>
+    <string name="feedback_category_thought">A thought</string>
+    <string name="feedback_message_placeholder">What\'s on your mind?</string>
+    <string name="feedback_include_device_info">Include device info</string>
+    <string name="feedback_send">Send</string>
+    <string name="feedback_confirmation_line1">Your note has been\nleft on the path.</string>
+    <string name="feedback_confirmation_line2">Thank you.</string>
+    <string name="settings_share_pilgrim_body">I\'ve been walking with Pilgrim — it tracks your walks, records voice notes, and even has a meditation mode. No accounts, no tracking, everything stays on your phone. Free and open source.</string>
+    <string name="settings_share_pilgrim_url">https://plgr.im/share</string>
 </resources>
