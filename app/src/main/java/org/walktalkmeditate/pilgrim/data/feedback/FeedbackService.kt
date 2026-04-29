@@ -6,6 +6,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -64,6 +65,11 @@ class FeedbackService @Inject constructor(
                 }
             } catch (e: FeedbackError) {
                 // Re-throw our own exceptions to preserve the caller-facing types.
+                throw e
+            } catch (e: CancellationException) {
+                // OkHttp surfaces coroutine cancellation as InterruptedIOException
+                // ("Canceled"), which IS an IOException — without this catch a
+                // user navigating away mid-submit would see "Couldn't send."
                 throw e
             } catch (e: IOException) {
                 throw FeedbackError.NetworkError(e.message ?: "Network error")
