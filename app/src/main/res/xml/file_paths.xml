@@ -9,8 +9,14 @@
                      produced from Settings → Data → Export Recordings.
                      No app-side sweeper; the OS clears cacheDir on
                      storage pressure.
+  - pilgrim_export/  (Stage 10-I) `.pilgrim` walks archives produced
+                     from Settings → Data → Export My Data. Contains
+                     manifest.json + walks/<uuid>.json + schema.json
+                     + optional photos/ (when user opts in). Same
+                     OS-clears-on-pressure lifecycle.
 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="etegami_cache" path="etegami/" />
     <cache-path name="recordings_export" path="recordings_export/" />
+    <cache-path name="pilgrim_export" path="pilgrim_export/" />
 </paths>
