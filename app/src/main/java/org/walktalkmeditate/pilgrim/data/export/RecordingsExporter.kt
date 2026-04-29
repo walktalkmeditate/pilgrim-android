@@ -36,16 +36,25 @@ object RecordingsExporter {
         val timeCode = BackupTimeCode.format(now)
         val out = File(targetDir, "pilgrim-recordings-$timeCode.zip")
 
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(out))).use { zip ->
-            for (file in files) {
-                val entryName = file.relativeTo(sourceDir).invariantSeparatorsPath
-                val entry = ZipEntry(entryName)
-                zip.putNextEntry(entry)
-                FileInputStream(file).use { input ->
-                    input.copyTo(zip, bufferSize = COPY_BUFFER_BYTES)
+        try {
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(out))).use { zip ->
+                for (file in files) {
+                    val entryName = file.relativeTo(sourceDir).invariantSeparatorsPath
+                    val entry = ZipEntry(entryName)
+                    zip.putNextEntry(entry)
+                    FileInputStream(file).use { input ->
+                        input.copyTo(zip, bufferSize = COPY_BUFFER_BYTES)
+                    }
+                    zip.closeEntry()
                 }
-                zip.closeEntry()
             }
+        } catch (t: Throwable) {
+            // Source file may have been swept (OrphanRecordingSweeper) or
+            // gone unreadable mid-loop. ZipOutputStream.use already closed
+            // and flushed a half-written archive — delete it so the user
+            // doesn't share or accidentally cache a corrupt zip.
+            out.delete()
+            throw t
         }
         return out
     }
