@@ -18,7 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.Context
-import android.util.Log
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -69,6 +68,8 @@ object Routes {
     const val SOUND_SETTINGS = "sound_settings"
     const val RECORDINGS_LIST = "recordings"
     const val DATA_SETTINGS = "data_settings"
+    const val JOURNEY_VIEWER = "journey_viewer"
+    const val ABOUT = "about"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -231,12 +232,26 @@ fun PilgrimNavHost(
             )
         }
         composable(Routes.DATA_SETTINGS) {
+            val dataSettingsContext = LocalContext.current
             org.walktalkmeditate.pilgrim.ui.settings.data.DataSettingsScreen(
                 onBack = { navController.popBackStack() },
+                onAction = { action ->
+                    handleSettingsAction(action, navController, dataSettingsContext)
+                },
             )
         }
         composable(Routes.FEEDBACK) {
             org.walktalkmeditate.pilgrim.ui.settings.connect.FeedbackScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.JOURNEY_VIEWER) {
+            org.walktalkmeditate.pilgrim.ui.settings.data.JourneyViewerScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.ABOUT) {
+            org.walktalkmeditate.pilgrim.ui.settings.about.AboutScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -499,13 +514,12 @@ fun PilgrimNavHost(
 
 /**
  * Routing hub for [SettingsAction]. The [Context] parameter is plumbed
- * through now (unused by Stage 10-A) so subsequent stages adding
- * intent-based destinations (Custom Tabs, Play Store deep link, share
- * sheet) don't need to re-touch the SettingsScreen call site.
+ * through so intent-based destinations (Custom Tabs, Play Store deep
+ * link, share sheet, app-permission settings) don't need to re-touch
+ * the SettingsScreen call site.
  *
  * The exhaustive `when` block captures every variant declared on
- * [SettingsAction]; reserved variants no-op until the corresponding
- * card lands.
+ * [SettingsAction].
  */
 @Suppress("UNUSED_PARAMETER")
 private fun handleSettingsAction(
@@ -537,18 +551,9 @@ private fun handleSettingsAction(
             org.walktalkmeditate.pilgrim.ui.util.ShareIntents.sharePilgrim(context)
         SettingsAction.OpenExportImport ->
             navController.navigate(Routes.DATA_SETTINGS) { launchSingleTop = true }
-        // The remaining destinations are introduced in subsequent stages.
-        // Keeping them in the sealed interface NOW lets each card author
-        // drop in its own action without re-touching the SettingsScreen
-        // signature; the routing handler grows exhaustively as cards
-        // land. The Log.w turns silent swallowing into a discoverable
-        // signal during manual QA — if a future card author wires a row
-        // but forgets to update this hub, the tap will log instead of
-        // vanishing into the void.
-        SettingsAction.OpenJourneyViewer,       // STAGE 10-I
-        SettingsAction.OpenAbout ->             // STAGE 10-H
-            Log.w(TAG_NAV, "Unhandled SettingsAction: $action — wire in the corresponding stage")
+        SettingsAction.OpenAbout ->
+            navController.navigate(Routes.ABOUT) { launchSingleTop = true }
+        SettingsAction.OpenJourneyViewer ->
+            navController.navigate(Routes.JOURNEY_VIEWER) { launchSingleTop = true }
     }
 }
-
-private const val TAG_NAV = "PilgrimNav"

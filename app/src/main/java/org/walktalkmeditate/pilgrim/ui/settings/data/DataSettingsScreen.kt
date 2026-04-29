@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.ui.settings.data
 
 import android.content.ClipData
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -42,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.settings.SettingNavRow
+import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.settingsCard
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -50,10 +53,13 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @Composable
 fun DataSettingsScreen(
     onBack: () -> Unit,
+    onAction: (SettingsAction) -> Unit,
     viewModel: DataSettingsViewModel = hiltViewModel(),
 ) {
     val recordingCount by viewModel.recordingCount.collectAsStateWithLifecycle()
     val isExporting by viewModel.isExporting.collectAsStateWithLifecycle()
+    val pilgrimExportState by viewModel.pilgrimExportState.collectAsStateWithLifecycle()
+    val pilgrimImportState by viewModel.pilgrimImportState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -61,7 +67,24 @@ fun DataSettingsScreen(
 
     val emptyMsg = stringResource(R.string.data_export_empty)
     val failedMsg = stringResource(R.string.data_export_failed)
-    val comingSoon = stringResource(R.string.data_coming_soon)
+    val pilgrimExportNoWalksMsg = stringResource(R.string.data_pilgrim_export_no_walks)
+    val pilgrimExportFailedMsg = stringResource(R.string.data_pilgrim_export_failed)
+    val pilgrimExportPartialMsg = stringResource(R.string.data_pilgrim_export_partial)
+    val pilgrimImportImportedOne = stringResource(R.string.data_pilgrim_import_imported_one)
+    val pilgrimImportImportedManyTpl = stringResource(R.string.data_pilgrim_import_imported_many)
+    val pilgrimImportUnsupportedMsg = stringResource(R.string.data_pilgrim_import_failed_unsupported_version)
+    val pilgrimImportGenericFailedMsg = stringResource(R.string.data_pilgrim_import_failed_generic)
+
+    // Stage 10-EFG fix #1: hoist the contract instance via remember so
+    // DisposableEffect's identity-keyed register/unregister cycle stays
+    // stable across recompositions. A fresh `OpenDocument()` instance
+    // every recompose strands in-flight pickers.
+    val openDocumentContract = remember { ActivityResultContracts.OpenDocument() }
+    val importPickerLauncher = rememberLauncherForActivityResult(openDocumentContract) { uri ->
+        if (uri != null) {
+            viewModel.importPilgrim(uri)
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.exportEvents.collect { event ->
@@ -92,6 +115,83 @@ fun DataSettingsScreen(
             }
         }
     }
+
+    // Stage 10-I: collect .pilgrim share events. Same intent shape as
+    // the recordings ZIP path: ACTION_SEND + ClipData + chooser-side
+    // FLAG_GRANT_READ_URI_PERMISSION (Stage 10-EFG fix #2) so receiving
+    // apps reliably resolve the FileProvider URI.
+    LaunchedEffect(Unit) {
+        viewModel.pilgrimShareEvents.collect { file ->
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newRawUri(file.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(sendIntent, null).apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(chooser)
+        }
+    }
+
+    LaunchedEffect(pilgrimExportState) {
+        when (val state = pilgrimExportState) {
+            is PilgrimExportState.Failed -> {
+                val message = when (state.message) {
+                    "No walks found to export." -> pilgrimExportNoWalksMsg
+                    else -> pilgrimExportFailedMsg
+                }
+                scope.launch { snackbarHostState.showSnackbar(message) }
+                viewModel.cancelPilgrimExport()
+            }
+            is PilgrimExportState.Done -> {
+                if (state.skippedPhotoCount > 0) {
+                    scope.launch { snackbarHostState.showSnackbar(pilgrimExportPartialMsg) }
+                }
+                viewModel.cancelPilgrimExport()
+            }
+            else -> Unit
+        }
+    }
+
+    LaunchedEffect(pilgrimImportState) {
+        when (val state = pilgrimImportState) {
+            is PilgrimImportState.Imported -> {
+                val message = when (state.walkCount) {
+                    1 -> pilgrimImportImportedOne
+                    else -> String.format(java.util.Locale.US, pilgrimImportImportedManyTpl, state.walkCount)
+                }
+                scope.launch { snackbarHostState.showSnackbar(message) }
+            }
+            is PilgrimImportState.Failed -> {
+                val message = if (state.message.startsWith("Unsupported version")) {
+                    pilgrimImportUnsupportedMsg
+                } else {
+                    pilgrimImportGenericFailedMsg
+                }
+                scope.launch { snackbarHostState.showSnackbar(message) }
+            }
+            else -> Unit
+        }
+    }
+
+    val confirming = pilgrimExportState as? PilgrimExportState.Confirming
+    if (confirming != null) {
+        ExportConfirmationSheet(
+            walkCount = confirming.walkCount,
+            dateRangeText = confirming.dateRangeText,
+            pinnedPhotoCount = confirming.pinnedPhotoCount,
+            estimatedPhotoSizeBytes = confirming.estimatedPhotoBytes,
+            onDismissRequest = { viewModel.cancelPilgrimExport() },
+            onCancel = { viewModel.cancelPilgrimExport() },
+            onExport = { includePhotos -> viewModel.confirmPilgrimExport(includePhotos) },
+        )
+    }
+
+    val isPilgrimExportBuilding = pilgrimExportState is PilgrimExportState.Building
+    val isPilgrimImporting = pilgrimImportState is PilgrimImportState.Importing
 
     Scaffold(
         topBar = {
@@ -128,20 +228,32 @@ fun DataSettingsScreen(
             item { SectionHeader(stringResource(R.string.data_section_walks_header)) }
             item {
                 Column(modifier = Modifier.fillMaxWidth().settingsCard()) {
-                    SettingNavRow(
-                        label = stringResource(R.string.data_action_export),
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            scope.launch { snackbarHostState.showSnackbar(comingSoon) }
-                        },
-                    )
-                    SettingNavRow(
-                        label = stringResource(R.string.data_action_import),
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            scope.launch { snackbarHostState.showSnackbar(comingSoon) }
-                        },
-                    )
+                    if (isPilgrimExportBuilding) {
+                        ExportingRow(
+                            label = stringResource(R.string.data_action_export),
+                        )
+                    } else {
+                        SettingNavRow(
+                            label = stringResource(R.string.data_action_export),
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { viewModel.requestPilgrimExport() },
+                        )
+                    }
+                    if (isPilgrimImporting) {
+                        ExportingRow(
+                            label = stringResource(R.string.data_action_import),
+                        )
+                    } else {
+                        SettingNavRow(
+                            label = stringResource(R.string.data_action_import),
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                importPickerLauncher.launch(
+                                    arrayOf("application/zip", "application/octet-stream", "*/*"),
+                                )
+                            },
+                        )
+                    }
                 }
             }
             item { SectionFooter(stringResource(R.string.data_walks_footer)) }
@@ -152,9 +264,7 @@ fun DataSettingsScreen(
                         label = stringResource(R.string.data_action_journey),
                         modifier = Modifier.fillMaxWidth(),
                         external = true,
-                        onClick = {
-                            scope.launch { snackbarHostState.showSnackbar(comingSoon) }
-                        },
+                        onClick = { onAction(SettingsAction.OpenJourneyViewer) },
                     )
                 }
             }
