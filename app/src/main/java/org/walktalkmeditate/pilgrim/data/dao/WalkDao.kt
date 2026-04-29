@@ -38,6 +38,9 @@ interface WalkDao {
     @Query("SELECT * FROM walks ORDER BY start_timestamp DESC")
     suspend fun getAll(): List<Walk>
 
+    @Query("SELECT uuid FROM walks")
+    suspend fun getAllUuids(): List<String>
+
     @Query(
         "SELECT * FROM walks WHERE end_timestamp IS NOT NULL " +
             "ORDER BY end_timestamp DESC LIMIT 1",

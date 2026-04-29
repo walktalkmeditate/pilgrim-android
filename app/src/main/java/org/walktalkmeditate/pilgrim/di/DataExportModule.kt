@@ -12,8 +12,12 @@ import java.io.File
 import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.ui.settings.data.DataExportEnv
+import org.walktalkmeditate.pilgrim.ui.settings.data.DefaultPilgrimPackageGateway
+import org.walktalkmeditate.pilgrim.ui.settings.data.PilgrimPackageGateway
 import org.walktalkmeditate.pilgrim.ui.settings.data.RecordingsCountSource
 import org.walktalkmeditate.pilgrim.ui.settings.data.WalkRepositoryRecordingsCountSource
+import org.walktalkmeditate.pilgrim.ui.settings.data.WalkRepositoryWalksSource
+import org.walktalkmeditate.pilgrim.ui.settings.data.WalksSource
 
 /**
  * Stage 10-D: DI for the Data settings screen export feature.
@@ -48,4 +52,16 @@ abstract class DataExportBindingsModule {
     abstract fun bindRecordingsCountSource(
         impl: WalkRepositoryRecordingsCountSource,
     ): RecordingsCountSource
+
+    @Binds
+    @Singleton
+    abstract fun bindWalksSource(
+        impl: WalkRepositoryWalksSource,
+    ): WalksSource
+
+    @Binds
+    @Singleton
+    abstract fun bindPilgrimPackageGateway(
+        impl: DefaultPilgrimPackageGateway,
+    ): PilgrimPackageGateway
 }
