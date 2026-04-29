@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -111,14 +112,17 @@ internal fun effectiveIncludePhotos(pinnedPhotoCount: Int, userToggle: Boolean):
     pinnedPhotoCount > 0 && userToggle
 
 /**
- * Returns "1 walk" / "2 walks" with correct plural. Static so it can
- * be unit tested. Uses `Locale.getDefault()` plurals — for English
- * "walks" / "walk"; other locales degrade gracefully (we don't ship
- * `<plurals>` at this resource yet — future stage if non-English
- * locales add walk-count plural diversity).
+ * Returns "1 walk" / "2 walks" with correct plural via Android
+ * `<plurals>`, so non-English locales (Russian, Arabic, etc.) get
+ * proper CLDR-driven forms instead of the hardcoded English binary.
  */
+@Composable
 internal fun walkCountText(walkCount: Int): String =
-    if (walkCount == 1) "1 walk" else "$walkCount walks"
+    pluralStringResource(
+        id = R.plurals.export_confirmation_walk_count,
+        count = walkCount,
+        walkCount,
+    )
 
 /**
  * Returns "18 photos · ≈1.4 MB" for typical case. Static for

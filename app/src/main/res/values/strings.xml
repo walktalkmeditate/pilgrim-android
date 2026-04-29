@@ -486,4 +486,9 @@
     <string name="journey_viewer_back">Back</string>
     <string name="journey_viewer_loading">Preparing your journey…</string>
     <string name="journey_viewer_no_walks">No walks yet. Take a walk first.</string>
+
+    <plurals name="export_confirmation_walk_count">
+        <item quantity="one">1 walk</item>
+        <item quantity="other">%1$d walks</item>
+    </plurals>
 </resources>
