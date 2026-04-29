@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,6 +54,10 @@ class FeedbackViewModel @Inject constructor(
             } catch (e: FeedbackError.ServerError) {
                 _state.update { it.copy(isSubmitting = false, errorMessage = "Couldn't send — please try again") }
             } catch (e: FeedbackError.NetworkError) {
+                _state.update { it.copy(isSubmitting = false, errorMessage = "Couldn't send — please try again") }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
                 _state.update { it.copy(isSubmitting = false, errorMessage = "Couldn't send — please try again") }
             }
         }
