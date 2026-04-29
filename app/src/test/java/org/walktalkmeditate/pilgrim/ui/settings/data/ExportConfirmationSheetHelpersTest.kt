@@ -17,12 +17,9 @@ class ExportConfirmationSheetHelpersTest {
 
     @Test
     fun `photoSizeText formats KB and MB`() {
-        // 80 KB
         assertEquals("1 photo · ≈80 KB", photoSizeText(1, 80_000L))
-        // 1.4 MB (using en-US locale defaults; tolerate either "1.4" or "1,4")
         val text = photoSizeText(18, 1_440_000L)
-        assertTrue("expected '1.4' or '1,4' MB in: $text", text.contains("1.4 MB") || text.contains("1,4 MB"))
-        assertTrue(text.startsWith("18 photos · ≈"))
+        assertEquals("18 photos · ≈1.4 MB", text)
     }
 
     @Test

@@ -472,17 +472,17 @@ private fun formatDistance(meters: Double, units: UnitSystem): String {
     return when (units) {
         UnitSystem.Metric -> {
             if (meters >= 1_000) {
-                "%.1f km".format(Locale.getDefault(), meters / 1_000)
+                String.format(Locale.US, "%.1f km", meters / 1_000)
             } else {
-                "%.0f m".format(Locale.getDefault(), meters)
+                String.format(Locale.US, "%.0f m", meters)
             }
         }
         UnitSystem.Imperial -> {
             val miles = meters / 1_609.344
             if (miles >= 1) {
-                "%.1f mi".format(Locale.getDefault(), miles)
+                String.format(Locale.US, "%.1f mi", miles)
             } else {
-                "%.0f ft".format(Locale.getDefault(), meters * 3.28084)
+                String.format(Locale.US, "%.0f ft", meters * 3.28084)
             }
         }
     }

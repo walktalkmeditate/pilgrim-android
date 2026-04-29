@@ -134,9 +134,9 @@ internal fun photoSizeText(photoCount: Int, bytes: Long): String {
 private fun formatBytes(bytes: Long): String {
     val kb = bytes / 1_000.0
     return if (kb < 1_000) {
-        "%.0f KB".format(java.util.Locale.getDefault(), kb)
+        String.format(java.util.Locale.US, "%.0f KB", kb)
     } else {
-        "%.1f MB".format(java.util.Locale.getDefault(), kb / 1_000)
+        String.format(java.util.Locale.US, "%.1f MB", kb / 1_000)
     }
 }
 
