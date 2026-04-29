@@ -12,6 +12,10 @@ import javax.inject.Singleton
 import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenSource
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import org.walktalkmeditate.pilgrim.ui.settings.connect.BuildDeviceInfoProvider
+import org.walktalkmeditate.pilgrim.ui.settings.connect.DeviceInfoProvider
+import org.walktalkmeditate.pilgrim.ui.settings.connect.FeedbackSubmitter
+import org.walktalkmeditate.pilgrim.ui.settings.connect.FeedbackSubmitterImpl
 
 /**
  * Stage 10-F: feedback POST configuration. Decorates the project-wide
@@ -55,4 +59,12 @@ abstract class FeedbackBindingsModule {
     @Binds
     @Singleton
     abstract fun bindDeviceTokenSource(impl: DeviceTokenStore): DeviceTokenSource
+
+    @Binds
+    @Singleton
+    abstract fun bindFeedbackSubmitter(impl: FeedbackSubmitterImpl): FeedbackSubmitter
+
+    @Binds
+    @Singleton
+    abstract fun bindDeviceInfoProvider(impl: BuildDeviceInfoProvider): DeviceInfoProvider
 }
