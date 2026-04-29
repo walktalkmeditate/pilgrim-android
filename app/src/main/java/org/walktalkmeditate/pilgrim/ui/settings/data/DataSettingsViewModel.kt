@@ -14,8 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,13 +43,16 @@ class DataSettingsViewModel @Inject constructor(
             initialValue = 0,
         )
 
-    // Channel + consumeAsFlow for one-shot events: buffers across the
-    // rotation gap and delivers the event to the next subscriber, then
-    // it's gone. SharedFlow with extraBufferCapacity dropped events
-    // when the previous collector tore down before the new one
-    // subscribed; replay-1 would re-deliver stale events on re-entry.
+    // Channel + receiveAsFlow for one-shot events: buffers across the
+    // rotation gap and delivers each event to the next subscriber, then
+    // it's gone. Must be `receiveAsFlow` (multi-collector-safe), NOT
+    // `consumeAsFlow` (single-shot terminal that closes the channel
+    // when the first collector cancels — second mount post-rotation
+    // would crash with IllegalStateException). SharedFlow with
+    // extraBufferCapacity dropped events across the subscriber gap;
+    // replay-1 would re-deliver stale events on re-entry.
     private val _exportEvents = Channel<RecordingsExportResult>(Channel.BUFFERED)
-    val exportEvents: Flow<RecordingsExportResult> = _exportEvents.consumeAsFlow()
+    val exportEvents: Flow<RecordingsExportResult> = _exportEvents.receiveAsFlow()
 
     private val _isExporting = MutableStateFlow(false)
     val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
