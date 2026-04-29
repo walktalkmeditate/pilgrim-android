@@ -207,6 +207,160 @@ class PilgrimPackageConverterTest {
         assertEquals("kcal", manifest.preferences.energyUnit)
     }
 
+    @Test
+    fun `convertToImport restores Walk metadata + uuid`() {
+        val pilgrimUuid = UUID.randomUUID().toString()
+        val pilgrimWalk = synthesizePilgrimWalk(uuid = pilgrimUuid)
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(pilgrimUuid, pending.walk.uuid)
+        assertEquals(0L, pending.walk.id)
+        assertEquals(pilgrimWalk.startDate.toEpochMilli(), pending.walk.startTimestamp)
+        assertEquals(pilgrimWalk.endDate.toEpochMilli(), pending.walk.endTimestamp)
+        assertEquals(pilgrimWalk.intention, pending.walk.intention)
+    }
+
+    @Test
+    fun `convertToImport reconstructs route samples from LineString feature`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            routeFeatures = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonFeature(
+                    geometry = org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonGeometry(
+                        type = "LineString",
+                        coordinates = GeoJsonCoordinates.LineString(
+                            listOf(
+                                listOf(-122.3, 47.6, 50.0),
+                                listOf(-122.4, 47.7, 55.0),
+                            ),
+                        ),
+                    ),
+                    properties = org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonProperties(
+                        timestamps = listOf(Instant.ofEpochMilli(1_000), Instant.ofEpochMilli(2_000)),
+                        speeds = listOf(1.5, 2.0),
+                    ),
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(2, pending.routeSamples.size)
+        assertEquals(-122.3, pending.routeSamples[0].longitude, 0.001)
+        assertEquals(47.6, pending.routeSamples[0].latitude, 0.001)
+        assertEquals(50.0, pending.routeSamples[0].altitudeMeters!!, 0.001)
+        assertEquals(1_000L, pending.routeSamples[0].timestamp)
+        assertEquals(1.5f, pending.routeSamples[0].speedMetersPerSecond!!, 0.001f)
+    }
+
+    @Test
+    fun `convertToImport extracts waypoints from Point features`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            routeFeatures = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonFeature(
+                    geometry = org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonGeometry(
+                        type = "Point",
+                        coordinates = GeoJsonCoordinates.Point(listOf(-122.35, 47.65)),
+                    ),
+                    properties = org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonProperties(
+                        markerType = "waypoint",
+                        label = "Bridge",
+                        icon = "bridge",
+                        timestamp = Instant.ofEpochMilli(15_000),
+                    ),
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(1, pending.waypoints.size)
+        assertEquals("Bridge", pending.waypoints[0].label)
+        assertEquals(15_000L, pending.waypoints[0].timestamp)
+    }
+
+    @Test
+    fun `convertToImport restores pauses as PAUSED+RESUMED event pairs`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            pauses = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPause(
+                    startDate = Instant.ofEpochMilli(20_000),
+                    endDate = Instant.ofEpochMilli(30_000),
+                    type = "manual",
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(2, pending.walkEvents.size)
+        assertEquals(WalkEventType.PAUSED, pending.walkEvents[0].eventType)
+        assertEquals(20_000L, pending.walkEvents[0].timestamp)
+        assertEquals(WalkEventType.RESUMED, pending.walkEvents[1].eventType)
+        assertEquals(30_000L, pending.walkEvents[1].timestamp)
+    }
+
+    @Test
+    fun `convertToImport voice recording duration converts seconds to millis`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            voiceRecordings = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording(
+                    startDate = Instant.ofEpochMilli(5_000),
+                    endDate = Instant.ofEpochMilli(65_000),
+                    duration = 60.0,
+                    transcription = "hello",
+                    wordsPerMinute = 120.0,
+                    isEnhanced = false,
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(1, pending.voiceRecordings.size)
+        assertEquals(60_000L, pending.voiceRecordings[0].durationMillis)
+        assertEquals("hello", pending.voiceRecordings[0].transcription)
+        assertEquals("", pending.voiceRecordings[0].fileRelativePath)
+    }
+
+    @Test
+    fun `convertToImport meditation activity maps to MEDITATING domain enum`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            activities = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity(
+                    type = "meditation",
+                    startDate = Instant.ofEpochMilli(10_000),
+                    endDate = Instant.ofEpochMilli(70_000),
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(1, pending.activityIntervals.size)
+        assertEquals(ActivityType.MEDITATING, pending.activityIntervals[0].activityType)
+    }
+
+    private fun synthesizePilgrimWalk(
+        uuid: String = UUID.randomUUID().toString(),
+        routeFeatures: List<org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonFeature> = emptyList(),
+        pauses: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPause> = emptyList(),
+        voiceRecordings: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording> = emptyList(),
+        activities: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity> = emptyList(),
+    ) = org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk(
+        schemaVersion = "1.0",
+        id = uuid,
+        type = "walking",
+        startDate = Instant.ofEpochMilli(1_000),
+        endDate = Instant.ofEpochMilli(100_000),
+        stats = org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimStats(
+            distance = 0.0, activeDuration = 0.0, pauseDuration = 0.0,
+            ascent = 0.0, descent = 0.0, talkDuration = 0.0, meditateDuration = 0.0,
+        ),
+        weather = null,
+        route = org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonFeatureCollection(features = routeFeatures),
+        pauses = pauses,
+        activities = activities,
+        voiceRecordings = voiceRecordings,
+        intention = "calm",
+        reflection = null,
+        heartRates = emptyList(),
+        workoutEvents = emptyList(),
+        favicon = null,
+        isRace = false,
+        isUserModified = false,
+        finishedRecording = true,
+        photos = null,
+    )
+
     private fun sample(walkId: Long, timestamp: Long, lat: Double, lng: Double) = RouteDataSample(
         walkId = walkId, timestamp = timestamp, latitude = lat, longitude = lng,
     )
