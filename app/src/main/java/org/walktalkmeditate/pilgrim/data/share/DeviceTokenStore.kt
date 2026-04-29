@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.first
 @Singleton
 class DeviceTokenStore @Inject constructor(
     @ApplicationContext private val context: Context,
-) {
+) : DeviceTokenSource {
     /**
      * Idempotent generate-or-read. `edit` serialises through the
      * DataStore actor — two concurrent first-launch callers both
@@ -34,7 +34,7 @@ class DeviceTokenStore @Inject constructor(
      * Preferences snapshot so we avoid a redundant second
      * `data.first()` read after the write.
      */
-    suspend fun getToken(): String {
+    override suspend fun getToken(): String {
         context.deviceTokenDataStore.data.first()[KEY]?.let { return it }
         var token: String? = null
         context.deviceTokenDataStore.edit { prefs ->

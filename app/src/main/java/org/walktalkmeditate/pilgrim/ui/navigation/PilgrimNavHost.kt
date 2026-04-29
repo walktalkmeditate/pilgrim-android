@@ -27,6 +27,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
@@ -50,6 +51,7 @@ object Routes {
     const val PATH = "path"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
+    const val FEEDBACK = "feedback"
     const val GOSHUIN = "goshuin"
     const val MEDITATION = "meditation"
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
@@ -66,6 +68,7 @@ object Routes {
     const val SOUNDSCAPE_PICKER = "soundscapes"
     const val SOUND_SETTINGS = "sound_settings"
     const val RECORDINGS_LIST = "recordings"
+    const val DATA_SETTINGS = "data_settings"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -224,6 +227,16 @@ fun PilgrimNavHost(
                 onAction = { action ->
                     handleSettingsAction(action, navController, soundsContext)
                 },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.DATA_SETTINGS) {
+            org.walktalkmeditate.pilgrim.ui.settings.data.DataSettingsScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.FEEDBACK) {
+            org.walktalkmeditate.pilgrim.ui.settings.connect.FeedbackScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -509,22 +522,31 @@ private fun handleSettingsAction(
             navController.navigate(Routes.SOUND_SETTINGS) { launchSingleTop = true }
         SettingsAction.OpenRecordings ->
             navController.navigate(Routes.RECORDINGS_LIST) { launchSingleTop = true }
-        // The remaining destinations are introduced in subsequent stages
-        // (10-D onward). Keeping them in the sealed interface NOW lets
-        // each card author drop in its own action without re-touching
-        // the SettingsScreen signature; the routing handler grows
-        // exhaustively as cards land. The Log.w turns silent swallowing
-        // into a discoverable signal during manual QA — if a future
-        // card author wires a row but forgets to update this hub, the
-        // tap will log instead of vanishing into the void.
-        SettingsAction.OpenAppPermissionSettings, // STAGE 10-E
-        SettingsAction.OpenExportImport,        // STAGE 10-G
-        SettingsAction.OpenJourneyViewer,       // STAGE 10-G
-        SettingsAction.OpenFeedback,            // STAGE 10-F
-        SettingsAction.OpenAbout,               // STAGE 10-H
-        SettingsAction.OpenPodcast,             // STAGE 10-F
-        SettingsAction.OpenPlayStoreReview,     // STAGE 10-F
-        SettingsAction.SharePilgrim ->          // STAGE 10-F
+        SettingsAction.OpenAppPermissionSettings ->
+            context.startActivity(AppSettings.openDetailsIntent(context))
+        SettingsAction.OpenFeedback ->
+            navController.navigate(Routes.FEEDBACK) { launchSingleTop = true }
+        SettingsAction.OpenPodcast ->
+            org.walktalkmeditate.pilgrim.ui.util.CustomTabs.launch(
+                context,
+                android.net.Uri.parse("https://podcast.pilgrimapp.org"),
+            )
+        SettingsAction.OpenPlayStoreReview ->
+            org.walktalkmeditate.pilgrim.ui.util.PlayStore.openListing(context)
+        SettingsAction.SharePilgrim ->
+            org.walktalkmeditate.pilgrim.ui.util.ShareIntents.sharePilgrim(context)
+        SettingsAction.OpenExportImport ->
+            navController.navigate(Routes.DATA_SETTINGS) { launchSingleTop = true }
+        // The remaining destinations are introduced in subsequent stages.
+        // Keeping them in the sealed interface NOW lets each card author
+        // drop in its own action without re-touching the SettingsScreen
+        // signature; the routing handler grows exhaustively as cards
+        // land. The Log.w turns silent swallowing into a discoverable
+        // signal during manual QA — if a future card author wires a row
+        // but forgets to update this hub, the tap will log instead of
+        // vanishing into the void.
+        SettingsAction.OpenJourneyViewer,       // STAGE 10-I
+        SettingsAction.OpenAbout ->             // STAGE 10-H
             Log.w(TAG_NAV, "Unhandled SettingsAction: $action — wire in the corresponding stage")
     }
 }

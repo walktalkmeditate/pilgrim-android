@@ -390,4 +390,58 @@
     <string name="walk_waypoint_chip_inspired">Inspired</string>
     <string name="walk_waypoint_chip_arrived">Arrived</string>
     <string name="walk_waypoint_count_chars">%1$d/%2$d</string>
+
+    <!-- Stage 10-E: PermissionsCard -->
+    <string name="settings_permissions_title">Permissions</string>
+    <string name="settings_permissions_subtitle">What Pilgrim can access</string>
+    <string name="settings_permissions_location_label">Location</string>
+    <string name="settings_permissions_location_caption">Track your route</string>
+    <string name="settings_permissions_microphone_label">Microphone</string>
+    <string name="settings_permissions_microphone_caption">Record reflections</string>
+    <string name="settings_permissions_motion_label">Motion</string>
+    <string name="settings_permissions_motion_caption">Count your steps</string>
+    <string name="settings_permissions_action_grant">Grant</string>
+    <string name="settings_permissions_action_settings">Settings</string>
+    <string name="settings_permissions_status_restricted">Restricted</string>
+    <string name="settings_permissions_status_granted_content_description">Permission granted</string>
+
+    <!-- Stage 10-F: ConnectCard / FeedbackScreen -->
+    <string name="settings_connect_title">Connect</string>
+    <string name="settings_connect_subtitle">Share the path</string>
+    <string name="settings_connect_podcast">Pilgrim on the Path</string>
+    <string name="settings_connect_feedback">Leave a Trail Note</string>
+    <string name="settings_connect_rate">Rate Pilgrim</string>
+    <string name="settings_connect_share">Share Pilgrim</string>
+    <string name="feedback_principal_title">Leave a Trail Note</string>
+    <string name="feedback_back_content_description">Back</string>
+    <string name="feedback_category_bug">Something\'s broken</string>
+    <string name="feedback_category_feature">I wish it could&#8230;</string>
+    <string name="feedback_category_thought">A thought</string>
+    <string name="feedback_message_placeholder">What\'s on your mind?</string>
+    <string name="feedback_include_device_info">Include device info</string>
+    <string name="feedback_send">Send</string>
+    <string name="feedback_confirmation_line1">Your note has been\nleft on the path.</string>
+    <string name="feedback_confirmation_line2">Thank you.</string>
+    <string name="feedback_error_rate_limited">Too many submissions today.</string>
+    <string name="feedback_error_generic">Couldn\'t send — please try again</string>
+    <string name="settings_share_pilgrim_body">I\'ve been walking with Pilgrim — it tracks your walks, records voice notes, and even has a meditation mode. No accounts, no tracking, everything stays on your phone. Free and open source.</string>
+    <string name="settings_share_pilgrim_url">https://plgr.im/share</string>
+    <!-- Stage 10-G: DataCard / DataSettingsScreen -->
+    <string name="settings_data_title">Data</string>
+    <string name="settings_data_subtitle">Your walk archive</string>
+    <string name="settings_data_export_import">Export &amp; Import</string>
+    <string name="data_screen_title">Data</string>
+    <string name="data_back_content_description">Back</string>
+    <string name="data_section_walks_header">Walks</string>
+    <string name="data_action_export">Export My Data</string>
+    <string name="data_action_import">Import Data</string>
+    <string name="data_walks_footer">Export creates a .pilgrim archive with all your walks, transcriptions, and settings. Import restores walks from a .pilgrim file.</string>
+    <string name="data_action_journey">View My Journey</string>
+    <string name="data_journey_footer">Opens view.pilgrimapp.org and renders all your walks in the browser. Your data stays on your device — nothing is uploaded.</string>
+    <string name="data_section_audio_header">Audio</string>
+    <string name="data_action_export_recordings">Export Recordings</string>
+    <string name="data_audio_footer">Exports all voice recording audio files as a zip archive. These are not included in the data export.</string>
+    <string name="data_export_empty">No recordings yet to export.</string>
+    <string name="data_export_failed">Couldn\'t create the archive — please try again.</string>
+    <string name="data_coming_soon">Coming in a future release.</string>
 </resources>
