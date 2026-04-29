@@ -274,7 +274,7 @@ object PilgrimPackageConverter {
                 ),
             )
         }
-        val walkPhotos = PilgrimPackagePhotoConverter.importPhotos(walkId = 0L, exported = pilgrim.photos)
+        val walkPhotos = PilgrimPackagePhotoConverter.importPhotos(exported = pilgrim.photos)
 
         return PendingImport(
             walk = walk,

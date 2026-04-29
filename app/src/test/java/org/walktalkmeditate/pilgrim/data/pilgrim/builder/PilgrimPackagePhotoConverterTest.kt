@@ -79,7 +79,7 @@ class PilgrimPackagePhotoConverterTest {
     }
 
     @Test
-    fun `import rebuilds WalkPhoto rows with takenAt = capturedAt`() {
+    fun `import rebuilds Pending shape with takenAt = capturedAt`() {
         val pilgrim = listOf(
             org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPhoto(
                 localIdentifier = "content://media/12345",
@@ -89,9 +89,8 @@ class PilgrimPackagePhotoConverterTest {
                 keptAt = java.time.Instant.ofEpochMilli(2_000),
             ),
         )
-        val rebuilt = PilgrimPackagePhotoConverter.importPhotos(walkId = 42L, exported = pilgrim)
+        val rebuilt = PilgrimPackagePhotoConverter.importPhotos(exported = pilgrim)
         assertEquals(1, rebuilt.size)
-        assertEquals(42L, rebuilt[0].walkId)
         assertEquals("content://media/12345", rebuilt[0].photoUri)
         assertEquals(2_000L, rebuilt[0].pinnedAt)
         assertEquals(1_500L, rebuilt[0].takenAt)
@@ -99,7 +98,7 @@ class PilgrimPackagePhotoConverterTest {
 
     @Test
     fun `import returns empty list for null exported photos`() {
-        val rebuilt = PilgrimPackagePhotoConverter.importPhotos(walkId = 42L, exported = null)
+        val rebuilt = PilgrimPackagePhotoConverter.importPhotos(exported = null)
         assertTrue(rebuilt.isEmpty())
     }
 
