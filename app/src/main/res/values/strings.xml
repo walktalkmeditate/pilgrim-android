@@ -190,9 +190,6 @@
 
     <string name="voice_guide_duration_minutes_format">%1$d min</string>
 
-    <string name="settings_soundscapes_row">Soundscapes</string>
-    <string name="settings_soundscapes_subtitle">Ambient sound for meditation</string>
-
     <string name="soundscape_picker_title">Soundscapes</string>
     <string name="soundscape_picker_empty">No soundscapes yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="soundscape_status_not_downloaded">Not downloaded</string>

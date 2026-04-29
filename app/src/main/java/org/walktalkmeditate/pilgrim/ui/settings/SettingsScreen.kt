@@ -132,18 +132,10 @@ fun SettingsScreen(
                     showPhotosDeniedNote = showPhotosDeniedNote,
                 )
             }
-            // Stage 10-D: VoiceCard sits between Practice and
-            // Atmosphere, matching iOS's settings card order.
-            // Replaces the transitional voice-guides nav row.
-            item {
-                VoiceCard(
-                    state = voiceCardState,
-                    onSetVoiceGuideEnabled = viewModel::setVoiceGuideEnabled,
-                    onSetAutoTranscribe = viewModel::setAutoTranscribe,
-                    onOpenVoiceGuides = { onAction(SettingsAction.OpenVoiceGuides) },
-                    onOpenRecordings = { onAction(SettingsAction.OpenRecordings) },
-                )
-            }
+            // iOS card order: Practice → Atmosphere → Voice → Permissions
+            // → Data → Connect → About. Stage 10-D originally landed
+            // VoiceCard before AtmosphereCard; reordered here for iOS
+            // pixel-parity per user request.
             item {
                 AtmosphereCard(
                     currentMode = appearanceMode,
@@ -151,6 +143,15 @@ fun SettingsScreen(
                     soundsEnabled = soundsEnabled,
                     onSetSoundsEnabled = viewModel::setSoundsEnabled,
                     onAction = onAction,
+                )
+            }
+            item {
+                VoiceCard(
+                    state = voiceCardState,
+                    onSetVoiceGuideEnabled = viewModel::setVoiceGuideEnabled,
+                    onSetAutoTranscribe = viewModel::setAutoTranscribe,
+                    onOpenVoiceGuides = { onAction(SettingsAction.OpenVoiceGuides) },
+                    onOpenRecordings = { onAction(SettingsAction.OpenRecordings) },
                 )
             }
             item {
@@ -191,22 +192,6 @@ fun SettingsScreen(
                         contentDescription = null,
                         tint = pilgrimColors.fog,
                         modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-            // Soundscapes is landed here as a SettingNavRow
-            // stand-in inside a settingsCard wrapper to share
-            // AtmosphereCard's 32dp content indent. The row will
-            // be absorbed into a proper Bells & Soundscapes card
-            // in Stage 10-B at which point this transitional
-            // wrapper goes away.
-            item {
-                Column(modifier = Modifier.fillMaxWidth().settingsCard()) {
-                    SettingNavRow(
-                        label = stringResource(R.string.settings_soundscapes_row),
-                        detail = stringResource(R.string.settings_soundscapes_subtitle),
-                        onClick = { onAction(SettingsAction.OpenSoundscapes) },
-                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
