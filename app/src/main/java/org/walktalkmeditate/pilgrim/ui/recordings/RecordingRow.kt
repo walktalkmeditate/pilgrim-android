@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.recordings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -424,6 +425,12 @@ private fun TranscriptionEditor(
     var text by rememberSaveable(initial) { mutableStateOf(initial) }
     val latestText by rememberUpdatedState(text)
     val editorDescription = stringResource(R.string.recordings_transcription_editor_description)
+
+    // Wire the system Back gesture to exit edit mode without committing,
+    // matching iOS where tapping outside the editor cancels the edit. Without
+    // this handler, Back would propagate up and pop the entire Recordings
+    // screen mid-edit — surprising UX.
+    BackHandler(enabled = true) { onStop() }
 
     Column(
         modifier = Modifier.fillMaxWidth(),

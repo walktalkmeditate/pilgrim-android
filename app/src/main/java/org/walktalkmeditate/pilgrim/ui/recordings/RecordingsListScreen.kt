@@ -178,7 +178,10 @@ private fun LoadedContent(
         )
 
         when {
-            state.searchQuery.isEmpty() && !state.hasAnyRecordings -> EmptyState(
+            // Empty database trumps any search query: a fresh-install user
+            // typing into the search field would otherwise see "No
+            // recordings match" instead of the steady-state empty hint.
+            !state.hasAnyRecordings -> EmptyState(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 32.dp),
