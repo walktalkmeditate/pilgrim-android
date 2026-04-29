@@ -69,6 +69,7 @@ object Routes {
     const val SOUND_SETTINGS = "sound_settings"
     const val RECORDINGS_LIST = "recordings"
     const val DATA_SETTINGS = "data_settings"
+    const val ABOUT = "about"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -237,6 +238,11 @@ fun PilgrimNavHost(
         }
         composable(Routes.FEEDBACK) {
             org.walktalkmeditate.pilgrim.ui.settings.connect.FeedbackScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.ABOUT) {
+            org.walktalkmeditate.pilgrim.ui.settings.about.AboutScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -537,6 +543,8 @@ private fun handleSettingsAction(
             org.walktalkmeditate.pilgrim.ui.util.ShareIntents.sharePilgrim(context)
         SettingsAction.OpenExportImport ->
             navController.navigate(Routes.DATA_SETTINGS) { launchSingleTop = true }
+        SettingsAction.OpenAbout ->
+            navController.navigate(Routes.ABOUT) { launchSingleTop = true }
         // The remaining destinations are introduced in subsequent stages.
         // Keeping them in the sealed interface NOW lets each card author
         // drop in its own action without re-touching the SettingsScreen
@@ -545,8 +553,7 @@ private fun handleSettingsAction(
         // signal during manual QA — if a future card author wires a row
         // but forgets to update this hub, the tap will log instead of
         // vanishing into the void.
-        SettingsAction.OpenJourneyViewer,       // STAGE 10-I
-        SettingsAction.OpenAbout ->             // STAGE 10-H
+        SettingsAction.OpenJourneyViewer ->     // STAGE 10-I
             Log.w(TAG_NAV, "Unhandled SettingsAction: $action — wire in the corresponding stage")
     }
 }

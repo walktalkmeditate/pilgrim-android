@@ -466,4 +466,5 @@
     <string name="about_link_github">Source code on GitHub</string>
     <string name="about_link_rate">Rate Pilgrim</string>
     <string name="about_motto">Slow and chill is the motto.\nRelax and release is the practice.\nPeace and harmony is the way.</string>
+    <string name="settings_about_pilgrim">About Pilgrim</string>
 </resources>
