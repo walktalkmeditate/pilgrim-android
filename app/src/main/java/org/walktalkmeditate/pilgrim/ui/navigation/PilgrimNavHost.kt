@@ -68,6 +68,7 @@ object Routes {
     const val SOUNDSCAPE_PICKER = "soundscapes"
     const val SOUND_SETTINGS = "sound_settings"
     const val RECORDINGS_LIST = "recordings"
+    const val DATA_SETTINGS = "data_settings"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -226,6 +227,11 @@ fun PilgrimNavHost(
                 onAction = { action ->
                     handleSettingsAction(action, navController, soundsContext)
                 },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.DATA_SETTINGS) {
+            org.walktalkmeditate.pilgrim.ui.settings.data.DataSettingsScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -529,6 +535,8 @@ private fun handleSettingsAction(
             org.walktalkmeditate.pilgrim.ui.util.PlayStore.openListing(context)
         SettingsAction.SharePilgrim ->
             org.walktalkmeditate.pilgrim.ui.util.ShareIntents.sharePilgrim(context)
+        SettingsAction.OpenExportImport ->
+            navController.navigate(Routes.DATA_SETTINGS) { launchSingleTop = true }
         // The remaining destinations are introduced in subsequent stages.
         // Keeping them in the sealed interface NOW lets each card author
         // drop in its own action without re-touching the SettingsScreen
@@ -537,8 +545,7 @@ private fun handleSettingsAction(
         // signal during manual QA — if a future card author wires a row
         // but forgets to update this hub, the tap will log instead of
         // vanishing into the void.
-        SettingsAction.OpenExportImport,        // STAGE 10-G
-        SettingsAction.OpenJourneyViewer,       // STAGE 10-G
+        SettingsAction.OpenJourneyViewer,       // STAGE 10-I
         SettingsAction.OpenAbout ->             // STAGE 10-H
             Log.w(TAG_NAV, "Unhandled SettingsAction: $action — wire in the corresponding stage")
     }
