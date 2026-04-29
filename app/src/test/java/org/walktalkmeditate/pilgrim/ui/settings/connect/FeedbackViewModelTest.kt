@@ -84,7 +84,7 @@ class FeedbackViewModelTest {
         vm.state.test(timeout = 5.seconds) {
             var current = awaitItem()
             while (current.errorMessage == null) current = awaitItem()
-            assertEquals("Too many submissions today.", current.errorMessage)
+            assertEquals(FeedbackErrorMessage.RateLimited, current.errorMessage)
             assertFalse(current.showConfirmation)
             assertFalse(current.isSubmitting)
             cancelAndIgnoreRemainingEvents()
@@ -102,7 +102,7 @@ class FeedbackViewModelTest {
         vm.state.test(timeout = 5.seconds) {
             var current = awaitItem()
             while (current.errorMessage == null) current = awaitItem()
-            assertEquals("Couldn't send — please try again", current.errorMessage)
+            assertEquals(FeedbackErrorMessage.Generic, current.errorMessage)
             cancelAndIgnoreRemainingEvents()
         }
     }

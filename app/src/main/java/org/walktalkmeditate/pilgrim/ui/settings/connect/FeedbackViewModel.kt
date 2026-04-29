@@ -50,15 +50,15 @@ class FeedbackViewModel @Inject constructor(
                 )
                 _state.update { it.copy(isSubmitting = false, showConfirmation = true) }
             } catch (e: FeedbackError.RateLimited) {
-                _state.update { it.copy(isSubmitting = false, errorMessage = "Too many submissions today.") }
+                _state.update { it.copy(isSubmitting = false, errorMessage = FeedbackErrorMessage.RateLimited) }
             } catch (e: FeedbackError.ServerError) {
-                _state.update { it.copy(isSubmitting = false, errorMessage = "Couldn't send — please try again") }
+                _state.update { it.copy(isSubmitting = false, errorMessage = FeedbackErrorMessage.Generic) }
             } catch (e: FeedbackError.NetworkError) {
-                _state.update { it.copy(isSubmitting = false, errorMessage = "Couldn't send — please try again") }
+                _state.update { it.copy(isSubmitting = false, errorMessage = FeedbackErrorMessage.Generic) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                _state.update { it.copy(isSubmitting = false, errorMessage = "Couldn't send — please try again") }
+                _state.update { it.copy(isSubmitting = false, errorMessage = FeedbackErrorMessage.Generic) }
             }
         }
     }

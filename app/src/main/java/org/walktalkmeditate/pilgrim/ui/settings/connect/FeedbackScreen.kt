@@ -187,8 +187,12 @@ private fun FormContent(
         }
 
         if (state.errorMessage != null) {
+            val errorText = when (state.errorMessage) {
+                FeedbackErrorMessage.RateLimited -> stringResource(R.string.feedback_error_rate_limited)
+                FeedbackErrorMessage.Generic -> stringResource(R.string.feedback_error_generic)
+            }
             Text(
-                text = state.errorMessage,
+                text = errorText,
                 style = pilgrimType.caption,
                 color = pilgrimColors.rust,
             )

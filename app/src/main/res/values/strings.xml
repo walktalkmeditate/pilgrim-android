@@ -422,6 +422,8 @@
     <string name="feedback_send">Send</string>
     <string name="feedback_confirmation_line1">Your note has been\nleft on the path.</string>
     <string name="feedback_confirmation_line2">Thank you.</string>
+    <string name="feedback_error_rate_limited">Too many submissions today.</string>
+    <string name="feedback_error_generic">Couldn\'t send — please try again</string>
     <string name="settings_share_pilgrim_body">I\'ve been walking with Pilgrim — it tracks your walks, records voice notes, and even has a meditation mode. No accounts, no tracking, everything stays on your phone. Free and open source.</string>
     <string name="settings_share_pilgrim_url">https://plgr.im/share</string>
     <!-- Stage 10-G: DataCard / DataSettingsScreen -->
