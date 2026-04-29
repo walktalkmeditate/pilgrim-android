@@ -424,4 +424,22 @@
     <string name="feedback_confirmation_line2">Thank you.</string>
     <string name="settings_share_pilgrim_body">I\'ve been walking with Pilgrim — it tracks your walks, records voice notes, and even has a meditation mode. No accounts, no tracking, everything stays on your phone. Free and open source.</string>
     <string name="settings_share_pilgrim_url">https://plgr.im/share</string>
+    <!-- Stage 10-G: DataCard / DataSettingsScreen -->
+    <string name="settings_data_title">Data</string>
+    <string name="settings_data_subtitle">Your walk archive</string>
+    <string name="settings_data_export_import">Export &amp; Import</string>
+    <string name="data_screen_title">Data</string>
+    <string name="data_back_content_description">Back</string>
+    <string name="data_section_walks_header">Walks</string>
+    <string name="data_action_export">Export My Data</string>
+    <string name="data_action_import">Import Data</string>
+    <string name="data_walks_footer">Export creates a .pilgrim archive with all your walks, transcriptions, and settings. Import restores walks from a .pilgrim file.</string>
+    <string name="data_action_journey">View My Journey</string>
+    <string name="data_journey_footer">Opens view.pilgrimapp.org and renders all your walks in the browser. Your data stays on your device — nothing is uploaded.</string>
+    <string name="data_section_audio_header">Audio</string>
+    <string name="data_action_export_recordings">Export Recordings</string>
+    <string name="data_audio_footer">Exports all voice recording audio files as a zip archive. These are not included in the data export.</string>
+    <string name="data_export_empty">No recordings yet to export.</string>
+    <string name="data_export_failed">Couldn\'t create the archive — please try again.</string>
+    <string name="data_coming_soon">Coming in a future release.</string>
 </resources>
