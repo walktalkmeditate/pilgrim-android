@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -44,11 +45,30 @@ class DataStoreVoicePreferencesRepository @Inject constructor(
         .map { prefs -> prefs[AUTO_TRANSCRIBE] ?: DEFAULT_AUTO_TRANSCRIBE }
         .stateIn(scope, SharingStarted.Eagerly, DEFAULT_AUTO_TRANSCRIBE)
 
+    /**
+     * Completes when the upgrade migration finishes (success or failure).
+     * [awaitAutoTranscribe] gates on this so an upgrading user whose
+     * process restarts mid-walk and immediately hits Finish from the FGS
+     * notification doesn't read the DataStore default (`false`) before
+     * the migration writes the seeded value (`true`) — that would
+     * silently skip transcription on the first walk after upgrade.
+     *
+     * Wrapped in a `try/finally` at the call site so production code
+     * cannot deadlock if the migration throws.
+     */
+    private val migrationComplete: CompletableDeferred<Unit> = CompletableDeferred()
+
     init {
         // Stage 10-D upgrade migration: see runAutoTranscribeMigrationIfNeeded kdoc.
         // Fire-and-forget on the repo scope. Idempotent — re-checks the key
         // inside `dataStore.edit` so concurrent setters don't get clobbered.
-        scope.launch { runAutoTranscribeMigrationIfNeeded() }
+        scope.launch {
+            try {
+                runAutoTranscribeMigrationIfNeeded()
+            } finally {
+                migrationComplete.complete(Unit)
+            }
+        }
     }
 
     override suspend fun setVoiceGuideEnabled(enabled: Boolean) {
@@ -60,6 +80,12 @@ class DataStoreVoicePreferencesRepository @Inject constructor(
     }
 
     override suspend fun awaitAutoTranscribe(): Boolean {
+        // Wait for the upgrade migration to finish before reading. Without
+        // this, an upgrading user whose process restarts mid-walk and
+        // immediately taps Finish on the FGS notification could read the
+        // DataStore default (false) before the migration writes the
+        // seeded value (true), silently skipping transcription.
+        migrationComplete.await()
         val prefs = dataStore.data.first()
         return prefs[AUTO_TRANSCRIBE] ?: DEFAULT_AUTO_TRANSCRIBE
     }

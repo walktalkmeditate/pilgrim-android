@@ -514,6 +514,7 @@ private fun SwipeableRecordingRow(
                 fileSystem = viewModel.recordingFileSystem,
                 waveformCache = viewModel.recordingWaveformCache,
                 fileAvailable = state.fileExistenceById[recording.id] ?: false,
+                sizeBytes = state.fileSizeById[recording.id] ?: 0L,
                 isPlayingThisRow = state.playingRecordingId == recording.id,
                 playbackPositionFraction = state.playbackPositionFraction,
                 playbackSpeed = state.playbackSpeed,
@@ -587,11 +588,11 @@ private data class SwipeChrome(
 
 private fun formatHeaderDate(epochMillis: Long): String {
     val instant = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault())
-    // Locale.US for stable English month names + AM/PM in iOS-parity
-    // tests. The home list's relative-date formatter uses the device
-    // locale; recordings sections lean on Locale.US the way iOS pins
-    // month-name display to the en_US format (matches the
-    // `String(localized:)` pattern used in iOS RecordingsListView).
-    return DateTimeFormatter.ofPattern("MMMM d, h:mm a", Locale.US).format(instant)
+    // Stage 3-A precedent: device-locale for natural-language formatting
+    // (month names, AM/PM markers); Locale.US is reserved for numeric
+    // `%d`-style format strings where ASCII digits are required. iOS's
+    // RecordingsListView formats this header with the device locale; we
+    // match by passing Locale.getDefault() to DateTimeFormatter.
+    return DateTimeFormatter.ofPattern("MMMM d, h:mm a", Locale.getDefault()).format(instant)
 }
 

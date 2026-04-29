@@ -79,6 +79,13 @@ object WaveformLoader {
                     val fmt = ByteArray(minOf(chunkSize, 16L).toInt())
                     raf.seek(pos + 8)
                     raf.readFully(fmt)
+                    // A non-standard or corrupt WAV may declare a fmt chunk
+                    // narrower than the 16 bytes we read into below — without
+                    // this explicit reject path, `fmtBuf.getShort(14)` throws
+                    // BufferUnderflowException and falls through to the
+                    // catch-all in [load], silently producing a flat-line
+                    // waveform with no diagnostic.
+                    if (fmt.size < 16) return null
                     val fmtBuf = ByteBuffer.wrap(fmt).order(ByteOrder.LITTLE_ENDIAN)
                     val audioFormat = fmtBuf.getShort(0).toInt()
                     if (audioFormat != 1) return null

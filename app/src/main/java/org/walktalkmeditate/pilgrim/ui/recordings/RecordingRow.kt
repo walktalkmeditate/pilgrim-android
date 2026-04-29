@@ -72,13 +72,13 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
  *  3. edit-mode — replaces the transcription view-block with an
  *     `OutlinedTextField` plus a `Done` button.
  *
- * The [fileSystem] dependency is plumbed in for the file-size lookup
- * (which we still resolve here so the meta-string doesn't need a parallel
- * VM-side map). File EXISTENCE is now resolved in the VM's combine block
- * and threaded down as [fileAvailable] — see Stage 10-D final-review
- * Fix 1: the previous per-row `remember(recording.fileRelativePath)` key
- * never changed when `onDeleteFile` succeeded (we keep the Room row), so
- * the player UI stayed visible for a deleted file.
+ * The [fileSystem] dependency is plumbed in only for [WaveformLoader] /
+ * [WaveformBar] to resolve the absolute file path on the IO dispatcher;
+ * file existence is threaded as [fileAvailable], file size as
+ * [sizeBytes] — both resolved on [Dispatchers.IO] inside
+ * [RecordingsListViewModel]'s `fileSnapshotFlow` so composition does NOT
+ * issue stat syscalls on Main (mass deletion would otherwise stat-storm
+ * Main on row recompose).
  *
  * iOS unavailable-state icon is `waveform.slash`. Material's extended
  * icon set has no `GraphicEqOff` — `Icons.Filled.MusicOff` is the
@@ -92,6 +92,7 @@ fun RecordingRow(
     fileSystem: VoiceRecordingFileSystem,
     waveformCache: WaveformCache,
     fileAvailable: Boolean,
+    sizeBytes: Long,
     isPlayingThisRow: Boolean,
     playbackPositionFraction: Float,
     playbackSpeed: Float,
@@ -106,9 +107,6 @@ fun RecordingRow(
     modifier: Modifier = Modifier,
 ) {
     val colors = pilgrimColors
-    val sizeBytes = remember(recording.fileRelativePath, fileAvailable) {
-        if (fileAvailable) fileSystem.fileSizeBytes(recording.fileRelativePath) else 0L
-    }
 
     Column(
         modifier = modifier.fillMaxWidth(),

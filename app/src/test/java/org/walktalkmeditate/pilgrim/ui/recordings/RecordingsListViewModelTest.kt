@@ -447,12 +447,30 @@ class RecordingsListViewModelTest {
         val vm = newViewModel()
         vm.onStartEditing(rec.id)
 
-        var state = loaded(vm)
-        assertEquals(rec.id, state.editingRecordingId)
+        // Poll: the combine block hops through real Dispatchers.IO for
+        // the file-snapshot side-channel, so virtual-time runTest does
+        // not observe the new emission synchronously after a state
+        // mutation. Same pattern as the existence-flip test below.
+        awaitEditingId(vm, expected = rec.id)
+        assertEquals(rec.id, (vm.state.value as RecordingsListUiState.Loaded).editingRecordingId)
 
         vm.onStopEditing()
-        state = loaded(vm)
-        assertNull(state.editingRecordingId)
+        awaitEditingId(vm, expected = null)
+        assertNull((vm.state.value as RecordingsListUiState.Loaded).editingRecordingId)
+    }
+
+    private suspend fun awaitEditingId(vm: RecordingsListViewModel, expected: Long?) {
+        // Bridge the real-time IO hop in fileSnapshotFlow to virtual-time
+        // runTest by polling vm.state.value on a real dispatcher.
+        withContext(Dispatchers.Default) {
+            withTimeout(2_000L) {
+                while ((vm.state.value as? RecordingsListUiState.Loaded)
+                        ?.editingRecordingId != expected
+                ) {
+                    Thread.sleep(25L)
+                }
+            }
+        }
     }
 
     // --- helpers -----------------------------------------------------

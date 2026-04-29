@@ -7,9 +7,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import org.junit.Rule
 
 class WaveformLoaderTest {
 
@@ -44,6 +44,32 @@ class WaveformLoaderTest {
         f.writeBytes(byteArrayOf(0x52, 0x49, 0x46, 0x46))  // just "RIFF"
         val samples = WaveformLoader.load(f, barCount = 64)
         assertEquals(64, samples.size)
+        samples.forEach { assertEquals(0f, it, 0.001f) }
+    }
+
+    @Test fun `returns flat-line when fmt chunk is shorter than 16 bytes`() {
+        // A non-standard or corrupt WAV may declare a fmt chunk smaller than
+        // the 16 bytes we read into; without an explicit guard, getShort(14)
+        // would throw BufferUnderflowException and silently produce a flat
+        // waveform. The guard makes the rejection deterministic.
+        val pcm = ByteArray(64) { 0 }
+        val header = ByteBuffer.allocate(36).order(ByteOrder.LITTLE_ENDIAN)
+        header.put("RIFF".toByteArray())
+        header.putInt(28 + pcm.size)
+        header.put("WAVE".toByteArray())
+        header.put("fmt ".toByteArray())
+        header.putInt(8)              // fmt chunk size declared as 8 (< 16)
+        header.putShort(1)            // PCM
+        header.putShort(1)            // mono
+        header.putInt(16_000)         // sample rate (still under-sized, total 8 bytes)
+        header.put("data".toByteArray())
+        header.putInt(pcm.size)
+        val wav = header.array() + pcm
+        val f = tmp.newFile("short-fmt.wav")
+        f.writeBytes(wav)
+
+        val samples = WaveformLoader.load(f, barCount = 32)
+        assertEquals(32, samples.size)
         samples.forEach { assertEquals(0f, it, 0.001f) }
     }
 

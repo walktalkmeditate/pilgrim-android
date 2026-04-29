@@ -9,6 +9,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
@@ -56,6 +58,15 @@ sealed interface RecordingsListUiState {
          * `fileExistenceById[recording.id] ?: false`.
          */
         val fileExistenceById: Map<Long, Boolean>,
+        /**
+         * Per-recording-id snapshot of `fileSystem.fileSizeBytes`. Computed
+         * alongside [fileExistenceById] inside the same VM-side combine so
+         * [RecordingRow] can render the meta-string size without running a
+         * `File.length()` syscall in `remember {}` on the Main thread —
+         * mass-deletion otherwise stat-storms Main on row recompose.
+         * Missing entry → 0 bytes (e.g. file unavailable).
+         */
+        val fileSizeById: Map<Long, Long>,
     ) : RecordingsListUiState
 }
 
@@ -116,31 +127,45 @@ class RecordingsListViewModel @Inject constructor(
     private val walksFlow = walkRepository.observeAllWalks()
 
     /**
-     * Slow-moving file-existence map keyed on recording id. Recomputes only
-     * when the recordings list changes upstream OR a delete handler bumps
-     * [fileSystemVersion]. The fast-moving 100 ms playback-position tick in
-     * the main `state` combine reads this cached map, NOT the file system —
-     * that earlier shape ran `fileSystem.fileExists` per recording on every
-     * tick (50 recordings × 10 ticks/sec = 500 syscalls/sec on Main during
-     * playback). Cost is now O(N×deletes) instead of O(N×ticks).
+     * Slow-moving per-recording snapshot — file existence + file size on
+     * disk. Recomputes only when the recordings list changes upstream OR a
+     * delete handler bumps [fileSystemVersion]. The fast-moving 100 ms
+     * playback-position tick in the main `state` combine reads these cached
+     * maps, NOT the file system — the earlier shape ran
+     * `fileSystem.fileExists` per recording on every tick (50 recordings ×
+     * 10 ticks/sec = 500 syscalls/sec on Main during playback). Cost is now
+     * O(N×deletes) instead of O(N×ticks).
      *
-     * Computation runs on whichever dispatcher the consuming combine is
-     * collected on (Main, by design — see the kdoc on the main `state` flow
-     * below). That's safe because the syscalls only fire on the slow path
-     * (recording list change or delete), not per playback tick. Routing
-     * via `flowOn(Dispatchers.IO)` would help further but breaks the
-     * test-dispatcher invariant the existing test suite relies on.
+     * The syscall loop hops to [Dispatchers.IO] via `withContext` INSIDE
+     * the combine lambda. This lifts the heavyweight stat block off Main
+     * (mass deletion across 50+ rows otherwise stat-storms Main and risks
+     * an ANR on budget devices) WITHOUT changing the upstream / downstream
+     * flow's dispatcher — `flowOn(Dispatchers.IO)` on the chain bypasses
+     * the test dispatcher injected via `Dispatchers.setMain(...)`, breaking
+     * virtual-time tests for the search/edit-mode toggle paths. Internal
+     * `withContext` keeps the test-dispatcher invariant intact while still
+     * paying the IO hop on production.
      */
-    private val fileExistenceFlow: Flow<Map<Long, Boolean>> = combine(
+    private val fileSnapshotFlow: Flow<FileSnapshot> = combine(
         recordingsFlow,
         fileSystemVersion,
     ) { recordings, _ ->
-        val map = HashMap<Long, Boolean>(recordings.size)
-        for (rec in recordings) {
-            map[rec.id] = fileSystem.fileExists(rec.fileRelativePath)
+        withContext(Dispatchers.IO) {
+            val exists = HashMap<Long, Boolean>(recordings.size)
+            val sizes = HashMap<Long, Long>(recordings.size)
+            for (rec in recordings) {
+                val present = fileSystem.fileExists(rec.fileRelativePath)
+                exists[rec.id] = present
+                sizes[rec.id] = if (present) fileSystem.fileSizeBytes(rec.fileRelativePath) else 0L
+            }
+            FileSnapshot(existsById = exists, sizeById = sizes)
         }
-        map
     }
+
+    private data class FileSnapshot(
+        val existsById: Map<Long, Boolean>,
+        val sizeById: Map<Long, Long>,
+    )
 
     val state: StateFlow<RecordingsListUiState> = combine(
         recordingsFlow,
@@ -150,7 +175,7 @@ class RecordingsListViewModel @Inject constructor(
         playbackController.playbackSpeed,
         playbackController.playbackPositionMillis,
         editingRecordingId,
-        fileExistenceFlow,
+        fileSnapshotFlow,
     ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
         val recordings = args[0] as List<VoiceRecording>
@@ -161,8 +186,7 @@ class RecordingsListViewModel @Inject constructor(
         val speed = args[4] as Float
         val posMs = args[5] as Long
         val editingId = args[6] as Long?
-        @Suppress("UNCHECKED_CAST")
-        val existence = args[7] as Map<Long, Boolean>
+        val snapshot = args[7] as FileSnapshot
 
         val sections = walks
             .filter { walk -> recordings.any { it.walkId == walk.id } }
@@ -204,7 +228,8 @@ class RecordingsListViewModel @Inject constructor(
             playbackPositionFraction = fraction,
             playbackSpeed = speed,
             editingRecordingId = editingId,
-            fileExistenceById = existence,
+            fileExistenceById = snapshot.existsById,
+            fileSizeById = snapshot.sizeById,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, RecordingsListUiState.Loading)
     // No `flowOn(Dispatchers.Default)`: the combine body is pure

@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -143,6 +144,16 @@ class RecordingsListScreenTest {
                     viewModel = vm,
                 )
             }
+        }
+
+        // The VM's `fileSnapshotFlow` hops to real Dispatchers.IO, which
+        // Compose's idling-resource tracking does not observe. Wait
+        // explicitly for the Loaded state to appear (Loading paints an
+        // empty Box; the empty-state copy only renders once the combine
+        // settles after the IO hop returns).
+        composeRule.waitUntil(timeoutMillis = 2_000L) {
+            composeRule.onAllNodesWithText("Your voice recordings will appear here")
+                .fetchSemanticsNodes().isNotEmpty()
         }
 
         composeRule.onNodeWithText("Your voice recordings will appear here").assertIsDisplayed()

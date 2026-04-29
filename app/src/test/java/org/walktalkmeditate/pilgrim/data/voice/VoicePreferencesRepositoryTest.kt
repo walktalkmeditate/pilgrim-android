@@ -125,4 +125,22 @@ class VoicePreferencesRepositoryTest {
         runBlocking { kotlinx.coroutines.delay(100) }
         assertFalse(repo.autoTranscribe.value)
     }
+
+    @Test
+    fun `awaitAutoTranscribe waits for migration even with concurrent finalize call`() = runTest {
+        // Pre-seed an upgrade indicator (the migration will see it and seed
+        // autoTranscribe = true). Before the fix, awaitAutoTranscribe could
+        // race the migration: a process-restart-mid-walk + immediate-Finish
+        // would call awaitAutoTranscribe BEFORE the init {} migration's
+        // dataStore.edit landed → returns false (default), silently skipping
+        // transcription for an upgrading user. Now awaitAutoTranscribe gates
+        // on `migrationComplete` so the seeded value is observed.
+        dataStore.edit { it[stringPreferencesKey("appearance_mode")] = "system" }
+
+        val repo = DataStoreVoicePreferencesRepository(dataStore, scope)
+        // Immediately call awaitAutoTranscribe — should return true
+        // (upgrade-seeded value), not false (DataStore default before
+        // migration ran).
+        assertTrue(repo.awaitAutoTranscribe())
+    }
 }
