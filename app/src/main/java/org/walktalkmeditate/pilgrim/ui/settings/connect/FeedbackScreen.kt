@@ -198,15 +198,20 @@ private fun FormContent(
             )
         }
 
+        // iOS parity: keep the stone background while submitting; only
+        // gate clickability via state.canSubmit (which already includes
+        // !isSubmitting). The background should reflect form validity,
+        // not in-flight state.
+        val backgroundEnabled = state.selectedCategory != null && state.message.trim().isNotEmpty()
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(
-                    if (state.canSubmit) pilgrimColors.stone
+                    if (backgroundEnabled) pilgrimColors.stone
                     else pilgrimColors.fog.copy(alpha = 0.2f),
                 )
-                .clickable(enabled = state.canSubmit && !state.isSubmitting) { onSubmit() }
+                .clickable(enabled = state.canSubmit) { onSubmit() }
                 .padding(vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
