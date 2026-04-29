@@ -4,6 +4,8 @@ package org.walktalkmeditate.pilgrim.data.feedback
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -73,11 +75,18 @@ class FeedbackService @Inject constructor(
         suspendCancellableCoroutine { cont ->
             enqueue(object : Callback {
                 override fun onResponse(call: Call, response: Response) {
-                    cont.resumeWith(Result.success(response))
+                    // resume(onCancellation = ...) closes the body if the
+                    // cont was cancelled between the I/O thread firing
+                    // onResponse and the suspension being resumed —
+                    // otherwise the Response leaks an open connection.
+                    cont.resume(response) { _, _, _ ->
+                        runCatching { response.close() }
+                    }
                 }
 
                 override fun onFailure(call: Call, e: IOException) {
-                    cont.resumeWith(Result.failure(e))
+                    if (cont.isCancelled) return
+                    cont.resumeWithException(e)
                 }
             })
             cont.invokeOnCancellation { runCatching { cancel() } }
