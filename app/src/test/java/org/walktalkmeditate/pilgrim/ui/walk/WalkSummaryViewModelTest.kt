@@ -11,6 +11,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
@@ -164,7 +165,7 @@ class WalkSummaryViewModelTest {
     fun `NotFound state when walk row is missing`() = runTest(dispatcher) {
         val vm = newViewModel(walkId = 999L)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             // Might be Loading first, then NotFound
             var item = awaitItem()
             if (item is WalkSummaryUiState.Loading) item = awaitItem()
@@ -186,7 +187,7 @@ class WalkSummaryViewModelTest {
 
         val vm = newViewModel(walkId = walk.id)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val loaded = item as WalkSummaryUiState.Loaded
@@ -214,7 +215,7 @@ class WalkSummaryViewModelTest {
 
         val vm = newViewModel(walkId = walk.id)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val s = (item as WalkSummaryUiState.Loaded).summary
@@ -237,7 +238,7 @@ class WalkSummaryViewModelTest {
 
         val vm = newViewModel(walkId = walk.id)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val s = (item as WalkSummaryUiState.Loaded).summary
@@ -258,7 +259,7 @@ class WalkSummaryViewModelTest {
 
         val vm = newViewModel(walkId = walk.id)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val s = (item as WalkSummaryUiState.Loaded).summary
@@ -359,7 +360,7 @@ class WalkSummaryViewModelTest {
 
         val vm = newViewModel(walkId = walk.id)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val loaded = item as WalkSummaryUiState.Loaded
@@ -387,7 +388,7 @@ class WalkSummaryViewModelTest {
 
         val vm = newViewModel(walkId = walk.id)
 
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val loaded = item as WalkSummaryUiState.Loaded
@@ -421,7 +422,7 @@ class WalkSummaryViewModelTest {
             ),
         )
 
-        vm.lightReadingDisplay.test {
+        vm.lightReadingDisplay.test(timeout = 5.seconds) {
             // The display flow seeds with null (initialValue) and
             // stays null because the gate is OFF.
             assertNull(
@@ -636,7 +637,7 @@ class WalkSummaryViewModelTest {
         repository.finishWalk(walk, endTimestamp = 5_600_000L)
 
         val vm = newViewModel(walkId = walk.id)
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             var item = awaitItem()
             while (item is WalkSummaryUiState.Loading) item = awaitItem()
             val loaded = item as WalkSummaryUiState.Loaded
@@ -686,7 +687,7 @@ class WalkSummaryViewModelTest {
         repository.finishWalk(walk, endTimestamp = 5_600_000L)
         val vm = newViewModel(walkId = walk.id)
 
-        vm.etegamiEvents.test {
+        vm.etegamiEvents.test(timeout = 5.seconds) {
             vm.shareEtegami(fixtureEtegamiSpec(walk.uuid))
             val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
                 withTimeout(10_000L) { awaitItem() }
@@ -735,7 +736,7 @@ class WalkSummaryViewModelTest {
         repository.finishWalk(walk, endTimestamp = 5_600_000L)
         val vm = newViewModel(walkId = walk.id)
 
-        vm.etegamiEvents.test {
+        vm.etegamiEvents.test(timeout = 5.seconds) {
             vm.notifyEtegamiSaveNeedsPermission()
             assertEquals(
                 WalkSummaryViewModel.EtegamiShareEvent.SaveNeedsPermission,

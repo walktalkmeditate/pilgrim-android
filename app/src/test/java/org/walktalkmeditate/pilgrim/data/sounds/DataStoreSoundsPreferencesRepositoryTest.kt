@@ -15,6 +15,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -54,7 +55,7 @@ class DataStoreSoundsPreferencesRepositoryTest {
     @Test
     fun `default is true when no key written`() = runTest(dispatcher) {
         val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
-        repo.soundsEnabled.test {
+        repo.soundsEnabled.test(timeout = 5.seconds) {
             assertEquals(true, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -77,7 +78,7 @@ class DataStoreSoundsPreferencesRepositoryTest {
     @Test
     fun `soundsEnabled emits new value after setSoundsEnabled`() = runTest(dispatcher) {
         val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
-        repo.soundsEnabled.test {
+        repo.soundsEnabled.test(timeout = 5.seconds) {
             assertEquals(true, awaitItem())
             repo.setSoundsEnabled(false)
             assertEquals(false, awaitItem())

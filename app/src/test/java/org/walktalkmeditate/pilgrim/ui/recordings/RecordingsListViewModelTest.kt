@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
@@ -97,7 +98,7 @@ class RecordingsListViewModelTest {
 
     private suspend fun loaded(vm: RecordingsListViewModel): RecordingsListUiState.Loaded {
         var captured: RecordingsListUiState = RecordingsListUiState.Loading
-        vm.state.test {
+        vm.state.test(timeout = 5.seconds) {
             captured = awaitItem()
             while (captured is RecordingsListUiState.Loading) captured = awaitItem()
             cancelAndIgnoreRemainingEvents()

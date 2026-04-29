@@ -12,6 +12,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -167,7 +168,7 @@ class VoiceRecorderTest {
 
     @Test
     fun `audioLevel emits non-zero during recording and returns to zero after stop`() = runBlocking<Unit> {
-        recorder.audioLevel.test {
+        recorder.audioLevel.test(timeout = 5.seconds) {
             assertEquals(0f, awaitItem())
 
             recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()

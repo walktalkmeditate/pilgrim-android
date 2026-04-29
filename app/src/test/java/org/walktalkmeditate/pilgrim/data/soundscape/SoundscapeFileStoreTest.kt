@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import java.io.File
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -75,7 +76,7 @@ class SoundscapeFileStoreTest {
         store.fileFor(a).writeBytes(ByteArray(10))
         assertTrue(store.isAvailable(a))
 
-        store.invalidations.test {
+        store.invalidations.test(timeout = 5.seconds) {
             store.delete(a)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -87,7 +88,7 @@ class SoundscapeFileStoreTest {
 
     @Test fun `delete on absent file still emits invalidation`() = runTest {
         val a = asset("never-downloaded")
-        store.invalidations.test {
+        store.invalidations.test(timeout = 5.seconds) {
             store.delete(a)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()

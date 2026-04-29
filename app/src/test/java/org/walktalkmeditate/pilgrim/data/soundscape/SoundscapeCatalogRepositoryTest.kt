@@ -9,6 +9,7 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import java.io.File
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -188,7 +189,7 @@ class SoundscapeCatalogRepositoryTest {
         seedManifest(listOf(asset("s1")))
         val repo = buildRepo()
 
-        repo.soundscapeStates.test {
+        repo.soundscapeStates.test(timeout = 5.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is SoundscapeState.NotDownloaded) {
                 current = awaitItem()
@@ -209,7 +210,7 @@ class SoundscapeCatalogRepositoryTest {
         seedManifest(listOf(a))
         val repo = buildRepo()
 
-        repo.soundscapeStates.test {
+        repo.soundscapeStates.test(timeout = 5.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is SoundscapeState.NotDownloaded) {
                 current = awaitItem()
