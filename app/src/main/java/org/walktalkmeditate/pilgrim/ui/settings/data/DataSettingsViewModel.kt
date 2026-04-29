@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -61,11 +62,17 @@ class DataSettingsViewModel @Inject constructor(
             initialValue = 0,
         )
 
+    // Read by `requestPilgrimExport()` via `.value` (non-suspend),
+    // which doesn't count as a subscriber for `WhileSubscribed`. Use
+    // `Eagerly` + upstream `.catch { emit(...) }` so the first tap on
+    // Export within the warmup window doesn't see the `initialValue`
+    // and short-circuit to "No walks found" when walks exist.
     val walkCount: StateFlow<Int> = walksSource.observeAllWalks()
         .map { walks -> walks.count { it.endTimestamp != null } }
+        .catch { emit(0) }
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(SUBSCRIPTION_KEEPALIVE_MS),
+            started = SharingStarted.Eagerly,
             initialValue = 0,
         )
 
@@ -77,16 +84,18 @@ class DataSettingsViewModel @Inject constructor(
             val latest = Instant.ofEpochMilli(finished.maxOf { it.startTimestamp })
             earliest to latest
         }
+        .catch { emit(null) }
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(SUBSCRIPTION_KEEPALIVE_MS),
+            started = SharingStarted.Eagerly,
             initialValue = null,
         )
 
     val pinnedPhotoCount: StateFlow<Int> = walkPhotoDao.observeAllCount()
+        .catch { emit(0) }
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(SUBSCRIPTION_KEEPALIVE_MS),
+            started = SharingStarted.Eagerly,
             initialValue = 0,
         )
 
