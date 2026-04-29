@@ -171,7 +171,7 @@ class PilgrimPackageImporter @Inject constructor(
 
             // Pre-fetch existing uuids to skip duplicates without
             // per-walk DB hits.
-            val existingUuids = walkDao.getAll().map { it.uuid }.toHashSet()
+            val existingUuids = walkDao.getAllUuids().toHashSet()
 
             for (pilgrimWalk in walks) {
                 if (pilgrimWalk.id in existingUuids) {
