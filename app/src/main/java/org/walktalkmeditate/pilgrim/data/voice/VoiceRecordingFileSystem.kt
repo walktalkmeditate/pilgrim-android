@@ -21,6 +21,13 @@ import kotlinx.coroutines.withContext
 class VoiceRecordingFileSystem @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    /**
+     * Canonical root directory for all voice recordings on disk:
+     * `filesDir/recordings/`. Mirrors [OrphanRecordingSweeper.RECORDINGS_DIR]
+     * so the sweep + export paths agree on what counts as "the recordings tree".
+     */
+    fun rootDir(): File = File(context.filesDir, RECORDINGS_DIR)
+
     fun absolutePath(relativePath: String): File =
         File(context.filesDir, relativePath)
 
@@ -34,5 +41,9 @@ class VoiceRecordingFileSystem @Inject constructor(
 
     suspend fun deleteFile(relativePath: String): Boolean = withContext(Dispatchers.IO) {
         absolutePath(relativePath).delete()
+    }
+
+    private companion object {
+        const val RECORDINGS_DIR = "recordings"
     }
 }
