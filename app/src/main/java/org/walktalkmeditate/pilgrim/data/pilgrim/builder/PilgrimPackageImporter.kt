@@ -17,6 +17,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
+import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
+import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimManifest
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
@@ -178,65 +184,87 @@ class PilgrimPackageImporter @Inject constructor(
                     Log.d(TAG, "Skipping duplicate walk uuid=${pilgrimWalk.id}")
                     continue
                 }
-                try {
-                    val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
-                    val newWalkId = walkDao.insert(pending.walk)
-                    if (newWalkId <= 0) {
-                        Log.w(TAG, "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}; skipping children")
-                        continue
-                    }
-
-                    pending.routeSamples
-                        .map { it.copy(walkId = newWalkId) }
-                        .takeIf { it.isNotEmpty() }
-                        ?.let { routeDao.insertAll(it) }
-
-                    for (waypoint in pending.waypoints) {
-                        waypointDao.insert(waypoint.copy(walkId = newWalkId))
-                    }
-
-                    for (event in pending.walkEvents) {
-                        eventDao.insert(event.copy(walkId = newWalkId))
-                    }
-
-                    pending.activityIntervals
-                        .map { it.copy(walkId = newWalkId) }
-                        .takeIf { it.isNotEmpty() }
-                        ?.let { activityDao.insertAll(it) }
-
-                    for (recording in pending.voiceRecordings) {
-                        voiceDao.insert(recording.copy(walkId = newWalkId))
-                    }
-
-                    // Construct WalkPhoto with the real walkId (Stage 7-A
-                    // invariant requires walkId > 0, so we couldn't carry
-                    // them through the PendingImport bundle directly).
-                    pending.walkPhotos
-                        .map { pendingPhoto ->
-                            WalkPhoto(
-                                walkId = newWalkId,
-                                photoUri = pendingPhoto.photoUri,
-                                pinnedAt = pendingPhoto.pinnedAt,
-                                takenAt = pendingPhoto.takenAt,
-                            )
+                val didInsert = try {
+                    // Nested transaction: inner failure rolls back JUST this
+                    // walk's inserts via SQLite savepoints, leaving the outer
+                    // batch transaction free to commit good walks. Without
+                    // this, a child-insert throw (e.g. WalkPhoto's pinnedAt > 0
+                    // invariant from Stage 7-A, VoiceRecording's endTimestamp
+                    // >= startTimestamp invariant) would leave an orphan Walk
+                    // row already inserted before the throw.
+                    database.withTransaction {
+                        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+                        val newWalkId = walkDao.insert(pending.walk)
+                        if (newWalkId <= 0) {
+                            Log.w(TAG, "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}; skipping children")
+                            return@withTransaction false
                         }
-                        .takeIf { it.isNotEmpty() }
-                        ?.let { photoDao.insertAll(it) }
-
-                    inserted += 1
+                        insertChildEntities(
+                            pending = pending,
+                            newWalkId = newWalkId,
+                            routeDao = routeDao,
+                            waypointDao = waypointDao,
+                            eventDao = eventDao,
+                            activityDao = activityDao,
+                            voiceDao = voiceDao,
+                            photoDao = photoDao,
+                        )
+                        true
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    // Per-walk isolation: a malformed walk (e.g. WalkPhoto's
-                    // pinnedAt > 0 invariant from Stage 7-A, or VoiceRecording's
-                    // endTimestamp >= startTimestamp invariant) shouldn't drop
-                    // the entire batch. Log + skip; the transaction still
-                    // commits the good walks.
                     Log.w(TAG, "Skipping walk uuid=${pilgrimWalk.id}: ${e.message}", e)
+                    false
                 }
+                if (didInsert) inserted += 1
             }
         }
         return inserted
+    }
+
+    private suspend fun insertChildEntities(
+        pending: PendingImport,
+        newWalkId: Long,
+        routeDao: RouteDataSampleDao,
+        waypointDao: WaypointDao,
+        eventDao: WalkEventDao,
+        activityDao: ActivityIntervalDao,
+        voiceDao: VoiceRecordingDao,
+        photoDao: WalkPhotoDao,
+    ) {
+        pending.routeSamples
+            .map { it.copy(walkId = newWalkId) }
+            .takeIf { it.isNotEmpty() }
+            ?.let { routeDao.insertAll(it) }
+
+        pending.waypoints
+            .map { it.copy(walkId = newWalkId) }
+            .forEach { waypointDao.insert(it) }
+
+        pending.walkEvents
+            .map { it.copy(walkId = newWalkId) }
+            .forEach { eventDao.insert(it) }
+
+        pending.activityIntervals
+            .map { it.copy(walkId = newWalkId) }
+            .let { if (it.isNotEmpty()) activityDao.insertAll(it) }
+
+        pending.voiceRecordings
+            .map { it.copy(walkId = newWalkId) }
+            .forEach { voiceDao.insert(it) }
+
+        pending.walkPhotos
+            .map { pendingPhoto ->
+                WalkPhoto(
+                    walkId = newWalkId,
+                    photoUri = pendingPhoto.photoUri,
+                    pinnedAt = pendingPhoto.pinnedAt,
+                    takenAt = pendingPhoto.takenAt,
+                )
+            }
+            .takeIf { it.isNotEmpty() }
+            ?.let { photoDao.insertAll(it) }
     }
 
     private companion object {
