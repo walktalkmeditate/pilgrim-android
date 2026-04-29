@@ -444,4 +444,26 @@
     <string name="data_export_empty">No recordings yet to export.</string>
     <string name="data_export_failed">Couldn\'t create the archive — please try again.</string>
     <string name="data_coming_soon">Coming in a future release.</string>
+    <!-- Stage 10-H: AboutView -->
+    <string name="about_title">About</string>
+    <string name="about_back_content_description">Back</string>
+    <string name="about_hero_title">Every walk is a\nsmall pilgrimage.</string>
+    <string name="about_hero_body">Walking is how we think, process, and return to ourselves. Pilgrim is a quiet companion for the path — no leaderboards, no metrics, just you and the walk.</string>
+    <string name="about_pillars_caption">walk · talk · meditate</string>
+    <string name="about_pillar_walk_title">walk</string>
+    <string name="about_pillar_walk_description">Walking as practice, not transit. Side by side, step by step — strengthening the physical body.</string>
+    <string name="about_pillar_talk_title">talk</string>
+    <string name="about_pillar_talk_description">Deep reflection and connection, not small talk. Ask and share your unique perspective of reality.</string>
+    <string name="about_pillar_meditate_title">meditate</string>
+    <string name="about_pillar_meditate_description">Seek the peace and calmness within. Harmonize your being with the group and the environment.</string>
+    <string name="about_stats_walked_with">walked with Pilgrim</string>
+    <string name="about_stats_walks_taken">walks taken</string>
+    <string name="about_stats_walk_taken">walk taken</string>
+    <string name="about_stats_walking_since">walking since</string>
+    <string name="about_open_source_header">OPEN SOURCE</string>
+    <string name="about_open_source_body">Pilgrim is free and open source. No accounts, no tracking, no data leaves your device. Built as part of the walk · talk · meditate project.</string>
+    <string name="about_link_website">walktalkmeditate.org</string>
+    <string name="about_link_github">Source code on GitHub</string>
+    <string name="about_link_rate">Rate Pilgrim</string>
+    <string name="about_motto">Slow and chill is the motto.\nRelax and release is the practice.\nPeace and harmony is the way.</string>
 </resources>
