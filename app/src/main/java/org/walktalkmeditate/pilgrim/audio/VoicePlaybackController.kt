@@ -17,6 +17,22 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 interface VoicePlaybackController {
     val state: StateFlow<PlaybackState>
 
+    /**
+     * Current playback speed multiplier in [0.5, 2.0]. Stage 10-D added
+     * the speed-toggle scrubber on the voice card; the value here is the
+     * COERCED rate (what's actually playing), not what the caller requested.
+     */
+    val playbackSpeed: StateFlow<Float>
+
+    /**
+     * Live playback position in milliseconds. While the underlying
+     * player is in `Player.STATE_READY` and playing, the controller posts
+     * a 100ms tick to update this StateFlow; while paused/idle/error it
+     * holds the last sampled value (or 0 after `release` / before the
+     * first `play`).
+     */
+    val playbackPositionMillis: StateFlow<Long>
+
     fun play(recording: VoiceRecording)
     fun pause()
     fun stop()
@@ -33,6 +49,22 @@ interface VoicePlaybackController {
      * subsequent screen's [play].
      */
     fun release()
+
+    /**
+     * Set playback speed. The rate is coerced into [0.5, 2.0]; the
+     * underlying player is set with `pitch = 1.0f` so audio doesn't
+     * pitch-shift (chipmunk effect). The reported [playbackSpeed]
+     * StateFlow reflects the COERCED rate.
+     */
+    fun setPlaybackSpeed(rate: Float)
+
+    /**
+     * Seek to a fraction in [0, 1] of the current recording's duration.
+     * No-op if no recording is loaded or if the player can't yet report
+     * a duration (e.g. mid-prepare). The fraction is coerced; the
+     * resolved millisecond target is also clamped to [0, duration].
+     */
+    fun seek(fraction: Float)
 }
 
 sealed class PlaybackState {

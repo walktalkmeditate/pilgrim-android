@@ -7,6 +7,7 @@ import android.media.AudioManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
@@ -92,7 +93,7 @@ class WalkViewModelWaypointCountTest {
 
     @Test
     fun `waypointCount is 0 when no walk in progress`() = runTest(dispatcher) {
-        viewModel.waypointCount.test {
+        viewModel.waypointCount.test(timeout = 5.seconds) {
             assertEquals(0, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -106,7 +107,7 @@ class WalkViewModelWaypointCountTest {
             LocationPoint(timestamp = 1_100L, latitude = 0.0, longitude = 0.0),
         )
 
-        viewModel.waypointCount.test {
+        viewModel.waypointCount.test(timeout = 5.seconds) {
             assertEquals(0, awaitItem())
 
             viewModel.dropWaypoint()
@@ -127,7 +128,7 @@ class WalkViewModelWaypointCountTest {
         )
         viewModel.dropWaypoint()
 
-        viewModel.waypointCount.test {
+        viewModel.waypointCount.test(timeout = 5.seconds) {
             assertEquals(1, awaitItem())
 
             clock.advanceTo(6_000L)

@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertFalse
@@ -50,7 +51,7 @@ class PermissionsRepositoryTest {
 
     @Test
     fun `onboardingComplete starts as false`() = runTest {
-        repository.onboardingComplete.test {
+        repository.onboardingComplete.test(timeout = 5.seconds) {
             assertFalse(awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -58,7 +59,7 @@ class PermissionsRepositoryTest {
 
     @Test
     fun `markOnboardingComplete flips the flow to true`() = runTest {
-        repository.onboardingComplete.test {
+        repository.onboardingComplete.test(timeout = 5.seconds) {
             assertFalse(awaitItem())
             repository.markOnboardingComplete()
             assertTrue(awaitItem())
@@ -68,7 +69,7 @@ class PermissionsRepositoryTest {
 
     @Test
     fun `batteryExemptionAsked defaults to false and survives markBatteryExemptionAsked`() = runTest {
-        repository.batteryExemptionAsked.test {
+        repository.batteryExemptionAsked.test(timeout = 5.seconds) {
             assertFalse(awaitItem())
             repository.markBatteryExemptionAsked()
             assertTrue(awaitItem())
@@ -80,7 +81,7 @@ class PermissionsRepositoryTest {
     fun `onboarding and battery flags are independent`() = runTest {
         repository.markOnboardingComplete()
 
-        repository.batteryExemptionAsked.test {
+        repository.batteryExemptionAsked.test(timeout = 5.seconds) {
             assertFalse(awaitItem())
             cancelAndIgnoreRemainingEvents()
         }

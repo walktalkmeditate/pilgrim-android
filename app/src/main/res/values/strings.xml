@@ -126,6 +126,45 @@
     <string name="settings_walk_reliquary_description">Find photos you took along each walk and pin them to the route. Photos stay in your gallery — never copied or uploaded.</string>
     <string name="settings_walk_reliquary_photos_denied_note">Photo access was declined. To enable the reliquary, grant photo access in Android Settings → Apps → Pilgrim → Permissions.</string>
 
+    <!-- Stage 10-D VoiceCard -->
+    <string name="settings_voice_card_header_title">Voice</string>
+    <string name="settings_voice_card_header_subtitle">Speaking and listening</string>
+    <string name="settings_voice_guide_label">Voice Guide</string>
+    <string name="settings_voice_guide_description">Spoken prompts during walks and meditation</string>
+    <string name="settings_voice_guide_packs_row">Guide Packs</string>
+    <string name="settings_auto_transcribe_label">Auto-transcribe</string>
+    <string name="settings_auto_transcribe_description">Convert recordings to text after each walk</string>
+    <string name="settings_recordings_row">Recordings</string>
+    <string name="settings_recordings_detail_zero">0 recordings • 0.0 MB</string>
+    <string name="settings_recordings_detail_one">1 recording • %1$s MB</string>
+    <string name="settings_recordings_detail_many">%1$d recordings • %2$s MB</string>
+
+    <!-- Stage 10-D RecordingsListScreen — RecordingRow -->
+    <string name="recordings_row_index">Recording %1$d</string>
+    <string name="recordings_row_meta">%1$s · %2$s MB</string>
+    <string name="recordings_row_meta_enhanced">%1$s · %2$s MB · Enhanced</string>
+    <string name="recordings_row_unavailable">File unavailable</string>
+    <string name="recordings_action_done">Done</string>
+    <string name="recordings_action_copy_transcription">Copy transcription</string>
+    <string name="recordings_transcription_editor_description">Transcription editor</string>
+
+    <!-- Stage 10-D RecordingsListScreen — top-level + section + dialogs -->
+    <string name="recordings_screen_title">Recordings</string>
+    <string name="recordings_search_prompt">Search transcriptions</string>
+    <string name="recordings_search_clear_description">Clear search</string>
+    <string name="recordings_empty_title">Your voice recordings will appear here</string>
+    <string name="recordings_search_no_match">No recordings match</string>
+    <string name="recordings_section_header_subtitle">%1$s of recordings</string>
+    <string name="recordings_section_header_chevron_description">Open walk summary</string>
+    <string name="recordings_action_retranscribe">Retranscribe</string>
+    <string name="recordings_action_delete">Delete</string>
+    <string name="recordings_action_delete_all">Delete All Recording Files</string>
+    <string name="recordings_dialog_delete_one_title">Delete this recording file? The transcription will be kept.</string>
+    <string name="recordings_dialog_delete_all_title">Delete all recording files? Transcriptions will be kept.</string>
+    <string name="recordings_dialog_delete_confirm">Delete</string>
+    <string name="recordings_dialog_delete_all_confirm">Delete All</string>
+    <string name="recordings_dialog_cancel">Cancel</string>
+
     <string name="voice_guide_picker_title">Voice guides</string>
     <string name="voice_guide_picker_empty">No voice guides yet. Check your connection — the catalog will load when you\'re online.</string>
     <string name="voice_guide_picker_loading">Loading voice guides&#8230;</string>

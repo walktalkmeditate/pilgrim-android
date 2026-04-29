@@ -17,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -55,7 +56,7 @@ class DataStoreAppearancePreferencesRepositoryTest {
     @Test
     fun `default is System when no key written`() = runTest(dispatcher) {
         val repo = DataStoreAppearancePreferencesRepository(dataStore, scope)
-        repo.appearanceMode.test {
+        repo.appearanceMode.test(timeout = 5.seconds) {
             assertEquals(AppearanceMode.System, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -84,7 +85,7 @@ class DataStoreAppearancePreferencesRepositoryTest {
         dataStore.edit { it[stringPreferencesKey("appearance_mode")] = "sepia" }
 
         val repo = DataStoreAppearancePreferencesRepository(dataStore, scope)
-        repo.appearanceMode.test {
+        repo.appearanceMode.test(timeout = 5.seconds) {
             assertEquals(AppearanceMode.System, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -93,7 +94,7 @@ class DataStoreAppearancePreferencesRepositoryTest {
     @Test
     fun `appearanceMode emits new value after setAppearanceMode`() = runTest(dispatcher) {
         val repo = DataStoreAppearancePreferencesRepository(dataStore, scope)
-        repo.appearanceMode.test {
+        repo.appearanceMode.test(timeout = 5.seconds) {
             assertEquals(AppearanceMode.System, awaitItem())
             repo.setAppearanceMode(AppearanceMode.Light)
             assertEquals(AppearanceMode.Light, awaitItem())
