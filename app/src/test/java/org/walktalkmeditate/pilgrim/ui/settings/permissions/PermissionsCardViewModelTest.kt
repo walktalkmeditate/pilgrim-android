@@ -3,6 +3,9 @@ package org.walktalkmeditate.pilgrim.ui.settings.permissions
 
 import app.cash.turbine.test
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -19,7 +22,8 @@ class PermissionsCardViewModelTest {
         )
 
         vm.state.test(timeout = 5.seconds) {
-            val state = awaitItem()
+            var state = awaitItem()
+            while (state.location != PermissionStatus.Granted) state = awaitItem()
             assertEquals(PermissionStatus.Granted, state.location)
             assertEquals(PermissionStatus.Granted, state.microphone)
             assertEquals(PermissionStatus.Granted, state.motion)
@@ -57,7 +61,8 @@ class PermissionsCardViewModelTest {
         )
 
         vm.state.test(timeout = 5.seconds) {
-            val state = awaitItem()
+            var state = awaitItem()
+            while (state.location != PermissionStatus.Denied) state = awaitItem()
             assertEquals(PermissionStatus.Denied, state.location)
             assertEquals(PermissionStatus.Denied, state.microphone)
             assertEquals(PermissionStatus.Denied, state.motion)
@@ -74,9 +79,12 @@ class PermissionsCardViewModelTest {
         )
 
         vm.state.test(timeout = 5.seconds) {
-            assertEquals(PermissionStatus.NotDetermined, awaitItem().location)
+            var state = awaitItem()
+            while (state.location != PermissionStatus.NotDetermined) state = awaitItem()
+            assertEquals(PermissionStatus.NotDetermined, state.location)
             vm.onPermissionResult(PermissionAskedStore.Key.Location)
-            val next = awaitItem()
+            var next = awaitItem()
+            while (next.location != PermissionStatus.Denied) next = awaitItem()
             assertEquals(PermissionStatus.Denied, next.location)
             cancelAndIgnoreRemainingEvents()
         }
@@ -88,10 +96,12 @@ class PermissionsCardViewModelTest {
         val vm = PermissionsCardViewModel(checks = checks, askedFlags = FakeAskedStore())
 
         vm.state.test(timeout = 5.seconds) {
-            awaitItem()
+            var state = awaitItem()
+            while (state.location != PermissionStatus.NotDetermined) state = awaitItem()
             checks.location = true
             vm.refresh()
-            val next = awaitItem()
+            var next = awaitItem()
+            while (next.location != PermissionStatus.Granted) next = awaitItem()
             assertEquals(PermissionStatus.Granted, next.location)
             cancelAndIgnoreRemainingEvents()
         }
@@ -109,9 +119,10 @@ private class FakePermissionChecks(
 }
 
 private class FakeAskedStore(asked: Set<PermissionAskedStore.Key> = emptySet()) : AskedFlagSource {
-    private val flags = asked.toMutableSet()
-    override fun isAsked(key: PermissionAskedStore.Key): Boolean = key in flags
+    private val flags = MutableStateFlow(asked)
+    override fun asked(key: PermissionAskedStore.Key): Flow<Boolean> =
+        flags.map { key in it }
     override suspend fun markAsked(key: PermissionAskedStore.Key) {
-        flags += key
+        flags.value = flags.value + key
     }
 }

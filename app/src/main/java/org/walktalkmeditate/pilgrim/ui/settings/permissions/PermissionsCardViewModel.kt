@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.permissions.PermissionAskedStore
 import org.walktalkmeditate.pilgrim.permissions.PermissionStatus
@@ -24,39 +26,53 @@ class PermissionsCardViewModel @Inject constructor(
     private val askedFlags: AskedFlagSource,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(compute())
-    val state: StateFlow<PermissionsCardState> = _state.asStateFlow()
-
     /**
-     * Re-read live permission state. Composable calls this on
-     * `Lifecycle.Event.ON_RESUME` (mirrors iOS willEnterForegroundNotification).
+     * Bumped on `Lifecycle.Event.ON_RESUME` and after every permission
+     * dialog result so [state] re-reads the live `checkSelfPermission`
+     * snapshot. No DataStore work happens on the recompose thread —
+     * the asked flags compose via Flow.
      */
+    private val refreshTick = MutableStateFlow(0)
+
+    val state: StateFlow<PermissionsCardState> = combine(
+        refreshTick,
+        askedFlags.asked(PermissionAskedStore.Key.Location),
+        askedFlags.asked(PermissionAskedStore.Key.Microphone),
+        askedFlags.asked(PermissionAskedStore.Key.Motion),
+    ) { _, lAsked, mAsked, motionAsked ->
+        PermissionsCardState(
+            location = resolve(checks.isLocationGranted(), lAsked),
+            microphone = resolve(checks.isMicrophoneGranted(), mAsked),
+            motion = resolve(checks.isMotionGranted(), motionAsked),
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(SUBSCRIPTION_KEEPALIVE_MS),
+        initialValue = PermissionsCardState(
+            location = PermissionStatus.NotDetermined,
+            microphone = PermissionStatus.NotDetermined,
+            motion = PermissionStatus.NotDetermined,
+        ),
+    )
+
     fun refresh() {
-        _state.value = compute()
+        refreshTick.value += 1
     }
 
-    /**
-     * Permission-request callback hook. Marks the key as asked and
-     * recomputes — flips a NotDetermined row to Granted (user said yes)
-     * or Denied (user said no).
-     */
     fun onPermissionResult(key: PermissionAskedStore.Key) {
         viewModelScope.launch {
             askedFlags.markAsked(key)
-            _state.value = compute()
+            refreshTick.value += 1
         }
     }
 
-    private fun compute(): PermissionsCardState = PermissionsCardState(
-        location = resolve(checks.isLocationGranted(), PermissionAskedStore.Key.Location),
-        microphone = resolve(checks.isMicrophoneGranted(), PermissionAskedStore.Key.Microphone),
-        motion = resolve(checks.isMotionGranted(), PermissionAskedStore.Key.Motion),
-    )
+    private fun resolve(granted: Boolean, asked: Boolean): PermissionStatus = when {
+        granted -> PermissionStatus.Granted
+        asked -> PermissionStatus.Denied
+        else -> PermissionStatus.NotDetermined
+    }
 
-    private fun resolve(granted: Boolean, key: PermissionAskedStore.Key): PermissionStatus =
-        when {
-            granted -> PermissionStatus.Granted
-            askedFlags.isAsked(key) -> PermissionStatus.Denied
-            else -> PermissionStatus.NotDetermined
-        }
+    private companion object {
+        const val SUBSCRIPTION_KEEPALIVE_MS = 5_000L
+    }
 }
