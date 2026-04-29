@@ -8,14 +8,13 @@ import java.time.Instant
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -44,11 +43,13 @@ class DataSettingsViewModel @Inject constructor(
             initialValue = 0,
         )
 
-    private val _exportEvents = MutableSharedFlow<RecordingsExportResult>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val exportEvents: SharedFlow<RecordingsExportResult> = _exportEvents.asSharedFlow()
+    // Channel + consumeAsFlow for one-shot events: buffers across the
+    // rotation gap and delivers the event to the next subscriber, then
+    // it's gone. SharedFlow with extraBufferCapacity dropped events
+    // when the previous collector tore down before the new one
+    // subscribed; replay-1 would re-deliver stale events on re-entry.
+    private val _exportEvents = Channel<RecordingsExportResult>(Channel.BUFFERED)
+    val exportEvents: Flow<RecordingsExportResult> = _exportEvents.consumeAsFlow()
 
     private val _isExporting = MutableStateFlow(false)
     val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
@@ -72,7 +73,7 @@ class DataSettingsViewModel @Inject constructor(
                         RecordingsExportResult.Failed(e.message ?: "Export failed")
                     }
                 }
-                _exportEvents.emit(result)
+                _exportEvents.send(result)
             } finally {
                 _isExporting.value = false
             }
