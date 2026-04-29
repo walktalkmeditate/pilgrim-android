@@ -29,8 +29,13 @@ object EpochSecondsInstantSerializer : KSerializer<Instant> {
 
     override fun deserialize(decoder: Decoder): Instant {
         val seconds = decoder.decodeDouble()
-        val whole = seconds.toLong()
+        // `floor` (not `toLong`, which truncates toward zero) keeps
+        // the fractional part non-negative for pre-1970 timestamps —
+        // `Instant.ofEpochSecond` requires `0 <= nanos < 1e9` and
+        // throws `DateTimeException` otherwise.
+        val whole = kotlin.math.floor(seconds).toLong()
         val nanos = ((seconds - whole) * 1_000_000_000).toLong()
+            .coerceIn(0, 999_999_999)
         return Instant.ofEpochSecond(whole, nanos)
     }
 }

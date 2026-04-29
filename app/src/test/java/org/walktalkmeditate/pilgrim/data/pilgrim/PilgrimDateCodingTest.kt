@@ -43,4 +43,13 @@ class PilgrimDateCodingTest {
         val encoded = json.encodeToString(Wrapper.serializer(), Wrapper(Instant.EPOCH))
         assertEquals("""{"instant":0.0}""", encoded)
     }
+
+    @Test
+    fun `negative epoch round trips without throwing`() {
+        val original = Instant.ofEpochSecond(-1_000_000_000, 500_000_000)
+        val encoded = json.encodeToString(Wrapper.serializer(), Wrapper(original))
+        val decoded = json.decodeFromString(Wrapper.serializer(), encoded).instant
+        assertEquals(original.epochSecond, decoded.epochSecond)
+        assertTrue(kotlin.math.abs(original.nano - decoded.nano) <= 100)
+    }
 }
