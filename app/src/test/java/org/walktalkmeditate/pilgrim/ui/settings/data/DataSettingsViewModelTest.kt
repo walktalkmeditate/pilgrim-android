@@ -81,6 +81,24 @@ class DataSettingsViewModelTest {
         }
     }
 
+    @Test
+    fun `concurrent exportRecordings calls produce only one event`() = runTest {
+        File(sourceDir, "a.wav").writeBytes(ByteArray(64))
+        val vm = DataSettingsViewModel(
+            recordingsSource = FakeRecordingsCountSource(flowOf(listOf(stubRecording(1)))),
+            env = DataExportEnv(sourceDir = { sourceDir }, targetDir = { targetDir }),
+        )
+
+        vm.exportEvents.test(timeout = 5.seconds) {
+            vm.exportRecordings()
+            vm.exportRecordings() // double-tap; second call must short-circuit on the in-flight guard
+            val first = awaitItem()
+            assertTrue(first is RecordingsExportResult.Success)
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     private fun stubRecording(id: Long) = VoiceRecording(
         id = id,
         walkId = 1L,

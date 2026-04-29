@@ -6,13 +6,16 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -47,22 +50,32 @@ class DataSettingsViewModel @Inject constructor(
     )
     val exportEvents: SharedFlow<RecordingsExportResult> = _exportEvents.asSharedFlow()
 
+    private val _isExporting = MutableStateFlow(false)
+    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
+
     fun exportRecordings() {
+        if (!_isExporting.compareAndSet(expect = false, update = true)) return
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val zip = RecordingsExporter.export(
-                        sourceDir = env.sourceDir(),
-                        targetDir = env.targetDir(),
-                        now = Instant.now(),
-                    )
-                    if (zip == null) RecordingsExportResult.Empty
-                    else RecordingsExportResult.Success(zip)
-                }.getOrElse { error ->
-                    RecordingsExportResult.Failed(error.message ?: "Export failed")
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    try {
+                        val zip = RecordingsExporter.export(
+                            sourceDir = env.sourceDir(),
+                            targetDir = env.targetDir(),
+                            now = Instant.now(),
+                        )
+                        if (zip == null) RecordingsExportResult.Empty
+                        else RecordingsExportResult.Success(zip)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        RecordingsExportResult.Failed(e.message ?: "Export failed")
+                    }
                 }
+                _exportEvents.emit(result)
+            } finally {
+                _isExporting.value = false
             }
-            _exportEvents.emit(result)
         }
     }
 
