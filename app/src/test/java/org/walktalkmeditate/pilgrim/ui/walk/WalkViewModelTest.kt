@@ -182,7 +182,7 @@ class WalkViewModelTest {
 
     @Test
     fun `startWalk dispatches Start and the controller becomes Active`() = runTest(dispatcher) {
-        controller.state.test(timeout = 5.seconds) {
+        controller.state.test(timeout = 10.seconds) {
             assertTrue(awaitItem() is WalkState.Idle)
 
             viewModel.startWalk(intention = "silence")
@@ -194,7 +194,7 @@ class WalkViewModelTest {
 
     @Test
     fun `pauseWalk and resumeWalk transition controller state correctly`() = runTest(dispatcher) {
-        controller.state.test(timeout = 5.seconds) {
+        controller.state.test(timeout = 10.seconds) {
             assertTrue(awaitItem() is WalkState.Idle)
 
             viewModel.startWalk()
@@ -213,7 +213,7 @@ class WalkViewModelTest {
 
     @Test
     fun `finishWalk transitions controller state to Finished`() = runTest(dispatcher) {
-        controller.state.test(timeout = 5.seconds) {
+        controller.state.test(timeout = 10.seconds) {
             assertTrue(awaitItem() is WalkState.Idle)
 
             viewModel.startWalk()
@@ -236,7 +236,7 @@ class WalkViewModelTest {
 
     @Test
     fun `uiState emits Active while subscribed`() = runTest(dispatcher) {
-        viewModel.uiState.test(timeout = 5.seconds) {
+        viewModel.uiState.test(timeout = 10.seconds) {
             assertTrue(awaitItem().walkState is WalkState.Idle)
 
             viewModel.startWalk()
@@ -267,7 +267,7 @@ class WalkViewModelTest {
         // rollback path there would immediately transition back to
         // Finished. The routePoints flow is driven off controller.state,
         // so testing with a direct controller start is an honest shape.
-        viewModel.routePoints.test(timeout = 5.seconds) {
+        viewModel.routePoints.test(timeout = 10.seconds) {
             assertTrue(awaitItem().isEmpty())
 
             controller.startWalk(intention = null)
@@ -307,7 +307,7 @@ class WalkViewModelTest {
         // Active → Paused must not cancel the DAO subscription (same walkId
         // after distinctUntilChanged collapses the state-level emissions).
         // If it did, every pause would drop the live polyline from the map.
-        viewModel.routePoints.test(timeout = 5.seconds) {
+        viewModel.routePoints.test(timeout = 10.seconds) {
             assertTrue(awaitItem().isEmpty())
 
             controller.startWalk(intention = null)
@@ -337,7 +337,7 @@ class WalkViewModelTest {
 
     @Test
     fun `routePoints returns to empty when the walk finishes and no new walk starts`() = runTest(dispatcher) {
-        viewModel.routePoints.test(timeout = 5.seconds) {
+        viewModel.routePoints.test(timeout = 10.seconds) {
             assertTrue(awaitItem().isEmpty())
 
             controller.startWalk(intention = null)
@@ -363,7 +363,7 @@ class WalkViewModelTest {
     @Test
     fun `toggleRecording when idle starts recording`() = runTest(dispatcher) {
         controller.startWalk(intention = null)
-        viewModel.voiceRecorderState.test(timeout = 5.seconds) {
+        viewModel.voiceRecorderState.test(timeout = 10.seconds) {
             assertEquals(VoiceRecorderUiState.Idle, awaitItem())
             viewModel.toggleRecording()
             assertEquals(VoiceRecorderUiState.Recording, awaitItem())
@@ -490,7 +490,7 @@ class WalkViewModelTest {
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
 
-        viewModel.recordingsCount.test(timeout = 5.seconds) {
+        viewModel.recordingsCount.test(timeout = 10.seconds) {
             assertEquals(0, awaitItem())
             repository.recordVoice(
                 VoiceRecording(

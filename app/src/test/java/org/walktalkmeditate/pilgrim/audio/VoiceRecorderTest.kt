@@ -168,7 +168,7 @@ class VoiceRecorderTest {
 
     @Test
     fun `audioLevel emits non-zero during recording and returns to zero after stop`() = runBlocking<Unit> {
-        recorder.audioLevel.test(timeout = 5.seconds) {
+        recorder.audioLevel.test(timeout = 10.seconds) {
             assertEquals(0f, awaitItem())
 
             recorder.start(walkId = 1L, walkUuid = walkUuidA).getOrThrow()

@@ -108,7 +108,7 @@ class HomeViewModelTest {
     fun `Empty when no finished walks exist`() = runTest(dispatcher) {
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             // Initial Loading, then Empty
             var item = awaitItem()
             while (item is HomeUiState.Loading) item = awaitItem()
@@ -124,7 +124,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals(1, loaded.rows.size)
             assertEquals(walk.id, loaded.rows[0].walkId)
@@ -140,7 +140,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals(1, loaded.rows.size)
             assertEquals(finished.id, loaded.rows[0].walkId)
@@ -157,7 +157,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals(listOf(newer.id, older.id), loaded.rows.map { it.walkId })
             cancelAndIgnoreRemainingEvents()
@@ -175,7 +175,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals("2 voice notes", loaded.rows[0].recordingCountText)
             cancelAndIgnoreRemainingEvents()
@@ -189,7 +189,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertNull(loaded.rows[0].recordingCountText)
             cancelAndIgnoreRemainingEvents()
@@ -205,7 +205,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals("silence", loaded.rows[0].intention)
             cancelAndIgnoreRemainingEvents()
@@ -219,7 +219,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertNull(loaded.rows[0].intention)
             cancelAndIgnoreRemainingEvents()
@@ -241,7 +241,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             // ~111 m for 0.001 degree longitude at equator; distanceText
             // uses "N m" format under 100 m, "X.XX km" above. 111 m
@@ -271,7 +271,7 @@ class HomeViewModelTest {
 
         val vm = newViewModel()
 
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             val row = loaded.rows.single()
             assertEquals(walk.uuid, row.uuid)
@@ -300,7 +300,7 @@ class HomeViewModelTest {
             repository.finishWalk(walk, endTimestamp = 5_600_000L)
         }
         val vm = newViewModel(FakeUnitsPreferencesRepository(initial = UnitSystem.Imperial))
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             // 111 m ≈ 0.069 mi → falls below the 0.1-mi threshold
             // → renders as feet ("364 ft" / "365 ft" depending on

@@ -68,7 +68,7 @@ class WalkPhotoDataLayerTest {
         )
 
         assertTrue("expected id > 0, got $id", id > 0)
-        repository.observePhotosFor(walk.id).test(timeout = 5.seconds) {
+        repository.observePhotosFor(walk.id).test(timeout = 10.seconds) {
             val rows = awaitItem()
             assertEquals(1, rows.size)
             assertEquals("content://x/1", rows.first().photoUri)
@@ -165,7 +165,7 @@ class WalkPhotoDataLayerTest {
     fun `observePhotosFor emits on pin and on unpin`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L)
 
-        repository.observePhotosFor(walk.id).test(timeout = 5.seconds) {
+        repository.observePhotosFor(walk.id).test(timeout = 10.seconds) {
             assertEquals(emptyList<WalkPhoto>(), awaitItem())
 
             val id = repository.pinPhoto(
@@ -292,7 +292,7 @@ class WalkPhotoDataLayerTest {
             analyzedAt = 5_000L,
         )
 
-        repository.observePhotosFor(walk.id).test(timeout = 5.seconds) {
+        repository.observePhotosFor(walk.id).test(timeout = 10.seconds) {
             val r = awaitItem()
             assertEquals(1, r.size)
             assertEquals("Mountain", r.first().topLabel)

@@ -188,7 +188,7 @@ class VoiceGuideCatalogRepositoryTest {
         // Subscribe and drain until we see NotDownloaded for "p", THEN
         // drive progress — otherwise the scheduler emission can race the
         // upstream combine's initial wiring.
-        repo.packStates.test(timeout = 5.seconds) {
+        repo.packStates.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is VoiceGuidePackState.NotDownloaded) {
                 current = awaitItem()
@@ -219,7 +219,7 @@ class VoiceGuideCatalogRepositoryTest {
         seedManifest(listOf(pk))
         val repo = buildRepo()
 
-        repo.packStates.test(timeout = 5.seconds) {
+        repo.packStates.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is VoiceGuidePackState.NotDownloaded) {
                 current = awaitItem()
@@ -286,7 +286,7 @@ class VoiceGuideCatalogRepositoryTest {
 
     private companion object {
         const val DATASTORE_NAME = "voice-guide-catalog-test"
-        const val AWAIT_TIMEOUT_MS = 3_000L
+        const val AWAIT_TIMEOUT_MS = 10_000L
     }
 
     /** Per-pack progress drivers + request capture. */

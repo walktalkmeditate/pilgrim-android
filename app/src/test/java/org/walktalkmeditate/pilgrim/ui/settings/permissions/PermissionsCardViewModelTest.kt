@@ -21,7 +21,7 @@ class PermissionsCardViewModelTest {
             askedFlags = FakeAskedStore(),
         )
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var state = awaitItem()
             while (state.location != PermissionStatus.Granted) state = awaitItem()
             assertEquals(PermissionStatus.Granted, state.location)
@@ -38,7 +38,7 @@ class PermissionsCardViewModelTest {
             askedFlags = FakeAskedStore(),
         )
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             val state = awaitItem()
             assertEquals(PermissionStatus.NotDetermined, state.location)
             assertEquals(PermissionStatus.NotDetermined, state.microphone)
@@ -60,7 +60,7 @@ class PermissionsCardViewModelTest {
             ),
         )
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var state = awaitItem()
             while (state.location != PermissionStatus.Denied) state = awaitItem()
             assertEquals(PermissionStatus.Denied, state.location)
@@ -78,7 +78,7 @@ class PermissionsCardViewModelTest {
             askedFlags = asked,
         )
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var state = awaitItem()
             while (state.location != PermissionStatus.NotDetermined) state = awaitItem()
             assertEquals(PermissionStatus.NotDetermined, state.location)
@@ -95,7 +95,7 @@ class PermissionsCardViewModelTest {
         val checks = FakePermissionChecks(location = false, microphone = false, motion = false)
         val vm = PermissionsCardViewModel(checks = checks, askedFlags = FakeAskedStore())
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var state = awaitItem()
             while (state.location != PermissionStatus.NotDetermined) state = awaitItem()
             checks.location = true

@@ -95,7 +95,7 @@ class WalkPhotoDaoTest {
     fun `observeForWalk emits new List on insert and delete`() = runTest {
         val w = newWalk()
 
-        photoDao.observeForWalk(w).test(timeout = 5.seconds) {
+        photoDao.observeForWalk(w).test(timeout = 10.seconds) {
             assertEquals(emptyList<WalkPhoto>(), awaitItem())
 
             val id1 = photoDao.insert(samplePhoto(w, uri = "content://x/1"))

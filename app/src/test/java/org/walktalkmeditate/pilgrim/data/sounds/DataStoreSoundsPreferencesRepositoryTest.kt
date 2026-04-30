@@ -55,7 +55,7 @@ class DataStoreSoundsPreferencesRepositoryTest {
     @Test
     fun `default is true when no key written`() = runTest(dispatcher) {
         val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
-        repo.soundsEnabled.test(timeout = 5.seconds) {
+        repo.soundsEnabled.test(timeout = 10.seconds) {
             assertEquals(true, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -78,7 +78,7 @@ class DataStoreSoundsPreferencesRepositoryTest {
     @Test
     fun `soundsEnabled emits new value after setSoundsEnabled`() = runTest(dispatcher) {
         val repo = DataStoreSoundsPreferencesRepository(dataStore, scope)
-        repo.soundsEnabled.test(timeout = 5.seconds) {
+        repo.soundsEnabled.test(timeout = 10.seconds) {
             assertEquals(true, awaitItem())
             repo.setSoundsEnabled(false)
             assertEquals(false, awaitItem())

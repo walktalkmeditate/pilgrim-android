@@ -13,8 +13,10 @@ import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.ui.settings.data.DataExportEnv
 import org.walktalkmeditate.pilgrim.ui.settings.data.DefaultPilgrimPackageGateway
+import org.walktalkmeditate.pilgrim.ui.settings.data.DefaultRecordingsExporterGateway
 import org.walktalkmeditate.pilgrim.ui.settings.data.PilgrimPackageGateway
 import org.walktalkmeditate.pilgrim.ui.settings.data.RecordingsCountSource
+import org.walktalkmeditate.pilgrim.ui.settings.data.RecordingsExporterGateway
 import org.walktalkmeditate.pilgrim.ui.settings.data.WalkRepositoryRecordingsCountSource
 import org.walktalkmeditate.pilgrim.ui.settings.data.WalkRepositoryWalksSource
 import org.walktalkmeditate.pilgrim.ui.settings.data.WalksSource
@@ -64,4 +66,10 @@ abstract class DataExportBindingsModule {
     abstract fun bindPilgrimPackageGateway(
         impl: DefaultPilgrimPackageGateway,
     ): PilgrimPackageGateway
+
+    @Binds
+    @Singleton
+    abstract fun bindRecordingsExporterGateway(
+        impl: DefaultRecordingsExporterGateway,
+    ): RecordingsExporterGateway
 }

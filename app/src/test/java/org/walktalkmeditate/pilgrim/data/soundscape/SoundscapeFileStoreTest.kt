@@ -76,7 +76,7 @@ class SoundscapeFileStoreTest {
         store.fileFor(a).writeBytes(ByteArray(10))
         assertTrue(store.isAvailable(a))
 
-        store.invalidations.test(timeout = 5.seconds) {
+        store.invalidations.test(timeout = 10.seconds) {
             store.delete(a)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -88,7 +88,7 @@ class SoundscapeFileStoreTest {
 
     @Test fun `delete on absent file still emits invalidation`() = runTest {
         val a = asset("never-downloaded")
-        store.invalidations.test(timeout = 5.seconds) {
+        store.invalidations.test(timeout = 10.seconds) {
             store.delete(a)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()

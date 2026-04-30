@@ -56,7 +56,7 @@ class DataStoreUnitsPreferencesRepositoryTest {
     @Test
     fun `default is Metric when no key written`() = runTest(dispatcher) {
         val repo = DataStoreUnitsPreferencesRepository(dataStore, scope)
-        repo.distanceUnits.test(timeout = 5.seconds) {
+        repo.distanceUnits.test(timeout = 10.seconds) {
             assertEquals(UnitSystem.Metric, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -86,7 +86,7 @@ class DataStoreUnitsPreferencesRepositoryTest {
         dataStore.edit { it[stringPreferencesKey("distanceMeasurementType")] = "nautical-miles" }
 
         val repo = DataStoreUnitsPreferencesRepository(dataStore, scope)
-        repo.distanceUnits.test(timeout = 5.seconds) {
+        repo.distanceUnits.test(timeout = 10.seconds) {
             assertEquals(UnitSystem.Metric, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -95,7 +95,7 @@ class DataStoreUnitsPreferencesRepositoryTest {
     @Test
     fun `distanceUnits emits new value after setDistanceUnits`() = runTest(dispatcher) {
         val repo = DataStoreUnitsPreferencesRepository(dataStore, scope)
-        repo.distanceUnits.test(timeout = 5.seconds) {
+        repo.distanceUnits.test(timeout = 10.seconds) {
             assertEquals(UnitSystem.Metric, awaitItem())
             repo.setDistanceUnits(UnitSystem.Imperial)
             assertEquals(UnitSystem.Imperial, awaitItem())

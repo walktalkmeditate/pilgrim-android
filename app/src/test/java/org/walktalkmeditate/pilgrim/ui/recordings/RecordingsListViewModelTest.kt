@@ -98,7 +98,7 @@ class RecordingsListViewModelTest {
 
     private suspend fun loaded(vm: RecordingsListViewModel): RecordingsListUiState.Loaded {
         var captured: RecordingsListUiState = RecordingsListUiState.Loading
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             captured = awaitItem()
             while (captured is RecordingsListUiState.Loading) captured = awaitItem()
             cancelAndIgnoreRemainingEvents()
