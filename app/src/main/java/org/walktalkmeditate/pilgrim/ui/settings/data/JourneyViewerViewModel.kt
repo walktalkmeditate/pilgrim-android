@@ -66,6 +66,12 @@ class JourneyViewerViewModel @Inject constructor(
         val walks = walkRepository.allWalks().filter { it.endTimestamp != null }
         if (walks.isEmpty()) return@withContext JourneyState.NoWalks
 
+        // iOS-parity gate: photos in the journey viewer respect the
+        // user's Photo Reliquary preference. When disabled, photos
+        // are excluded from both the converter output and the
+        // enrichment loop. JourneyViewerView.swift:68-82.
+        val reliquaryEnabled = practicePreferences.walkReliquaryEnabled.value
+
         val pilgrimWalks = walks.map { walk ->
             val bundle = WalkExportBundle(
                 walk = walk,
@@ -77,22 +83,33 @@ class JourneyViewerViewModel @Inject constructor(
                 voiceRecordings = walkRepository.voiceRecordingsFor(walk.id),
                 walkPhotos = walkPhotoDao.getForWalk(walk.id),
             )
-            PilgrimPackageConverter.convert(bundle, includePhotos = true).walk
+            PilgrimPackageConverter.convert(bundle, includePhotos = reliquaryEnabled).walk
         }
 
-        val enrichedWalks = pilgrimWalks.map { walk ->
-            val photos = walk.photos ?: return@map walk
-            val enrichedPhotos = photos.map { photo ->
-                val dataUrl = try {
-                    photoEmbedder.encodeAsDataUrl(photo.localIdentifier)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Throwable) {
-                    null
+        val enrichedWalks = if (reliquaryEnabled) {
+            pilgrimWalks.map { walk ->
+                val photos = walk.photos ?: return@map walk
+                val enrichedPhotos = photos.map { photo ->
+                    // Intentional divergence from iOS: when encodeAsDataUrl returns
+                    // null (URI gone, permission revoked, encode failed), iOS drops
+                    // the photo via compactMap so neither marker nor thumbnail
+                    // appears. Android keeps the photo with inlineUrl=null — the JS
+                    // viewer renders it as a marker without thumbnail, preserving
+                    // the "this walk had a photo here" signal even when the bytes
+                    // are gone.
+                    val dataUrl = try {
+                        photoEmbedder.encodeAsDataUrl(photo.localIdentifier)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    if (dataUrl != null) photo.copy(inlineUrl = dataUrl) else photo
                 }
-                if (dataUrl != null) photo.copy(inlineUrl = dataUrl) else photo
+                walk.copy(photos = enrichedPhotos)
             }
-            walk.copy(photos = enrichedPhotos)
+        } else {
+            pilgrimWalks
         }
 
         val manifest = PilgrimPackageConverter.buildManifest(
