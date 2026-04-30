@@ -99,9 +99,14 @@ class CollectiveMilestoneDetectorTest {
         val throwingDetector = CollectiveMilestoneDetector(throwingStore)
         // Must not throw — log + swallow expected.
         throwingDetector.check(108)
-        // Milestone state must remain null because the write failed before
-        // the in-memory state would have been updated.
-        assertNull(throwingDetector.milestone.value)
+        // Order is publish-in-memory-then-persist (mirrors iOS, prevents
+        // process-kill silent miss). So when the persist throws, the
+        // in-memory milestone IS published — the user still sees the
+        // celebration. The next launch will re-detect (lastSeen unchanged
+        // on disk), surfacing it again — at-least-once is the correct
+        // bias here, vs at-most-once = silent miss.
+        assertNotNull(throwingDetector.milestone.value)
+        assertEquals(108, throwingDetector.milestone.value?.number)
     }
 
     @Test

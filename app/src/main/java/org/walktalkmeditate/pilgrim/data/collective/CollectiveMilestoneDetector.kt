@@ -34,8 +34,19 @@ class CollectiveMilestoneDetector @Inject constructor(
             val lastSeen = storage.firstReadyLastSeenCollectiveWalks()
             for (number in CollectiveMilestone.SACRED_NUMBERS) {
                 if (totalWalks >= number && lastSeen < number) {
-                    storage.setLastSeenCollectiveWalks(number)
+                    // Publish in-memory FIRST, then persist. Matches iOS
+                    // CollectiveCounterService.checkMilestone exactly.
+                    // Reverse-order would lose the celebration if the
+                    // process is killed between the two writes (Doze /
+                    // low-mem kill / force-stop): lastSeen advances
+                    // durably, _milestone never makes it to disk, and
+                    // the next check skips because lastSeen >= number.
+                    // Publishing first means the worst case is a
+                    // duplicate emission across a cold start, which is
+                    // recoverable (user sees the celebration) — strictly
+                    // safer than silently swallowing it.
                     _milestone.value = CollectiveMilestone.forNumber(number)
+                    storage.setLastSeenCollectiveWalks(number)
                     break
                 }
             }
