@@ -51,6 +51,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
@@ -160,6 +161,7 @@ class WalkViewModelTest {
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
+            milestoneChecker = NoopMilestoneChecker,
         )
         fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
         viewModel = WalkViewModel(
@@ -725,4 +727,8 @@ private class FakeWidgetRefreshScheduler : WidgetRefreshScheduler {
         // No-op for VM tests — we don't exercise the daily-rotate path
         // through the VM. WorkManagerWidgetRefreshSchedulerTest covers it.
     }
+}
+
+private object NoopMilestoneChecker : MilestoneChecking {
+    override suspend fun check(totalWalks: Int) = Unit
 }

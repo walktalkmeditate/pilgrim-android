@@ -16,6 +16,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonCoordinates
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -326,6 +327,103 @@ class PilgrimPackageConverterTest {
         val pilgrimWalk = synthesizePilgrimWalk(uuid = UUID.randomUUID().toString())
         val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
         assertEquals(pilgrimWalk.endDate.toEpochMilli(), pending.walk.endTimestamp)
+    }
+
+    @Test
+    fun `export distance cache hit equals live compute`() {
+        // Same clean walk — cache populated vs cleared. Meditation
+        // also asserted invariant across both reads.
+        val baseWalk = Walk(
+            id = 1,
+            uuid = UUID.randomUUID().toString(),
+            startTimestamp = 0L,
+            endTimestamp = 30 * 60_000L,
+        )
+        // Three samples ~111m apart at equator → ~222m of route.
+        val routeSamples = listOf(
+            sample(walkId = 1, timestamp = 0L, lat = 0.0, lng = 0.0),
+            sample(walkId = 1, timestamp = 60_000L, lat = 0.0, lng = 0.001),
+            sample(walkId = 1, timestamp = 120_000L, lat = 0.0, lng = 0.002),
+        )
+        val intervals = listOf(
+            ActivityInterval(
+                walkId = 1,
+                startTimestamp = 60_000L,
+                endTimestamp = 360_000L,
+                activityType = ActivityType.MEDITATING,
+            ),
+        )
+        val liveDistance = WalkDistanceCalculator.computeDistanceMeters(routeSamples)
+
+        val cachedBundle = WalkExportBundle(
+            walk = baseWalk.copy(distanceMeters = liveDistance, meditationSeconds = 300L),
+            routeSamples = routeSamples,
+            altitudeSamples = emptyList(),
+            walkEvents = emptyList(),
+            activityIntervals = intervals,
+            waypoints = emptyList(),
+            voiceRecordings = emptyList(),
+            walkPhotos = emptyList(),
+        )
+        val liveBundle = cachedBundle.copy(
+            walk = baseWalk.copy(distanceMeters = null, meditationSeconds = null),
+        )
+
+        val cachedExport = PilgrimPackageConverter.convert(cachedBundle, includePhotos = false).walk
+        val liveExport = PilgrimPackageConverter.convert(liveBundle, includePhotos = false).walk
+
+        assertEquals(cachedExport.stats.distance, liveExport.stats.distance, 0.0001)
+        assertEquals(
+            cachedExport.stats.meditateDuration,
+            liveExport.stats.meditateDuration,
+            0.0001,
+        )
+    }
+
+    @Test
+    fun `export corrupt meditation clamped regardless of cache state`() {
+        // 30-min walk with a 12-min pause via PAUSED/RESUMED → activeDuration = 18min = 1080s.
+        // Corrupt 50-min MEDITATING interval. Both paths must clamp to 1080s.
+        val walk = Walk(
+            id = 1,
+            uuid = UUID.randomUUID().toString(),
+            startTimestamp = 0L,
+            endTimestamp = 30 * 60_000L,
+        )
+        val intervals = listOf(
+            ActivityInterval(
+                walkId = 1,
+                startTimestamp = 0L,
+                endTimestamp = 50 * 60_000L,
+                activityType = ActivityType.MEDITATING,
+            ),
+        )
+        val events = listOf(
+            WalkEvent(walkId = 1, timestamp = 5 * 60_000L, eventType = WalkEventType.PAUSED),
+            WalkEvent(walkId = 1, timestamp = 17 * 60_000L, eventType = WalkEventType.RESUMED),
+        )
+        val baseBundle = WalkExportBundle(
+            walk = walk,
+            routeSamples = emptyList(),
+            altitudeSamples = emptyList(),
+            walkEvents = events,
+            activityIntervals = intervals,
+            waypoints = emptyList(),
+            voiceRecordings = emptyList(),
+            walkPhotos = emptyList(),
+        )
+
+        val clearedExport = PilgrimPackageConverter.convert(
+            baseBundle.copy(walk = walk.copy(meditationSeconds = null)),
+            includePhotos = false,
+        ).walk
+        val cachedExport = PilgrimPackageConverter.convert(
+            baseBundle.copy(walk = walk.copy(meditationSeconds = 1080L)),
+            includePhotos = false,
+        ).walk
+
+        assertEquals(1080.0, clearedExport.stats.meditateDuration, 0.001)
+        assertEquals(1080.0, cachedExport.stats.meditateDuration, 0.001)
     }
 
     @Test

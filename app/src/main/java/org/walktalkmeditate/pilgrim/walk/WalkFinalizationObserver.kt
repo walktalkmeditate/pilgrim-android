@@ -14,6 +14,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
@@ -65,6 +66,7 @@ class WalkFinalizationObserver @Inject constructor(
     private val collectiveRepository: CollectiveRepository,
     private val widgetRefreshScheduler: WidgetRefreshScheduler,
     private val voicePreferences: VoicePreferencesRepository,
+    private val walkMetricsCache: WalkMetricsCaching,
 ) {
     // Set is unbounded by design — one Long per finished walk for the
     // process lifetime. 8 bytes × 100k walks = 800 KB worst case;
@@ -154,6 +156,21 @@ class WalkFinalizationObserver @Inject constructor(
             throw cancel
         } catch (t: Throwable) {
             Log.w(TAG, "widget refresh scheduling failed", t)
+        }
+        // Stage 11-A: persist distance + meditation aggregates to the
+        // walk row's cache columns so Walk Summary, milestone trigger,
+        // and package export read pre-computed values instead of
+        // re-traversing samples/intervals/events. Runs AFTER collective
+        // POST + widget refresh so a cache compute failure (e.g.
+        // walkId not yet visible due to a write that the in-memory
+        // state-flow projected ahead of the row commit) never blocks
+        // the user-visible side-effects.
+        try {
+            walkMetricsCache.computeAndPersist(walkId)
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "metric cache compute failed for walk $walkId", t)
         }
     }
 

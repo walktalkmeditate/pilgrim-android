@@ -214,6 +214,107 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
+    fun `migration 4 to 5 adds distance_meters + meditation_seconds, both nullable, and preserves existing rows`() {
+        // Stage 11-A: walks table gains two nullable cache cols. The
+        // migration is ALTER TABLE only (no row scan); pre-existing
+        // walks must keep their data and report null for both new cols.
+        // We build the v4 walks shape by hand (the helper-less pattern
+        // used elsewhere in this file), insert id=42, run the migration,
+        // and assert the new columns exist with correct affinity + null.
+        val db = openV2Shape()
+        try {
+            db.execSQL("PRAGMA foreign_keys = ON")
+            db.insert(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("id", 42L)
+                    put("uuid", "abc-uuid")
+                    put("start_timestamp", 1_000L)
+                    put("end_timestamp", 5_000L)
+                },
+            )
+
+            PilgrimDatabase.MIGRATION_4_5.migrate(db)
+
+            db.query("PRAGMA table_info(`walks`)").use { cursor ->
+                val columns = mutableMapOf<String, Pair<String, Int>>()
+                val nameIdx = cursor.getColumnIndexOrThrow("name")
+                val typeIdx = cursor.getColumnIndexOrThrow("type")
+                val notNullIdx = cursor.getColumnIndexOrThrow("notnull")
+                while (cursor.moveToNext()) {
+                    columns[cursor.getString(nameIdx)] =
+                        cursor.getString(typeIdx) to cursor.getInt(notNullIdx)
+                }
+                assertEquals(
+                    "expected v5 walks columns to be a superset of v4",
+                    setOf(
+                        "id", "uuid", "start_timestamp", "end_timestamp",
+                        "intention", "favicon", "notes",
+                        "distance_meters", "meditation_seconds",
+                    ),
+                    columns.keys,
+                )
+                assertEquals("REAL" to 0, columns["distance_meters"])
+                assertEquals("INTEGER" to 0, columns["meditation_seconds"])
+            }
+
+            db.query(
+                "SELECT id, distance_meters, meditation_seconds FROM walks WHERE id = ?",
+                arrayOf<Any>(42L),
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                assertEquals(42L, c.getLong(0))
+                assertTrue("distance_meters should be null after migration", c.isNull(1))
+                assertTrue("meditation_seconds should be null after migration", c.isNull(2))
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `migrated v5 walks accepts updates to the new cache cols`() {
+        // Catches any SQL typo in MIGRATION_4_5 that PRAGMA alone would
+        // miss (wrong type affinity, dropped NOT NULL, etc.) — same
+        // pattern as the v3->v4 walk_photos write test above.
+        val db = openV2Shape()
+        try {
+            db.execSQL("PRAGMA foreign_keys = ON")
+            PilgrimDatabase.MIGRATION_4_5.migrate(db)
+
+            val walkId = db.insert(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("uuid", "w-uuid")
+                    put("start_timestamp", 1_000L)
+                },
+            )
+            db.update(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("distance_meters", 1234.56)
+                    put("meditation_seconds", 600L)
+                },
+                "id = ?",
+                arrayOf<Any>(walkId),
+            )
+            db.query(
+                "SELECT distance_meters, meditation_seconds FROM walks WHERE id = ?",
+                arrayOf<Any>(walkId),
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                assertEquals(1234.56, c.getDouble(0), 0.0001)
+                assertEquals(600L, c.getLong(1))
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun `migrated v4 walk_photos accepts an update-analysis write`() {
         // Prove the new columns are writable with the expected types —
         // catches a typo in MIGRATION_3_4 SQL that would otherwise only

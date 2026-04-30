@@ -18,4 +18,14 @@ interface BellPlaying {
      * denied. Safe to call at any time.
      */
     fun play()
+
+    /**
+     * Fire the bell at [scale] × user's bell-volume preference. Used
+     * by the milestone overlay (scale=0.4f) so a user who muted bells
+     * still hears no sound. Default body delegates to [play] — existing
+     * fakes continue to work without compile changes.
+     */
+    fun play(scale: Float) {
+        play()
+    }
 }

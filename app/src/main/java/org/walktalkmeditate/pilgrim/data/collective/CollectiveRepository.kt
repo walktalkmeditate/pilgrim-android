@@ -26,6 +26,7 @@ class CollectiveRepository @Inject constructor(
     private val cacheStore: CollectiveCacheStore,
     private val service: CollectiveCounterService,
     @CollectiveRepoScope private val scope: CoroutineScope,
+    private val milestoneChecker: MilestoneChecking,
 ) {
     private val recordMutex = Mutex()
 
@@ -95,6 +96,18 @@ class CollectiveRepository @Inject constructor(
             try {
                 val fresh = service.fetch()
                 cacheStore.writeStats(fresh, nowMs)
+                // Stage 11-B: probe for sacred-number crossings AFTER the
+                // write so the detector reads the freshly-persisted total
+                // via storage if it ever needs to. Wrapped so a detector
+                // failure (DataStore corruption, etc.) cannot fail the
+                // user-visible fetch — we already updated the cache.
+                try {
+                    milestoneChecker.check(fresh.totalWalks)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    Log.w(TAG, "milestone check threw — ignoring", t)
+                }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {

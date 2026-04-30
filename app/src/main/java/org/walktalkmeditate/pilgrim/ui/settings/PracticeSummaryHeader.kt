@@ -2,9 +2,13 @@
 package org.walktalkmeditate.pilgrim.ui.settings
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.Air
@@ -20,8 +25,11 @@ import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,7 +44,9 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.PilgrimageProgress
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -49,14 +59,14 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * iOS-faithful summary header at the top of Settings. Mirrors
  * `pilgrim-ios/Pilgrim/Scenes/Settings/PracticeSummaryHeader.swift`.
  *
- * Three sections (top-to-bottom):
+ * Four sections (top-to-bottom):
  *  - Seasonal label "{Season} {Year}" with a faded glyph
  *  - Per-user stats whisper (tap to cycle distance/meditation/since)
  *  - Pilgrimage progress (when collective stats present, plus streak)
- *
- * Milestone overlay (iOS shows + bell + auto-dismiss after 8s) is
- * OUT OF SCOPE for this stage — tracked as a follow-up that needs
- * `lastSeenCollectiveWalks` DataStore persistence + BellPlayer wiring.
+ *  - Optional milestone overlay (italic moss banner, bell + auto-dismiss
+ *    after 8s) when [milestone] is non-null. The bell fires exactly once
+ *    per milestone *number* — re-keyed `LaunchedEffect` plus a
+ *    [rememberSaveable] number latch survives recomposition AND rotation.
  */
 @Composable
 fun PracticeSummaryHeader(
@@ -66,6 +76,9 @@ fun PracticeSummaryHeader(
     firstWalkInstant: Instant?,
     distanceUnits: UnitSystem,
     collectiveStats: CollectiveStats?,
+    milestone: CollectiveMilestone? = null,
+    onMilestoneShown: (CollectiveMilestone) -> Unit = {},
+    onMilestoneDismiss: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var statPhase by rememberSaveable { mutableIntStateOf(0) }
@@ -123,6 +136,57 @@ fun PracticeSummaryHeader(
                 if (streakDays > 1) {
                     StreakFlame(days = streakDays, modifier = Modifier.padding(top = 2.dp))
                 }
+            }
+        }
+
+        // Cache the most recent non-null milestone so AnimatedVisibility's
+        // 500ms fadeOut has content to fade. If we read `milestone` directly
+        // inside the content lambda, the dismiss-driven null transition makes
+        // the lambda return zero composables and the banner snaps out
+        // instantly. Holding the previous value through the fade keeps the
+        // crossfade visible. The LaunchedEffect inside still keys on
+        // ms.number so the bell-fired latch remains correct.
+        //
+        // Seed `displayedMilestone` with the current `milestone` value during
+        // the initial composition (rather than null + an after-the-fact
+        // LaunchedEffect) so the inner LaunchedEffect that drives the 8s
+        // auto-dismiss starts on frame 0 instead of frame 1 — otherwise the
+        // dismiss timer is offset by a frame, which would break tests that
+        // assert exact 8000ms thresholds via `mainClock.advanceTimeBy`.
+        val displayedMilestone = remember { mutableStateOf<CollectiveMilestone?>(milestone) }
+        if (milestone != null && milestone != displayedMilestone.value) {
+            displayedMilestone.value = milestone
+        }
+
+        AnimatedVisibility(
+            visible = milestone != null,
+            enter = fadeIn(animationSpec = tween(500, easing = FastOutSlowInEasing)),
+            exit = fadeOut(animationSpec = tween(500, easing = FastOutSlowInEasing)),
+        ) {
+            displayedMilestone.value?.let { ms ->
+                val firedFor = rememberSaveable { mutableStateOf<Int?>(null) }
+                LaunchedEffect(ms.number) {
+                    if (firedFor.value != ms.number) {
+                        firedFor.value = ms.number
+                        onMilestoneShown(ms)
+                    }
+                    delay(8_000L)
+                    onMilestoneDismiss()
+                }
+                Text(
+                    text = ms.message,
+                    style = pilgrimType.body.copy(fontStyle = FontStyle.Italic),
+                    color = pilgrimColors.stone,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .background(
+                            color = pilgrimColors.moss.copy(alpha = 0.08f),
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                )
             }
         }
     }

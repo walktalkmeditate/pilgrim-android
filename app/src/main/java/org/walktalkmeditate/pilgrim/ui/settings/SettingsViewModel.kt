@@ -16,12 +16,14 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -29,8 +31,6 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
-import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
-import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCardState
 
 /**
@@ -63,6 +63,8 @@ class SettingsViewModel @Inject constructor(
     private val voicePreferences: VoicePreferencesRepository,
     private val walkRepository: WalkRepository,
     private val voiceRecordingFileSystem: VoiceRecordingFileSystem,
+    private val milestoneSurface: MilestoneSurface,
+    private val bellPlayer: BellPlaying,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
@@ -76,6 +78,16 @@ class SettingsViewModel @Inject constructor(
      * can drive its segmented Units row + caption.
      */
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
+    /**
+     * Stage 11-B Task 15: pending sacred-number milestone published by
+     * the [MilestoneSurface] (concrete: `CollectiveMilestoneDetector`)
+     * after the collective repository's stats fetch crosses an unseen
+     * threshold. Direct passthrough so [PracticeSummaryHeader]'s overlay
+     * mirrors the detector exactly — `null` while no milestone is
+     * pending or after [dismissMilestone] clears it.
+     */
+    val milestone: StateFlow<CollectiveMilestone?> = milestoneSurface.milestone
 
     val beginWithIntention: StateFlow<Boolean> = practicePreferences.beginWithIntention
     val celestialAwarenessEnabled: StateFlow<Boolean> = practicePreferences.celestialAwarenessEnabled
@@ -224,48 +236,56 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
+     * Called once per milestone *number* by [PracticeSummaryHeader] when
+     * its overlay first composes — fires the temple bell at 0.4 × the
+     * user's bellVolume preference, matching iOS's milestone-bell volume
+     * envelope. Multiplicative scaling preserves the muted-user invariant
+     * (bellVolume=0 stays silent because `0 × 0.4 = 0`).
+     */
+    fun onMilestoneShown(milestone: CollectiveMilestone) {
+        // iOS PracticeSummaryHeader.swift's `playMilestoneBell()` gates
+        // on `UserPreferences.soundsEnabled.value`. Mirror that here:
+        // a user who muted sounds in Settings → AtmosphereCard expects
+        // ALL audio to stay silent (including the milestone bell), even
+        // if their `bellVolume` slider is non-zero (the slider is the
+        // mix-level when sounds are on, not the master mute).
+        if (!soundsPreferences.soundsEnabled.value) return
+        bellPlayer.play(scale = MILESTONE_BELL_SCALE)
+    }
+
+    /**
+     * Dismiss action — nulls the detector's StateFlow. Routed by
+     * [PracticeSummaryHeader]'s 8-second auto-dismiss `LaunchedEffect`
+     * once the overlay has been visible for the full duration. Mirrors
+     * iOS behaviour: no tap-to-dismiss surface — the overlay clears
+     * itself after 8 seconds and stays gone for the rest of the
+     * session unless the next sacred number crosses.
+     */
+    fun dismissMilestone() {
+        milestoneSurface.clear()
+    }
+
+    /**
      * Per-user aggregate driving the [PracticeSummaryHeader] stats whisper.
      *
-     * **Known performance limitation (Gemini PR #72 review):** for each
-     * finished walk, this aggregator runs `locationSamplesFor(id)` +
-     * `activityIntervalsFor(id)` queries — i.e. N walks → 2N queries per
-     * emission. For users with 500+ walks this introduces visible lag on
-     * Settings tab open.
-     *
-     * Acknowledged limitation; the proper fix is a `Walk` table schema
-     * migration to cache `distance_meters` + `meditation_seconds` columns
-     * computed at finalize-time (Stage 11 candidate). Until then:
-     * - Aggregation runs on `Dispatchers.IO` so Main is never blocked.
-     * - `Eagerly + .catch` keeps the result cached across SettingsScreen
-     *   compositions.
-     * - Acceptable for typical users (<100 walks); power-user lag is the
-     *   only visible symptom.
+     * Stage 11-A: reads the `Walk.distanceMeters` + `Walk.meditationSeconds`
+     * cache cols populated at finalize-time (Task 5) and drained for stale
+     * rows by [WalkMetricsBackfillCoordinator] (Task 6). Drops the previous
+     * per-walk N+1 (`locationSamplesFor` + `activityIntervalsFor`) to zero
+     * queries per emission — Settings tab opens immediately even with
+     * thousands of walks. A `null` cache col means "not yet computed" and
+     * contributes 0 to the running sum until the backfill catches up.
      */
     val practiceSummary: StateFlow<PracticeSummaryStats> = walkRepository.observeAllWalks()
         .map { walks ->
-            withContext(Dispatchers.IO) {
-                val finished = walks.filter { it.endTimestamp != null }
-                if (finished.isEmpty()) return@withContext PracticeSummaryStats.Empty
-                var totalDistance = 0.0
-                var totalMeditation = 0L
-                for (walk in finished) {
-                    totalDistance += WalkDistanceCalculator.computeDistanceMeters(
-                        walkRepository.locationSamplesFor(walk.id),
-                    )
-                    val intervals = walkRepository.activityIntervalsFor(walk.id)
-                    for (interval in intervals) {
-                        if (interval.activityType == ActivityType.MEDITATING) {
-                            totalMeditation += (interval.endTimestamp - interval.startTimestamp) / 1_000
-                        }
-                    }
-                }
-                PracticeSummaryStats(
-                    walkCount = finished.size,
-                    totalDistanceMeters = totalDistance,
-                    totalMeditationSeconds = totalMeditation,
-                    firstWalkInstant = Instant.ofEpochMilli(finished.minOf { it.startTimestamp }),
-                )
-            }
+            val finished = walks.filter { it.endTimestamp != null }
+            if (finished.isEmpty()) return@map PracticeSummaryStats.Empty
+            PracticeSummaryStats(
+                walkCount = finished.size,
+                totalDistanceMeters = finished.sumOf { it.distanceMeters ?: 0.0 },
+                totalMeditationSeconds = finished.sumOf { it.meditationSeconds ?: 0L },
+                firstWalkInstant = Instant.ofEpochMilli(finished.minOf { it.startTimestamp }),
+            )
         }
         .catch { emit(PracticeSummaryStats.Empty) }
         .flowOn(Dispatchers.IO)
@@ -277,6 +297,7 @@ class SettingsViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "SettingsViewModel"
+        const val MILESTONE_BELL_SCALE = 0.4f
     }
 }
 

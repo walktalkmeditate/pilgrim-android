@@ -20,6 +20,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
 import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
@@ -133,6 +134,16 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var walkController: WalkController
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
 
+    /**
+     * Stage 11-A: drains stale walk-metrics cache columns for legacy
+     * rows seeded NULL by MIGRATION_4_5 and for walks where the
+     * finalize-hook crashed before invoking the cache. Started here so
+     * the collector survives the whole process — `start()` is
+     * idempotent (AtomicBoolean), so a re-call after a config change
+     * is a safe no-op.
+     */
+    @Inject lateinit var walkMetricsBackfillCoordinator: WalkMetricsBackfillCoordinator
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -218,6 +229,12 @@ class PilgrimApp : Application(), Configuration.Provider {
         // running and an orphan WAV on disk that the user has no UI
         // to recover.
         walkLifecycleObserver.hashCode()
+
+        // Stage 11-A: arm the cache backfill coordinator. Idempotent
+        // start() — re-invocation is a no-op via AtomicBoolean. The
+        // collector lives on @CollectiveRepoScope (SupervisorJob +
+        // Dispatchers.IO) so it survives the whole process.
+        walkMetricsBackfillCoordinator.start()
 
         // Cold-launch stale-walk recovery. Any walk with end_timestamp
         // NULL is one the OS killed (swipe-from-recents, force-stop,

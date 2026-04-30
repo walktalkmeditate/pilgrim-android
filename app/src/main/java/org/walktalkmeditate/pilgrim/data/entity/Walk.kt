@@ -26,4 +26,8 @@ data class Walk(
     val intention: String? = null,
     val favicon: String? = null,
     val notes: String? = null,
+    @ColumnInfo(name = "distance_meters")
+    val distanceMeters: Double? = null,
+    @ColumnInfo(name = "meditation_seconds")
+    val meditationSeconds: Long? = null,
 )

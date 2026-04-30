@@ -67,7 +67,11 @@ class BellPlayer @Inject constructor(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override fun play() {
+    override fun play() = playInternal(scale = 1.0f)
+
+    override fun play(scale: Float) = playInternal(scale = scale)
+
+    private fun playInternal(scale: Float) {
         val bellAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -81,8 +85,19 @@ class BellPlayer @Inject constructor(
         // provides the happens-before edge that a plain mutable field
         // wouldn't under the JMM. The AtomicBoolean guard below then
         // dedupes concurrent invocations.
+        //
+        // [playerRef] and [safetyNetRef] are populated AFTER focus is
+        // granted and the MediaPlayer is built. The [cleanup] lambda
+        // null-checks both so it's safe to invoke any time after
+        // `cleanupRef.set(cleanup)`: if focus was rejected and the
+        // listener fires synchronously, both refs are null and cleanup
+        // only abandons the focus request. Once the player is
+        // constructed, `playerRef.set(player)` makes it eligible for
+        // release on the next cleanup call. Same for the safety-net.
         val cleanedUp = AtomicBoolean(false)
         val cleanupRef = AtomicReference<(() -> Unit)?>(null)
+        val playerRef = AtomicReference<MediaPlayer?>(null)
+        val safetyNetRef = AtomicReference<Runnable?>(null)
 
         val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(bellAttributes)
@@ -111,10 +126,39 @@ class BellPlayer @Inject constructor(
             }
             .build()
 
+        // Build the cleanup lambda BEFORE requesting focus. The OS may
+        // call back the focus-loss listener (or reject the request)
+        // between `requestAudioFocus()` returning and our subsequent
+        // setup; if `cleanupRef` were null at that moment, the listener
+        // would no-op, leaving the focus request and any in-flight
+        // MediaPlayer to leak until the safety-net fires 5s later.
+        val cleanup: () -> Unit = {
+            if (cleanedUp.compareAndSet(false, true)) {
+                safetyNetRef.get()?.let { mainHandler.removeCallbacks(it) }
+                playerRef.get()?.let { mp ->
+                    try {
+                        mp.release()
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "MediaPlayer release failed", t)
+                    }
+                }
+                try {
+                    audioManager.abandonAudioFocusRequest(focusRequest)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "abandonAudioFocusRequest failed", t)
+                }
+            }
+        }
+        cleanupRef.set(cleanup)
+
         val granted = audioManager.requestAudioFocus(focusRequest) ==
             AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (!granted) {
             Log.w(TAG, "bell focus denied; skipping play")
+            // Idempotent: cleanup abandons the (possibly already
+            // rejected) focus request and short-circuits via the
+            // cleanedUp guard if the listener happened to race here.
+            cleanup()
             return
         }
 
@@ -127,12 +171,26 @@ class BellPlayer @Inject constructor(
         // hints the bell could play through the earpiece or miss
         // the sonification ducking policy.
         val player = MediaPlayer()
+        playerRef.set(player)
+
+        // Focus could have been revoked between requestAudioFocus returning
+        // GRANTED and now (the listener fires on a system thread). If cleanup
+        // already ran via the listener, playerRef was null at that moment so
+        // the MediaPlayer never got released. Re-check now and release.
+        if (cleanedUp.get()) {
+            try {
+                player.release()
+            } catch (t: Throwable) {
+                Log.w(TAG, "MediaPlayer release after racing cleanup failed", t)
+            }
+            return
+        }
+
         try {
             player.setAudioAttributes(bellAttributes)
             val afd = context.resources.openRawResourceFd(R.raw.bell) ?: run {
                 Log.w(TAG, "bell resource file descriptor null")
-                player.release()
-                audioManager.abandonAudioFocusRequest(focusRequest)
+                cleanup()
                 return
             }
             afd.use {
@@ -141,55 +199,72 @@ class BellPlayer @Inject constructor(
             player.prepare()
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer setup failed", t)
-            try {
-                player.release()
-            } catch (r: Throwable) {
-                Log.w(TAG, "MediaPlayer release after setup failure failed", r)
-            }
-            audioManager.abandonAudioFocusRequest(focusRequest)
+            cleanup()
             return
         }
+
+        // Second re-check: focus revoke can fire any time during the
+        // synchronous setAudioAttributes/setDataSource/prepare block
+        // above (the listener runs on a system thread). If cleanup
+        // already ran via the listener, it released the player via
+        // `playerRef.get()` (which is now non-null since line 174) and
+        // marked cleanedUp. We must not wire listeners + post the
+        // safety-net + start() against a released MediaPlayer — start()
+        // would throw IllegalStateException, caught below, but the
+        // listener+handler wiring would briefly pin a released-player
+        // reference. Cheaper to bail here.
+        if (cleanedUp.get()) return
 
         // Per-play safety-net runnable captured by reference so
         // `cleanup` can remove it and avoid a stale firing after
         // natural completion.
         val safetyNet = Runnable { cleanupRef.get()?.invoke() }
+        safetyNetRef.set(safetyNet)
 
-        val cleanup: () -> Unit = {
-            if (cleanedUp.compareAndSet(false, true)) {
-                mainHandler.removeCallbacks(safetyNet)
-                try {
-                    player.release()
-                } catch (t: Throwable) {
-                    Log.w(TAG, "MediaPlayer release failed", t)
-                }
-                try {
-                    audioManager.abandonAudioFocusRequest(focusRequest)
-                } catch (t: Throwable) {
-                    Log.w(TAG, "abandonAudioFocusRequest failed", t)
-                }
+        // Wrap listener wiring + safetyNet posting in try/catch:
+        // focus revoke can still fire on a system thread between the
+        // re-check above and these lines, releasing the MediaPlayer.
+        // setOnCompletionListener / setOnErrorListener on a player in
+        // the End state throw IllegalStateException — without this
+        // catch, the exception would propagate to the caller (Main
+        // thread, milestone overlay's onMilestoneShown) and crash the
+        // process. cleanup() in the catch is idempotent.
+        try {
+            player.setOnCompletionListener { cleanup() }
+            player.setOnErrorListener { _, what, extra ->
+                Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
+                cleanup()
+                true
             }
-        }
-        cleanupRef.set(cleanup)
-
-        player.setOnCompletionListener { cleanup() }
-        player.setOnErrorListener { _, what, extra ->
-            Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
+            mainHandler.postDelayed(safetyNet, SAFETY_NET_MS)
+        } catch (t: Throwable) {
+            Log.w(TAG, "MediaPlayer listener wiring failed", t)
             cleanup()
-            true
+            return
         }
-        mainHandler.postDelayed(safetyNet, SAFETY_NET_MS)
 
         // Apply user's bellVolume preference (Eagerly StateFlow — `.value`
         // is the current cached pref, no suspend hop needed). MediaPlayer's
         // setVolume is legal in the Prepared state per the docs, but
         // calling it AFTER start() would briefly play at 1.0f before
         // the volume change lands; setting it here avoids that flash.
-        // Coerced into [0, 1] defensively even though the repository
-        // already clamps writes — guards against future repo refactors.
-        val bellVolume = soundsPreferences.bellVolume.value.coerceIn(0f, 1f)
+        //
+        // Defensive: `coerceIn` does NOT sanitize NaN
+        // (`Float.NaN.coerceIn(0f, 1f) == NaN`). The repository's
+        // `setBellVolume` does not currently clamp, so a future bug
+        // could persist NaN and reach this read. Treat NaN as silence —
+        // safer than letting NaN propagate into `MediaPlayer.setVolume`.
+        // Same handling applied to [scale] for the same reason.
+        // [scale] multiplies the user pref so the milestone overlay
+        // (scale=0.4) can mirror iOS's volume-0.4 milestone bell while
+        // still respecting Android's user-volume control: a muted user
+        // (bellVolume=0) stays muted because 0 × anything = 0.
+        val rawBellVolume = soundsPreferences.bellVolume.value
+        val userBellVolume = if (rawBellVolume.isNaN()) 0f else rawBellVolume.coerceIn(0f, 1f)
+        val safeScale = if (scale.isNaN()) 0f else scale.coerceIn(0f, 1f)
+        val effectiveVolume = (safeScale * userBellVolume).coerceIn(0f, 1f)
         try {
-            player.setVolume(bellVolume, bellVolume)
+            player.setVolume(effectiveVolume, effectiveVolume)
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer setVolume failed", t)
             // Non-fatal: the bell will still play at the player's default
