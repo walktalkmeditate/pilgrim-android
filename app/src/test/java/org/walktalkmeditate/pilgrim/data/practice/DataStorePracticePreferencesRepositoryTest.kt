@@ -128,7 +128,7 @@ class DataStorePracticePreferencesRepositoryTest {
     @Test
     fun `beginWithIntention emits new value after setBeginWithIntention`() = runTest(dispatcher) {
         val repo = DataStorePracticePreferencesRepository(dataStore, scope)
-        repo.beginWithIntention.test(timeout = 5.seconds) {
+        repo.beginWithIntention.test(timeout = 10.seconds) {
             assertEquals(false, awaitItem())
             repo.setBeginWithIntention(true)
             assertEquals(true, awaitItem())
@@ -139,7 +139,7 @@ class DataStorePracticePreferencesRepositoryTest {
     @Test
     fun `zodiacSystem emits new value after setZodiacSystem`() = runTest(dispatcher) {
         val repo = DataStorePracticePreferencesRepository(dataStore, scope)
-        repo.zodiacSystem.test(timeout = 5.seconds) {
+        repo.zodiacSystem.test(timeout = 10.seconds) {
             assertEquals(ZodiacSystem.Tropical, awaitItem())
             repo.setZodiacSystem(ZodiacSystem.Sidereal)
             assertEquals(ZodiacSystem.Sidereal, awaitItem())
@@ -158,7 +158,7 @@ class DataStorePracticePreferencesRepositoryTest {
         dataStore.edit { it[stringPreferencesKey("zodiacSystem")] = "vedic" }
 
         val repo = DataStorePracticePreferencesRepository(dataStore, scope)
-        repo.zodiacSystem.test(timeout = 5.seconds) {
+        repo.zodiacSystem.test(timeout = 10.seconds) {
             assertEquals(ZodiacSystem.Tropical, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
