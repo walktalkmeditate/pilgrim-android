@@ -36,7 +36,16 @@ object HapticsModule {
             val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
             manager.defaultVibrator
         } else {
+            // Safe-cast on the deprecated path: on rare device classes
+            // without vibrator hardware (Chromebooks, stripped emulators)
+            // the system service can return null. A raw `as Vibrator` would
+            // KotlinNPE during Hilt construction, which would also bring
+            // down BellPlayer and any singleton that depends on it. Fail
+            // fast with a clear message instead — vibrate calls on a real
+            // no-vibrator Vibrator are silent no-ops via `hasVibrator()`,
+            // so this only fires when the system service itself is absent.
             @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            (context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
+                ?: error("VIBRATOR_SERVICE unavailable on this device")
         }
 }

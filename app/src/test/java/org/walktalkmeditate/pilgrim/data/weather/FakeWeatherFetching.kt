@@ -19,15 +19,35 @@ import kotlinx.coroutines.CompletableDeferred
  * walk row's `weather_condition` column must remain null (or the row
  * itself purged for the discard path). This avoids tracking persist
  * state inside the fake, which would race the cancellation cleanup.
+ *
+ * Sequence support: pass `snapshots` (a `List<WeatherSnapshot?>`) to
+ * vend different values across successive calls — required to test
+ * the iOS-faithful `null → +10s retry → success` path. The single-
+ * snapshot constructor is preserved for backwards compatibility with
+ * the ~10 existing call sites.
  */
-class FakeWeatherFetching(
-    private val snapshot: WeatherSnapshot? = null,
-    private val gate: CompletableDeferred<WeatherSnapshot?>? = null,
+class FakeWeatherFetching private constructor(
+    private val snapshots: List<WeatherSnapshot?>,
+    private val gate: CompletableDeferred<WeatherSnapshot?>?,
 ) : WeatherFetching {
     val callCount = AtomicInteger(0)
 
+    constructor(
+        snapshot: WeatherSnapshot? = null,
+        gate: CompletableDeferred<WeatherSnapshot?>? = null,
+    ) : this(snapshots = listOf(snapshot), gate = gate)
+
+    constructor(
+        snapshots: List<WeatherSnapshot?>,
+    ) : this(snapshots = snapshots, gate = null)
+
     override suspend fun fetchCurrent(latitude: Double, longitude: Double): WeatherSnapshot? {
-        callCount.incrementAndGet()
-        return if (gate != null) gate.await() else snapshot
+        val idx = callCount.getAndIncrement()
+        if (gate != null) return gate.await()
+        // Last-element pinning: callers that pass fewer snapshots than
+        // calls (e.g. the no-arg `()` constructor) keep getting the
+        // final entry forever, matching the previous single-snapshot
+        // behavior.
+        return snapshots[idx.coerceAtMost(snapshots.size - 1)]
     }
 }

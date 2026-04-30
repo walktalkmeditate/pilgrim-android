@@ -184,17 +184,45 @@ class OpenMeteoClientTest {
     }
 
     @Test
-    fun unknownCodeMapsToClear() = runTest {
-        // iOS @unknown default → .clear. Code 999 is not in the WMO table.
-        server.enqueue(
-            MockResponse().setBody(
-                """{"current":{"temperature_2m":15.0,"weather_code":999,"wind_speed_10m":2.0}}"""
+    fun unmappedCodesAllMapToClear() = runTest {
+        // iOS @unknown default → .clear. Open-Meteo's WMO range has many
+        // unmapped codes (4-44, 46-50, 60, 68-70, 78-79, 83-84, 87-94,
+        // 97-98). All must fall through to CLEAR. Negative + INT_MAX +
+        // codes outside the documented range guard against future drift
+        // where someone reorders the `when` and accidentally creates a
+        // tighter range check.
+        val unmappedCodes = listOf(4, 44, 50, 60, 68, 79, 84, 97, 98, 999, -1, Int.MAX_VALUE)
+        unmappedCodes.forEach { code ->
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"current":{"temperature_2m":15.0,"weather_code":$code,"wind_speed_10m":2.0}}"""
+                )
             )
-        )
-        assertEquals(
-            WeatherCondition.CLEAR,
-            client.fetchInternal(baseUrl, 0.0, 0.0)?.condition,
-        )
+            assertEquals(
+                "code $code should map to CLEAR per iOS @unknown default",
+                WeatherCondition.CLEAR,
+                client.fetchInternal(baseUrl, 0.0, 0.0)?.condition,
+            )
+        }
+    }
+
+    @Test
+    fun freezingRainCodesMapToSnow() = runTest {
+        // iOS lumps freezingRain (WMO 66/67) into SNOW. Pinned regression:
+        // a future split into a dedicated FREEZING_RAIN enum would
+        // diverge from iOS persistence semantics across platforms.
+        listOf(66, 67).forEach { code ->
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"current":{"temperature_2m":1.0,"weather_code":$code,"wind_speed_10m":2.0}}"""
+                )
+            )
+            assertEquals(
+                "freezing rain code $code → SNOW (iOS lumps freezingRain)",
+                WeatherCondition.SNOW,
+                client.fetchInternal(baseUrl, 0.0, 0.0)?.condition,
+            )
+        }
     }
 
     @Test

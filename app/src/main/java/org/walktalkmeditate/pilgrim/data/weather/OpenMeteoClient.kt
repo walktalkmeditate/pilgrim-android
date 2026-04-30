@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.data.weather
 
 import android.util.Log
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -85,11 +86,19 @@ class OpenMeteoClient @Inject constructor(
         // and a noisy log line. Bail before issuing the request.
         if (!latitude.isFinite() || !longitude.isFinite()) return@withContext null
         try {
+            // Format with %.6f (≈11cm precision) and Locale.US for guaranteed
+            // `.` decimal separator + ASCII digits. Naive Double.toString
+            // emits scientific notation (e.g. `1.0E-4`) for absolute values
+            // < 10^-3 — coordinates near 0,0 (Gulf of Guinea) would 400 the
+            // Open-Meteo endpoint. Matches the codebase's Locale.US numeric
+            // formatting convention (PracticeSummaryHeader, VoiceCard, etc.).
+            val latStr = String.format(Locale.US, "%.6f", latitude)
+            val lngStr = String.format(Locale.US, "%.6f", longitude)
             val url = buildString {
                 append(baseUrl)
                 append("v1/forecast")
-                append("?latitude=").append(latitude)
-                append("&longitude=").append(longitude)
+                append("?latitude=").append(latStr)
+                append("&longitude=").append(lngStr)
                 append("&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m")
                 append("&temperature_unit=celsius")
                 append("&wind_speed_unit=ms")

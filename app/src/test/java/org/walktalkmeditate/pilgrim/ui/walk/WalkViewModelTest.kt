@@ -741,6 +741,48 @@ class WalkViewModelTest {
     }
 
     @Test
+    fun `weather job retries after null then succeeds and persists`() = runTest(dispatcher) {
+        // Exercises the iOS-faithful `null → +10s retry → success` path.
+        // The single-snapshot fake couldn't drive this — first call returned
+        // the same value as the second. With the snapshot-sequence fake,
+        // call 1 returns null (forcing the +10s retry branch) and call 2
+        // returns a real snapshot, which must land in the walk row.
+        val fakeWeather = FakeWeatherFetching(listOf(null, stubSnapshot))
+        val vm = newViewModelWithWeather(fakeWeather, lastKnown = stubLastKnown)
+
+        vm.startWalk()
+        runCurrent()
+        val walkId = requireActiveWalkId()
+
+        advanceTimeBy(2_001L)
+        runCurrent()
+        assertEquals(1, fakeWeather.callCount.get())
+        // First call returned null → row's weather column must still be null.
+        assertNull(repository.getWalk(walkId)?.weatherCondition)
+
+        advanceTimeBy(10_000L)
+        runCurrent()
+        assertEquals(2, fakeWeather.callCount.get())
+
+        // The retry succeeded — the second-call snapshot landed in Room.
+        // The column persists `rawValue` (matches iOS `String, Codable`),
+        // so compare the lowercase on-disk identifier rather than the
+        // enum directly.
+        assertEquals(WeatherCondition.CLEAR.rawValue, repository.getWalk(walkId)?.weatherCondition)
+    }
+
+    // Note: a `vm.finishWalk()` direct-call cancellation test was
+    // considered (per Stage 12 polish review). Skipped: the VM's
+    // `finishWalk()` does NOT carry a synchronous `weatherJob?.cancel()`
+    // (unlike `discardWalk()`, which does). The cancel-on-Finished
+    // path runs entirely through the controller.state observer, which
+    // the test below already exercises end-to-end. Adding a vm.finishWalk()
+    // variant would either duplicate the observer-path coverage or fail
+    // (no synchronous cancel exists to assert). If a future refactor
+    // moves the cancel back into vm.finishWalk(), add a direct-call
+    // test then.
+
+    @Test
     fun `weather job cancels on Finished so suspended fetch never persists`() = runTest(dispatcher) {
         val gate = CompletableDeferred<WeatherSnapshot?>()
         val fakeWeather = FakeWeatherFetching(gate = gate)
