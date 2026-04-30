@@ -514,4 +514,11 @@
     <string name="weather_fog">Foggy</string>
     <string name="weather_wind">Windy</string>
     <string name="weather_haze">Hazy</string>
+
+    <!-- Stage 12-D: locale-resolution marker. values/ is the English source;
+         values-fr/ overrides for the fr locale to verify the values-XX/
+         directory pattern works. iOS is also English-only (Base.lproj +
+         en.lproj only). When real localization arrives, both apps need
+         translators + plural rules together. -->
+    <string name="locale_resolution_marker">en</string>
 </resources>
