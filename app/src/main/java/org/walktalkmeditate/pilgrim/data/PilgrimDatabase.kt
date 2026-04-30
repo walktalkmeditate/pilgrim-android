@@ -35,7 +35,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
         VoiceRecording::class,
         WalkPhoto::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -100,6 +100,30 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `walk_photos` ADD COLUMN `top_label` TEXT")
                 db.execSQL("ALTER TABLE `walk_photos` ADD COLUMN `top_label_confidence` REAL")
                 db.execSQL("ALTER TABLE `walk_photos` ADD COLUMN `analyzed_at` INTEGER")
+            }
+        }
+
+        /**
+         * Stage 11-A: adds two nullable cache columns to the walks table
+         * for finalize-time precomputed metrics — `distance_meters` (REAL)
+         * and `meditation_seconds` (INTEGER). Both are pure `ALTER TABLE
+         * ADD COLUMN`: SQLite appends nullable columns without a row scan,
+         * so this is O(1) on existing DBs of any size. Pre-existing walks
+         * read null for both fields; a lazy backfill coordinator
+         * (Stage 11-B) computes values on first read and writes them back.
+         *
+         * Column order matters — must match the order of `distanceMeters`
+         * then `meditationSeconds` in the [Walk] entity. Room hashes the
+         * column ordering at startup, so swapping these two ALTERs would
+         * fail schema validation.
+         *
+         * No manual transaction wrapper here — Room's RoomOpenHelper
+         * already wraps `migrate()` in a transaction; nesting deadlocks.
+         */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `distance_meters` REAL")
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `meditation_seconds` INTEGER")
             }
         }
     }
