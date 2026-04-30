@@ -23,7 +23,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
-import org.walktalkmeditate.pilgrim.data.export.RecordingsExporter
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageError
 
 /**
@@ -51,6 +50,7 @@ class DataSettingsViewModel @Inject constructor(
     walksSource: WalksSource,
     walkPhotoDao: WalkPhotoDao,
     private val pilgrimGateway: PilgrimPackageGateway,
+    private val exporterGateway: RecordingsExporterGateway,
     private val env: DataExportEnv,
 ) : ViewModel() {
 
@@ -131,7 +131,7 @@ class DataSettingsViewModel @Inject constructor(
             try {
                 val result = withContext(Dispatchers.IO) {
                     try {
-                        val zip = RecordingsExporter.export(
+                        val zip = exporterGateway.export(
                             sourceDir = env.sourceDir(),
                             targetDir = env.targetDir(),
                             now = Instant.now(),

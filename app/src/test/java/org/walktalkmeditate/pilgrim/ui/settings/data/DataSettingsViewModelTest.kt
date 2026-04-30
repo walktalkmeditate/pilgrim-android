@@ -4,8 +4,10 @@ package org.walktalkmeditate.pilgrim.ui.settings.data
 import android.net.Uri
 import app.cash.turbine.test
 import java.io.File
+import java.time.Instant
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -14,10 +16,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
-import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageBuildResult
 
 class DataSettingsViewModelTest {
@@ -52,9 +54,12 @@ class DataSettingsViewModelTest {
 
     @Test
     fun `exportRecordings emits Success with file`() = runTest {
-        File(sourceDir, "a.wav").writeBytes(ByteArray(64))
+        val syntheticZip = File(workspace, "pilgrim-recordings-test.zip").also {
+            it.writeBytes(ByteArray(64))
+        }
         val vm = newViewModel(
             recordingsSource = FakeRecordingsCountSource(flowOf(listOf(stubRecording(1)))),
+            exporterGateway = gatewayThatReturns(syntheticZip),
         )
 
         vm.exportEvents.test(timeout = 10.seconds) {
@@ -72,6 +77,7 @@ class DataSettingsViewModelTest {
     fun `exportRecordings emits Empty when source dir empty`() = runTest {
         val vm = newViewModel(
             recordingsSource = FakeRecordingsCountSource(flowOf(emptyList())),
+            exporterGateway = gatewayThatReturns(null),
         )
 
         vm.exportEvents.test(timeout = 10.seconds) {
@@ -83,14 +89,26 @@ class DataSettingsViewModelTest {
 
     @Test
     fun `concurrent exportRecordings calls produce only one event`() = runTest {
-        File(sourceDir, "a.wav").writeBytes(ByteArray(64))
+        val gate = CompletableDeferred<File?>()
+        val syntheticZip = File(workspace, "pilgrim-recordings-concurrent.zip").also {
+            it.writeBytes(ByteArray(64))
+        }
+
         val vm = newViewModel(
             recordingsSource = FakeRecordingsCountSource(flowOf(listOf(stubRecording(1)))),
+            exporterGateway = FakeRecordingsExporterGateway(gate = gate),
         )
 
+        // Both calls happen synchronously while the gate is still
+        // suspended — second call must short-circuit on the in-flight
+        // compareAndSet guard.
+        vm.exportRecordings()
+        vm.exportRecordings()
+
+        // Release the gate so the first call's coroutine can complete.
+        gate.complete(syntheticZip)
+
         vm.exportEvents.test(timeout = 10.seconds) {
-            vm.exportRecordings()
-            vm.exportRecordings() // double-tap; second call must short-circuit on the in-flight guard
             val first = awaitItem()
             assertTrue(first is RecordingsExportResult.Success)
             expectNoEvents()
@@ -165,13 +183,20 @@ class DataSettingsViewModelTest {
         walksSource: WalksSource = FakeWalksSource(flowOf(emptyList())),
         walkPhotoDao: WalkPhotoDao = FakeWalkPhotoDao(observeAllCountFlow = flowOf(0)),
         gateway: PilgrimPackageGateway = FakePilgrimPackageGateway(),
+        exporterGateway: RecordingsExporterGateway = gatewayThatReturns(null),
     ): DataSettingsViewModel = DataSettingsViewModel(
         recordingsSource = recordingsSource,
         walksSource = walksSource,
         walkPhotoDao = walkPhotoDao,
         pilgrimGateway = gateway,
+        exporterGateway = exporterGateway,
         env = DataExportEnv(sourceDir = { sourceDir }, targetDir = { targetDir }),
     )
+
+    private fun gatewayThatReturns(file: File?): RecordingsExporterGateway =
+        object : RecordingsExporterGateway {
+            override suspend fun export(sourceDir: File, targetDir: File, now: Instant): File? = file
+        }
 
     private fun stubRecording(id: Long) = VoiceRecording(
         id = id,
@@ -209,6 +234,13 @@ private class FakePilgrimPackageGateway(
 ) : PilgrimPackageGateway {
     override suspend fun build(includePhotos: Boolean): PilgrimPackageBuildResult = buildResult()
     override suspend fun import(uri: Uri): Int = importResult()
+}
+
+private class FakeRecordingsExporterGateway(
+    private val gate: CompletableDeferred<File?>,
+) : RecordingsExporterGateway {
+    override suspend fun export(sourceDir: File, targetDir: File, now: Instant): File? =
+        gate.await()
 }
 
 /**
