@@ -558,7 +558,7 @@ private fun fireWaveformFallback() {
 `MeditationBellObserver` currently calls `bellPlayer.play()`. Switch to `bellPlayer.play(scale = 1.0f, withHaptic = true)` (or just `play()` after the new default — verify Kotlin resolution). Audit other bell call sites:
 - Walk-start bell — iOS fires withHaptic=true. Switch.
 - Walk-end bell — iOS fires withHaptic=true. Switch.
-- Milestone overlay — Stage 11 used `bellPlayer.play(scale = 0.4f)`. Add `withHaptic = false` because iOS milestone overlay does NOT pair the celebration bell with a haptic (verified: iOS PracticeSummaryHeader.playMilestoneBell calls plain `BellPlayer.shared.play(asset, volume: 0.4)` without `withHaptic`). Preserve that.
+- Milestone overlay — Stage 11 used `bellPlayer.play(scale = 0.4f)`. **CORRECTION (post-implementation closing review):** iOS DOES pair haptic on milestone. iOS `BellPlayer.swift:14` declares `func play(_ asset, volume: Float = 0.7, withHaptic: Bool = true)` — `withHaptic` defaults to **true**. iOS `PracticeSummaryHeader.swift:92` calls `BellPlayer.shared.play(asset, volume: 0.4)` without overriding `withHaptic`, so the default fires. Switch the Android milestone path to `bellPlayer.play(scale = MILESTONE_BELL_SCALE, withHaptic = true)` for iOS parity. (An earlier draft of this spec incorrectly claimed iOS milestone is haptic-silent — that claim was wrong.)
 
 ### Tests
 1. `BellPlayerTest.play_firesPrimitiveOnApi30PlusWhenSupported` — Robolectric @Config sdk=30, ShadowVibrator reports `areAllPrimitivesSupported(PRIMITIVE_CLICK)=true`, assert composition fires.

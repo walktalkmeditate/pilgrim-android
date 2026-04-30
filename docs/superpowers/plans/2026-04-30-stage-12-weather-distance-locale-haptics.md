@@ -1059,8 +1059,7 @@ interface BellPlaying {
     /**
      * Fire bell + (optional) haptic. iOS-faithful default: haptic ON,
      * gated internally by `bellHapticEnabled` preference. Sites that
-     * don't want haptic explicitly pass `withHaptic = false` (e.g.
-     * milestone overlay, which iOS plays without haptic).
+     * don't want haptic explicitly pass `withHaptic = false`.
      */
     fun play(scale: Float = 1.0f, withHaptic: Boolean = true) {
         play(scale)
@@ -1139,7 +1138,7 @@ grep -rn "bellPlayer\.play\|BellPlaying" app/src/main/java/
 - `MeditationBellObserver.kt` — meditation start/end bells. Switch to `play(withHaptic = true)` (iOS fires `.medium` haptic at meditation bells).
 - Walk-start bell (find caller). Switch to `withHaptic = true`.
 - Walk-end bell. Switch to `withHaptic = true`.
-- `SettingsViewModel.onMilestoneShown` — currently calls `bellPlayer.play(scale = MILESTONE_BELL_SCALE)`. iOS milestone path does NOT pair haptic. Add `withHaptic = false` explicitly.
+- `SettingsViewModel.onMilestoneShown` — currently calls `bellPlayer.play(scale = MILESTONE_BELL_SCALE)`. iOS DOES pair haptic on milestone (verified: `BellPlayer.swift:14`'s `withHaptic: Bool = true` default fires for the `PracticeSummaryHeader.swift:92` caller). Switch to `withHaptic = true` explicitly for iOS parity + audit visibility.
 
 - [ ] **Step 3: Update tests for each affected caller**
 
