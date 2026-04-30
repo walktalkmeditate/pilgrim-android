@@ -24,10 +24,10 @@ import kotlinx.coroutines.flow.asStateFlow
 @Singleton
 class CollectiveMilestoneDetector @Inject constructor(
     private val storage: MilestoneStorage,
-) : MilestoneChecking {
+) : MilestoneChecking, MilestoneSurface {
 
     private val _milestone = MutableStateFlow<CollectiveMilestone?>(null)
-    val milestone: StateFlow<CollectiveMilestone?> = _milestone.asStateFlow()
+    override val milestone: StateFlow<CollectiveMilestone?> = _milestone.asStateFlow()
 
     override suspend fun check(totalWalks: Int) {
         try {
@@ -46,7 +46,7 @@ class CollectiveMilestoneDetector @Inject constructor(
         }
     }
 
-    fun clear() {
+    override fun clear() {
         _milestone.value = null
     }
 
@@ -63,6 +63,19 @@ class CollectiveMilestoneDetector @Inject constructor(
  */
 interface MilestoneChecking {
     suspend fun check(totalWalks: Int)
+}
+
+/**
+ * Read-side seam consumed by [SettingsViewModel] (Task 15). Exposes the
+ * detector's pending-milestone StateFlow plus the imperative `clear()`
+ * the dismiss action calls. Extracted as an interface (matching the
+ * [MilestoneStorage] / [MilestoneChecking] pattern) so VM tests can
+ * substitute a `MutableStateFlow`-backed fake without subclassing the
+ * `@Singleton` detector or relying on `open` modifiers.
+ */
+interface MilestoneSurface {
+    val milestone: StateFlow<CollectiveMilestone?>
+    fun clear()
 }
 
 /**

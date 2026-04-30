@@ -73,6 +73,7 @@ fun SettingsScreen(
     val walkReliquary by viewModel.walkReliquaryEnabled.collectAsStateWithLifecycle()
     val voiceCardState by viewModel.voiceCardState.collectAsStateWithLifecycle()
     val practiceSummary by viewModel.practiceSummary.collectAsStateWithLifecycle()
+    val milestone by viewModel.milestone.collectAsStateWithLifecycle()
     // Android's Photo Picker (ActivityResultContracts.PickVisualMedia)
     // doesn't require a runtime permission on API 33+ and uses the
     // photo-picker pseudo-permission below that, so this flag will rarely
@@ -121,6 +122,9 @@ fun SettingsScreen(
                     firstWalkInstant = practiceSummary.firstWalkInstant,
                     distanceUnits = distanceUnits,
                     collectiveStats = stats,
+                    milestone = milestone,
+                    onMilestoneShown = viewModel::onMilestoneShown,
+                    onMilestoneDismiss = viewModel::dismissMilestone,
                 )
             }
             item {

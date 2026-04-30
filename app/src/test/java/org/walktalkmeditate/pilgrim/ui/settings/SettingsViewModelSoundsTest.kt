@@ -40,7 +40,10 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -122,6 +125,8 @@ class SettingsViewModelSoundsTest {
             voicePreferences = FakeVoicePreferencesRepository(),
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = NoopMilestoneSurface,
+            bellPlayer = NoopBellPlayer,
         )
         assertEquals(false, vm.soundsEnabled.first())
     }
@@ -138,6 +143,8 @@ class SettingsViewModelSoundsTest {
             voicePreferences = FakeVoicePreferencesRepository(),
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = NoopMilestoneSurface,
+            bellPlayer = NoopBellPlayer,
         )
         assertEquals(true, vm.soundsEnabled.first())
         vm.setSoundsEnabled(false)
@@ -158,6 +165,8 @@ class SettingsViewModelSoundsTest {
             voicePreferences = FakeVoicePreferencesRepository(),
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = NoopMilestoneSurface,
+            bellPlayer = NoopBellPlayer,
         )
         // Calling the setter must NOT throw — runCatching inside the
         // VM swallows the IOException and logs it.
@@ -214,5 +223,16 @@ class SettingsViewModelSoundsTest {
 
     private object NoopMilestoneChecker : MilestoneChecking {
         override suspend fun check(totalWalks: Int) = Unit
+    }
+
+    private object NoopMilestoneSurface : MilestoneSurface {
+        private val state = MutableStateFlow<CollectiveMilestone?>(null)
+        override val milestone: StateFlow<CollectiveMilestone?> = state.asStateFlow()
+        override fun clear() = Unit
+    }
+
+    private object NoopBellPlayer : BellPlaying {
+        override fun play() = Unit
+        override fun play(scale: Float) = Unit
     }
 }

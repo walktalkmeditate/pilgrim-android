@@ -16,11 +16,14 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -60,6 +63,8 @@ class SettingsViewModel @Inject constructor(
     private val voicePreferences: VoicePreferencesRepository,
     private val walkRepository: WalkRepository,
     private val voiceRecordingFileSystem: VoiceRecordingFileSystem,
+    private val milestoneSurface: MilestoneSurface,
+    private val bellPlayer: BellPlaying,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
@@ -73,6 +78,16 @@ class SettingsViewModel @Inject constructor(
      * can drive its segmented Units row + caption.
      */
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
+    /**
+     * Stage 11-B Task 15: pending sacred-number milestone published by
+     * the [MilestoneSurface] (concrete: `CollectiveMilestoneDetector`)
+     * after the collective repository's stats fetch crosses an unseen
+     * threshold. Direct passthrough so [PracticeSummaryHeader]'s overlay
+     * mirrors the detector exactly — `null` while no milestone is
+     * pending or after [dismissMilestone] clears it.
+     */
+    val milestone: StateFlow<CollectiveMilestone?> = milestoneSurface.milestone
 
     val beginWithIntention: StateFlow<Boolean> = practicePreferences.beginWithIntention
     val celestialAwarenessEnabled: StateFlow<Boolean> = practicePreferences.celestialAwarenessEnabled
@@ -221,6 +236,26 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
+     * Called once per milestone *number* by [PracticeSummaryHeader] when
+     * its overlay first composes — fires the temple bell at 0.4 × the
+     * user's bellVolume preference, matching iOS's milestone-bell volume
+     * envelope. Multiplicative scaling preserves the muted-user invariant
+     * (bellVolume=0 stays silent because `0 × 0.4 = 0`).
+     */
+    fun onMilestoneShown(milestone: CollectiveMilestone) {
+        bellPlayer.play(scale = MILESTONE_BELL_SCALE)
+    }
+
+    /**
+     * Dismiss action — nulls the detector's StateFlow. The header's
+     * 8-second auto-dismiss timer + tap-to-dismiss both route here so
+     * the next milestone crossing re-emits cleanly.
+     */
+    fun dismissMilestone() {
+        milestoneSurface.clear()
+    }
+
+    /**
      * Per-user aggregate driving the [PracticeSummaryHeader] stats whisper.
      *
      * Stage 11-A: reads the `Walk.distanceMeters` + `Walk.meditationSeconds`
@@ -252,6 +287,7 @@ class SettingsViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "SettingsViewModel"
+        const val MILESTONE_BELL_SCALE = 0.4f
     }
 }
 

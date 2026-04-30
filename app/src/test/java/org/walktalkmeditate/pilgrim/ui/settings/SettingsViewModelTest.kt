@@ -16,6 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -44,7 +47,10 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -86,6 +92,8 @@ class SettingsViewModelTest {
     private lateinit var walkRepository: CountingWalkRepository
     private lateinit var voicePreferences: FakeVoicePreferencesRepository
     private lateinit var voiceFs: VoiceRecordingFileSystem
+    private lateinit var milestoneSurface: FakeMilestoneSurface
+    private lateinit var bellPlayer: RecordingBellPlayer
     private lateinit var vm: SettingsViewModel
 
     @Before
@@ -117,6 +125,8 @@ class SettingsViewModelTest {
         )
         voicePreferences = FakeVoicePreferencesRepository()
         voiceFs = VoiceRecordingFileSystem(context)
+        milestoneSurface = FakeMilestoneSurface()
+        bellPlayer = RecordingBellPlayer()
         vm = SettingsViewModel(
             collectiveRepository = repo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
@@ -126,6 +136,8 @@ class SettingsViewModelTest {
             voicePreferences = voicePreferences,
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = milestoneSurface,
+            bellPlayer = bellPlayer,
         )
     }
 
@@ -258,6 +270,35 @@ class SettingsViewModelTest {
         )
     }
 
+    @Test
+    fun `milestone passes through from detector`() = runBlocking {
+        // Initial: detector emits null → VM exposes null.
+        assertEquals(null, vm.milestone.first())
+
+        // Detector publishes a milestone → VM's StateFlow mirrors it.
+        val expected = CollectiveMilestone.forNumber(108)
+        milestoneSurface.set(expected)
+        assertEquals(expected, vm.milestone.first { it != null })
+    }
+
+    @Test
+    fun `onMilestoneShown invokes bell player with scale 0_4`() {
+        val milestone = CollectiveMilestone.forNumber(108)
+        vm.onMilestoneShown(milestone)
+        assertEquals(1, bellPlayer.scaleCalls.size)
+        assertEquals(0.4f, bellPlayer.scaleCalls.single(), 0.0001f)
+    }
+
+    @Test
+    fun `dismissMilestone clears detector`() {
+        // Seed a milestone so we can prove `clear()` was the side effect.
+        milestoneSurface.set(CollectiveMilestone.forNumber(108))
+        assertEquals(0, milestoneSurface.clearCount)
+        vm.dismissMilestone()
+        assertEquals(1, milestoneSurface.clearCount)
+        assertEquals(null, milestoneSurface.milestone.value)
+    }
+
     private fun seedWavFile(relativePath: String, sizeBytes: Long) {
         val target = voiceFs.absolutePath(relativePath)
         target.parentFile?.mkdirs()
@@ -332,5 +373,42 @@ class SettingsViewModelTest {
 
     private object NoopMilestoneChecker : MilestoneChecking {
         override suspend fun check(totalWalks: Int) = Unit
+    }
+
+    /**
+     * Lightweight fake of the [MilestoneSurface] read-side seam so
+     * VM tests can drive the StateFlow directly + count `clear()` calls
+     * without subclassing the @Singleton concrete detector.
+     */
+    private class FakeMilestoneSurface : MilestoneSurface {
+        private val _milestone = MutableStateFlow<CollectiveMilestone?>(null)
+        override val milestone: StateFlow<CollectiveMilestone?> = _milestone.asStateFlow()
+        var clearCount: Int = 0
+            private set
+
+        fun set(value: CollectiveMilestone?) {
+            _milestone.value = value
+        }
+
+        override fun clear() {
+            clearCount++
+            _milestone.value = null
+        }
+    }
+
+    /**
+     * Records every `play(scale)` invocation. The default no-arg
+     * `play()` is unused on the milestone path but kept implementable
+     * via the interface default body.
+     */
+    private class RecordingBellPlayer : BellPlaying {
+        val scaleCalls = mutableListOf<Float>()
+        override fun play() {
+            scaleCalls += 1.0f
+        }
+
+        override fun play(scale: Float) {
+            scaleCalls += scale
+        }
     }
 }

@@ -30,6 +30,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 
 /**
  * Stage 8-B: DI wiring for the Collective Counter — short-call HTTP
@@ -74,6 +75,17 @@ object CollectiveModule {
     @Provides
     @Singleton
     fun provideMilestoneChecking(impl: CollectiveMilestoneDetector): MilestoneChecking = impl
+
+    /**
+     * Read-side seam consumed by `SettingsViewModel` (Stage 11-B Task 15)
+     * so the Settings screen can collect the pending milestone and
+     * dismiss it without depending on the concrete detector. Matches the
+     * `provideMilestoneStorage` / `provideMilestoneChecking` style
+     * (single `@Provides` keeps the `object` module uniform).
+     */
+    @Provides
+    @Singleton
+    fun provideMilestoneSurface(impl: CollectiveMilestoneDetector): MilestoneSurface = impl
 
     /**
      * Long-lived scope for the repository's fire-and-forget recordWalk
