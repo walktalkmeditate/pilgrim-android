@@ -94,6 +94,48 @@ class PracticeSummaryHeaderMilestoneTest {
     }
 
     @Test
+    fun milestoneRendersDuringFadeOut() {
+        // The spec requires a 500ms easeInOut crossfade when a milestone
+        // dismisses. If [PracticeSummaryHeader] read `milestone` directly
+        // inside AnimatedVisibility's content lambda, the dismiss-driven
+        // null transition would leave the lambda with no composables to
+        // emit and the banner would snap out instantly. Caching the most
+        // recent non-null milestone in a `displayedMilestone` state keeps
+        // the previous text visible while the exit animation plays.
+        //
+        // We assert that on the FRAME after the dismiss (milestone -> null)
+        // the text is still in the tree. With the bug, AnimatedVisibility
+        // composes nothing and `assertIsDisplayed` fails immediately.
+        val milestone = mutableStateOf<CollectiveMilestone?>(
+            CollectiveMilestone.forNumber(108),
+        )
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            PilgrimTheme {
+                PracticeSummaryHeader(
+                    walkCount = 10,
+                    totalDistanceMeters = 0.0,
+                    totalMeditationSeconds = 0L,
+                    firstWalkInstant = null,
+                    distanceUnits = UnitSystem.Metric,
+                    collectiveStats = null,
+                    milestone = milestone.value,
+                    onMilestoneShown = {},
+                    onMilestoneDismiss = {},
+                )
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(100L, ignoreFrameDuration = true)
+        composeRule.onNodeWithText("108 walks. One for each bead on the mala.")
+            .assertIsDisplayed()
+
+        milestone.value = null
+        composeRule.mainClock.advanceTimeBy(100L, ignoreFrameDuration = true)
+        composeRule.onNodeWithText("108 walks. One for each bead on the mala.")
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun milestoneTextRendersVerbatim() {
         composeRule.setContent {
             PilgrimTheme {

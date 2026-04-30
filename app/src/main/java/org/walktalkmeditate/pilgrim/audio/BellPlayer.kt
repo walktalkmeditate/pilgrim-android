@@ -172,6 +172,20 @@ class BellPlayer @Inject constructor(
         // the sonification ducking policy.
         val player = MediaPlayer()
         playerRef.set(player)
+
+        // Focus could have been revoked between requestAudioFocus returning
+        // GRANTED and now (the listener fires on a system thread). If cleanup
+        // already ran via the listener, playerRef was null at that moment so
+        // the MediaPlayer never got released. Re-check now and release.
+        if (cleanedUp.get()) {
+            try {
+                player.release()
+            } catch (t: Throwable) {
+                Log.w(TAG, "MediaPlayer release after racing cleanup failed", t)
+            }
+            return
+        }
+
         try {
             player.setAudioAttributes(bellAttributes)
             val afd = context.resources.openRawResourceFd(R.raw.bell) ?: run {

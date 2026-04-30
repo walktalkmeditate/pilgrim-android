@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -138,12 +139,31 @@ fun PracticeSummaryHeader(
             }
         }
 
+        // Cache the most recent non-null milestone so AnimatedVisibility's
+        // 500ms fadeOut has content to fade. If we read `milestone` directly
+        // inside the content lambda, the dismiss-driven null transition makes
+        // the lambda return zero composables and the banner snaps out
+        // instantly. Holding the previous value through the fade keeps the
+        // crossfade visible. The LaunchedEffect inside still keys on
+        // ms.number so the bell-fired latch remains correct.
+        //
+        // Seed `displayedMilestone` with the current `milestone` value during
+        // the initial composition (rather than null + an after-the-fact
+        // LaunchedEffect) so the inner LaunchedEffect that drives the 8s
+        // auto-dismiss starts on frame 0 instead of frame 1 — otherwise the
+        // dismiss timer is offset by a frame, which would break tests that
+        // assert exact 8000ms thresholds via `mainClock.advanceTimeBy`.
+        val displayedMilestone = remember { mutableStateOf<CollectiveMilestone?>(milestone) }
+        if (milestone != null && milestone != displayedMilestone.value) {
+            displayedMilestone.value = milestone
+        }
+
         AnimatedVisibility(
             visible = milestone != null,
             enter = fadeIn(animationSpec = tween(500, easing = FastOutSlowInEasing)),
             exit = fadeOut(animationSpec = tween(500, easing = FastOutSlowInEasing)),
         ) {
-            milestone?.let { ms ->
+            displayedMilestone.value?.let { ms ->
                 val firedFor = rememberSaveable { mutableStateOf<Int?>(null) }
                 LaunchedEffect(ms.number) {
                     if (firedFor.value != ms.number) {
