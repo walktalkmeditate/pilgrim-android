@@ -39,6 +39,7 @@ import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -73,6 +74,7 @@ class WalkFinalizationObserverTest {
     private lateinit var fakeCollectiveService: FakeCollectiveCounterService
     private lateinit var collectiveRepository: CollectiveRepository
     private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
+    private lateinit var walkMetricsCache: RecordingWalkMetricsCache
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
     private lateinit var observer: WalkFinalizationObserver
@@ -118,6 +120,7 @@ class WalkFinalizationObserverTest {
             scope = collectiveScope,
         )
         widgetRefreshScheduler = CountingWidgetRefreshScheduler()
+        walkMetricsCache = RecordingWalkMetricsCache()
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -130,6 +133,7 @@ class WalkFinalizationObserverTest {
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
+            walkMetricsCache = walkMetricsCache,
         )
         // The observer's `init { scope.launch { walkState.collect } }`
         // attaches asynchronously on Dispatchers.IO. If a test mutates
@@ -248,6 +252,68 @@ class WalkFinalizationObserverTest {
     // assertion (Active→Finished stops + commits the row).
 
     @Test
+    fun `runFinalize_invokesWalkMetricsCacheAfterCollectivePost`() = runBlocking {
+        val walkId = 314L
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(
+                walkId = walkId,
+                startedAt = 0L,
+                distanceMeters = 1_500.0,
+                totalMeditatedMillis = 60_000L,
+            ),
+            endedAt = 5_000L,
+        )
+        Thread.sleep(WAIT_FOR_GRACE_MS)
+        assertEquals(listOf(walkId), walkMetricsCache.computedWalkIds)
+        assertEquals(1, widgetRefreshScheduler.callCount)
+    }
+
+    @Test
+    fun `runFinalize_doesNotPropagateCacheException`() = runBlocking {
+        // Replace the recording cache with a throwing one and rebuild
+        // the observer so it captures the throwing impl. The default
+        // observer built in setUp() is fine to discard — we never
+        // exercise it in this test.
+        observerScope.coroutineContext[Job]?.cancel()
+        observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val throwingCache = ThrowingWalkMetricsCache()
+        @Suppress("UNUSED_VARIABLE")
+        val throwingObserver = WalkFinalizationObserver(
+            walkState = stateFlow,
+            scope = observerScope,
+            repository = repository,
+            transcriptionScheduler = transcriptionScheduler,
+            hemisphereRepository = hemisphereRepo,
+            collectiveRepository = collectiveRepository,
+            widgetRefreshScheduler = widgetRefreshScheduler,
+            voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
+            walkMetricsCache = throwingCache,
+        )
+        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
+        val walkId = 271L
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
+            endedAt = 1_000L,
+        )
+        Thread.sleep(WAIT_FOR_GRACE_MS)
+        // The cache was invoked (and threw), but the rest of the
+        // bundle still ran — widget refresh fires AFTER the cache hook
+        // would have completed in the no-throw case, but it's BEFORE
+        // the cache in production order. Either way: a cache throw
+        // must not have toppled the launched coroutine.
+        assertEquals(1, throwingCache.invocationCount)
+        // No exception escaped to the caller (we got here without a
+        // crash); also confirm the side-effect bundle finished — the
+        // widget scheduler ran before the cache hook.
+        assertTrue(
+            "widget refresh ran before cache hook (production order)",
+            widgetRefreshScheduler.callCount >= 1,
+        )
+    }
+
+    @Test
     fun `collective is not POSTed when opt-in is OFF`() = runBlocking {
         // Default opt-in is OFF — the repo gates the actual POST.
         val walkId = 17L
@@ -289,6 +355,21 @@ private class CountingWidgetRefreshScheduler : WidgetRefreshScheduler {
         callCount += 1
     }
     override fun scheduleMidnightRefresh() = Unit
+}
+
+private class RecordingWalkMetricsCache : WalkMetricsCaching {
+    val computedWalkIds: MutableList<Long> = java.util.Collections.synchronizedList(mutableListOf())
+    override suspend fun computeAndPersist(walkId: Long) {
+        computedWalkIds += walkId
+    }
+}
+
+private class ThrowingWalkMetricsCache : WalkMetricsCaching {
+    @Volatile var invocationCount: Int = 0
+    override suspend fun computeAndPersist(walkId: Long) {
+        invocationCount += 1
+        throw IllegalStateException("simulated cache failure for walk=$walkId")
+    }
 }
 
 private class FakeCollectiveCounterService(

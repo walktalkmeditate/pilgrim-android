@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -140,6 +141,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = voicePrefs,
+            walkMetricsCache = NoopWalkMetricsCache,
         )
         // Sleep so the IO-attached collector consumes the initial Idle
         // before we start mutating stateFlow. Same pattern + value as the
@@ -198,6 +200,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = voicePrefs,
+            walkMetricsCache = NoopWalkMetricsCache,
         )
         @Suppress("UNUSED_VARIABLE") val keepAlive = observer
         Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
@@ -240,6 +243,10 @@ class WalkFinalizationObserverAutoTranscribeTest {
 private class NoopWidgetRefreshScheduler : WidgetRefreshScheduler {
     override fun scheduleRefresh() = Unit
     override fun scheduleMidnightRefresh() = Unit
+}
+
+private object NoopWalkMetricsCache : WalkMetricsCaching {
+    override suspend fun computeAndPersist(walkId: Long) = Unit
 }
 
 private class FakeCollectiveCounterServiceForAutoTranscribe(
