@@ -57,7 +57,7 @@ interface BellPlaying {
      * [org.walktalkmeditate.pilgrim.audio.BellPlayer] overrides this
      * with the real audio + haptic path.
      */
-    fun play(scale: Float, withHaptic: Boolean) {
+    fun play(scale: Float = 1.0f, withHaptic: Boolean = true) {
         play(scale)
     }
 }
