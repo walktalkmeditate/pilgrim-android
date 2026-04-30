@@ -37,6 +37,7 @@ object DatabaseModule {
             PilgrimDatabase.MIGRATION_2_3,
             PilgrimDatabase.MIGRATION_3_4,
             PilgrimDatabase.MIGRATION_4_5,
+            PilgrimDatabase.MIGRATION_5_6,
         )
         .build()
 

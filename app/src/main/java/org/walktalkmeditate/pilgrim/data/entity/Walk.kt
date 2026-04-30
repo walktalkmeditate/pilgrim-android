@@ -30,4 +30,12 @@ data class Walk(
     val distanceMeters: Double? = null,
     @ColumnInfo(name = "meditation_seconds")
     val meditationSeconds: Long? = null,
+    @ColumnInfo(name = "weather_condition")
+    val weatherCondition: String? = null,
+    @ColumnInfo(name = "weather_temperature")
+    val weatherTemperature: Double? = null,
+    @ColumnInfo(name = "weather_humidity")
+    val weatherHumidity: Double? = null,
+    @ColumnInfo(name = "weather_wind_speed")
+    val weatherWindSpeed: Double? = null,
 )
