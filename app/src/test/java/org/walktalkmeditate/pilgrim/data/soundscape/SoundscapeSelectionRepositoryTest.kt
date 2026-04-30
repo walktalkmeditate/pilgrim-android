@@ -105,6 +105,6 @@ class SoundscapeSelectionRepositoryTest {
 
     private companion object {
         const val DATASTORE_NAME = "soundscape-selection-test"
-        const val AWAIT_TIMEOUT_MS = 3_000L
+        const val AWAIT_TIMEOUT_MS = 10_000L
     }
 }

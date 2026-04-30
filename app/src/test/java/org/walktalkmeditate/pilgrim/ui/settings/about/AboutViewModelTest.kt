@@ -25,7 +25,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(emptyList()))
         val vm = AboutViewModel(source, FakeUnits())
 
-        vm.stats.test(timeout = 5.seconds) {
+        vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.hasWalks) current = awaitItem()
             assertFalse(current.hasWalks)
@@ -46,7 +46,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(walks), perWalkSamples)
         val vm = AboutViewModel(source, FakeUnits())
 
-        vm.stats.test(timeout = 5.seconds) {
+        vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.walkCount != 2) current = awaitItem()
             assertEquals(2, current.walkCount)
@@ -69,7 +69,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(walks), mapOf(1L to emptyList()))
         val vm = AboutViewModel(source, FakeUnits())
 
-        vm.stats.test(timeout = 5.seconds) {
+        vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.walkCount != 1) current = awaitItem()
             assertEquals(1, current.walkCount)

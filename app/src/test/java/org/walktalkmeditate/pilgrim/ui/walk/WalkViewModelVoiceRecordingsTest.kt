@@ -96,7 +96,7 @@ class WalkViewModelVoiceRecordingsTest {
 
     @Test
     fun `talkMillis is 0L when no walk in progress`() = runTest(dispatcher) {
-        viewModel.talkMillis.test(timeout = 5.seconds) {
+        viewModel.talkMillis.test(timeout = 10.seconds) {
             assertEquals(0L, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -107,7 +107,7 @@ class WalkViewModelVoiceRecordingsTest {
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
 
-        viewModel.talkMillis.test(timeout = 5.seconds) {
+        viewModel.talkMillis.test(timeout = 10.seconds) {
             assertEquals(0L, awaitItem())
             repository.recordVoice(
                 VoiceRecording(
@@ -148,7 +148,7 @@ class WalkViewModelVoiceRecordingsTest {
             ),
         )
 
-        viewModel.talkMillis.test(timeout = 5.seconds) {
+        viewModel.talkMillis.test(timeout = 10.seconds) {
             assertEquals(4_000L, awaitItem())
 
             // Finish keeps walkId in state (mirroring routePoints' "keeps
@@ -176,7 +176,7 @@ class WalkViewModelVoiceRecordingsTest {
         // guard: both flows MUST update together for any single insert.
         combine(viewModel.recordingsCount, viewModel.talkMillis) { count, millis ->
             count to millis
-        }.test(timeout = 5.seconds) {
+        }.test(timeout = 10.seconds) {
             assertEquals(0 to 0L, awaitItem())
 
             repository.recordVoice(

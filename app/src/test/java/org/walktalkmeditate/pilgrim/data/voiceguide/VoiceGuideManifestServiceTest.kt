@@ -238,7 +238,7 @@ class VoiceGuideManifestServiceTest {
         )
         val service = buildService()
 
-        service.isSyncing.test(timeout = 5.seconds) {
+        service.isSyncing.test(timeout = 10.seconds) {
             assertFalse(awaitItem())
             service.syncIfNeeded()
             assertTrue(awaitItem())

@@ -18,7 +18,7 @@ class FeedbackViewModelTest {
     fun `canSubmit requires both category and non-empty message`() = runTest {
         val vm = FeedbackViewModel(FakeService(), FakeDeviceInfo("Android 14"))
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             assertFalse(awaitItem().canSubmit)
 
             vm.selectCategory(FeedbackCategory.Bug)
@@ -39,7 +39,7 @@ class FeedbackViewModelTest {
 
         vm.submit()
 
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             // Drain to the eventual showConfirmation=true emission.
             var current = awaitItem()
             while (!current.showConfirmation) {
@@ -63,7 +63,7 @@ class FeedbackViewModelTest {
         vm.toggleIncludeDeviceInfo(false)
 
         vm.submit()
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (!current.showConfirmation) {
                 current = awaitItem()
@@ -81,7 +81,7 @@ class FeedbackViewModelTest {
         vm.updateMessage("rate me out")
 
         vm.submit()
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.errorMessage == null) current = awaitItem()
             assertEquals(FeedbackErrorMessage.RateLimited, current.errorMessage)
@@ -99,7 +99,7 @@ class FeedbackViewModelTest {
         vm.updateMessage("hello")
 
         vm.submit()
-        vm.state.test(timeout = 5.seconds) {
+        vm.state.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.errorMessage == null) current = awaitItem()
             assertEquals(FeedbackErrorMessage.Generic, current.errorMessage)

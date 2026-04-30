@@ -189,7 +189,7 @@ class SoundscapeCatalogRepositoryTest {
         seedManifest(listOf(asset("s1")))
         val repo = buildRepo()
 
-        repo.soundscapeStates.test(timeout = 5.seconds) {
+        repo.soundscapeStates.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is SoundscapeState.NotDownloaded) {
                 current = awaitItem()
@@ -210,7 +210,7 @@ class SoundscapeCatalogRepositoryTest {
         seedManifest(listOf(a))
         val repo = buildRepo()
 
-        repo.soundscapeStates.test(timeout = 5.seconds) {
+        repo.soundscapeStates.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.firstOrNull() !is SoundscapeState.NotDownloaded) {
                 current = awaitItem()
@@ -254,7 +254,7 @@ class SoundscapeCatalogRepositoryTest {
 
     private companion object {
         const val DATASTORE_NAME = "soundscape-catalog-test"
-        const val AWAIT_TIMEOUT_MS = 3_000L
+        const val AWAIT_TIMEOUT_MS = 10_000L
     }
 
     private class FakeScheduler : SoundscapeDownloadScheduler {

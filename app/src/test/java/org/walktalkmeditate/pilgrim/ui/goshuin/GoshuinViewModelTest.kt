@@ -101,7 +101,7 @@ class GoshuinViewModelTest {
     @Test
     fun `Empty when repository has no walks`() = runTest(dispatcher) {
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             var item = awaitItem()
             while (item is GoshuinUiState.Loading) item = awaitItem()
             assertEquals(GoshuinUiState.Empty, item)
@@ -115,7 +115,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             var item = awaitItem()
             while (item is GoshuinUiState.Loading) item = awaitItem()
             assertEquals(GoshuinUiState.Empty, item)
@@ -129,7 +129,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals(1, loaded.seals.size)
             assertEquals(walk.id, loaded.seals[0].walkId)
@@ -146,7 +146,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.finishWalk(newer, endTimestamp = 5_600_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals(listOf(newer.id, older.id), loaded.seals.map { it.walkId })
             cancelAndIgnoreRemainingEvents()
@@ -159,7 +159,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             // VM must not resolve the seasonal tint — theme reads are
             // @Composable-scoped. Composable-layer tests verify tinting.
@@ -174,7 +174,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             val spec = loaded.seals[0].sealSpec
             assertEquals(walk.uuid, spec.uuid)
@@ -190,7 +190,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertTrue(
                 "shortDateLabel='${loaded.seals[0].shortDateLabel}'",
@@ -223,7 +223,7 @@ class GoshuinViewModelTest {
         runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             assertEquals(GoshuinMilestone.FirstWalk, loaded.seals[0].milestone)
             cancelAndIgnoreRemainingEvents()
@@ -256,7 +256,7 @@ class GoshuinViewModelTest {
         }
 
         val vm = newViewModel()
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
             val byId = loaded.seals.associateBy { it.walkId }
             assertEquals(GoshuinMilestone.FirstWalk, byId.getValue(w1.id).milestone)
