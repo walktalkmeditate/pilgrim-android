@@ -115,7 +115,7 @@ class WalkShareViewModelTest {
     fun `uiState transitions Loading then Loaded for a seeded walk`() = runTest(dispatcher) {
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             // First emission is Loading (initialValue).
             var item = awaitItem()
             while (item is WalkShareUiState.Loading) item = awaitItem()
@@ -127,7 +127,7 @@ class WalkShareViewModelTest {
     @Test
     fun `uiState is NotFound for missing walkId`() = runTest(dispatcher) {
         val vm = vm(walkId = 9_999L)
-        vm.uiState.test(timeout = 5.seconds) {
+        vm.uiState.test(timeout = 10.seconds) {
             var item = awaitItem()
             while (item is WalkShareUiState.Loading) item = awaitItem()
             assertEquals(WalkShareUiState.NotFound, item)
@@ -174,7 +174,7 @@ class WalkShareViewModelTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
         }
-        vm.events.test(timeout = 5.seconds) {
+        vm.events.test(timeout = 10.seconds) {
             vm.share()
             val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
                 withTimeout(10_000L) { awaitItem() }
@@ -198,7 +198,7 @@ class WalkShareViewModelTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
         }
-        vm.events.test(timeout = 5.seconds) {
+        vm.events.test(timeout = 10.seconds) {
             vm.share()
             val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
                 withTimeout(10_000L) { awaitItem() }

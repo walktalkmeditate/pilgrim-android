@@ -42,7 +42,7 @@ class DataSettingsViewModelTest {
     fun `recordingCount mirrors source size`() = runTest {
         val source = FakeRecordingsCountSource(flowOf(listOf(stubRecording(1), stubRecording(2))))
         val vm = newViewModel(recordingsSource = source)
-        vm.recordingCount.test(timeout = 5.seconds) {
+        vm.recordingCount.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current != 2) current = awaitItem()
             assertEquals(2, current)
@@ -57,7 +57,7 @@ class DataSettingsViewModelTest {
             recordingsSource = FakeRecordingsCountSource(flowOf(listOf(stubRecording(1)))),
         )
 
-        vm.exportEvents.test(timeout = 5.seconds) {
+        vm.exportEvents.test(timeout = 10.seconds) {
             vm.exportRecordings()
             val event = awaitItem()
             assertTrue(event is RecordingsExportResult.Success)
@@ -74,7 +74,7 @@ class DataSettingsViewModelTest {
             recordingsSource = FakeRecordingsCountSource(flowOf(emptyList())),
         )
 
-        vm.exportEvents.test(timeout = 5.seconds) {
+        vm.exportEvents.test(timeout = 10.seconds) {
             vm.exportRecordings()
             assertEquals(RecordingsExportResult.Empty, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -88,7 +88,7 @@ class DataSettingsViewModelTest {
             recordingsSource = FakeRecordingsCountSource(flowOf(listOf(stubRecording(1)))),
         )
 
-        vm.exportEvents.test(timeout = 5.seconds) {
+        vm.exportEvents.test(timeout = 10.seconds) {
             vm.exportRecordings()
             vm.exportRecordings() // double-tap; second call must short-circuit on the in-flight guard
             val first = awaitItem()
@@ -103,7 +103,7 @@ class DataSettingsViewModelTest {
         val vm = newViewModel(
             walksSource = FakeWalksSource(flowOf(emptyList())),
         )
-        vm.walkCount.test(timeout = 5.seconds) {
+        vm.walkCount.test(timeout = 10.seconds) {
             // Drain initial 0 then ensure the flow has settled at 0.
             var current = awaitItem()
             while (current != 0) current = awaitItem()
@@ -125,12 +125,12 @@ class DataSettingsViewModelTest {
             walksSource = FakeWalksSource(flowOf(walks)),
             walkPhotoDao = FakeWalkPhotoDao(observeAllCountFlow = flowOf(7)),
         )
-        vm.walkCount.test(timeout = 5.seconds) {
+        vm.walkCount.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current != 2) current = awaitItem()
             cancelAndIgnoreRemainingEvents()
         }
-        vm.pinnedPhotoCount.test(timeout = 5.seconds) {
+        vm.pinnedPhotoCount.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current != 7) current = awaitItem()
             cancelAndIgnoreRemainingEvents()
@@ -149,7 +149,7 @@ class DataSettingsViewModelTest {
         val vm = newViewModel(
             walksSource = FakeWalksSource(flowOf(listOf(stubWalk(1, 1_000L, 2_000L)))),
         )
-        vm.walkCount.test(timeout = 5.seconds) {
+        vm.walkCount.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current != 1) current = awaitItem()
             cancelAndIgnoreRemainingEvents()

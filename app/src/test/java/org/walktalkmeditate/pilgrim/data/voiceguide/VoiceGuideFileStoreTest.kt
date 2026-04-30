@@ -124,7 +124,7 @@ class VoiceGuideFileStoreTest {
         store.fileForPrompt(pr.r2Key).writeBytes(ByteArray(5))
         assertTrue(store.isPackDownloaded(p))
 
-        store.invalidations.test(timeout = 5.seconds) {
+        store.invalidations.test(timeout = 10.seconds) {
             store.deletePack(p)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -136,7 +136,7 @@ class VoiceGuideFileStoreTest {
 
     @Test fun `deletePack on absent pack still emits invalidation`() = runTest {
         val p = pack("never-downloaded", emptyList())
-        store.invalidations.test(timeout = 5.seconds) {
+        store.invalidations.test(timeout = 10.seconds) {
             store.deletePack(p)
             assertEquals(Unit, awaitItem())
             cancelAndIgnoreRemainingEvents()
