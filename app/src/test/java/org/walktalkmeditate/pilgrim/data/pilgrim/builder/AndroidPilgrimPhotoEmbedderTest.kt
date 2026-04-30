@@ -13,6 +13,8 @@ import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -116,6 +118,26 @@ class AndroidPilgrimPhotoEmbedderTest {
         )
         assertTrue(result.filenameMap.isEmpty())
         assertEquals(1, result.skippedCount)
+    }
+
+    @Test
+    fun `encodeAsDataUrl returns base64 data URL for valid synthetic image`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val syntheticUri = registerSyntheticImage(app, name = "thumb.png", width = 200, height = 200)
+
+        val dataUrl = embedder.encodeAsDataUrl(syntheticUri.toString())
+
+        assertNotNull(dataUrl)
+        assertTrue(dataUrl!!.startsWith("data:image/jpeg;base64,"))
+        val base64 = dataUrl.removePrefix("data:image/jpeg;base64,")
+        assertTrue(base64.isNotEmpty())
+        assertTrue(base64.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' })
+    }
+
+    @Test
+    fun `encodeAsDataUrl returns null for unresolvable URI`() {
+        val dataUrl = embedder.encodeAsDataUrl("content://media/external/images/media/missing-99999")
+        assertNull(dataUrl)
     }
 
     @Test
