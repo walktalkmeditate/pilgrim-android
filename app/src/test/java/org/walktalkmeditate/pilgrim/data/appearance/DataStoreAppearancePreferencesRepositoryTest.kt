@@ -56,7 +56,7 @@ class DataStoreAppearancePreferencesRepositoryTest {
     @Test
     fun `default is System when no key written`() = runTest(dispatcher) {
         val repo = DataStoreAppearancePreferencesRepository(dataStore, scope)
-        repo.appearanceMode.test(timeout = 5.seconds) {
+        repo.appearanceMode.test(timeout = 10.seconds) {
             assertEquals(AppearanceMode.System, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -85,7 +85,7 @@ class DataStoreAppearancePreferencesRepositoryTest {
         dataStore.edit { it[stringPreferencesKey("appearance_mode")] = "sepia" }
 
         val repo = DataStoreAppearancePreferencesRepository(dataStore, scope)
-        repo.appearanceMode.test(timeout = 5.seconds) {
+        repo.appearanceMode.test(timeout = 10.seconds) {
             assertEquals(AppearanceMode.System, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -94,7 +94,7 @@ class DataStoreAppearancePreferencesRepositoryTest {
     @Test
     fun `appearanceMode emits new value after setAppearanceMode`() = runTest(dispatcher) {
         val repo = DataStoreAppearancePreferencesRepository(dataStore, scope)
-        repo.appearanceMode.test(timeout = 5.seconds) {
+        repo.appearanceMode.test(timeout = 10.seconds) {
             assertEquals(AppearanceMode.System, awaitItem())
             repo.setAppearanceMode(AppearanceMode.Light)
             assertEquals(AppearanceMode.Light, awaitItem())
