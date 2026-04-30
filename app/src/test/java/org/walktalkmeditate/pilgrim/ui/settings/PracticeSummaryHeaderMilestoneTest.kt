@@ -133,6 +133,14 @@ class PracticeSummaryHeaderMilestoneTest {
         composeRule.mainClock.advanceTimeBy(100L, ignoreFrameDuration = true)
         composeRule.onNodeWithText("108 walks. One for each bead on the mala.")
             .assertIsDisplayed()
+
+        // After the full 500ms fade-out elapses (plus a margin), the
+        // banner must be gone — guards against the regression where
+        // displayedMilestone is never re-cleared and the previous text
+        // lingers forever.
+        composeRule.mainClock.advanceTimeBy(600L, ignoreFrameDuration = true)
+        composeRule.onNodeWithText("108 walks. One for each bead on the mala.")
+            .assertDoesNotExist()
     }
 
     @Test

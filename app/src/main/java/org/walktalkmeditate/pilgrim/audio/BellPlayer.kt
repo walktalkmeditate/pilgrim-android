@@ -203,6 +203,18 @@ class BellPlayer @Inject constructor(
             return
         }
 
+        // Second re-check: focus revoke can fire any time during the
+        // synchronous setAudioAttributes/setDataSource/prepare block
+        // above (the listener runs on a system thread). If cleanup
+        // already ran via the listener, it released the player via
+        // `playerRef.get()` (which is now non-null since line 174) and
+        // marked cleanedUp. We must not wire listeners + post the
+        // safety-net + start() against a released MediaPlayer — start()
+        // would throw IllegalStateException, caught below, but the
+        // listener+handler wiring would briefly pin a released-player
+        // reference. Cheaper to bail here.
+        if (cleanedUp.get()) return
+
         // Per-play safety-net runnable captured by reference so
         // `cleanup` can remove it and avoid a stale firing after
         // natural completion.

@@ -112,10 +112,12 @@ abstract class PilgrimDatabase : RoomDatabase() {
          * read null for both fields; a lazy backfill coordinator
          * (Stage 11-B) computes values on first read and writes them back.
          *
-         * Column order matters — must match the order of `distanceMeters`
-         * then `meditationSeconds` in the [Walk] entity. Room hashes the
-         * column ordering at startup, so swapping these two ALTERs would
-         * fail schema validation.
+         * Column order does not affect Room's schema validator (it
+         * compares names/types/nullability/defaults, not physical order),
+         * but we still emit the ALTERs in declaration order
+         * (`distanceMeters` then `meditationSeconds`) so the table layout
+         * matches the entity declaration for readability + debugging
+         * tools that snapshot the schema visually.
          *
          * No manual transaction wrapper here — Room's RoomOpenHelper
          * already wraps `migrate()` in a transaction; nesting deadlocks.
