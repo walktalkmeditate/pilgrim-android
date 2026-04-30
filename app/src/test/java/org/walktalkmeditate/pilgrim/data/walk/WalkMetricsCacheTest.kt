@@ -147,6 +147,48 @@ class WalkMetricsCacheTest {
         assertEquals(10 * 60L, walkDao.getById(id)!!.meditationSeconds)
     }
 
+    @Test
+    fun zeroDurationWalkWritesZeroMeditation() = runTest {
+        // A finalized walk with start == end (instant abort) must
+        // produce a deterministic zero, not crash on division and not
+        // leave NULL — the cache row is the one source of truth for
+        // downstream consumers.
+        val id = walkDao.insert(Walk(startTimestamp = 1_000L, endTimestamp = 1_000L))
+        db.activityIntervalDao().insert(
+            ActivityInterval(
+                walkId = id,
+                activityType = ActivityType.MEDITATING,
+                startTimestamp = 1_000L,
+                endTimestamp = 1_000L,
+            ),
+        )
+
+        cache.computeAndPersist(id)
+
+        val w = walkDao.getById(id)!!
+        assertEquals(0L, w.meditationSeconds)
+    }
+
+    @Test
+    fun reversedMeditationIntervalCoercedToZero() = runTest {
+        // Corrupted interval (end < start) would otherwise compute a
+        // negative span. The per-interval coerceAtLeast(0L) clamps it
+        // to zero so the meditation total never goes negative.
+        val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 600_000L))
+        db.activityIntervalDao().insert(
+            ActivityInterval(
+                walkId = id,
+                activityType = ActivityType.MEDITATING,
+                startTimestamp = 400_000L,
+                endTimestamp = 300_000L,
+            ),
+        )
+
+        cache.computeAndPersist(id)
+
+        assertEquals(0L, walkDao.getById(id)!!.meditationSeconds)
+    }
+
     private fun routeSample(walkId: Long, t: Long, lat: Double, lng: Double) = RouteDataSample(
         walkId = walkId,
         timestamp = t,

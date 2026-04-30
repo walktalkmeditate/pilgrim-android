@@ -152,6 +152,42 @@ class CollectiveRepositoryTest {
     }
 
     @Test
+    fun `fetchIfStale calls detector check with fresh totalWalks`() = runBlocking {
+        // Mirrors `forceFetch_callsDetectorCheckWithFreshTotalWalks` but
+        // exercises the fetchIfStale path (TTL-gated entry point used at
+        // app start). With a never-fetched cache the TTL gate falls
+        // through and the detector should still see the fresh count.
+        fakeService.fetchResult = sampleStats(108)
+        val checked = mutableListOf<Int>()
+        val detector = object : MilestoneChecking {
+            override suspend fun check(totalWalks: Int) {
+                checked += totalWalks
+            }
+        }
+        val repo = newRepo(milestoneChecker = detector)
+        repo.fetchIfStale { 1_700_000_000_000L }
+        assertEquals(listOf(108), checked)
+    }
+
+    @Test
+    fun `fetch failure skips detector check`() = runBlocking {
+        // If `service.fetch()` throws, the cache write never happens
+        // and the milestone detector must not fire — emitting a
+        // milestone tied to a stale or default total would mislead
+        // the user about a crossing that didn't really land.
+        fakeService.fetchError = IOException("offline")
+        val checked = mutableListOf<Int>()
+        val detector = object : MilestoneChecking {
+            override suspend fun check(totalWalks: Int) {
+                checked += totalWalks
+            }
+        }
+        val repo = newRepo(milestoneChecker = detector)
+        repo.forceFetch { 1_700_000_000_000L }
+        assertTrue("detector should not fire on fetch failure: $checked", checked.isEmpty())
+    }
+
+    @Test
     fun `recordWalk no-op when opt-in OFF`() = runBlocking {
         cacheStore.setOptIn(false)
         val repo = newRepo()

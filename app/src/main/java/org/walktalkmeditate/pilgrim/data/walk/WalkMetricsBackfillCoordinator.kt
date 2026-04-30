@@ -70,15 +70,28 @@ class WalkMetricsBackfillCoordinator @Inject constructor(
                 .filterNotNull()
                 .distinctUntilChanged()
                 .collect { walkId ->
-                    if (!inflight.add(walkId)) return@collect
+                    // [added] starts false so the finally branch only
+                    // removes ids we actually inserted. If a
+                    // CancellationException tears the collector down
+                    // BETWEEN `inflight.add(walkId)` returning true and
+                    // the `try { ... }` opening (a sub-instruction window
+                    // the JVM doesn't atomically protect), the id would
+                    // stay in [inflight] forever and future emissions
+                    // would silently dedup-skip — breaking the
+                    // convergence invariant. Folding the add into the
+                    // try makes the cleanup unconditional: any path out
+                    // of the body removes the id we added.
+                    var added = false
                     try {
+                        added = inflight.add(walkId)
+                        if (!added) return@collect
                         cache.computeAndPersist(walkId)
                     } catch (ce: CancellationException) {
                         throw ce
                     } catch (t: Throwable) {
                         Log.w(TAG, "backfill failed walk=$walkId", t)
                     } finally {
-                        inflight.remove(walkId)
+                        if (added) inflight.remove(walkId)
                     }
                 }
         }

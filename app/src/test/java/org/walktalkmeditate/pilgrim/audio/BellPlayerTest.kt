@@ -135,4 +135,47 @@ class BellPlayerTest {
         assertEquals(0.7f, shadow.leftVolume, 0.001f)
         assertEquals(0.7f, shadow.rightVolume, 0.001f)
     }
+
+    @Test fun `play with NaN scale stays silent`() {
+        // `Float.NaN.coerceIn(0f, 1f)` returns NaN — without an
+        // explicit isNaN() guard, NaN would propagate into
+        // `MediaPlayer.setVolume`. BellPlayer treats NaN as silence
+        // so a future repo bug that persists NaN can't surface as
+        // a runtime IllegalArgumentException or a silent stuck-at-
+        // default playback.
+        val nanPlayer = BellPlayer(
+            context = context,
+            audioManager = audioManager,
+            soundsPreferences = FakeSoundsPreferencesRepository(initialBellVolume = 0.7f),
+        )
+        nanPlayer.play(scale = Float.NaN)
+
+        val shadow = createdShadows.lastOrNull()
+            ?: error("BellPlayer did not construct a MediaPlayer")
+        assertEquals(0f, shadow.leftVolume, 0.001f)
+        assertEquals(0f, shadow.rightVolume, 0.001f)
+    }
+
+    @Test fun `play with out-of-range scale clamps to bounds`() {
+        // Defensive coerceIn handles values outside [0, 1] from any
+        // future caller. scale > 1 clamps to 1 (effective = user vol);
+        // scale < 0 clamps to 0 (silent regardless of user vol).
+        val clampedPlayer = BellPlayer(
+            context = context,
+            audioManager = audioManager,
+            soundsPreferences = FakeSoundsPreferencesRepository(initialBellVolume = 0.5f),
+        )
+        clampedPlayer.play(scale = 1.5f)
+
+        val shadowHigh = createdShadows.lastOrNull()
+            ?: error("BellPlayer did not construct a MediaPlayer")
+        assertEquals(0.5f, shadowHigh.leftVolume, 0.001f)
+        assertEquals(0.5f, shadowHigh.rightVolume, 0.001f)
+
+        clampedPlayer.play(scale = -0.3f)
+        val shadowLow = createdShadows.lastOrNull()
+            ?: error("BellPlayer did not construct a MediaPlayer")
+        assertEquals(0f, shadowLow.leftVolume, 0.001f)
+        assertEquals(0f, shadowLow.rightVolume, 0.001f)
+    }
 }

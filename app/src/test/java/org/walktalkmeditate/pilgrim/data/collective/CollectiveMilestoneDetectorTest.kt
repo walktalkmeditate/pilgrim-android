@@ -111,4 +111,24 @@ class CollectiveMilestoneDetectorTest {
         detector.clear()
         assertNull(detector.milestone.value)
     }
+
+    @Test
+    fun checkWithZeroTotalWalksDoesNotEmit() = runTest {
+        // `totalWalks >= number` for any sacred number > 0 is false
+        // when totalWalks == 0, so the loop never matches. Guards
+        // against a future predicate flip from `>=` to `>` (or
+        // `lastSeen < number` to `<=`) accidentally emitting on a
+        // pre-launch backend response.
+        detector.check(0)
+        assertNull(detector.milestone.value)
+    }
+
+    @Test
+    fun checkWithNegativeTotalWalksDoesNotEmit() = runTest {
+        // Defensive: backend should never return a negative count,
+        // but if a future protocol change does, the detector must
+        // not emit a milestone for it.
+        detector.check(-1)
+        assertNull(detector.milestone.value)
+    }
 }
