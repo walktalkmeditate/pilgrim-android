@@ -6,11 +6,6 @@ import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
-import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
-import org.walktalkmeditate.pilgrim.data.entity.Walk
-import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
-import org.walktalkmeditate.pilgrim.domain.ActivityType
-import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 /**
  * Surface used by [WalkFinalizationObserver] (Stage 11-A) and tests so
@@ -57,55 +52,7 @@ class WalkMetricsCache @Inject constructor(
         val events = walkEventDao.getForWalk(walkId)
 
         val distance = WalkDistanceCalculator.computeDistanceMeters(samples)
-        val meditation = computeMeditationSeconds(intervals, walk, events)
+        val meditation = WalkMetricsMath.computeMeditationSeconds(intervals, walk, events)
         walkDao.updateAggregates(walkId, distance, meditation)
-    }
-
-    /**
-     * Sum of MEDITATING [ActivityInterval] durations, clamped to active
-     * duration. Mirrors iOS `NewWalk.swift:42` `min(rawMeditate, activeDuration)`.
-     *
-     * `internal` so [PilgrimPackageConverter] (Task 8) can reuse this
-     * exact clamp on the fallback path when the cache column is null
-     * (legacy walks that pre-date the cache backfill).
-     */
-    internal fun computeMeditationSeconds(
-        intervals: List<ActivityInterval>,
-        walk: Walk,
-        events: List<WalkEvent>,
-    ): Long {
-        val rawMillis = intervals
-            .filter { it.activityType == ActivityType.MEDITATING }
-            .sumOf { (it.endTimestamp - it.startTimestamp).coerceAtLeast(0L) }
-        val rawSeconds = rawMillis / 1_000L
-        val activeDurationSeconds = computeActiveDurationSeconds(walk, events)
-        return rawSeconds.coerceAtMost(activeDurationSeconds).coerceAtLeast(0L)
-    }
-
-    /**
-     * Active duration in seconds = wall-clock duration minus the sum of
-     * paused gaps. A paused gap is the elapsed time between a PAUSED
-     * event and its matching RESUMED event; an unpaired trailing PAUSED
-     * is closed at the walk's `endTimestamp`. Returns 0 for in-progress
-     * walks (defense-in-depth — the public entry point already guards).
-     */
-    internal fun computeActiveDurationSeconds(walk: Walk, events: List<WalkEvent>): Long {
-        val end = walk.endTimestamp ?: return 0L
-        val wallClockMs = (end - walk.startTimestamp).coerceAtLeast(0L)
-        var pausedSinceMs: Long? = null
-        var pausedTotalMs = 0L
-        for (event in events.sortedBy { it.timestamp }) {
-            when (event.eventType) {
-                WalkEventType.PAUSED -> if (pausedSinceMs == null) pausedSinceMs = event.timestamp
-                WalkEventType.RESUMED -> {
-                    val pausedAt = pausedSinceMs ?: continue
-                    pausedTotalMs += (event.timestamp - pausedAt).coerceAtLeast(0L)
-                    pausedSinceMs = null
-                }
-                else -> Unit
-            }
-        }
-        pausedSinceMs?.let { pausedTotalMs += (end - it).coerceAtLeast(0L) }
-        return ((wallClockMs - pausedTotalMs).coerceAtLeast(0L)) / 1_000L
     }
 }

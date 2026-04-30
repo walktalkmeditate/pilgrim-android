@@ -665,7 +665,7 @@ git commit -m "feat(walks): WalkMetricsBackfillCoordinator drains stale rows (St
 - Modify: `app/src/test/java/org/walktalkmeditate/pilgrim/ui/settings/SettingsViewModelTest.kt`
 - Modify: `app/src/test/java/org/walktalkmeditate/pilgrim/ui/settings/about/AboutViewModelTest.kt`
 
-- [ ] **Step 1: Write failing test (SettingsViewModel)**
+- [x] **Step 1: Write failing test (SettingsViewModel)**
 
 Add:
 
@@ -695,9 +695,9 @@ fun practiceSummary_readsCacheColsDirectlyNoIntervalScan() = runTest {
 }
 ```
 
-- [ ] **Step 2: Run — FAIL** (current implementation still scans).
+- [x] **Step 2: Run — FAIL** (current implementation still scans).
 
-- [ ] **Step 3: Replace per-walk scan with sum over cache cols**
+- [x] **Step 3: Replace per-walk scan with sum over cache cols**
 
 In `SettingsViewModel.kt` `practiceSummary` flow, replace the existing per-walk loop with:
 
@@ -710,9 +710,9 @@ Drop any `activityIntervalsFor(walkId)` calls in the practiceSummary path.
 
 Same change for `AboutViewModel.stats`. Add equivalent test.
 
-- [ ] **Step 4: Run — PASS.**
+- [x] **Step 4: Run — PASS.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/src/main/java/org/walktalkmeditate/pilgrim/ui/settings/SettingsViewModel.kt \
@@ -730,7 +730,7 @@ git commit -m "perf(settings): read walks cache cols, kill per-walk N+1 (Stage 1
 - Modify: `app/src/main/java/org/walktalkmeditate/pilgrim/data/pilgrim/builder/PilgrimPackageConverter.kt`
 - Modify: `app/src/test/java/org/walktalkmeditate/pilgrim/data/pilgrim/builder/PilgrimPackageConverterTest.kt`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```kotlin
 @Test
@@ -756,9 +756,9 @@ fun export_corruptMeditationClampedRegardlessOfCacheState() = runTest {
 }
 ```
 
-- [ ] **Step 2: Run — FAIL.**
+- [x] **Step 2: Run — FAIL.**
 
-- [ ] **Step 3: Modify converter**
+- [x] **Step 3: Modify converter**
 
 In `PilgrimPackageConverter.convert()`, replace the meditation/distance reads:
 
@@ -782,16 +782,19 @@ PilgrimStats(
 
 If the converter doesn't currently take `WalkEventDao`, add it.
 
-- [ ] **Step 4: Run — PASS.**
+- [x] **Step 4: Run — PASS.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/src/main/java/org/walktalkmeditate/pilgrim/data/pilgrim/builder/PilgrimPackageConverter.kt \
         app/src/main/java/org/walktalkmeditate/pilgrim/data/walk/WalkMetricsCache.kt \
+        app/src/main/java/org/walktalkmeditate/pilgrim/data/walk/WalkMetricsMath.kt \
         app/src/test/java/org/walktalkmeditate/pilgrim/data/pilgrim/builder/PilgrimPackageConverterTest.kt
 git commit -m "feat(pilgrim): converter cache-first read + iOS-faithful meditation clamp (Stage 11-A)"
 ```
+
+**Implementation note:** `computeMeditationSeconds` was extracted from `WalkMetricsCache` to a new top-level `internal object WalkMetricsMath` (same package). `WalkMetricsCache` delegates to it; the converter calls it directly. Plain JUnit tests stay simple (no DAO mocks / Robolectric), and the spec's invariant — both cache-write and cache-fallback paths run the same iOS clamp — is preserved.
 
 ---
 

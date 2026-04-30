@@ -28,6 +28,7 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.AltitudeCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -67,7 +68,22 @@ object PilgrimPackageConverter {
         val (ascent, descent) = AltitudeCalculator.computeAscentDescent(bundle.altitudeSamples)
 
         val talkSec = sumActivityDuration(bundle.activityIntervals, ActivityType.TALKING)
-        val meditateSec = sumActivityDuration(bundle.activityIntervals, ActivityType.MEDITATING)
+        // Stage 11-A: cache-first reads for distance + meditation. The
+        // fallback path for meditation runs the same iOS-faithful clamp
+        // ([WalkMetricsMath.computeMeditationSeconds]) the cache writer
+        // applies, so cleared-cache and populated-cache exports match
+        // byte-for-byte and corrupt walks (e.g. 50-min MEDITATING
+        // interval on an 18-min active wall clock) cap at activeDuration.
+        val distanceMeters = walk.distanceMeters
+            ?: WalkDistanceCalculator.computeDistanceMeters(bundle.routeSamples)
+        val meditateSec = (
+            walk.meditationSeconds
+                ?: WalkMetricsMath.computeMeditationSeconds(
+                    intervals = bundle.activityIntervals,
+                    walk = walk,
+                    events = bundle.walkEvents,
+                )
+            ).toDouble()
 
         val photoResult = PilgrimPackagePhotoConverter.exportPhotos(
             walkPhotos = bundle.walkPhotos,
@@ -82,7 +98,7 @@ object PilgrimPackageConverter {
             startDate = startInstant,
             endDate = endInstant,
             stats = PilgrimStats(
-                distance = WalkDistanceCalculator.computeDistanceMeters(bundle.routeSamples),
+                distance = distanceMeters,
                 steps = null,
                 activeDuration = activeDurationSec,
                 pauseDuration = pauseDurationSec,
