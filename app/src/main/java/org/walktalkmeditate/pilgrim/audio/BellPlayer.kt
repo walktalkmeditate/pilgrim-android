@@ -67,7 +67,11 @@ class BellPlayer @Inject constructor(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override fun play() {
+    override fun play() = playInternal(scale = 1.0f)
+
+    override fun play(scale: Float) = playInternal(scale = scale)
+
+    private fun playInternal(scale: Float) {
         val bellAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -187,9 +191,14 @@ class BellPlayer @Inject constructor(
         // the volume change lands; setting it here avoids that flash.
         // Coerced into [0, 1] defensively even though the repository
         // already clamps writes — guards against future repo refactors.
-        val bellVolume = soundsPreferences.bellVolume.value.coerceIn(0f, 1f)
+        // [scale] multiplies the user pref so the milestone overlay
+        // (scale=0.4) can mirror iOS's volume-0.4 milestone bell while
+        // still respecting Android's user-volume control: a muted user
+        // (bellVolume=0) stays muted because 0 × anything = 0.
+        val userBellVolume = soundsPreferences.bellVolume.value.coerceIn(0f, 1f)
+        val effectiveVolume = (scale.coerceIn(0f, 1f) * userBellVolume).coerceIn(0f, 1f)
         try {
-            player.setVolume(bellVolume, bellVolume)
+            player.setVolume(effectiveVolume, effectiveVolume)
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer setVolume failed", t)
             // Non-fatal: the bell will still play at the player's default
