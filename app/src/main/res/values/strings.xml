@@ -501,4 +501,17 @@
     <string name="practice_summary_meditation_hours_minutes">%1$dh %2$dm in stillness</string>
     <string name="practice_summary_meditation_minutes">%1$dm in stillness</string>
     <string name="practice_summary_walking_since">Walking since %1$s</string>
+
+    <!-- Stage 12-A: WeatherCondition labels (10 cases). Mirror iOS
+         WeatherCondition.label verbatim. -->
+    <string name="weather_clear">Clear</string>
+    <string name="weather_partly_cloudy">Partly cloudy</string>
+    <string name="weather_overcast">Overcast</string>
+    <string name="weather_light_rain">Light rain</string>
+    <string name="weather_heavy_rain">Heavy rain</string>
+    <string name="weather_thunderstorm">Thunderstorm</string>
+    <string name="weather_snow">Snow</string>
+    <string name="weather_fog">Foggy</string>
+    <string name="weather_wind">Windy</string>
+    <string name="weather_haze">Hazy</string>
 </resources>
