@@ -221,13 +221,27 @@ class BellPlayer @Inject constructor(
         val safetyNet = Runnable { cleanupRef.get()?.invoke() }
         safetyNetRef.set(safetyNet)
 
-        player.setOnCompletionListener { cleanup() }
-        player.setOnErrorListener { _, what, extra ->
-            Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
+        // Wrap listener wiring + safetyNet posting in try/catch:
+        // focus revoke can still fire on a system thread between the
+        // re-check above and these lines, releasing the MediaPlayer.
+        // setOnCompletionListener / setOnErrorListener on a player in
+        // the End state throw IllegalStateException — without this
+        // catch, the exception would propagate to the caller (Main
+        // thread, milestone overlay's onMilestoneShown) and crash the
+        // process. cleanup() in the catch is idempotent.
+        try {
+            player.setOnCompletionListener { cleanup() }
+            player.setOnErrorListener { _, what, extra ->
+                Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
+                cleanup()
+                true
+            }
+            mainHandler.postDelayed(safetyNet, SAFETY_NET_MS)
+        } catch (t: Throwable) {
+            Log.w(TAG, "MediaPlayer listener wiring failed", t)
             cleanup()
-            true
+            return
         }
-        mainHandler.postDelayed(safetyNet, SAFETY_NET_MS)
 
         // Apply user's bellVolume preference (Eagerly StateFlow — `.value`
         // is the current cached pref, no suspend hop needed). MediaPlayer's
