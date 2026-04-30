@@ -32,6 +32,19 @@ interface WalkDao {
     )
     suspend fun updateAggregates(id: Long, distanceMeters: Double?, meditationSeconds: Long?)
 
+    @Query(
+        "UPDATE walks SET weather_condition = :condition, " +
+            "weather_temperature = :temperature, weather_humidity = :humidity, " +
+            "weather_wind_speed = :windSpeed WHERE id = :id",
+    )
+    suspend fun updateWeather(
+        id: Long,
+        condition: String?,
+        temperature: Double?,
+        humidity: Double?,
+        windSpeed: Double?,
+    )
+
     @Query("SELECT * FROM walks WHERE id = :id")
     suspend fun getById(id: Long): Walk?
 
