@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
@@ -29,8 +28,6 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
-import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
-import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCardState
 
 /**
@@ -226,46 +223,24 @@ class SettingsViewModel @Inject constructor(
     /**
      * Per-user aggregate driving the [PracticeSummaryHeader] stats whisper.
      *
-     * **Known performance limitation (Gemini PR #72 review):** for each
-     * finished walk, this aggregator runs `locationSamplesFor(id)` +
-     * `activityIntervalsFor(id)` queries — i.e. N walks → 2N queries per
-     * emission. For users with 500+ walks this introduces visible lag on
-     * Settings tab open.
-     *
-     * Acknowledged limitation; the proper fix is a `Walk` table schema
-     * migration to cache `distance_meters` + `meditation_seconds` columns
-     * computed at finalize-time (Stage 11 candidate). Until then:
-     * - Aggregation runs on `Dispatchers.IO` so Main is never blocked.
-     * - `Eagerly + .catch` keeps the result cached across SettingsScreen
-     *   compositions.
-     * - Acceptable for typical users (<100 walks); power-user lag is the
-     *   only visible symptom.
+     * Stage 11-A: reads the `Walk.distanceMeters` + `Walk.meditationSeconds`
+     * cache cols populated at finalize-time (Task 5) and drained for stale
+     * rows by [WalkMetricsBackfillCoordinator] (Task 6). Drops the previous
+     * per-walk N+1 (`locationSamplesFor` + `activityIntervalsFor`) to zero
+     * queries per emission — Settings tab opens immediately even with
+     * thousands of walks. A `null` cache col means "not yet computed" and
+     * contributes 0 to the running sum until the backfill catches up.
      */
     val practiceSummary: StateFlow<PracticeSummaryStats> = walkRepository.observeAllWalks()
         .map { walks ->
-            withContext(Dispatchers.IO) {
-                val finished = walks.filter { it.endTimestamp != null }
-                if (finished.isEmpty()) return@withContext PracticeSummaryStats.Empty
-                var totalDistance = 0.0
-                var totalMeditation = 0L
-                for (walk in finished) {
-                    totalDistance += WalkDistanceCalculator.computeDistanceMeters(
-                        walkRepository.locationSamplesFor(walk.id),
-                    )
-                    val intervals = walkRepository.activityIntervalsFor(walk.id)
-                    for (interval in intervals) {
-                        if (interval.activityType == ActivityType.MEDITATING) {
-                            totalMeditation += (interval.endTimestamp - interval.startTimestamp) / 1_000
-                        }
-                    }
-                }
-                PracticeSummaryStats(
-                    walkCount = finished.size,
-                    totalDistanceMeters = totalDistance,
-                    totalMeditationSeconds = totalMeditation,
-                    firstWalkInstant = Instant.ofEpochMilli(finished.minOf { it.startTimestamp }),
-                )
-            }
+            val finished = walks.filter { it.endTimestamp != null }
+            if (finished.isEmpty()) return@map PracticeSummaryStats.Empty
+            PracticeSummaryStats(
+                walkCount = finished.size,
+                totalDistanceMeters = finished.sumOf { it.distanceMeters ?: 0.0 },
+                totalMeditationSeconds = finished.sumOf { it.meditationSeconds ?: 0L },
+                firstWalkInstant = Instant.ofEpochMilli(finished.minOf { it.startTimestamp }),
+            )
         }
         .catch { emit(PracticeSummaryStats.Empty) }
         .flowOn(Dispatchers.IO)

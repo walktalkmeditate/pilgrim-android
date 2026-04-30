@@ -35,6 +35,8 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
@@ -80,7 +82,7 @@ class SettingsViewModelTest {
     private lateinit var scope: CoroutineScope
     private lateinit var repo: CollectiveRepository
     private lateinit var db: PilgrimDatabase
-    private lateinit var walkRepository: WalkRepository
+    private lateinit var walkRepository: CountingWalkRepository
     private lateinit var voicePreferences: FakeVoicePreferencesRepository
     private lateinit var voiceFs: VoiceRecordingFileSystem
     private lateinit var vm: SettingsViewModel
@@ -101,7 +103,7 @@ class SettingsViewModelTest {
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        walkRepository = WalkRepository(
+        walkRepository = CountingWalkRepository(
             database = db,
             walkDao = db.walkDao(),
             routeDao = db.routeDataSampleDao(),
@@ -219,6 +221,42 @@ class SettingsViewModelTest {
         assertTrue(voicePreferences.autoTranscribe.first { it })
     }
 
+    @Test
+    fun `practiceSummary reads cache cols directly without per-walk interval scan`() = runBlocking {
+        // Stage 11-A: VM must aggregate from the Walk row's cache cols
+        // (`distance_meters`, `meditation_seconds`) and never call the
+        // per-walk activity-interval or route-sample DAO methods. The
+        // counting subclass increments on each call; we assert it stays
+        // at zero after the practiceSummary populates.
+        val first = walkRepository.startWalk(0L)
+        walkRepository.updateWalk(
+            first.copy(endTimestamp = 100_000L, distanceMeters = 1500.0, meditationSeconds = 300L),
+        )
+        val second = walkRepository.startWalk(200_000L)
+        walkRepository.updateWalk(
+            second.copy(endTimestamp = 400_000L, distanceMeters = 2200.0, meditationSeconds = 600L),
+        )
+        walkRepository.locationSamplesCallCount.set(0)
+        walkRepository.activityIntervalsCallCount.set(0)
+
+        val populated = withTimeout(2_000) {
+            vm.practiceSummary.first { it.walkCount == 2 }
+        }
+        assertEquals(2, populated.walkCount)
+        assertEquals(3700.0, populated.totalDistanceMeters, 0.001)
+        assertEquals(900L, populated.totalMeditationSeconds)
+        assertEquals(
+            "practiceSummary must not call locationSamplesFor per walk",
+            0,
+            walkRepository.locationSamplesCallCount.get(),
+        )
+        assertEquals(
+            "practiceSummary must not call activityIntervalsFor per walk",
+            0,
+            walkRepository.activityIntervalsCallCount.get(),
+        )
+    }
+
     private fun seedWavFile(relativePath: String, sizeBytes: Long) {
         val target = voiceFs.absolutePath(relativePath)
         target.parentFile?.mkdirs()
@@ -228,6 +266,47 @@ class SettingsViewModelTest {
             // sumOf assertion. The path matches what `voiceFs.absolutePath`
             // resolves so `fileSizeBytes(relativePath)` returns the same value.
             repeat(sizeBytes.toInt()) { out.write(0) }
+        }
+    }
+
+    /**
+     * Subclasses [WalkRepository] so the practiceSummary test can prove
+     * the aggregator does NOT call per-walk DAO reads. Counts are reset
+     * after seed inserts run; assertions then verify the steady-state
+     * read path stayed off these methods entirely.
+     */
+    private class CountingWalkRepository(
+        database: PilgrimDatabase,
+        walkDao: org.walktalkmeditate.pilgrim.data.dao.WalkDao,
+        routeDao: org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao,
+        altitudeDao: org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao,
+        walkEventDao: org.walktalkmeditate.pilgrim.data.dao.WalkEventDao,
+        activityIntervalDao: org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao,
+        waypointDao: org.walktalkmeditate.pilgrim.data.dao.WaypointDao,
+        voiceRecordingDao: org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao,
+        walkPhotoDao: org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao,
+    ) : WalkRepository(
+        database = database,
+        walkDao = walkDao,
+        routeDao = routeDao,
+        altitudeDao = altitudeDao,
+        walkEventDao = walkEventDao,
+        activityIntervalDao = activityIntervalDao,
+        waypointDao = waypointDao,
+        voiceRecordingDao = voiceRecordingDao,
+        walkPhotoDao = walkPhotoDao,
+    ) {
+        val locationSamplesCallCount = AtomicInteger(0)
+        val activityIntervalsCallCount = AtomicInteger(0)
+
+        override suspend fun locationSamplesFor(walkId: Long): List<RouteDataSample> {
+            locationSamplesCallCount.incrementAndGet()
+            return super.locationSamplesFor(walkId)
+        }
+
+        override suspend fun activityIntervalsFor(walkId: Long): List<ActivityInterval> {
+            activityIntervalsCallCount.incrementAndGet()
+            return super.activityIntervalsFor(walkId)
         }
     }
 

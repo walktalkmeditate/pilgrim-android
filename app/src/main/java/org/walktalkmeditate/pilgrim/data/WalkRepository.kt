@@ -23,7 +23,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 
 @Singleton
-class WalkRepository @Inject constructor(
+open class WalkRepository @Inject constructor(
     private val database: PilgrimDatabase,
     private val walkDao: WalkDao,
     private val routeDao: RouteDataSampleDao,
@@ -104,7 +104,7 @@ class WalkRepository @Inject constructor(
 
     suspend fun recordLocations(samples: List<RouteDataSample>) = routeDao.insertAll(samples)
 
-    suspend fun locationSamplesFor(walkId: Long): List<RouteDataSample> = routeDao.getForWalk(walkId)
+    open suspend fun locationSamplesFor(walkId: Long): List<RouteDataSample> = routeDao.getForWalk(walkId)
 
     suspend fun lastLocationSampleFor(walkId: Long): RouteDataSample? = routeDao.getLastForWalk(walkId)
 
@@ -121,7 +121,7 @@ class WalkRepository @Inject constructor(
 
     suspend fun recordActivityInterval(interval: ActivityInterval): Long = activityIntervalDao.insert(interval)
 
-    suspend fun activityIntervalsFor(walkId: Long): List<ActivityInterval> = activityIntervalDao.getForWalk(walkId)
+    open suspend fun activityIntervalsFor(walkId: Long): List<ActivityInterval> = activityIntervalDao.getForWalk(walkId)
 
     suspend fun addWaypoint(waypoint: Waypoint): Long = waypointDao.insert(waypoint)
 
