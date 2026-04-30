@@ -15,6 +15,21 @@ import okhttp3.Request
 import org.walktalkmeditate.pilgrim.di.WeatherHttpClient
 
 /**
+ * Stage 12-A seam for fetching current weather. Production binding is
+ * [OpenMeteoClient]; tests substitute a fake to drive
+ * [WalkViewModel]'s `+2s` / `+10s` retry policy without standing up
+ * MockWebServer or touching the network. Same shape as the
+ * `MilestoneStorage`/`MilestoneChecking` seam from Stage 11.
+ *
+ * Returns `null` on any failure (no fix, non-2xx, empty body, parse
+ * error, network exception). Callers treat `null` as "weather
+ * unavailable" and may retry per their own policy.
+ */
+interface WeatherFetching {
+    suspend fun fetchCurrent(latitude: Double, longitude: Double): WeatherSnapshot?
+}
+
+/**
  * Stage 12-A — Item A: Open-Meteo current-weather client.
  *
  * Fetches `/v1/forecast?...current=...` from
@@ -48,10 +63,10 @@ import org.walktalkmeditate.pilgrim.di.WeatherHttpClient
 class OpenMeteoClient @Inject constructor(
     @WeatherHttpClient private val client: OkHttpClient,
     private val json: Json,
-) {
+) : WeatherFetching {
 
     /** Production entrypoint — uses the hard-coded Open-Meteo base URL. */
-    suspend fun fetchCurrent(latitude: Double, longitude: Double): WeatherSnapshot? =
+    override suspend fun fetchCurrent(latitude: Double, longitude: Double): WeatherSnapshot? =
         fetchInternal(BASE_URL, latitude, longitude)
 
     /**

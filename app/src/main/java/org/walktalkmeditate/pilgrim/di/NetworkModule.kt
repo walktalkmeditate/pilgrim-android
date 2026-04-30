@@ -21,6 +21,8 @@ import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePromptBaseUrl
+import org.walktalkmeditate.pilgrim.data.weather.OpenMeteoClient
+import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 
 /**
  * First-introduction HTTP + JSON infrastructure for Stage 5-C. The
@@ -145,6 +147,18 @@ object NetworkModule {
     private const val WEATHER_CONNECT_TIMEOUT_SEC = 5L
     private const val WEATHER_READ_TIMEOUT_SEC = 5L
     private const val WEATHER_CALL_TIMEOUT_SEC = 10L
+
+    /**
+     * Stage 12-A: weather seam consumed by [WalkViewModel]'s `+2s` /
+     * `+10s` retry policy. Production binding is [OpenMeteoClient];
+     * tests substitute a fake. Same `@Provides`-style binding as the
+     * Stage 11 `provideMilestoneStorage` / `provideMilestoneChecking`
+     * seams in `CollectiveModule` so this `object` module stays
+     * uniform without converting to an `abstract class`.
+     */
+    @Provides
+    @Singleton
+    fun provideWeatherFetching(impl: OpenMeteoClient): WeatherFetching = impl
 }
 
 /**

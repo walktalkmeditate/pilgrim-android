@@ -13,6 +13,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,7 +24,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
@@ -45,6 +49,10 @@ import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.weather.FakeWeatherFetching
+import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
+import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
+import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -169,6 +177,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            FakeWeatherFetching(),
         )
     }
 
@@ -403,6 +412,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            FakeWeatherFetching(),
         )
 
         controller.startWalk(intention = null)
@@ -437,6 +447,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            FakeWeatherFetching(),
         )
 
         controller.startWalk(intention = null)
@@ -544,6 +555,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            FakeWeatherFetching(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -573,6 +585,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            FakeWeatherFetching(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -630,6 +643,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            FakeWeatherFetching(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -644,6 +658,132 @@ class WalkViewModelTest {
         context.preferencesDataStoreFile(throwingStoreName).delete()
     }
 
+    // --- Stage 12-A: weather fetch + retry + cancel seams ------------
+
+    @Test
+    fun `weather job fires once after +2s and skips retry on success`() = runTest(dispatcher) {
+        val fakeWeather = FakeWeatherFetching(snapshot = stubSnapshot)
+        val vm = newViewModelWithWeather(fakeWeather, lastKnown = stubLastKnown)
+
+        vm.startWalk()
+        runCurrent()
+
+        // Just before +2s, no fetch yet.
+        advanceTimeBy(1_999L)
+        runCurrent()
+        assertEquals(0, fakeWeather.callCount.get())
+
+        // Cross the +2s boundary.
+        advanceTimeBy(2L)
+        runCurrent()
+        assertEquals(1, fakeWeather.callCount.get())
+
+        // Successful first call — no +10s retry.
+        advanceTimeBy(15_000L)
+        runCurrent()
+        assertEquals(1, fakeWeather.callCount.get())
+    }
+
+    @Test
+    fun `weather job retries once after null snapshot and stops`() = runTest(dispatcher) {
+        val fakeWeather = FakeWeatherFetching(snapshot = null)
+        val vm = newViewModelWithWeather(fakeWeather, lastKnown = stubLastKnown)
+
+        vm.startWalk()
+        runCurrent()
+
+        advanceTimeBy(2_001L)
+        runCurrent()
+        assertEquals(1, fakeWeather.callCount.get())
+
+        // +10s after the failed first attempt — second call fires.
+        advanceTimeBy(10_000L)
+        runCurrent()
+        assertEquals(2, fakeWeather.callCount.get())
+
+        // No third attempt — both calls returned null but the policy
+        // caps retries at one extra try.
+        advanceTimeBy(20_000L)
+        runCurrent()
+        assertEquals(2, fakeWeather.callCount.get())
+    }
+
+    @Test
+    fun `weather job cancels on discard so suspended fetch never persists`() = runTest(dispatcher) {
+        val gate = CompletableDeferred<WeatherSnapshot?>()
+        val fakeWeather = FakeWeatherFetching(gate = gate)
+        val vm = newViewModelWithWeather(fakeWeather, lastKnown = stubLastKnown)
+
+        vm.startWalk()
+        runCurrent()
+        val walkId = requireActiveWalkId()
+
+        advanceTimeBy(2_001L)
+        runCurrent()
+        // Fetch was launched and is suspended on the gate.
+        assertEquals(1, fakeWeather.callCount.get())
+
+        vm.discardWalk()
+        runCurrent()
+
+        // Release the fetch — the post-cancel resumption MUST NOT write
+        // to Room. (PurgeWalk effect deletes the walk row; if the
+        // weatherJob were still alive after the gate completed and the
+        // VM tried to write, we'd at minimum get a no-op UPDATE on a
+        // missing row — but the spec requires the cancel to fire BEFORE
+        // the write attempt, which is what we're really verifying.)
+        gate.complete(stubSnapshot)
+        advanceUntilIdle()
+        // Walk row is gone (PurgeWalk effect ran).
+        assertNull(repository.getWalk(walkId))
+        // Only one fetch attempt — no retry, no second write attempt.
+        assertEquals(1, fakeWeather.callCount.get())
+    }
+
+    @Test
+    fun `weather job cancels on Finished so suspended fetch never persists`() = runTest(dispatcher) {
+        val gate = CompletableDeferred<WeatherSnapshot?>()
+        val fakeWeather = FakeWeatherFetching(gate = gate)
+        val vm = newViewModelWithWeather(fakeWeather, lastKnown = stubLastKnown)
+
+        vm.startWalk()
+        runCurrent()
+        val walkId = requireActiveWalkId()
+
+        advanceTimeBy(2_001L)
+        runCurrent()
+        assertEquals(1, fakeWeather.callCount.get())
+
+        clock.advanceTo(5_000L)
+        controller.finishWalk()
+        runCurrent()
+
+        gate.complete(stubSnapshot)
+        advanceUntilIdle()
+        // Walk row survives finish (Finished retains it for the summary
+        // screen) — but it must NOT have weather columns populated. The
+        // VM coroutine was cancelled inside `gate.await()`, so the
+        // post-await `walkRepository.updateWeather(...)` write never
+        // ran.
+        val walk = repository.getWalk(walkId)
+        assertNull(walk?.weatherCondition)
+        assertEquals(1, fakeWeather.callCount.get())
+    }
+
+    private fun newViewModelWithWeather(
+        weather: WeatherFetching,
+        lastKnown: LocationPoint?,
+    ): WalkViewModel {
+        val locationSource = FakeLocationSource(lastKnown = lastKnown)
+        return WalkViewModel(
+            context, controller, repository, clock, voiceRecorder, locationSource,
+            org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            weather,
+        )
+    }
+
     // --- Stage 10-C: practice prefs passthrough ----------------------
 
     @Test
@@ -656,6 +796,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             prefs,
+            FakeWeatherFetching(),
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)
@@ -676,7 +817,22 @@ class WalkViewModelTest {
     // for filename greppability if a leak ever leaves stale state.
     private val hemisphereStoreName: String = "walk-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
     private val throwingStoreName: String = "walk-vm-hemisphere-throwing-test-${java.util.UUID.randomUUID()}"
+
+    private companion object {
+        val stubLastKnown = LocationPoint(
+            timestamp = 100L,
+            latitude = 35.681236,
+            longitude = 139.767125,
+        )
+        val stubSnapshot = WeatherSnapshot(
+            condition = WeatherCondition.CLEAR,
+            temperatureCelsius = 18.0,
+            humidityFraction = 0.55,
+            windSpeedMps = 2.0,
+        )
+    }
 }
+
 
 private class FakeClock(initial: Long) : Clock {
     private var current: Long = initial
