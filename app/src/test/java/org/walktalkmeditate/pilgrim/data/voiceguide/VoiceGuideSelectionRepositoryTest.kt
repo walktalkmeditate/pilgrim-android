@@ -39,10 +39,11 @@ class VoiceGuideSelectionRepositoryTest {
     @Before fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Application>()
         context.preferencesDataStoreFile(DATASTORE_NAME).delete()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         dataStore = PreferenceDataStoreFactory.create(
+            scope = scope,
             produceFile = { context.preferencesDataStoreFile(DATASTORE_NAME) },
         )
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
 
     @After fun tearDown() {
