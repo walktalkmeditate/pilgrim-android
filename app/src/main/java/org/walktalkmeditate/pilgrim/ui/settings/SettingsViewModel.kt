@@ -243,6 +243,13 @@ class SettingsViewModel @Inject constructor(
      * (bellVolume=0 stays silent because `0 × 0.4 = 0`).
      */
     fun onMilestoneShown(milestone: CollectiveMilestone) {
+        // iOS PracticeSummaryHeader.swift's `playMilestoneBell()` gates
+        // on `UserPreferences.soundsEnabled.value`. Mirror that here:
+        // a user who muted sounds in Settings → AtmosphereCard expects
+        // ALL audio to stay silent (including the milestone bell), even
+        // if their `bellVolume` slider is non-zero (the slider is the
+        // mix-level when sounds are on, not the master mute).
+        if (!soundsPreferences.soundsEnabled.value) return
         bellPlayer.play(scale = MILESTONE_BELL_SCALE)
     }
 

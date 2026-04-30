@@ -290,6 +290,29 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `onMilestoneShown stays silent when soundsEnabled is false`() {
+        // iOS PracticeSummaryHeader.swift's playMilestoneBell() guards
+        // on `UserPreferences.soundsEnabled.value` — Android must
+        // mirror to keep master-mute users muted regardless of bellVolume.
+        val mutedSoundsPrefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = false)
+        val mutedBell = RecordingBellPlayer()
+        val mutedVm = SettingsViewModel(
+            collectiveRepository = repo,
+            appearancePreferences = FakeAppearancePreferencesRepository(),
+            soundsPreferences = mutedSoundsPrefs,
+            practicePreferences = FakePracticePreferencesRepository(),
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            voicePreferences = voicePreferences,
+            walkRepository = walkRepository,
+            voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = FakeMilestoneSurface(),
+            bellPlayer = mutedBell,
+        )
+        mutedVm.onMilestoneShown(CollectiveMilestone.forNumber(108))
+        assertEquals(emptyList<Float>(), mutedBell.scaleCalls)
+    }
+
+    @Test
     fun `dismissMilestone clears detector`() {
         // Seed a milestone so we can prove `clear()` was the side effect.
         milestoneSurface.set(CollectiveMilestone.forNumber(108))
