@@ -42,8 +42,11 @@ class DataStoreSoundsPreferencesRepositoryTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         file = File(context.cacheDir, "sounds-test-${System.nanoTime()}.preferences_pb")
-        dataStore = PreferenceDataStoreFactory.create(produceFile = { file })
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        dataStore = PreferenceDataStoreFactory.create(
+            scope = scope,
+            produceFile = { file },
+        )
     }
 
     @After
