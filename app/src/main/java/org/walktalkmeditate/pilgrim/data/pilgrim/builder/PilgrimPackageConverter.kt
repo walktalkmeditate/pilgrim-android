@@ -25,6 +25,7 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimStats
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWeather
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.AltitudeCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
@@ -39,8 +40,9 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
  * Most schema fields that iOS reads from the Walk object directly
  * are computed on Android from related entities (distance from
  * route, durations from activity intervals, ascent from altitude).
- * Fields Android doesn't track (weather, heart rates, workout
- * events, reflection) emit as null/empty arrays.
+ * Fields Android doesn't track (heart rates, workout events,
+ * reflection) emit as null/empty arrays. Weather rides through
+ * starting Stage 12 (`Walk.weatherCondition` + 3 friends).
  */
 object PilgrimPackageConverter {
 
@@ -91,6 +93,21 @@ object PilgrimPackageConverter {
             includePhotos = includePhotos,
         )
 
+        // Stage 12: emit weather only when both required iOS fields are
+        // present. PilgrimWeather mandates non-null condition +
+        // temperature; humidity/windSpeed are optional and pass through.
+        val weather: PilgrimWeather? =
+            if (walk.weatherCondition != null && walk.weatherTemperature != null) {
+                PilgrimWeather(
+                    condition = walk.weatherCondition,
+                    temperature = walk.weatherTemperature,
+                    humidity = walk.weatherHumidity,
+                    windSpeed = walk.weatherWindSpeed,
+                )
+            } else {
+                null
+            }
+
         val pilgrimWalk = PilgrimWalk(
             schemaVersion = PilgrimSchema.VERSION,
             id = walk.uuid,
@@ -108,7 +125,7 @@ object PilgrimPackageConverter {
                 talkDuration = talkSec,
                 meditateDuration = meditateSec,
             ),
-            weather = null,
+            weather = weather,
             route = buildRouteGeoJson(bundle.routeSamples, bundle.waypoints),
             pauses = pauses,
             activities = bundle.activityIntervals.map { it.toPilgrimActivity() },
@@ -233,7 +250,6 @@ object PilgrimPackageConverter {
      * `walkId` before bulk-inserting.
      *
      * Drops on import (silently logged in caller):
-     * - `weather` — Android Walk has no weather columns.
      * - `reflection` — Android has no reflection storage.
      * - `heartRates` — no HeartRateSample entity.
      * - `workoutEvents` — Android `WalkEventType` doesn't model
@@ -241,6 +257,8 @@ object PilgrimPackageConverter {
      * - `isRace`, `isUserModified` — no schema columns.
      * - `intentions` from manifest, `events` from manifest,
      *   `customPromptStyles` from manifest — all dropped.
+     *
+     * Weather (4 cols since Stage 12) rides through unchanged.
      */
     fun convertToImport(pilgrim: PilgrimWalk): PendingImport {
         val walk = Walk(
@@ -251,6 +269,10 @@ object PilgrimPackageConverter {
             intention = pilgrim.intention,
             favicon = pilgrim.favicon,
             notes = null,
+            weatherCondition = pilgrim.weather?.condition,
+            weatherTemperature = pilgrim.weather?.temperature,
+            weatherHumidity = pilgrim.weather?.humidity,
+            weatherWindSpeed = pilgrim.weather?.windSpeed,
         )
 
         val (routeSamples, waypoints) = decomposeRoute(pilgrim.route, walkStart = pilgrim.startDate)
