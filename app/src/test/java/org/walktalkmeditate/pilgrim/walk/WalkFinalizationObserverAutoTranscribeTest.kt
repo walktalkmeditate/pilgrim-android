@@ -33,6 +33,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
@@ -114,6 +115,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
+            milestoneChecker = NoopMilestoneCheckerForAutoTranscribe,
         )
         widgetRefreshScheduler = NoopWidgetRefreshScheduler()
 
@@ -267,4 +269,8 @@ private class FakeCollectiveCounterServiceForAutoTranscribe(
         recordedPosts += delta
         return postResult
     }
+}
+
+private object NoopMilestoneCheckerForAutoTranscribe : MilestoneChecking {
+    override suspend fun check(totalWalks: Int) = Unit
 }

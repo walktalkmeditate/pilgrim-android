@@ -60,7 +60,12 @@ class CollectiveRepositoryTest {
         File(context.filesDir, "datastore/share_device_token.preferences_pb").delete()
     }
 
-    private fun newRepo() = CollectiveRepository(cacheStore, fakeService, scope)
+    private fun newRepo(milestoneChecker: MilestoneChecking = NoopMilestoneChecker) =
+        CollectiveRepository(cacheStore, fakeService, scope, milestoneChecker)
+
+    private object NoopMilestoneChecker : MilestoneChecking {
+        override suspend fun check(totalWalks: Int) = Unit
+    }
 
     private fun sampleStats(walks: Int = 5) = CollectiveStats(
         totalWalks = walks,
@@ -117,6 +122,33 @@ class CollectiveRepositoryTest {
         nowMs += 10_000L
         repo.forceFetch { nowMs }
         assertEquals(2, fakeService.fetchCount.get())
+    }
+
+    @Test
+    fun `forceFetch calls detector check with fresh totalWalks`() = runBlocking {
+        fakeService.fetchResult = sampleStats(108)
+        val checked = mutableListOf<Int>()
+        val detector = object : MilestoneChecking {
+            override suspend fun check(totalWalks: Int) {
+                checked += totalWalks
+            }
+        }
+        val repo = newRepo(milestoneChecker = detector)
+        repo.forceFetch { 1_700_000_000_000L }
+        assertEquals(listOf(108), checked)
+    }
+
+    @Test
+    fun `forceFetch detector throwing does not fail fetch`() = runBlocking {
+        fakeService.fetchResult = sampleStats(108)
+        val detector = object : MilestoneChecking {
+            override suspend fun check(totalWalks: Int) {
+                error("boom")
+            }
+        }
+        val repo = newRepo(milestoneChecker = detector)
+        repo.forceFetch { 1_700_000_000_000L }
+        assertEquals(sampleStats(108), cacheStore.statsFlow.first())
     }
 
     @Test

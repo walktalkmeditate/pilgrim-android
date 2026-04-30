@@ -24,9 +24,11 @@ import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveConfig
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveDataStore
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestoneDetector
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
 
 /**
@@ -61,6 +63,17 @@ object CollectiveModule {
     @Provides
     @Singleton
     fun provideMilestoneStorage(impl: CollectiveCacheStore): MilestoneStorage = impl
+
+    /**
+     * Detector seam consumed by `CollectiveRepository` after each
+     * successful fetch (Stage 11-B Task 12). Same `@Provides` style as
+     * `provideMilestoneStorage` above so the `object` module stays
+     * uniform — a `@Binds`-style binding would force a switch to an
+     * `abstract class`.
+     */
+    @Provides
+    @Singleton
+    fun provideMilestoneChecking(impl: CollectiveMilestoneDetector): MilestoneChecking = impl
 
     /**
      * Long-lived scope for the repository's fire-and-forget recordWalk

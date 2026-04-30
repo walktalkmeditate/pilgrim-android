@@ -40,6 +40,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -83,7 +84,7 @@ class SettingsViewModelSoundsTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope)
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -209,5 +210,9 @@ class SettingsViewModelSoundsTest {
         ) {
         override suspend fun fetch(): CollectiveStats = CollectiveStats(0, 0.0, 0, 0)
         override suspend fun post(delta: CollectiveCounterDelta): PostResult = PostResult.Success
+    }
+
+    private object NoopMilestoneChecker : MilestoneChecking {
+        override suspend fun check(totalWalks: Int) = Unit
     }
 }
