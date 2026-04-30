@@ -33,10 +33,12 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -113,6 +115,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
+            milestoneChecker = NoopMilestoneCheckerForAutoTranscribe,
         )
         widgetRefreshScheduler = NoopWidgetRefreshScheduler()
 
@@ -140,6 +143,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = voicePrefs,
+            walkMetricsCache = NoopWalkMetricsCache,
         )
         // Sleep so the IO-attached collector consumes the initial Idle
         // before we start mutating stateFlow. Same pattern + value as the
@@ -198,6 +202,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = voicePrefs,
+            walkMetricsCache = NoopWalkMetricsCache,
         )
         @Suppress("UNUSED_VARIABLE") val keepAlive = observer
         Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
@@ -242,6 +247,10 @@ private class NoopWidgetRefreshScheduler : WidgetRefreshScheduler {
     override fun scheduleMidnightRefresh() = Unit
 }
 
+private object NoopWalkMetricsCache : WalkMetricsCaching {
+    override suspend fun computeAndPersist(walkId: Long) = Unit
+}
+
 private class FakeCollectiveCounterServiceForAutoTranscribe(
     context: Context,
     json: Json,
@@ -260,4 +269,8 @@ private class FakeCollectiveCounterServiceForAutoTranscribe(
         recordedPosts += delta
         return postResult
     }
+}
+
+private object NoopMilestoneCheckerForAutoTranscribe : MilestoneChecking {
+    override suspend fun check(totalWalks: Int) = Unit
 }

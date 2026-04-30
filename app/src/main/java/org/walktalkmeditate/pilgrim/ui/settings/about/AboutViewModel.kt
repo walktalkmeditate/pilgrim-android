@@ -6,17 +6,13 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import javax.inject.Inject
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
-import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 
 data class AboutStats(
     val walkCount: Int,
@@ -37,27 +33,26 @@ class AboutViewModel @Inject constructor(
 
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
+    /**
+     * Stage 11-A: reads `Walk.distanceMeters` cache col directly instead
+     * of running `locationSamplesFor` per walk. Cache cols are populated
+     * at finalize-time (Task 5) and a backfill coordinator (Task 6)
+     * drains stale rows in the background, so a `null` is the empty-state
+     * (no walks) or a transient pre-backfill state — both safely handled
+     * by `?: 0.0`. Drops the per-walk N+1 to zero queries.
+     */
     val stats: StateFlow<AboutStats> = walkSource.observeAllWalks()
         .map { walks ->
-            withContext(Dispatchers.IO) {
-                val finished = walks.filter { it.endTimestamp != null }
-                if (finished.isEmpty()) return@withContext AboutStats.Empty
-                val totalDistance = finished.sumOf { walk ->
-                    WalkDistanceCalculator.computeDistanceMeters(
-                        walkSource.locationSamplesFor(walk.id),
-                    )
-                }
-                val firstStart = finished.minOf { it.startTimestamp }
-                AboutStats(
-                    walkCount = finished.size,
-                    totalDistanceMeters = totalDistance,
-                    firstWalkInstant = Instant.ofEpochMilli(firstStart),
-                    hasWalks = true,
-                )
-            }
+            val finished = walks.filter { it.endTimestamp != null }
+            if (finished.isEmpty()) return@map AboutStats.Empty
+            AboutStats(
+                walkCount = finished.size,
+                totalDistanceMeters = finished.sumOf { it.distanceMeters ?: 0.0 },
+                firstWalkInstant = Instant.ofEpochMilli(finished.minOf { it.startTimestamp }),
+                hasWalks = true,
+            )
         }
         .catch { emit(AboutStats.Empty) }
-        .flowOn(Dispatchers.IO)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000L),

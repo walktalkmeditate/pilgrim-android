@@ -40,6 +40,10 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
@@ -91,7 +95,7 @@ class SettingsViewModelPracticeTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope)
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -129,6 +133,8 @@ class SettingsViewModelPracticeTest {
         voicePreferences = FakeVoicePreferencesRepository(),
         walkRepository = walkRepository,
         voiceRecordingFileSystem = voiceFs,
+        milestoneSurface = NoopMilestoneSurface,
+        bellPlayer = NoopBellPlayer,
     )
 
     @Test
@@ -312,5 +318,20 @@ class SettingsViewModelPracticeTest {
         ) {
         override suspend fun fetch(): CollectiveStats = CollectiveStats(0, 0.0, 0, 0)
         override suspend fun post(delta: CollectiveCounterDelta): PostResult = PostResult.Success
+    }
+
+    private object NoopMilestoneChecker : MilestoneChecking {
+        override suspend fun check(totalWalks: Int) = Unit
+    }
+
+    private object NoopMilestoneSurface : MilestoneSurface {
+        private val state = MutableStateFlow<CollectiveMilestone?>(null)
+        override val milestone: StateFlow<CollectiveMilestone?> = state.asStateFlow()
+        override fun clear() = Unit
+    }
+
+    private object NoopBellPlayer : BellPlaying {
+        override fun play() = Unit
+        override fun play(scale: Float) = Unit
     }
 }

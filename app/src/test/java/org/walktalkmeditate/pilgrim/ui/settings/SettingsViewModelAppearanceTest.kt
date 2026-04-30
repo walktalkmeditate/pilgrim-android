@@ -37,6 +37,13 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -83,7 +90,7 @@ class SettingsViewModelAppearanceTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope)
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -121,6 +128,8 @@ class SettingsViewModelAppearanceTest {
             voicePreferences = FakeVoicePreferencesRepository(),
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = NoopMilestoneSurface,
+            bellPlayer = NoopBellPlayer,
         )
         assertEquals(AppearanceMode.Dark, vm.appearanceMode.first())
     }
@@ -137,6 +146,8 @@ class SettingsViewModelAppearanceTest {
             voicePreferences = FakeVoicePreferencesRepository(),
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
+            milestoneSurface = NoopMilestoneSurface,
+            bellPlayer = NoopBellPlayer,
         )
         assertEquals(AppearanceMode.System, vm.appearanceMode.first())
         vm.setAppearanceMode(AppearanceMode.Light)
@@ -152,5 +163,20 @@ class SettingsViewModelAppearanceTest {
         ) {
         override suspend fun fetch(): CollectiveStats = CollectiveStats(0, 0.0, 0, 0)
         override suspend fun post(delta: CollectiveCounterDelta): PostResult = PostResult.Success
+    }
+
+    private object NoopMilestoneChecker : MilestoneChecking {
+        override suspend fun check(totalWalks: Int) = Unit
+    }
+
+    private object NoopMilestoneSurface : MilestoneSurface {
+        private val state = MutableStateFlow<CollectiveMilestone?>(null)
+        override val milestone: StateFlow<CollectiveMilestone?> = state.asStateFlow()
+        override fun clear() = Unit
+    }
+
+    private object NoopBellPlayer : BellPlaying {
+        override fun play() = Unit
+        override fun play(scale: Float) = Unit
     }
 }

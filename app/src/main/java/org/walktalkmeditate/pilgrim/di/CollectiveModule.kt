@@ -24,9 +24,13 @@ import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveConfig
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveDataStore
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestoneDetector
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
 
 /**
  * Stage 8-B: DI wiring for the Collective Counter — short-call HTTP
@@ -48,6 +52,40 @@ object CollectiveModule {
     @Singleton
     @CounterBaseUrl
     fun provideCounterBaseUrl(): String = CollectiveConfig.BASE_URL
+
+    /**
+     * Storage seam for `CollectiveMilestoneDetector` (Stage 11-B).
+     * The detector consumes only `firstReady…` + `setLastSeen…` so an
+     * interface keeps unit tests free of `CollectiveCacheStore`'s full
+     * surface. `@Binds`-style wiring would require converting this
+     * `object` module to an `abstract class`, which churns every
+     * `@Provides` member; a single `@Provides` is the lighter touch.
+     */
+    @Provides
+    @Singleton
+    fun provideMilestoneStorage(impl: CollectiveCacheStore): MilestoneStorage = impl
+
+    /**
+     * Detector seam consumed by `CollectiveRepository` after each
+     * successful fetch (Stage 11-B Task 12). Same `@Provides` style as
+     * `provideMilestoneStorage` above so the `object` module stays
+     * uniform — a `@Binds`-style binding would force a switch to an
+     * `abstract class`.
+     */
+    @Provides
+    @Singleton
+    fun provideMilestoneChecking(impl: CollectiveMilestoneDetector): MilestoneChecking = impl
+
+    /**
+     * Read-side seam consumed by `SettingsViewModel` (Stage 11-B Task 15)
+     * so the Settings screen can collect the pending milestone and
+     * dismiss it without depending on the concrete detector. Matches the
+     * `provideMilestoneStorage` / `provideMilestoneChecking` style
+     * (single `@Provides` keeps the `object` module uniform).
+     */
+    @Provides
+    @Singleton
+    fun provideMilestoneSurface(impl: CollectiveMilestoneDetector): MilestoneSurface = impl
 
     /**
      * Long-lived scope for the repository's fire-and-forget recordWalk
