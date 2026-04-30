@@ -6,13 +6,16 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.test.core.app.ApplicationProvider
+import app.cash.turbine.test
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -131,5 +134,29 @@ class CollectiveCacheStoreTest {
         val cleared = store.mutatePending { CollectiveCounterDelta() }
         assertTrue(cleared.isEmpty())
         assertTrue(store.pendingFlow.first().isEmpty())
+    }
+
+    @Test
+    fun `lastSeenCollectiveWalks roundTripsAcrossInstances`() = runTest {
+        val store1 = CollectiveCacheStore(dataStore, json)
+        store1.setLastSeenCollectiveWalks(108)
+        val store2 = CollectiveCacheStore(dataStore, json)
+        assertEquals(108, store2.firstReadyLastSeenCollectiveWalks())
+    }
+
+    @Test
+    fun `firstReadyLastSeenCollectiveWalks defaultsToZero`() = runTest {
+        assertEquals(0, store.firstReadyLastSeenCollectiveWalks())
+    }
+
+    @Test
+    fun `lastSeenCollectiveWalksFlow emitsUpdates`() = runTest {
+        store.lastSeenCollectiveWalksFlow.test(timeout = 10.seconds) {
+            assertEquals(0, awaitItem())
+            store.setLastSeenCollectiveWalks(108)
+            var current = awaitItem()
+            while (current != 108) current = awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }

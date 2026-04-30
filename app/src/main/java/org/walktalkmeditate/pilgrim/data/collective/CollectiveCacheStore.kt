@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import javax.inject.Inject
@@ -12,6 +13,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 
@@ -42,6 +44,11 @@ class CollectiveCacheStore @Inject constructor(
             }
             .distinctUntilChanged()
 
+    val lastSeenCollectiveWalksFlow: Flow<Int> =
+        dataStore.data
+            .map { it[KEY_LAST_SEEN_COLLECTIVE_WALKS] ?: 0 }
+            .distinctUntilChanged()
+
     suspend fun writeStats(stats: CollectiveStats, fetchedAtMs: Long) {
         val blob = json.encodeToString(CollectiveStats.serializer(), stats)
         dataStore.edit { prefs ->
@@ -56,6 +63,13 @@ class CollectiveCacheStore @Inject constructor(
 
     suspend fun setOptIn(value: Boolean) {
         dataStore.edit { prefs -> prefs[KEY_OPT_IN] = value }
+    }
+
+    suspend fun firstReadyLastSeenCollectiveWalks(): Int =
+        dataStore.data.map { it[KEY_LAST_SEEN_COLLECTIVE_WALKS] ?: 0 }.first()
+
+    suspend fun setLastSeenCollectiveWalks(value: Int) {
+        dataStore.edit { it[KEY_LAST_SEEN_COLLECTIVE_WALKS] = value }
     }
 
     suspend fun mutatePending(
@@ -100,5 +114,6 @@ class CollectiveCacheStore @Inject constructor(
         val KEY_LAST_FETCHED_AT = longPreferencesKey("last_fetched_at_ms")
         val KEY_OPT_IN = booleanPreferencesKey("opt_in")
         val KEY_PENDING_JSON = stringPreferencesKey("pending_delta_json")
+        val KEY_LAST_SEEN_COLLECTIVE_WALKS = intPreferencesKey("lastSeenCollectiveWalks")
     }
 }
