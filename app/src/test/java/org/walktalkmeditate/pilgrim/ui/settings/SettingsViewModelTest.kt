@@ -290,6 +290,20 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `onMilestoneShown does not pair haptic`() {
+        // Stage 12-C: milestone overlay is a passive ambient
+        // celebration — iOS PracticeSummaryHeader.swift:88-93 calls
+        // `BellPlayer.shared.play(asset, volume: 0.4)` for the
+        // celebration; the design intent is "bell, no tactile
+        // interrupt" (distinct from deliberate user-action bells).
+        // Audit-explicit `withHaptic = false` so a future refactor
+        // can't silently flip it on.
+        val milestone = CollectiveMilestone.forNumber(108)
+        vm.onMilestoneShown(milestone)
+        assertEquals(listOf(false), bellPlayer.hapticCalls)
+    }
+
+    @Test
     fun `onMilestoneShown stays silent when soundsEnabled is false`() {
         // iOS PracticeSummaryHeader.swift's playMilestoneBell() guards
         // on `UserPreferences.soundsEnabled.value` — Android must
@@ -420,18 +434,35 @@ class SettingsViewModelTest {
     }
 
     /**
-     * Records every `play(scale)` invocation. The default no-arg
-     * `play()` is unused on the milestone path but kept implementable
-     * via the interface default body.
+     * Records every `play(scale, withHaptic)` invocation.
+     *
+     * Stage 12-C: the milestone path now invokes the 2-arg overload
+     * with `withHaptic = false`. The fake must override that overload
+     * directly — otherwise the `BellPlaying` interface default routes
+     * back through `play(scale)` and the haptic-flag assertions can't
+     * observe what the call site actually passed.
+     *
+     * Existing `scaleCalls` assertions kept untouched; new
+     * `hapticCalls` parallel list captures the haptic flag for the
+     * matching invocation.
      */
     private class RecordingBellPlayer : BellPlaying {
         val scaleCalls = mutableListOf<Float>()
+        val hapticCalls = mutableListOf<Boolean>()
+
         override fun play() {
             scaleCalls += 1.0f
+            hapticCalls += false
         }
 
         override fun play(scale: Float) {
             scaleCalls += scale
+            hapticCalls += false
+        }
+
+        override fun play(scale: Float, withHaptic: Boolean) {
+            scaleCalls += scale
+            hapticCalls += withHaptic
         }
     }
 }

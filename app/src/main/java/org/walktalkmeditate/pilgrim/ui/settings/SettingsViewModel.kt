@@ -250,7 +250,14 @@ class SettingsViewModel @Inject constructor(
         // if their `bellVolume` slider is non-zero (the slider is the
         // mix-level when sounds are on, not the master mute).
         if (!soundsPreferences.soundsEnabled.value) return
-        bellPlayer.play(scale = MILESTONE_BELL_SCALE)
+        // Stage 12-C: explicit `withHaptic = false`. iOS milestone path
+        // (PracticeSummaryHeader.swift:88-93 → playMilestoneBell) calls
+        // `BellPlayer.shared.play(asset, volume: 0.4)` for a passive,
+        // ambient celebration overlay — the design intent is "bell, no
+        // tactile interrupt", distinct from the deliberate user-action
+        // bells (walk-start/end, meditation-start/end). Audit-explicit
+        // false so a future refactor can't silently flip it on.
+        bellPlayer.play(scale = MILESTONE_BELL_SCALE, withHaptic = false)
     }
 
     /**
