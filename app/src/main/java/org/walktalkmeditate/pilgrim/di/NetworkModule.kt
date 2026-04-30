@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.TimeUnit
+import javax.inject.Qualifier
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -117,7 +118,41 @@ object NetworkModule {
     fun provideAudioManifestScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /**
+     * Stage 12-A: dedicated OkHttpClient for Open-Meteo current-weather
+     * fetches. Tighter timeouts than the project default
+     * ([provideOkHttpClient]) because this is on the walk-start
+     * critical path — a slow weather fetch must NOT block the user
+     * starting their walk. `retryOnConnectionFailure = true` is
+     * OkHttp's default, restated here so the policy is explicit and
+     * survives any future builder reshuffle.
+     */
+    @Provides
+    @Singleton
+    @WeatherHttpClient
+    fun provideWeatherHttpClient(): OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(WEATHER_CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .readTimeout(WEATHER_READ_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .callTimeout(WEATHER_CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 30L
     private const val CALL_TIMEOUT_SEC = 45L
+
+    private const val WEATHER_CONNECT_TIMEOUT_SEC = 5L
+    private const val WEATHER_READ_TIMEOUT_SEC = 5L
+    private const val WEATHER_CALL_TIMEOUT_SEC = 10L
 }
+
+/**
+ * Stage 12-A qualifier for the Open-Meteo OkHttpClient. Lives at
+ * file-level so [NetworkModule.provideWeatherHttpClient] and
+ * `OpenMeteoClient` (in `data/weather/`) can share the annotation
+ * without a circular import.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class WeatherHttpClient
