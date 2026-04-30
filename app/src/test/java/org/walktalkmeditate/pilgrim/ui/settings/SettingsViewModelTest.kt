@@ -290,17 +290,15 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `onMilestoneShown does not pair haptic`() {
-        // Stage 12-C: milestone overlay is a passive ambient
-        // celebration — iOS PracticeSummaryHeader.swift:88-93 calls
-        // `BellPlayer.shared.play(asset, volume: 0.4)` for the
-        // celebration; the design intent is "bell, no tactile
-        // interrupt" (distinct from deliberate user-action bells).
-        // Audit-explicit `withHaptic = false` so a future refactor
-        // can't silently flip it on.
+    fun `onMilestoneShown pairs haptic matching iOS default`() {
+        // Stage 12-C: iOS BellPlayer.swift:14 has
+        // `func play(_ asset, volume: Float = 0.7, withHaptic: Bool = true)`.
+        // The milestone caller at PracticeSummaryHeader.swift:92 calls
+        // `play(asset, volume: 0.4)` WITHOUT overriding `withHaptic`, so
+        // the default `true` fires. Match iOS exactly.
         val milestone = CollectiveMilestone.forNumber(108)
         vm.onMilestoneShown(milestone)
-        assertEquals(listOf(false), bellPlayer.hapticCalls)
+        assertEquals(listOf(true), bellPlayer.hapticCalls)
     }
 
     @Test
