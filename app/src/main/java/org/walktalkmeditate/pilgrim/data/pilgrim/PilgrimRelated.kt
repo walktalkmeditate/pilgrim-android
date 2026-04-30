@@ -76,8 +76,10 @@ data class PilgrimWorkoutEvent(
  * `photos/` directory — null when the bytes aren't embedded.
  *
  * `inlineUrl` is base64 data-URL enrichment used ONLY by the in-app
- * journey viewer; never serialized to a `.pilgrim` archive (the
- * Stage 10-I Android port skips enrichment per spec).
+ * journey viewer; never serialized to a `.pilgrim` archive. On
+ * Android, enrichment is performed by `JourneyViewerViewModel` when
+ * the user's Photo Reliquary preference is enabled — otherwise the
+ * field stays null.
  */
 @Serializable
 data class PilgrimPhoto(
