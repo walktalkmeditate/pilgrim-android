@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
@@ -77,6 +78,22 @@ class AndroidPilgrimPhotoEmbedder @Inject constructor(
         }
 
         return EmbedResult(filenameMap = filenameMap, skippedCount = skippedCount)
+    }
+
+    /**
+     * Encode a pinned photo's bytes as a `data:image/jpeg;base64,...`
+     * URL for in-app WebView rendering (Stage 10-I JourneyViewer
+     * thumbnail enrichment). iOS reference:
+     * `JourneyViewerView.swift` `enrichWithInlinePhotos(_)`.
+     *
+     * Returns null on any failure (URI gone, decode failure, encode
+     * exceeds the 150KB ceiling — same skip semantics as the
+     * disk-write path). Must be called from a background coroutine.
+     */
+    fun encodeAsDataUrl(localIdentifier: String): String? {
+        val bytes = encodePhoto(localIdentifier) ?: return null
+        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        return "data:image/jpeg;base64,$base64"
     }
 
     /**
