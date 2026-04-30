@@ -247,9 +247,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * Dismiss action — nulls the detector's StateFlow. The header's
-     * 8-second auto-dismiss timer + tap-to-dismiss both route here so
-     * the next milestone crossing re-emits cleanly.
+     * Dismiss action — nulls the detector's StateFlow. Routed by
+     * [PracticeSummaryHeader]'s 8-second auto-dismiss `LaunchedEffect`
+     * once the overlay has been visible for the full duration. Mirrors
+     * iOS behaviour: no tap-to-dismiss surface — the overlay clears
+     * itself after 8 seconds and stays gone for the rest of the
+     * session unless the next sacred number crosses.
      */
     fun dismissMilestone() {
         milestoneSurface.clear()
