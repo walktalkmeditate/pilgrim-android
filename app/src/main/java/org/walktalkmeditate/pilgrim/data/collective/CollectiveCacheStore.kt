@@ -21,7 +21,7 @@ import kotlinx.serialization.json.Json
 class CollectiveCacheStore @Inject constructor(
     @CollectiveDataStore private val dataStore: DataStore<Preferences>,
     private val json: Json,
-) {
+) : MilestoneStorage {
     val statsFlow: Flow<CollectiveStats?> =
         dataStore.data
             .map { prefs -> prefs[KEY_STATS_JSON]?.let(::decodeStats) }
@@ -65,10 +65,10 @@ class CollectiveCacheStore @Inject constructor(
         dataStore.edit { prefs -> prefs[KEY_OPT_IN] = value }
     }
 
-    suspend fun firstReadyLastSeenCollectiveWalks(): Int =
+    override suspend fun firstReadyLastSeenCollectiveWalks(): Int =
         dataStore.data.map { it[KEY_LAST_SEEN_COLLECTIVE_WALKS] ?: 0 }.first()
 
-    suspend fun setLastSeenCollectiveWalks(value: Int) {
+    override suspend fun setLastSeenCollectiveWalks(value: Int) {
         dataStore.edit { it[KEY_LAST_SEEN_COLLECTIVE_WALKS] = value }
     }
 

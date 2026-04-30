@@ -27,6 +27,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
+import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
 
 /**
  * Stage 8-B: DI wiring for the Collective Counter — short-call HTTP
@@ -48,6 +49,18 @@ object CollectiveModule {
     @Singleton
     @CounterBaseUrl
     fun provideCounterBaseUrl(): String = CollectiveConfig.BASE_URL
+
+    /**
+     * Storage seam for `CollectiveMilestoneDetector` (Stage 11-B).
+     * The detector consumes only `firstReady…` + `setLastSeen…` so an
+     * interface keeps unit tests free of `CollectiveCacheStore`'s full
+     * surface. `@Binds`-style wiring would require converting this
+     * `object` module to an `abstract class`, which churns every
+     * `@Provides` member; a single `@Provides` is the lighter touch.
+     */
+    @Provides
+    @Singleton
+    fun provideMilestoneStorage(impl: CollectiveCacheStore): MilestoneStorage = impl
 
     /**
      * Long-lived scope for the repository's fire-and-forget recordWalk
