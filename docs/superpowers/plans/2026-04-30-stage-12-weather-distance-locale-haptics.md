@@ -1126,7 +1126,7 @@ git commit -m "feat(audio): BellPlayer haptic coupling at player layer (Stage 12
 
 **Files:**
 - Modify: `app/src/main/java/.../audio/MeditationBellObserver.kt` (and any other bell call sites)
-- Modify: `app/src/main/java/.../ui/settings/SettingsViewModel.kt` (milestone path — must opt-out of haptic)
+- Modify: `app/src/main/java/.../ui/settings/SettingsViewModel.kt` (milestone path — pair haptic per iOS default)
 
 - [ ] **Step 1: Grep `bellPlayer.play(` in main src to find all call sites**
 
@@ -1146,7 +1146,7 @@ Existing tests probably assert vibrator NOT called (because BellPlayer didn't fi
 
 For each affected caller, write or update one test verifying expected haptic behavior:
 - `MeditationBellObserverTest.bell_firesWithHapticAtMeditationStart`
-- `SettingsViewModelTest.milestoneBellSkipsHaptic` (the test renamed to verify withHaptic=false propagates)
+- `SettingsViewModelTest.onMilestoneShown_pairsHaptic_matchingIosDefault` (verifies withHaptic=true propagates to match iOS BellPlayer.swift:14 default)
 
 - [ ] **Step 4: Run full test suite**
 
