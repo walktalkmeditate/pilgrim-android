@@ -266,14 +266,13 @@
     <!-- Stage 8-B: collective counter -->
     <string name="collective_opt_in_label">Walk with the collective</string>
     <string name="collective_opt_in_description">Add your footsteps to the path</string>
-    <string name="collective_stats_walks_distance">%1$s walks · %2$s km</string>
-    <string name="collective_stats_one_walk">%1$s walk · %2$s km</string>
-    <!-- Stage 10-C: Imperial variants of the above. Identical structure
-         with `mi` suffix instead of `km`. -->
-    <string name="collective_stats_walks_distance_mi">%1$s walks · %2$s mi</string>
-    <string name="collective_stats_one_walk_mi">%1$s walk · %2$s mi</string>
-    <string name="collective_stats_loading">Loading the collective…</string>
-    <string name="collective_stats_unavailable">The collective is resting.</string>
+
+    <!-- PracticeSummaryHeader (replaces the old collective_stats_* card) -->
+    <string name="practice_summary_season_spring">Spring %1$d</string>
+    <string name="practice_summary_season_summer">Summer %1$d</string>
+    <string name="practice_summary_season_autumn">Autumn %1$d</string>
+    <string name="practice_summary_season_winter">Winter %1$d</string>
+    <string name="practice_summary_streak_days">%1$d days, the path unbroken</string>
 
     <!-- Stage 9.5-A: Bottom-nav tab labels -->
     <string name="tab_path">Path</string>

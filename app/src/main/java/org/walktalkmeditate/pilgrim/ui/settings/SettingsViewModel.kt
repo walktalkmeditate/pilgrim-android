@@ -5,15 +5,18 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.Instant
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
@@ -26,6 +29,8 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
+import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCardState
 
 /**
@@ -41,8 +46,8 @@ import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCardState
  * the new PracticeCard:
  *  - [beginWithIntention], [celestialAwarenessEnabled], [zodiacSystem],
  *    [walkReliquaryEnabled] proxy [PracticePreferencesRepository].
- *  - [distanceUnits] proxies [UnitsPreferencesRepository] (already
- *    surfaced for CollectiveStatsCard formatting).
+ *  - [distanceUnits] proxies [UnitsPreferencesRepository] (used by
+ *    PracticeSummaryHeader for unit-aware distance formatting).
  *  - The "Walk with the collective" toggle in PracticeCard reuses the
  *    existing [optIn] / [setOptIn] pair — no separate pref needed.
  *  - The photos-denied note is transient screen-level UI state owned
@@ -66,9 +71,9 @@ class SettingsViewModel @Inject constructor(
     val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
 
     /**
-     * Stage 10-C: passthrough so [CollectiveStatsCard] can format
-     * the community totals in the user's preferred units, and so the
-     * Practice card can drive its segmented Units row + caption.
+     * Passthrough so [PracticeSummaryHeader] can format community
+     * totals in the user's preferred units, and so the Practice card
+     * can drive its segmented Units row + caption.
      */
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
@@ -218,8 +223,77 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { collectiveRepository.fetchIfStale() }
     }
 
+    /**
+     * Aggregate snapshot driving [PracticeSummaryHeader]: total
+     * finished walk count, lifetime distance (meters), lifetime
+     * meditation duration (seconds), and the timestamp of the user's
+     * first walk. Mirrors the iOS PracticeSummaryHeader inputs.
+     *
+     * Aggregation hops onto [Dispatchers.IO] because each emission
+     * scans every walk's [WalkRepository.locationSamplesFor] +
+     * [WalkRepository.activityIntervalsFor] — running the haversine
+     * sum + interval scan on Main during recompose risks ANRs once
+     * a user has accumulated dozens of walks. `Eagerly` keeps the
+     * StateFlow warm so the header doesn't flash empty while the
+     * coroutine catches up after a tab switch.
+     */
+    val practiceSummary: StateFlow<PracticeSummaryStats> = walkRepository.observeAllWalks()
+        .map { walks ->
+            withContext(Dispatchers.IO) {
+                val finished = walks.filter { it.endTimestamp != null }
+                if (finished.isEmpty()) return@withContext PracticeSummaryStats.Empty
+                var totalDistance = 0.0
+                var totalMeditation = 0L
+                for (walk in finished) {
+                    totalDistance += WalkDistanceCalculator.computeDistanceMeters(
+                        walkRepository.locationSamplesFor(walk.id),
+                    )
+                    val intervals = walkRepository.activityIntervalsFor(walk.id)
+                    for (interval in intervals) {
+                        if (interval.activityType == ActivityType.MEDITATING) {
+                            totalMeditation += (interval.endTimestamp - interval.startTimestamp) / 1_000
+                        }
+                    }
+                }
+                PracticeSummaryStats(
+                    walkCount = finished.size,
+                    totalDistanceMeters = totalDistance,
+                    totalMeditationSeconds = totalMeditation,
+                    firstWalkInstant = Instant.ofEpochMilli(finished.minOf { it.startTimestamp }),
+                )
+            }
+        }
+        .catch { emit(PracticeSummaryStats.Empty) }
+        .flowOn(Dispatchers.IO)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = PracticeSummaryStats.Empty,
+        )
+
     private companion object {
         const val TAG = "SettingsViewModel"
+    }
+}
+
+/**
+ * Aggregate stats powering [PracticeSummaryHeader]. `Empty` is the
+ * initial-load state and the post-error fallback (matches AboutStats
+ * pattern).
+ */
+data class PracticeSummaryStats(
+    val walkCount: Int,
+    val totalDistanceMeters: Double,
+    val totalMeditationSeconds: Long,
+    val firstWalkInstant: Instant?,
+) {
+    companion object {
+        val Empty = PracticeSummaryStats(
+            walkCount = 0,
+            totalDistanceMeters = 0.0,
+            totalMeditationSeconds = 0L,
+            firstWalkInstant = null,
+        )
     }
 }
 
