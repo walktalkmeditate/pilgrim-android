@@ -487,4 +487,18 @@
         <item quantity="one">1 walk</item>
         <item quantity="other">%1$d walks</item>
     </plurals>
+
+    <!-- PracticeSummaryHeader stats whisper -->
+    <plurals name="practice_summary_walks_distance_metric">
+        <item quantity="one">1 walk · %2$s km</item>
+        <item quantity="other">%1$d walks · %2$s km</item>
+    </plurals>
+    <plurals name="practice_summary_walks_distance_imperial">
+        <item quantity="one">1 walk · %2$s mi</item>
+        <item quantity="other">%1$d walks · %2$s mi</item>
+    </plurals>
+    <string name="practice_summary_meditation_no_meditation">No meditation yet</string>
+    <string name="practice_summary_meditation_hours_minutes">%1$dh %2$dm in stillness</string>
+    <string name="practice_summary_meditation_minutes">%1$dm in stillness</string>
+    <string name="practice_summary_walking_since">Walking since %1$s</string>
 </resources>

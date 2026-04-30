@@ -27,15 +27,14 @@ class PilgrimageProgressTest {
 
     @Test fun `walking the Moon`() {
         val msg = PilgrimageProgress.from(384_400.0).message
-        assertEquals("Together, one the Moon complete.", msg)
+        assertEquals("Together, the Moon complete.", msg)
     }
 
     @Test fun `2x walking the Moon`() {
-        // iOS-verbatim: route name is literally "the Moon" and the
-        // factory wraps it as "Together, the {name} walked N times.",
-        // producing the article collision below. Singular branch
-        // ("Together, one {name} complete.") doesn't collide.
+        // Route name is literally "the Moon"; PilgrimageProgress patches
+        // the article collision so we get "Together, the Moon walked 2
+        // times." instead of iOS's "Together, the the Moon walked 2 times."
         val msg = PilgrimageProgress.from(768_800.0).message
-        assertEquals("Together, the the Moon walked 2 times.", msg)
+        assertEquals("Together, the Moon walked 2 times.", msg)
     }
 }

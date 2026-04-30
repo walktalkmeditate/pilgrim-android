@@ -224,18 +224,22 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * Aggregate snapshot driving [PracticeSummaryHeader]: total
-     * finished walk count, lifetime distance (meters), lifetime
-     * meditation duration (seconds), and the timestamp of the user's
-     * first walk. Mirrors the iOS PracticeSummaryHeader inputs.
+     * Per-user aggregate driving the [PracticeSummaryHeader] stats whisper.
      *
-     * Aggregation hops onto [Dispatchers.IO] because each emission
-     * scans every walk's [WalkRepository.locationSamplesFor] +
-     * [WalkRepository.activityIntervalsFor] — running the haversine
-     * sum + interval scan on Main during recompose risks ANRs once
-     * a user has accumulated dozens of walks. `Eagerly` keeps the
-     * StateFlow warm so the header doesn't flash empty while the
-     * coroutine catches up after a tab switch.
+     * **Known performance limitation (Gemini PR #72 review):** for each
+     * finished walk, this aggregator runs `locationSamplesFor(id)` +
+     * `activityIntervalsFor(id)` queries — i.e. N walks → 2N queries per
+     * emission. For users with 500+ walks this introduces visible lag on
+     * Settings tab open.
+     *
+     * Acknowledged limitation; the proper fix is a `Walk` table schema
+     * migration to cache `distance_meters` + `meditation_seconds` columns
+     * computed at finalize-time (Stage 11 candidate). Until then:
+     * - Aggregation runs on `Dispatchers.IO` so Main is never blocked.
+     * - `Eagerly + .catch` keeps the result cached across SettingsScreen
+     *   compositions.
+     * - Acceptable for typical users (<100 walks); power-user lag is the
+     *   only visible symptom.
      */
     val practiceSummary: StateFlow<PracticeSummaryStats> = walkRepository.observeAllWalks()
         .map { walks ->

@@ -36,9 +36,20 @@ data class PilgrimageProgress(
                 if (distanceKm >= km) {
                     val times = (distanceKm / km).toInt()
                     val message = if (times >= 2) {
-                        "Together, the $name walked $times times."
+                        // Avoid "the the Moon" — when route name itself starts with
+                        // "the ", the template's "the {name}" produces an article
+                        // collision. iOS has the same bug; we patch only on Android.
+                        if (name.startsWith("the ")) {
+                            "Together, $name walked $times times."
+                        } else {
+                            "Together, the $name walked $times times."
+                        }
                     } else {
-                        "Together, one $name complete."
+                        if (name.startsWith("the ")) {
+                            "Together, $name complete."
+                        } else {
+                            "Together, one $name complete."
+                        }
                     }
                     return PilgrimageProgress(message, distanceKm)
                 }

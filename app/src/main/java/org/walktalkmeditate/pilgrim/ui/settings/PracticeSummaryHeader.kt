@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -171,6 +172,7 @@ private fun seasonIcon(season: Season): ImageVector = when (season) {
     Season.Winter -> Icons.Filled.AcUnit
 }
 
+@Composable
 private fun currentStatLine(
     phase: Int,
     walkCount: Int,
@@ -184,34 +186,73 @@ private fun currentStatLine(
     else -> statsLine(walkCount, totalDistanceMeters, distanceUnits)
 }
 
+@Composable
 private fun statsLine(walkCount: Int, totalDistanceMeters: Double, units: UnitSystem): String {
     val distKm = totalDistanceMeters / 1_000.0
-    val (dist, unit) = when (units) {
-        UnitSystem.Metric -> distKm to "km"
-        UnitSystem.Imperial -> (distKm * 0.621371) to "mi"
+    return when (units) {
+        UnitSystem.Metric -> {
+            val distFmt = String.format(Locale.US, "%.0f", distKm)
+            pluralStringResource(
+                R.plurals.practice_summary_walks_distance_metric,
+                walkCount,
+                walkCount,
+                distFmt,
+            )
+        }
+        UnitSystem.Imperial -> {
+            val distFmt = String.format(Locale.US, "%.0f", distKm * 0.621371)
+            pluralStringResource(
+                R.plurals.practice_summary_walks_distance_imperial,
+                walkCount,
+                walkCount,
+                distFmt,
+            )
+        }
     }
-    val walkLabel = if (walkCount == 1) "walk" else "walks"
-    return String.format(Locale.US, "%d %s · %.0f %s", walkCount, walkLabel, dist, unit)
 }
 
+@Composable
 private fun meditationStatLine(totalMeditationSeconds: Long): String {
-    if (totalMeditationSeconds <= 0L) return "No meditation yet"
+    if (totalMeditationSeconds <= 0L) {
+        return stringResource(R.string.practice_summary_meditation_no_meditation)
+    }
     val hours = totalMeditationSeconds / 3_600
-    val minutes = (totalMeditationSeconds % 3_600) / 60
-    return if (hours > 0) "${hours}h ${minutes}m in stillness" else "${minutes}m in stillness"
+    val minutes = ((totalMeditationSeconds % 3_600) / 60).toInt()
+    return if (hours > 0) {
+        stringResource(R.string.practice_summary_meditation_hours_minutes, hours.toInt(), minutes)
+    } else {
+        stringResource(R.string.practice_summary_meditation_minutes, minutes)
+    }
 }
 
+@Composable
 private fun walkingSinceLine(firstWalkInstant: Instant?): String? {
     val instant = firstWalkInstant ?: return null
     val formatter = DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault())
-    return "Walking since ${formatter.format(instant.atZone(ZoneId.systemDefault()))}"
+    val dateText = formatter.format(instant.atZone(ZoneId.systemDefault()))
+    return stringResource(R.string.practice_summary_walking_since, dateText)
 }
 
+@Composable
 private fun collectiveStatsLine(stats: CollectiveStats, units: UnitSystem): String {
-    val (dist, unit) = when (units) {
-        UnitSystem.Metric -> stats.totalDistanceKm to "km"
-        UnitSystem.Imperial -> (stats.totalDistanceKm * 0.621371) to "mi"
+    return when (units) {
+        UnitSystem.Metric -> {
+            val distFmt = String.format(Locale.US, "%.0f", stats.totalDistanceKm)
+            pluralStringResource(
+                R.plurals.practice_summary_walks_distance_metric,
+                stats.totalWalks,
+                stats.totalWalks,
+                distFmt,
+            )
+        }
+        UnitSystem.Imperial -> {
+            val distFmt = String.format(Locale.US, "%.0f", stats.totalDistanceKm * 0.621371)
+            pluralStringResource(
+                R.plurals.practice_summary_walks_distance_imperial,
+                stats.totalWalks,
+                stats.totalWalks,
+                distFmt,
+            )
+        }
     }
-    val walkLabel = if (stats.totalWalks == 1) "walk" else "walks"
-    return String.format(Locale.US, "%d %s · %.0f %s", stats.totalWalks, walkLabel, dist, unit)
 }
