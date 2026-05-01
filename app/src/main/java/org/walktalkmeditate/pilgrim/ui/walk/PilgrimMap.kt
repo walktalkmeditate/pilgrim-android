@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -38,7 +39,12 @@ import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
+import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
+import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 
 /**
  * Mapbox-backed map showing the walk's route polyline. Style follows
@@ -52,13 +58,17 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
  * on first render.
  */
 @Composable
-fun PilgrimMap(
+internal fun PilgrimMap(
     points: List<LocationPoint>,
     modifier: Modifier = Modifier,
     followLatest: Boolean = false,
     initialCenter: LocationPoint? = null,
     bottomInsetDp: Dp = 0.dp,
     waypoints: List<org.walktalkmeditate.pilgrim.data.entity.Waypoint> = emptyList(),
+    routeSegments: List<RouteSegment> = emptyList(),
+    segmentColors: RouteSegmentColors? = null,
+    revealPhase: RevealPhase? = null,
+    reduceMotion: Boolean = false,
 ) {
     val darkMode = isSystemInDarkTheme()
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -72,6 +82,15 @@ fun PilgrimMap(
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
+    var segmentPolylines by remember { mutableStateOf<List<PolylineAnnotation>>(emptyList()) }
+    // Snapshot of the segments + colors that produced the current polyline
+    // set, so subsequent recompositions (e.g. revealPhase transitions) skip
+    // the delete-and-recreate when the segments themselves haven't changed.
+    // Without this guard the multi-segment branch fires on every `update`
+    // pass that revealPhase touches — visible flicker as Mapbox tears
+    // annotations down and back up.
+    var renderedSegments by remember { mutableStateOf<List<RouteSegment>?>(null) }
+    var renderedSegmentColors by remember { mutableStateOf<RouteSegmentColors?>(null) }
     var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
     val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
@@ -96,17 +115,67 @@ fun PilgrimMap(
     // a fresh opt-out on next entry.
     var telemetryOptedOut by remember { mutableStateOf(false) }
 
-    // Own the style load from one place so init and theme toggles cannot
-    // race each other. Keyed on (mapView, styleUri): first pass with
-    // mapView == null bails, next pass (once the factory has assigned it)
-    // does the initial load, and subsequent theme changes trigger a clean
-    // reload. Any prior annotation manager is detached before a new one
-    // is created to avoid orphaning it on the stale style.
+    // Stage 13-B: reveal-driven camera control. Fires whenever the phase,
+    // map view instance, first GPS point, or reduce-motion flag changes.
+    // Gated on `revealPhase != null` so legacy callers (Active Walk, Walk
+    // Share) keep their existing fit-bounds-once behavior — they pass the
+    // default `null` revealPhase and never enter this branch.
+    //
+    //   Hidden  -> no-op
+    //   Zoomed  -> instant plant at first GPS point at zoom 16
+    //   Revealed -> 2.5s ease to fit-bounds (or setCamera under reduce-motion)
+    //
+    // The style-load LaunchedEffect below owns annotation-manager lifecycle;
+    // this one only touches camera state.
+    LaunchedEffect(mapView, revealPhase, points.firstOrNull(), reduceMotion) {
+        if (revealPhase == null) return@LaunchedEffect
+        val view = mapView ?: return@LaunchedEffect
+        when (revealPhase) {
+            RevealPhase.Hidden -> { /* no camera change */ }
+            RevealPhase.Zoomed -> {
+                val first = points.firstOrNull() ?: return@LaunchedEffect
+                view.mapboxMap.setCamera(
+                    CameraOptions.Builder()
+                        .center(Point.fromLngLat(first.longitude, first.latitude))
+                        .zoom(REVEAL_ZOOM)
+                        .build(),
+                )
+            }
+            RevealPhase.Revealed -> {
+                if (points.size < 2) return@LaunchedEffect
+                val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
+                val camera = view.mapboxMap.cameraForCoordinates(
+                    mapboxPoints,
+                    CameraOptions.Builder().build(),
+                    EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
+                    null,
+                    null,
+                )
+                val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
+                val target = camera.toBuilder().zoom(clampedZoom).build()
+                // Reduce-motion: snap straight to fit-bounds. iOS bypasses the
+                // 2.5s ease entirely under accessibilityReduceMotion; mirror
+                // here via setCamera in place of easeTo.
+                if (reduceMotion) {
+                    view.mapboxMap.setCamera(target)
+                } else {
+                    view.mapboxMap.easeTo(
+                        target,
+                        MapAnimationOptions.Builder().duration(REVEAL_CAMERA_EASE_MS).build(),
+                    )
+                }
+            }
+        }
+    }
+
     LaunchedEffect(mapView, styleUri) {
         val view = mapView ?: return@LaunchedEffect
         polylineManager?.let { view.annotations.removeAnnotationManager(it) }
         polylineManager = null
         polyline = null
+        segmentPolylines = emptyList()
+        renderedSegments = null
+        renderedSegmentColors = null
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
@@ -199,7 +268,38 @@ fun PilgrimMap(
         },
         update = { view ->
             val manager = polylineManager ?: return@AndroidView
-            if (points.size >= 2) {
+            if (routeSegments.isNotEmpty() && segmentColors != null) {
+                // Multi-segment path. Skip the delete-and-recreate when the
+                // segment list AND colors are structurally identical to what's
+                // already rendered (revealPhase changes re-fire the update
+                // lambda but don't change segments, so without this guard the
+                // polylines would visibly flicker during the reveal sequence).
+                val needsRebuild =
+                    renderedSegments != routeSegments ||
+                        renderedSegmentColors != segmentColors
+                if (needsRebuild) {
+                    if (segmentPolylines.isNotEmpty()) {
+                        segmentPolylines.forEach { manager.delete(it) }
+                    }
+                    segmentPolylines = routeSegments.map { seg ->
+                        val mapboxPoints =
+                            seg.points.map { Point.fromLngLat(it.longitude, it.latitude) }
+                        val color = when (seg.activity) {
+                            RouteActivity.Walking -> segmentColors.walking.toArgb()
+                            RouteActivity.Talking -> segmentColors.talking.toArgb()
+                            RouteActivity.Meditating -> segmentColors.meditating.toArgb()
+                        }
+                        manager.create(
+                            PolylineAnnotationOptions()
+                                .withPoints(mapboxPoints)
+                                .withLineColor(color)
+                                .withLineWidth(POLYLINE_WIDTH_DP),
+                        )
+                    }
+                    renderedSegments = routeSegments
+                    renderedSegmentColors = segmentColors
+                }
+            } else if (points.size >= 2) {
                 val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
                 val existing = polyline
                 if (existing == null) {
@@ -236,7 +336,7 @@ fun PilgrimMap(
                             .build(),
                         MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
                     )
-                } else if (!didFitBounds) {
+                } else if (!didFitBounds && revealPhase == null) {
                     val camera = view.mapboxMap.cameraForCoordinates(
                         mapboxPoints,
                         CameraOptions.Builder().build(),
@@ -325,6 +425,9 @@ fun PilgrimMap(
                 mapView = null
                 polylineManager = null
                 polyline = null
+                segmentPolylines = emptyList()
+                renderedSegments = null
+                renderedSegmentColors = null
                 waypointManager = null
                 waypointAnnotations = emptyList()
             }
@@ -374,6 +477,7 @@ private fun createWaypointBitmap(darkMode: Boolean): android.graphics.Bitmap {
 
 private const val POLYLINE_WIDTH_DP = 4.0
 private const val FOLLOW_ZOOM = 16.0
+private const val REVEAL_ZOOM = 16.0
 private const val MAX_FIT_ZOOM = 17.0
 private const val FOLLOW_EASE_MS = 800L
 private const val FIT_PADDING_DP = 32

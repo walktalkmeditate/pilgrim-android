@@ -16,6 +16,7 @@ import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -43,7 +44,9 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
+import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.computeAscend
+import org.walktalkmeditate.pilgrim.data.walk.computeRouteSegments
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -102,6 +105,15 @@ data class WalkSummary(
     val activeMillis: Long,
     val ascendMeters: Double,
     val routePoints: List<LocationPoint>,
+    /**
+     * Stage 13-B: per-activity classified slices of [routePoints] for
+     * the segment-tinted polyline on the Walk Summary map. One segment
+     * per contiguous run of `Walking` / `Talking` / `Meditating`;
+     * boundary points are duplicated across adjacent segments so the
+     * rendered polylines connect seamlessly. Empty when fewer than 2
+     * GPS samples landed (single point can't draw a polyline).
+     */
+    val routeSegments: List<RouteSegment> = emptyList(),
     /**
      * Pre-built goshuin seal spec for the Stage 4-B reveal animation.
      * [SealSpec.ink] is [Color.Transparent] here — the composable
@@ -626,8 +638,31 @@ class WalkSummaryViewModel @Inject constructor(
         // summary fields below and the etegami-spec composition further
         // down. The etegami runCatching block reuses these locals by
         // name rather than re-reading the repo.
+        // Stage 13-B: `activityIntervals` joins the same hoisted set —
+        // both the route-segments classifier (top-level field) and the
+        // etegami spec consume it.
         val voiceRecordings = repository.voiceRecordingsFor(walkId)
         val altitudeSamples = repository.altitudeSamplesFor(walkId)
+        val activityIntervals = repository.activityIntervalsFor(walkId)
+
+        // Stage 13-B: classify each GPS sample's activity (walking /
+        // talking / meditating) and group into contiguous segments for
+        // the segment-tinted polyline. Pure function — see
+        // [computeRouteSegments] for the priority rules.
+        //
+        // Hopped to Dispatchers.Default because `buildState()` runs on
+        // viewModelScope's Main dispatcher (SharingStarted.Eagerly).
+        // Worst-case 90-min walk @ 1Hz GPS + 100 voice recordings is
+        // ~5400 samples × ~120 predicate evals = ~640K compares — tens
+        // of ms on mid-range hardware, enough to trip ANR thresholds
+        // when stacked with the other Main-thread work in this build.
+        val routeSegments = withContext(Dispatchers.Default) {
+            computeRouteSegments(
+                samples = samples,
+                intervals = activityIntervals,
+                recordings = voiceRecordings,
+            )
+        }
 
         val talkMillis = voiceRecordings.sumOf { it.durationMillis }
         // Stage 13-A: paused-excluded, meditation-included. Mirrors the
@@ -655,7 +690,6 @@ class WalkSummaryViewModel @Inject constructor(
         // currently span. Defer to the future "live re-render of
         // generated artifacts" stage that also handles the seal.
         val etegamiSpec = runCatching {
-            val activityIntervals = repository.activityIntervalsFor(walkId)
             org.walktalkmeditate.pilgrim.ui.etegami.composeEtegamiSpec(
                 walk = walk,
                 routePoints = points,
@@ -687,6 +721,7 @@ class WalkSummaryViewModel @Inject constructor(
                 activeMillis = activeMillis,
                 ascendMeters = ascendMeters,
                 routePoints = points,
+                routeSegments = routeSegments,
                 sealSpec = sealSpec,
                 milestone = milestone,
                 lightReading = lightReading,

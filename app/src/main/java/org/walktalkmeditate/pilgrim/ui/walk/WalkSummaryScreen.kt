@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,12 +35,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.ui.walk.share.JourneyRowState
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -49,12 +64,18 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
+import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_FADE_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkDurationHero
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkIntentionCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkJourneyQuote
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkStatsRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryTopBar
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkTimeBreakdownGrid
+import org.walktalkmeditate.pilgrim.ui.walk.summary.ZOOM_HOLD_MS
 
 @Composable
 fun WalkSummaryScreen(
@@ -97,6 +118,45 @@ fun WalkSummaryScreen(
     val msgNeedsPermission = stringResource(R.string.etegami_save_needs_permission)
     val msgCopied = stringResource(R.string.share_journey_copied)
     val msgChooserTitle = stringResource(R.string.share_modal_chooser_title)
+
+    // Stage 13-B: reveal phase machine. Hidden -> Zoomed -> Revealed.
+    // Re-keys on the loaded walkId so re-entering a different walk replays;
+    // re-entering the SAME walk via back-nav also replays (matches iOS).
+    val loadedWalkId = (state as? WalkSummaryUiState.Loaded)?.summary?.walk?.id
+    var revealPhase by remember(loadedWalkId) { mutableStateOf(RevealPhase.Hidden) }
+    val reduceMotion = remember {
+        android.provider.Settings.Global.getFloat(
+            context.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    }
+    LaunchedEffect(loadedWalkId) {
+        val s = state
+        if (s !is WalkSummaryUiState.Loaded) return@LaunchedEffect
+        if (s.summary.routePoints.isEmpty() || reduceMotion) {
+            revealPhase = RevealPhase.Revealed
+            return@LaunchedEffect
+        }
+        revealPhase = RevealPhase.Zoomed
+        delay(ZOOM_HOLD_MS)
+        revealPhase = RevealPhase.Revealed
+    }
+    val targetDistance =
+        (state as? WalkSummaryUiState.Loaded)?.summary?.distanceMeters?.toFloat() ?: 0f
+    // Reduce-motion: snap to target instantly with a zero-duration tween.
+    // iOS uses `@Environment(\.accessibilityReduceMotion)` to bypass the
+    // count-up entirely; Android's equivalent is `ANIMATOR_DURATION_SCALE`.
+    val animatedDistanceMeters by animateFloatAsState(
+        targetValue = if (revealPhase == RevealPhase.Revealed) targetDistance else 0f,
+        animationSpec = if (reduceMotion) {
+            tween(durationMillis = 0)
+        } else {
+            tween(durationMillis = COUNT_UP_DURATION_MS, easing = SmoothStepEasing)
+        },
+        label = "summary-distance-countup",
+    )
+
     LaunchedEffect(viewModel) {
         viewModel.etegamiEvents.collect { ev ->
             when (ev) {
@@ -173,8 +233,25 @@ fun WalkSummaryScreen(
                         )
                     }
                     is WalkSummaryUiState.Loaded -> {
-                        // 1. Map — height stays 200dp until Stage 13-B
-                        SummaryMap(points = s.summary.routePoints)
+                        // Stage 13-B: theme-resolved per-activity polyline colors.
+                        // Lives inside the Loaded branch because pilgrimColors is
+                        // theme-scoped at composition.
+                        val segmentColors = RouteSegmentColors(
+                            walking = pilgrimColors.moss,
+                            talking = pilgrimColors.rust,
+                            meditating = pilgrimColors.dawn,
+                        )
+
+                        // 1. Map — Stage 13-B bumps height to 320dp + adds the
+                        // radial-gradient circular mask + plumbs the reveal
+                        // phase + segment colors through to PilgrimMap.
+                        SummaryMap(
+                            points = s.summary.routePoints,
+                            routeSegments = s.summary.routeSegments,
+                            revealPhase = revealPhase,
+                            segmentColors = segmentColors,
+                            reduceMotion = reduceMotion,
+                        )
                         Spacer(Modifier.height(PilgrimSpacing.normal))
 
                         // 2. Photo Reliquary
@@ -193,63 +270,79 @@ fun WalkSummaryScreen(
 
                         // 4. Elevation profile — placeholder for Stage 13-F
 
-                        // 5. Journey quote
+                        // Stage 13-B: sections 5/6/8/9/11 fade in together once
+                        // the reveal phase reaches Revealed (camera fan-out is
+                        // already underway). The Spacer here provides the gap
+                        // from the section above (Reliquary or IntentionCard);
+                        // inter-section spacing is handled by the spacedBy
+                        // arrangement inside the wrapper.
                         Spacer(Modifier.height(PilgrimSpacing.normal))
-                        WalkJourneyQuote(
-                            talkMillis = s.summary.talkMillis,
-                            meditateMillis = s.summary.totalMeditatedMillis,
-                            distanceMeters = s.summary.distanceMeters,
-                            distanceUnits = distanceUnits,
-                        )
+                        // Reduce-motion: collapse the fade-in to zero duration so
+                        // sections appear instantly along with the (also snapped)
+                        // camera and count-up.
+                        val fadeDuration = if (reduceMotion) 0 else REVEAL_FADE_MS
+                        AnimatedVisibility(
+                            visible = revealPhase == RevealPhase.Revealed,
+                            enter = fadeIn(animationSpec = tween(durationMillis = fadeDuration)),
+                            exit = ExitTransition.None,
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+                            ) {
+                                // 5. Journey quote
+                                WalkJourneyQuote(
+                                    talkMillis = s.summary.talkMillis,
+                                    meditateMillis = s.summary.totalMeditatedMillis,
+                                    distanceMeters = s.summary.distanceMeters,
+                                    distanceUnits = distanceUnits,
+                                )
 
-                        // 6. Duration hero
-                        Spacer(Modifier.height(PilgrimSpacing.normal))
-                        WalkDurationHero(durationMillis = s.summary.activeMillis)
+                                // 6. Duration hero
+                                WalkDurationHero(durationMillis = s.summary.activeMillis)
 
-                        // 7. Milestone callout — placeholder for Stage 13-F.
-                        // The Stage 4-B SealRevealOverlay below already adds an
-                        // extra haptic + hold for milestone walks; the iOS
-                        // textual callout above the stats row is the new
-                        // surface deferred to 13-F.
+                                // 7. Milestone callout — placeholder for Stage 13-F.
+                                // The Stage 4-B SealRevealOverlay below already adds an
+                                // extra haptic + hold for milestone walks; the iOS
+                                // textual callout above the stats row is the new
+                                // surface deferred to 13-F.
 
-                        // 8. Stats row
-                        Spacer(Modifier.height(PilgrimSpacing.normal))
-                        WalkStatsRow(
-                            distanceMeters = s.summary.distanceMeters,
-                            ascendMeters = s.summary.ascendMeters,
-                            units = distanceUnits,
-                        )
+                                // 8. Stats row — distance value animates 0 → final on reveal.
+                                WalkStatsRow(
+                                    distanceMeters = animatedDistanceMeters.toDouble(),
+                                    ascendMeters = s.summary.ascendMeters,
+                                    units = distanceUnits,
+                                )
 
-                        // 9. Weather line (Stage 12-A). Renders only when the
-                        // persisted condition resolves to a known enum AND a
-                        // temperature is present — legacy walks captured before
-                        // Stage 12-A have null weather columns and skip silently.
-                        // Imperial coupling follows the user's distance
-                        // preference, matching iOS where temperature units track
-                        // `distanceMeasurementType`.
-                        s.summary.walk.weatherCondition?.let { conditionRaw ->
-                            val condition = WeatherCondition.fromRawValue(conditionRaw)
-                                ?: return@let
-                            val temperature = s.summary.walk.weatherTemperature
-                                ?: return@let
-                            Spacer(Modifier.height(PilgrimSpacing.normal))
-                            WalkSummaryWeatherLine(
-                                condition = condition,
-                                temperatureCelsius = temperature,
-                                imperial = distanceUnits == UnitSystem.Imperial,
-                            )
+                                // 9. Weather line (Stage 12-A). Renders only when the
+                                // persisted condition resolves to a known enum AND a
+                                // temperature is present — legacy walks captured before
+                                // Stage 12-A have null weather columns and skip silently.
+                                // Imperial coupling follows the user's distance
+                                // preference, matching iOS where temperature units track
+                                // `distanceMeasurementType`.
+                                s.summary.walk.weatherCondition?.let { conditionRaw ->
+                                    val condition = WeatherCondition.fromRawValue(conditionRaw)
+                                        ?: return@let
+                                    val temperature = s.summary.walk.weatherTemperature
+                                        ?: return@let
+                                    WalkSummaryWeatherLine(
+                                        condition = condition,
+                                        temperatureCelsius = temperature,
+                                        imperial = distanceUnits == UnitSystem.Imperial,
+                                    )
+                                }
+
+                                // 10. Celestial line — placeholder for Stage 13-F
+
+                                // 11. Time breakdown grid — Walk card uses
+                                // activeWalkingMillis (paused-AND-meditate-excluded).
+                                WalkTimeBreakdownGrid(
+                                    walkMillis = s.summary.activeWalkingMillis,
+                                    talkMillis = s.summary.talkMillis,
+                                    meditateMillis = s.summary.totalMeditatedMillis,
+                                )
+                            }
                         }
-
-                        // 10. Celestial line — placeholder for Stage 13-F
-
-                        // 11. Time breakdown grid — Walk card uses
-                        // activeWalkingMillis (paused-AND-meditate-excluded).
-                        Spacer(Modifier.height(PilgrimSpacing.normal))
-                        WalkTimeBreakdownGrid(
-                            walkMillis = s.summary.activeWalkingMillis,
-                            talkMillis = s.summary.talkMillis,
-                            meditateMillis = s.summary.totalMeditatedMillis,
-                        )
 
                         // 12. Favicon selector — placeholder for Stage 13-E
                         // 13-15. Activity timeline + insights + list — Stage 13-C
@@ -391,11 +484,35 @@ private fun LoadingRow() {
 }
 
 @Composable
-private fun SummaryMap(points: List<org.walktalkmeditate.pilgrim.domain.LocationPoint>) {
+private fun SummaryMap(
+    points: List<org.walktalkmeditate.pilgrim.domain.LocationPoint>,
+    routeSegments: List<RouteSegment>,
+    revealPhase: RevealPhase,
+    segmentColors: RouteSegmentColors,
+    reduceMotion: Boolean,
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(200.dp),
+            .height(320.dp)
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithCache {
+                // iOS RadialGradient mask: opaque center -> transparent edge.
+                // 0.45 stop matches iOS's 80/180 startRadius/endRadius ratio.
+                val brush = Brush.radialGradient(
+                    colorStops = arrayOf(
+                        0f to Color.White,
+                        0.45f to Color.White,
+                        1f to Color.Transparent,
+                    ),
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    radius = size.minDimension / 2f,
+                )
+                onDrawWithContent {
+                    drawContent()
+                    drawRect(brush = brush, blendMode = BlendMode.DstIn)
+                }
+            },
         colors = CardDefaults.cardColors(
             containerColor = pilgrimColors.parchmentSecondary,
         ),
@@ -411,6 +528,10 @@ private fun SummaryMap(points: List<org.walktalkmeditate.pilgrim.domain.Location
         } else {
             PilgrimMap(
                 points = points,
+                routeSegments = routeSegments,
+                segmentColors = segmentColors,
+                revealPhase = revealPhase,
+                reduceMotion = reduceMotion,
                 followLatest = false,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -426,7 +547,7 @@ private fun SummaryMapPlaceholder() {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(200.dp),
+            .height(320.dp),
         colors = CardDefaults.cardColors(
             containerColor = pilgrimColors.parchmentSecondary,
             contentColor = pilgrimColors.fog,
