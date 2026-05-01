@@ -47,8 +47,10 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
+import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.computeAscend
 import org.walktalkmeditate.pilgrim.data.walk.computeRouteSegments
+import org.walktalkmeditate.pilgrim.data.walk.computeWalkMapAnnotations
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -117,6 +119,14 @@ data class WalkSummary(
      * GPS samples landed (single point can't draw a polyline).
      */
     val routeSegments: List<RouteSegment> = emptyList(),
+    /**
+     * Stage 13-D: pin set for the Walk Summary map (start, end,
+     * meditation, voice-recording markers). Built once in the VM via
+     * [computeWalkMapAnnotations] so the screen + share-sheet renderers
+     * share a single source of truth. Empty when the route has no GPS
+     * samples (single-sample walks still get a Start pin only).
+     */
+    val walkAnnotations: List<WalkMapAnnotation> = emptyList(),
     /**
      * Stage 13-C: voice recordings for this walk, ordered by repository
      * default. Consumed by the activity timeline bar (talk segments) and
@@ -673,18 +683,29 @@ class WalkSummaryViewModel @Inject constructor(
         // the segment-tinted polyline. Pure function — see
         // [computeRouteSegments] for the priority rules.
         //
+        // Stage 13-D: same Default-dispatcher hop also computes the
+        // map annotation pin set (start / end / meditation / voice
+        // recording). Pair-return keeps both pure computations on a
+        // single dispatcher hop instead of two.
+        //
         // Hopped to Dispatchers.Default because `buildState()` runs on
         // viewModelScope's Main dispatcher (SharingStarted.Eagerly).
         // Worst-case 90-min walk @ 1Hz GPS + 100 voice recordings is
         // ~5400 samples × ~120 predicate evals = ~640K compares — tens
         // of ms on mid-range hardware, enough to trip ANR thresholds
         // when stacked with the other Main-thread work in this build.
-        val routeSegments = withContext(Dispatchers.Default) {
-            computeRouteSegments(
+        val (routeSegments, walkAnnotations) = withContext(Dispatchers.Default) {
+            val seg = computeRouteSegments(
                 samples = samples,
                 intervals = activityIntervals,
                 recordings = voiceRecordings,
             )
+            val ann = computeWalkMapAnnotations(
+                routeSamples = samples,
+                meditationIntervals = activityIntervals,
+                voiceRecordings = voiceRecordings,
+            )
+            seg to ann
         }
 
         val talkMillis = voiceRecordings.sumOf { it.durationMillis }
@@ -745,6 +766,7 @@ class WalkSummaryViewModel @Inject constructor(
                 ascendMeters = ascendMeters,
                 routePoints = points,
                 routeSegments = routeSegments,
+                walkAnnotations = walkAnnotations,
                 voiceRecordings = voiceRecordings,
                 meditationIntervals = activityIntervals.filter {
                     it.activityType == ActivityType.MEDITATING

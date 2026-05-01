@@ -51,3 +51,17 @@ data class RouteSegmentColors(
     val talking: Color,
     val meditating: Color,
 )
+
+/**
+ * Theme-resolved colors for the Walk Summary map's annotation pins
+ * (start/end + meditation + voice recording). Same packaging pattern
+ * as [RouteSegmentColors] — read at the @Composable layer
+ * (LocalPilgrimColors), passed into [PilgrimMap] so it doesn't need
+ * to depend on the theme module directly.
+ */
+@Immutable
+data class WalkAnnotationColors(
+    val startEnd: Color,
+    val meditation: Color,
+    val voice: Color,
+)
