@@ -69,6 +69,9 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_FADE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkActivityInsightsCard
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkActivityListCard
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkActivityTimelineCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkDurationHero
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkIntentionCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkJourneyQuote
@@ -341,11 +344,37 @@ fun WalkSummaryScreen(
                                     talkMillis = s.summary.talkMillis,
                                     meditateMillis = s.summary.totalMeditatedMillis,
                                 )
+
+                                // 13. Activity timeline bar (Stage 13-C)
+                                WalkActivityTimelineCard(
+                                    startTimestamp = s.summary.walk.startTimestamp,
+                                    endTimestamp = s.summary.walk.endTimestamp ?: s.summary.walk.startTimestamp,
+                                    voiceRecordings = s.summary.voiceRecordings,
+                                    activityIntervals = s.summary.meditationIntervals,
+                                    routeSamples = s.summary.routeSamples,
+                                    units = distanceUnits,
+                                )
+
+                                // 14. Activity insights (Stage 13-C)
+                                if (s.summary.talkMillis > 0L || s.summary.meditationIntervals.isNotEmpty()) {
+                                    WalkActivityInsightsCard(
+                                        talkMillis = s.summary.talkMillis,
+                                        activeMillis = s.summary.activeMillis,
+                                        meditationIntervals = s.summary.meditationIntervals,
+                                    )
+                                }
+
+                                // 15. Activity list (Stage 13-C)
+                                if (s.summary.voiceRecordings.isNotEmpty() || s.summary.meditationIntervals.isNotEmpty()) {
+                                    WalkActivityListCard(
+                                        voiceRecordings = s.summary.voiceRecordings,
+                                        meditationIntervals = s.summary.meditationIntervals,
+                                    )
+                                }
                             }
                         }
 
                         // 12. Favicon selector — placeholder for Stage 13-E
-                        // 13-15. Activity timeline + insights + list — Stage 13-C
 
                         // 16. Voice recordings (Stage 2-E)
                         if (recordings.isNotEmpty()) {
