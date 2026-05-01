@@ -147,9 +147,24 @@ private fun TimelineBar(
                 detectTapGestures { offset ->
                     if (widthPx <= 0) return@detectTapGestures
                     val frac = offset.x / widthPx
-                    segments.firstOrNull {
-                        frac >= it.startFraction && frac <= it.startFraction + it.widthFraction
-                    }?.let { currentOnTap(it.id) }
+                    // Hit-test in REVERSE draw order — talk segments draw on
+                    // top of meditation (talk = 10dp, meditate = 16dp; talk
+                    // sits inside the meditation rect when ranges overlap),
+                    // so the visually-topmost target is the Talking segment.
+                    // `segments` is sorted by `startFraction`; without this
+                    // reorder a meditation interval that starts BEFORE an
+                    // overlapping talk would swallow taps the user expects
+                    // to hit the talk slice.
+                    val hit = segments.firstOrNull {
+                        it.type == TimelineSegmentType.Talking &&
+                            frac >= it.startFraction &&
+                            frac <= it.startFraction + it.widthFraction
+                    } ?: segments.firstOrNull {
+                        it.type == TimelineSegmentType.Meditating &&
+                            frac >= it.startFraction &&
+                            frac <= it.startFraction + it.widthFraction
+                    }
+                    hit?.let { currentOnTap(it.id) }
                 }
             },
         // iOS centers shorter segments (talk = 10dp) vertically within the
