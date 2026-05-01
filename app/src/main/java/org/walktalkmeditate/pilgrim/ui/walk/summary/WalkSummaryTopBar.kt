@@ -3,10 +3,12 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,13 +27,22 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
- * Walk Summary top bar. Centered date title with a trailing Done button.
- * Mirrors iOS `WalkSummaryView.toolbar` (`WalkSummaryView.swift:106-116`).
+ * Walk Summary top bar. Truly-centered date title with a trailing Done
+ * button. Mirrors iOS `WalkSummaryView.toolbar` (`WalkSummaryView.swift:106-116`).
  *
- * Custom Row instead of `TopAppBar` because the screen is composed
- * inside a sheet/modal-like container, not at an Activity nav-host
- * boundary. M3 TopAppBar's Insets handling assumes the latter and
- * paints status-bar padding we don't want here.
+ * Custom layout instead of `TopAppBar` because the screen sits in a
+ * sheet/modal-like container, not at the Activity nav-host root. The
+ * bar carries its own [windowInsetsPadding] for [WindowInsets.statusBars]
+ * — `MainActivity` calls `enableEdgeToEdge()`, so without this padding
+ * the title and Done button render under the system status bar on
+ * physical devices.
+ *
+ * Layout: `Box(fillMaxWidth)` with the title centered via
+ * `Alignment.Center` and the Done button right-aligned via
+ * `Alignment.CenterEnd`. This keeps the title centered against the FULL
+ * bar width regardless of the Done button's intrinsic width — a `Row +
+ * weight(1f)` trick centers within only `(width - DoneWidth)` and the
+ * title drifts visibly left of true center.
  */
 @Composable
 fun WalkSummaryTopBar(
@@ -40,29 +51,26 @@ fun WalkSummaryTopBar(
     modifier: Modifier = Modifier,
 ) {
     val dateText = remember(startTimestamp) { startTimestamp?.let(::formatLongDate) }
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .background(pilgrimColors.parchment)
+            .windowInsetsPadding(WindowInsets.statusBars)
             .height(64.dp)
             .padding(horizontal = PilgrimSpacing.normal),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (dateText != null) {
-                Text(
-                    text = dateText,
-                    style = pilgrimType.heading,
-                    color = pilgrimColors.ink,
-                )
-            }
+        if (dateText != null) {
+            Text(
+                text = dateText,
+                style = pilgrimType.heading,
+                color = pilgrimColors.ink,
+                modifier = Modifier.align(Alignment.Center),
+            )
         }
-        TextButton(onClick = onDone) {
+        TextButton(
+            onClick = onDone,
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
             Text(
                 text = stringResource(R.string.summary_action_done),
                 style = pilgrimType.button,
