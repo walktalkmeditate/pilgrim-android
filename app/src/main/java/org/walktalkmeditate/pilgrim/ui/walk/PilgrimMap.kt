@@ -115,12 +115,18 @@ internal fun PilgrimMap(
     // a fresh opt-out on next entry.
     var telemetryOptedOut by remember { mutableStateOf(false) }
 
-    // Own the style load from one place so init and theme toggles cannot
-    // race each other. Keyed on (mapView, styleUri): first pass with
-    // mapView == null bails, next pass (once the factory has assigned it)
-    // does the initial load, and subsequent theme changes trigger a clean
-    // reload. Any prior annotation manager is detached before a new one
-    // is created to avoid orphaning it on the stale style.
+    // Stage 13-B: reveal-driven camera control. Fires whenever the phase,
+    // map view instance, first GPS point, or reduce-motion flag changes.
+    // Gated on `revealPhase != null` so legacy callers (Active Walk, Walk
+    // Share) keep their existing fit-bounds-once behavior — they pass the
+    // default `null` revealPhase and never enter this branch.
+    //
+    //   Hidden  -> no-op
+    //   Zoomed  -> instant plant at first GPS point at zoom 16
+    //   Revealed -> 2.5s ease to fit-bounds (or setCamera under reduce-motion)
+    //
+    // The style-load LaunchedEffect below owns annotation-manager lifecycle;
+    // this one only touches camera state.
     LaunchedEffect(mapView, revealPhase, points.firstOrNull(), reduceMotion) {
         if (revealPhase == null) return@LaunchedEffect
         val view = mapView ?: return@LaunchedEffect
