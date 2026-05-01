@@ -169,6 +169,14 @@ android {
         abortOnError = true
         checkReleaseBuilds = true
         warningsAsErrors = false
+        // Stage 12-D: values-fr/ is a STUB locale that intentionally
+        // contains only `locale_resolution_marker` to verify the
+        // values-XX/ resource resolution path. iOS is English-only too
+        // (Base.lproj + en.lproj only). Lint's MissingTranslation
+        // would error on all 391 keys missing in fr — until real
+        // translations land, suppress globally so the stub doesn't
+        // block CI.
+        disable += "MissingTranslation"
     }
 }
 
