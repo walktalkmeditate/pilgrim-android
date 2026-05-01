@@ -315,6 +315,128 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
+    fun `migration 5 to 6 adds four nullable weather cols and preserves existing rows`() {
+        // Stage 12-A: walks table gains four nullable weather cache cols.
+        // Pure ALTER TABLE ADD COLUMN — no row scan, no defaults, all
+        // nullable. Pre-existing walks must keep their data and report
+        // null for every new col. Build the v5 walks shape (v2 + the
+        // 4->5 ALTERs), insert id=99, run the migration, assert columns
+        // exist with correct affinity + nullable, and the row survives.
+        val db = openV2Shape()
+        try {
+            PilgrimDatabase.MIGRATION_4_5.migrate(db)
+            db.execSQL("PRAGMA foreign_keys = ON")
+            db.insert(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("id", 99L)
+                    put("uuid", "weather-uuid")
+                    put("start_timestamp", 1_000L)
+                    put("end_timestamp", 5_000L)
+                    put("distance_meters", 1500.0)
+                    put("meditation_seconds", 300L)
+                },
+            )
+
+            PilgrimDatabase.MIGRATION_5_6.migrate(db)
+
+            db.query("PRAGMA table_info(`walks`)").use { cursor ->
+                val columns = mutableMapOf<String, Pair<String, Int>>()
+                val nameIdx = cursor.getColumnIndexOrThrow("name")
+                val typeIdx = cursor.getColumnIndexOrThrow("type")
+                val notNullIdx = cursor.getColumnIndexOrThrow("notnull")
+                while (cursor.moveToNext()) {
+                    columns[cursor.getString(nameIdx)] =
+                        cursor.getString(typeIdx) to cursor.getInt(notNullIdx)
+                }
+                assertEquals(
+                    "expected v6 walks columns to be a superset of v5",
+                    setOf(
+                        "id", "uuid", "start_timestamp", "end_timestamp",
+                        "intention", "favicon", "notes",
+                        "distance_meters", "meditation_seconds",
+                        "weather_condition", "weather_temperature",
+                        "weather_humidity", "weather_wind_speed",
+                    ),
+                    columns.keys,
+                )
+                assertEquals("TEXT" to 0, columns["weather_condition"])
+                assertEquals("REAL" to 0, columns["weather_temperature"])
+                assertEquals("REAL" to 0, columns["weather_humidity"])
+                assertEquals("REAL" to 0, columns["weather_wind_speed"])
+            }
+
+            db.query(
+                "SELECT id, distance_meters, meditation_seconds, " +
+                    "weather_condition, weather_temperature, " +
+                    "weather_humidity, weather_wind_speed " +
+                    "FROM walks WHERE id = ?",
+                arrayOf<Any>(99L),
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                assertEquals(99L, c.getLong(0))
+                assertEquals(1500.0, c.getDouble(1), 0.0001)
+                assertEquals(300L, c.getLong(2))
+                assertTrue("weather_condition should be null after migration", c.isNull(3))
+                assertTrue("weather_temperature should be null after migration", c.isNull(4))
+                assertTrue("weather_humidity should be null after migration", c.isNull(5))
+                assertTrue("weather_wind_speed should be null after migration", c.isNull(6))
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `migrated v6 walks accepts updates to the new weather cols`() {
+        // Catches any SQL typo in MIGRATION_5_6 that PRAGMA alone would
+        // miss (wrong type affinity, dropped NOT NULL, etc.) — same
+        // pattern as the v4->v5 cache-cols write test above.
+        val db = openV2Shape()
+        try {
+            db.execSQL("PRAGMA foreign_keys = ON")
+            PilgrimDatabase.MIGRATION_4_5.migrate(db)
+            PilgrimDatabase.MIGRATION_5_6.migrate(db)
+
+            val walkId = db.insert(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("uuid", "w-uuid")
+                    put("start_timestamp", 1_000L)
+                },
+            )
+            db.update(
+                "walks",
+                android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+                android.content.ContentValues().apply {
+                    put("weather_condition", "clear")
+                    put("weather_temperature", 18.5)
+                    put("weather_humidity", 0.62)
+                    put("weather_wind_speed", 3.4)
+                },
+                "id = ?",
+                arrayOf<Any>(walkId),
+            )
+            db.query(
+                "SELECT weather_condition, weather_temperature, " +
+                    "weather_humidity, weather_wind_speed " +
+                    "FROM walks WHERE id = ?",
+                arrayOf<Any>(walkId),
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                assertEquals("clear", c.getString(0))
+                assertEquals(18.5, c.getDouble(1), 0.0001)
+                assertEquals(0.62, c.getDouble(2), 0.0001)
+                assertEquals(3.4, c.getDouble(3), 0.0001)
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun `migrated v4 walk_photos accepts an update-analysis write`() {
         // Prove the new columns are writable with the expected types —
         // catches a typo in MIGRATION_3_4 SQL that would otherwise only

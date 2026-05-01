@@ -35,7 +35,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
         VoiceRecording::class,
         WalkPhoto::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -126,6 +126,32 @@ abstract class PilgrimDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `walks` ADD COLUMN `distance_meters` REAL")
                 db.execSQL("ALTER TABLE `walks` ADD COLUMN `meditation_seconds` INTEGER")
+            }
+        }
+
+        /**
+         * Stage 12-A: adds four nullable weather columns to the walks
+         * table — `weather_condition` (TEXT), `weather_temperature`,
+         * `weather_humidity`, `weather_wind_speed` (all REAL). Like
+         * MIGRATION_4_5, this is pure `ALTER TABLE ADD COLUMN`: SQLite
+         * appends nullable columns without a row scan, so it's O(1) on
+         * existing DBs of any size. Pre-existing walks read null for
+         * every new field; the weather snapshot service (Task 2) writes
+         * values during walk finalize for new walks only — there is no
+         * historical backfill.
+         *
+         * ALTER order matches the entity field declaration order
+         * (condition, temperature, humidity, wind speed) for parity with
+         * `app/schemas/.../6.json` and so debugging tools that snapshot
+         * the table layout visually see the same column sequence as the
+         * Kotlin source.
+         */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_condition` TEXT")
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_temperature` REAL")
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_humidity` REAL")
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_wind_speed` REAL")
             }
         }
     }

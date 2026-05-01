@@ -256,4 +256,25 @@ class SharePayloadBuilderTest {
         )
         assertNull(payload.stats.distance)
     }
+
+    @Test
+    fun `weather rides through when walk captured it`() {
+        val walkWithWeather = walk().copy(
+            weatherCondition = "fog",
+            weatherTemperature = 8.5,
+        )
+        val payload = SharePayloadBuilder.build(
+            baseInputs().copy(walk = walkWithWeather),
+            allOn(),
+        )
+        assertEquals("fog", payload.stats.weatherCondition)
+        assertEquals(8.5, payload.stats.weatherTemperature!!, 0.0)
+    }
+
+    @Test
+    fun `weather is null when walk has no weather`() {
+        val payload = SharePayloadBuilder.build(baseInputs(), allOn())
+        assertNull(payload.stats.weatherCondition)
+        assertNull(payload.stats.weatherTemperature)
+    }
 }

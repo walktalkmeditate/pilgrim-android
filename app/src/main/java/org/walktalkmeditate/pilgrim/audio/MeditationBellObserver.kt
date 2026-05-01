@@ -91,7 +91,14 @@ class MeditationBellObserver @Inject constructor(
                 if (wasMeditating != isMeditating && !isRestoreIntoMeditating) {
                     // Stage 10-B master sounds toggle: short-circuit if user has muted.
                     if (soundsPreferences.soundsEnabled.value) {
-                        bellPlayer.play()
+                        // iOS-faithful: meditation start/end bells pair a
+                        // `.medium` haptic when `bellHapticEnabled` is on
+                        // (BellPlayer.swift:29-31; SoundManagement.swift:43
+                        // forwards `withHaptic: hapticEnabled`). Stage 12-C
+                        // moves haptic coupling to the player layer; the
+                        // observer simply requests `withHaptic = true` and
+                        // BellPlayer gates internally on the user pref.
+                        bellPlayer.play(scale = 1.0f, withHaptic = true)
                     }
                 }
             }

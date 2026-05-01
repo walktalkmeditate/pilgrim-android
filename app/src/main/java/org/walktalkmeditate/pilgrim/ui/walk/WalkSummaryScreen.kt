@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -30,14 +32,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.ui.walk.share.JourneyRowState
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealRevealOverlay
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -161,6 +167,27 @@ fun WalkSummaryScreen(
                     SummaryMap(points = s.summary.routePoints)
                     Spacer(Modifier.height(PilgrimSpacing.big))
                     SummaryStats(summary = s.summary, units = distanceUnits)
+                    // Stage 12-A: weather line below the stats block.
+                    // Matches iOS WalkSummaryView.weatherLine placement.
+                    // Renders only when the persisted condition resolves
+                    // to a known enum AND a temperature is present —
+                    // legacy walks captured before Stage 12-A have null
+                    // weather columns and skip silently. Imperial
+                    // coupling follows the user's distance preference,
+                    // matching iOS where temperature units track
+                    // `distanceMeasurementType`.
+                    s.summary.walk.weatherCondition?.let { conditionRaw ->
+                        val condition = WeatherCondition.fromRawValue(conditionRaw)
+                            ?: return@let
+                        val temperature = s.summary.walk.weatherTemperature
+                            ?: return@let
+                        WalkSummaryWeatherLine(
+                            condition = condition,
+                            temperatureCelsius = temperature,
+                            imperial = distanceUnits == UnitSystem.Imperial,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
                     // Stage 7-A: the reliquary sits between the
                     // objective stats and the interpretive Light
                     // Reading — tangible artifacts first, felt content
@@ -435,4 +462,49 @@ private fun CachedShare?.toJourneyRowState(): JourneyRowState = when {
         shareDateEpochMs = shareDateEpochMs,
         expiryOption = expiryOption,
     )
+}
+
+/**
+ * Stage 12-A: weather summary line. Renders unconditionally when
+ * called — the WalkSummaryScreen caller is responsible for the
+ * `weatherCondition != null && weatherTemperature != null` guard.
+ *
+ * Visuals mirror iOS `WalkSummaryView.weatherLine` (16dp icon, xs
+ * spacer, caption-styled "{label}, {N}°{unit}" text, fog tint).
+ *
+ * `imperial = true` switches both the conversion (C → F) and the
+ * suffix glyph. The coupling matches iOS where temperature units
+ * track the user's distance preference.
+ */
+@Composable
+fun WalkSummaryWeatherLine(
+    condition: WeatherCondition,
+    temperatureCelsius: Double,
+    imperial: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(condition.iconRes),
+            contentDescription = null,
+            tint = pilgrimColors.fog,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(PilgrimSpacing.xs))
+        Text(
+            text = "${stringResource(condition.labelRes)}, ${
+                formatTemperature(temperatureCelsius, imperial)
+            }",
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+        )
+    }
+}
+
+private fun formatTemperature(celsius: Double, imperial: Boolean): String {
+    val rounded = if (imperial) celsius * 9.0 / 5.0 + 32.0 else celsius
+    return String.format(Locale.US, "%.0f°%s", rounded, if (imperial) "F" else "C")
 }

@@ -21,6 +21,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 
 @Singleton
 open class WalkRepository @Inject constructor(
@@ -84,6 +85,22 @@ open class WalkRepository @Inject constructor(
 
     suspend fun updateWalkIntention(walkId: Long, intention: String?) {
         walkDao.updateIntention(walkId = walkId, intention = intention)
+    }
+
+    /**
+     * Stage 12-A: persist a [WeatherSnapshot] to the four weather
+     * columns on `walks`. Pass-through to [WalkDao.updateWeather] —
+     * maps the typed [WeatherCondition] enum to its on-disk
+     * `rawValue` so the column matches iOS verbatim.
+     */
+    suspend fun updateWeather(walkId: Long, snapshot: WeatherSnapshot) {
+        walkDao.updateWeather(
+            id = walkId,
+            condition = snapshot.condition.rawValue,
+            temperature = snapshot.temperatureCelsius,
+            humidity = snapshot.humidityFraction,
+            windSpeed = snapshot.windSpeedMps,
+        )
     }
 
     suspend fun deleteWalk(walk: Walk) {

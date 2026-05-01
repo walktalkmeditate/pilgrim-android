@@ -128,8 +128,11 @@ internal object SharePayloadBuilder {
             steps = if (options.includeSteps) inputs.steps?.takeIf { it > 0 } else null,
             meditateDuration = inputs.meditateDurationSeconds.takeIf { it > 0.0 },
             talkDuration = inputs.talkDurationSeconds.takeIf { it > 0.0 },
-            weatherCondition = null,
-            weatherTemperature = null,
+            // Stage 12: weather rides through if the walk captured it
+            // (Stage 12-A added the 4 cols on Walk). Already-nullable
+            // wire fields keep the format wire-compatible with iOS.
+            weatherCondition = inputs.walk.weatherCondition,
+            weatherTemperature = inputs.walk.weatherTemperature,
         )
 
         val waypointsPayload = if (options.includeWaypoints && inputs.waypoints.isNotEmpty()) {

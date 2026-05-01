@@ -178,6 +178,20 @@ class MeditationBellObserverTest {
         return Scenario(state, fakePlayer, scope)
     }
 
+    @Test fun `meditation boundary bell requests haptic`() = runTest {
+        // Stage 12-C: meditation start/end bells must pair `.medium`
+        // haptic (iOS BellPlayer.swift:29-31 + SoundManagement.swift:43).
+        // The observer requests `withHaptic = true`; the player gates
+        // internally on `bellHapticEnabled`. Asserting the request, not
+        // the gate.
+        val s = newScenario(initial = WalkState.Active(acc))
+        advanceUntilIdle()
+        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+        advanceUntilIdle()
+        assertEquals(listOf(true), s.player.hapticCalls)
+        s.cancel()
+    }
+
     @Test fun `master toggle off suppresses Active to Meditating bell`() = runTest {
         val s = newScenario(
             initial = WalkState.Active(acc),
@@ -221,10 +235,24 @@ class MeditationBellObserverTest {
     }
 }
 
-/** Counts [play] calls. All other behaviors are no-ops. */
+/**
+ * Counts [play] calls and captures the [withHaptic] flag passed by the
+ * call site. Stage 12-C: `MeditationBellObserver` now invokes the
+ * 2-arg overload with `withHaptic = true`, so the fake must override
+ * that overload directly — otherwise the `BellPlaying` interface
+ * default routes back through [play] (no-arg) and the haptic-flag
+ * assertions can't observe what the call site actually passed.
+ */
 private class FakeBellPlayer : BellPlaying {
     var playCount = 0
+    val hapticCalls = mutableListOf<Boolean>()
+
     override fun play() {
         playCount += 1
+    }
+
+    override fun play(scale: Float, withHaptic: Boolean) {
+        playCount += 1
+        hapticCalls += withHaptic
     }
 }

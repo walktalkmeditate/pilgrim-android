@@ -14,6 +14,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +41,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -76,6 +78,7 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository,
     unitsPreferences: UnitsPreferencesRepository,
     practicePreferences: PracticePreferencesRepository,
+    private val weatherFetching: WeatherFetching,
 ) : ViewModel() {
 
     /**
@@ -535,6 +538,16 @@ class WalkViewModel @Inject constructor(
                 ) {
                     _voiceRecorderState.value = VoiceRecorderUiState.Idle
                 }
+                // Stage 12-A: cancel the +2s/+10s weather fetch on every
+                // terminal transition. discardWalk also cancels
+                // synchronously (see [discardWalk] kdoc); the cancel
+                // here covers paths the VM doesn't initiate — finish
+                // tapped from the foreground-service notification, or
+                // a controller-driven rollback after a service-start
+                // failure. weatherJob.cancel() is idempotent.
+                if (state is WalkState.Finished || state is WalkState.Idle) {
+                    weatherJob?.cancel()
+                }
             }
         }
     }
@@ -546,7 +559,7 @@ class WalkViewModel @Inject constructor(
             // the controller trigger the service-start rollback, which
             // would finish a walk that's ALREADY running — effectively
             // cancelling a legitimate earlier startWalk call.
-            try {
+            val started = try {
                 controller.startWalk(intention)
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -558,6 +571,14 @@ class WalkViewModel @Inject constructor(
                 Log.d(TAG, "startWalk ignored — controller is not idle: ${e.message}")
                 return@launch
             }
+            // Stage 12-A: schedule the +2s/+10s weather fetch as soon
+            // as we have the new walkId. Runs independently of the
+            // foreground-service start below — even if the service
+            // refuses to start (rollback path), the +2s delay's
+            // CancellationException from the rollback's transition
+            // through Finished tears the weatherJob down before any
+            // fetch is issued.
+            scheduleWeatherFetch(started.id)
             try {
                 ContextCompat.startForegroundService(
                     context,
@@ -576,6 +597,57 @@ class WalkViewModel @Inject constructor(
                 controller.finishWalk()
             }
         }
+    }
+
+    /**
+     * Stage 12-A: schedule the +2s/+10s weather-fetch sequence. Cancels
+     * any prior in-flight job before launching a fresh one (defends
+     * against a back-to-back finish→start where a stale job from the
+     * prior walk could otherwise keep running and write weather to the
+     * wrong walkId — the cancel-on-Finished observer already catches
+     * the common case, but defending here too is cheap).
+     */
+    private fun scheduleWeatherFetch(walkId: Long) {
+        weatherJob?.cancel()
+        weatherJob = viewModelScope.launch {
+            delay(WEATHER_FIRST_DELAY_MS)
+            if (!fetchAndPersistWeather(walkId)) {
+                delay(WEATHER_RETRY_DELAY_MS)
+                fetchAndPersistWeather(walkId)
+            }
+        }
+    }
+
+    /**
+     * Returns true when both the location seed AND the weather fetch
+     * succeeded (and the row was persisted). Returns false on missing
+     * seed location (no cached fix) or null snapshot (network/parse
+     * failure) — caller may schedule a single retry per the iOS-faithful
+     * +10s policy.
+     *
+     * Reads `lastKnownLocation()` rather than a live GPS subscription:
+     * a fresh `requestLocationUpdates` round-trip would race the
+     * fetch's +2s budget on cold device starts, and the spec
+     * accepts "weather unavailable" as a valid first-call outcome
+     * (which is what the +10s retry exists to recover from).
+     */
+    private suspend fun fetchAndPersistWeather(walkId: Long): Boolean {
+        val location = try {
+            locationSource.lastKnownLocation()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            // FINE_LOCATION may have been revoked between walk-start and
+            // the +2s tick. Treat missing location the same as no
+            // cached fix: signal failure so the +10s retry runs (in
+            // case permission comes back) and don't crash the VM.
+            Log.w(TAG, "weather fetch: location lookup failed", t)
+            return false
+        } ?: return false
+        val snapshot = weatherFetching.fetchCurrent(location.latitude, location.longitude)
+            ?: return false
+        repository.updateWeather(walkId, snapshot)
+        return true
     }
 
     fun pauseWalk() {
@@ -610,6 +682,23 @@ class WalkViewModel @Inject constructor(
      */
     private val finishInFlight = AtomicBoolean(false)
 
+    /**
+     * Stage 12-A: handle for the +2s/+10s weather fetch coroutine
+     * scheduled at walk-start. Cancelled at every terminal transition
+     * so a slow Open-Meteo round-trip can't write weather columns
+     * onto a discarded (deleted) row or onto a finished walk after
+     * the summary screen has already painted. Cleared back to null
+     * once the job completes so we don't pin a dead Job reference
+     * for the VM's lifetime.
+     *
+     * Process death = lost fetch. The +2s/+10s timing window is
+     * short enough that an OS kill mid-walk-start is rare; on
+     * recovery (`restoreActiveWalk`) we deliberately do NOT
+     * re-schedule because the captured weather wouldn't reflect
+     * walk-start conditions any more.
+     */
+    private var weatherJob: Job? = null
+
     fun finishWalk() {
         if (!finishInFlight.compareAndSet(false, true)) return
         viewModelScope.launch {
@@ -634,6 +723,14 @@ class WalkViewModel @Inject constructor(
      * parent walk no longer exists.
      */
     fun discardWalk() {
+        // Stage 12-A: cancel the +2s/+10s weather fetch BEFORE the
+        // discard fires. The state observer below also cancels on the
+        // Active→Idle transition, but doing it here too closes the
+        // window between this fun's call and the controller's
+        // PurgeWalk effect committing — without this synchronous
+        // cancel, a fetch in flight under its delay() could resume
+        // post-purge and try to UPDATE a deleted walk row.
+        weatherJob?.cancel()
         viewModelScope.launch { controller.discardWalk() }
     }
 
@@ -655,5 +752,10 @@ class WalkViewModel @Inject constructor(
         const val TICK_INTERVAL_MS = 1_000L
         const val SUBSCRIBER_GRACE_MS = 5_000L
         const val TAG = "WalkViewModel"
+        // Stage 12-A: iOS-faithful weather-fetch delays. First attempt
+        // 2s after walk-start; on `null` (no fix or null snapshot)
+        // retry once after another 10s.
+        const val WEATHER_FIRST_DELAY_MS = 2_000L
+        const val WEATHER_RETRY_DELAY_MS = 10_000L
     }
 }
