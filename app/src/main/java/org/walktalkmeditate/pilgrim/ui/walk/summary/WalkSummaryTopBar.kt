@@ -35,11 +35,11 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  */
 @Composable
 fun WalkSummaryTopBar(
-    startTimestamp: Long,
+    startTimestamp: Long?,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val dateText = remember(startTimestamp) { formatLongDate(startTimestamp) }
+    val dateText = remember(startTimestamp) { startTimestamp?.let(::formatLongDate) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -54,11 +54,13 @@ fun WalkSummaryTopBar(
                 .fillMaxWidth(),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = dateText,
-                style = pilgrimType.heading,
-                color = pilgrimColors.ink,
-            )
+            if (dateText != null) {
+                Text(
+                    text = dateText,
+                    style = pilgrimType.heading,
+                    color = pilgrimColors.ink,
+                )
+            }
         }
         TextButton(onClick = onDone) {
             Text(

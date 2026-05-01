@@ -141,13 +141,12 @@ fun WalkSummaryScreen(
         // Summary content renders first (z-order: behind the overlay).
         Column(modifier = Modifier.fillMaxSize()) {
             // Stage 13-A: top bar lives OUTSIDE the scroll — iOS parity
-            // (a top bar shouldn't slide off as the user scrolls). For
-            // Loading + NotFound branches the timestamp is unavailable;
-            // fall back to 0L (epoch) — momentary state, NotFound users
-            // see the unavailable copy below regardless.
+            // (a top bar shouldn't slide off as the user scrolls). The
+            // title is null during Loading + NotFound — TopBar renders
+            // an empty title slot rather than displaying a placeholder
+            // date like "January 1, 1970".
             val titleTimestamp = (state as? WalkSummaryUiState.Loaded)
                 ?.summary?.walk?.startTimestamp
-                ?: 0L
             WalkSummaryTopBar(
                 startTimestamp = titleTimestamp,
                 onDone = onDone,
@@ -207,8 +206,11 @@ fun WalkSummaryScreen(
                         Spacer(Modifier.height(PilgrimSpacing.normal))
                         WalkDurationHero(durationMillis = s.summary.activeMillis)
 
-                        // 7. Milestone callout — placeholder for Stage 13-F
-                        // (the existing reveal-overlay halo remains)
+                        // 7. Milestone callout — placeholder for Stage 13-F.
+                        // The Stage 4-B SealRevealOverlay below already adds an
+                        // extra haptic + hold for milestone walks; the iOS
+                        // textual callout above the stats row is the new
+                        // surface deferred to 13-F.
 
                         // 8. Stats row
                         Spacer(Modifier.height(PilgrimSpacing.normal))

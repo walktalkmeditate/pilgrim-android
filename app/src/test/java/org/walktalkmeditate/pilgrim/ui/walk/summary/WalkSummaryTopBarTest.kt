@@ -2,8 +2,10 @@
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.app.Application
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertTrue
@@ -49,6 +51,23 @@ class WalkSummaryTopBarTest {
                 )
             }
         }
+        composeRule.onNodeWithText("Done").performClick()
+        assertTrue(doneTaps == 1)
+    }
+
+    @Test
+    fun nullTimestamp_rendersEmptyTitleSlot_doneStillWorks() {
+        var doneTaps = 0
+        composeRule.setContent {
+            PilgrimTheme {
+                WalkSummaryTopBar(
+                    startTimestamp = null,
+                    onDone = { doneTaps += 1 },
+                )
+            }
+        }
+        // No epoch placeholder leaks through during Loading / NotFound.
+        composeRule.onAllNodesWithText("January 1, 1970").assertCountEquals(0)
         composeRule.onNodeWithText("Done").performClick()
         assertTrue(doneTaps == 1)
     }

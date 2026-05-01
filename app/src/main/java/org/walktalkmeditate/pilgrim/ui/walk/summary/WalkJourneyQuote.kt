@@ -17,7 +17,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
  * Contextual quote below the elevation profile (when present) and
- * above the duration hero. Six cases driven by [classifyJourneyQuote];
+ * above the duration hero. Seven cases driven by [classifyJourneyQuote];
  * mirrors iOS `WalkSummaryView.journeyQuote` (`WalkSummaryView.swift:314-322,
  * 396-417`).
  *

@@ -49,17 +49,17 @@ fun WalkTimeBreakdownGrid(
             .height(IntrinsicSize.Min),
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
     ) {
-        breakdownCard(
+        BreakdownCard(
             icon = Icons.Rounded.DirectionsWalk,
             label = stringResource(R.string.summary_breakdown_walk),
             millis = walkMillis,
         )
-        breakdownCard(
+        BreakdownCard(
             icon = Icons.Rounded.GraphicEq,
             label = stringResource(R.string.summary_breakdown_talk),
             millis = talkMillis,
         )
-        breakdownCard(
+        BreakdownCard(
             icon = Icons.Rounded.SelfImprovement,
             label = stringResource(R.string.summary_breakdown_meditate),
             millis = meditateMillis,
@@ -68,7 +68,7 @@ fun WalkTimeBreakdownGrid(
 }
 
 @Composable
-private fun RowScope.breakdownCard(
+private fun RowScope.BreakdownCard(
     icon: ImageVector,
     label: String,
     millis: Long,

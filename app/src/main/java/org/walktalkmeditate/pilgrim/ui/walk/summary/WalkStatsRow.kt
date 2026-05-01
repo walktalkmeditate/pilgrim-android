@@ -40,12 +40,12 @@ fun WalkStatsRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.big),
     ) {
-        miniStat(
+        MiniStat(
             label = stringResource(R.string.summary_stat_distance),
             value = WalkFormat.distance(distanceMeters, units),
         )
         if (ascendMeters > 1.0) {
-            miniStat(
+            MiniStat(
                 label = stringResource(R.string.summary_stat_elevation),
                 value = WalkFormat.altitude(ascendMeters, units),
             )
@@ -54,7 +54,7 @@ fun WalkStatsRow(
 }
 
 @Composable
-private fun RowScope.miniStat(label: String, value: String) {
+private fun RowScope.MiniStat(label: String, value: String) {
     Column(
         modifier = Modifier.weight(1f),
         horizontalAlignment = Alignment.CenterHorizontally,
