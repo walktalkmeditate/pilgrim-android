@@ -74,9 +74,7 @@ private fun RowScope.BreakdownCard(
     millis: Long,
 ) {
     Card(
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxWidth(),
+        modifier = Modifier.weight(1f),
         colors = CardDefaults.cardColors(
             containerColor = pilgrimColors.parchmentSecondary,
         ),

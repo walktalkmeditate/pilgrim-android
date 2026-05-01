@@ -76,7 +76,14 @@ private fun formatLongDate(epochMillis: Long): String {
     val date = Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .toLocalDate()
+    // Pinned to Locale.ENGLISH because the rest of the app is English-only
+    // (Stage 12-D's values-fr/ stub carries a single locale_resolution_marker
+    // and nothing else). Locale.getDefault() would produce mixed-locale output
+    // on a French device — "mars 16, 2026" surrounded by English UI. This
+    // matches the iOS reference, which uses an `en_US`-equivalent
+    // .dateStyle = .long. When a real translation lands, switch to
+    // Locale.getDefault() in the same change that ships fr strings.
     return DateTimeFormatter
-        .ofPattern("MMMM d, yyyy", Locale.getDefault())
+        .ofPattern("MMMM d, yyyy", Locale.ENGLISH)
         .format(date)
 }
