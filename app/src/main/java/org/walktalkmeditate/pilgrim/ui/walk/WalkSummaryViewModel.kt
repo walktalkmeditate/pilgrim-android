@@ -700,9 +700,16 @@ class WalkSummaryViewModel @Inject constructor(
                 intervals = activityIntervals,
                 recordings = voiceRecordings,
             )
+            // Pre-filter to MEDITATING per the function's parameter contract.
+            // The function has a defensive `continue` on non-MEDITATING types
+            // but relying on that as load-bearing means the contract drifts
+            // and a future refactor (e.g. when a new ActivityType gains a
+            // pin) would silently start drawing walking-interval pins.
             val ann = computeWalkMapAnnotations(
                 routeSamples = samples,
-                meditationIntervals = activityIntervals,
+                meditationIntervals = activityIntervals.filter {
+                    it.activityType == ActivityType.MEDITATING
+                },
                 voiceRecordings = voiceRecordings,
             )
             seg to ann
