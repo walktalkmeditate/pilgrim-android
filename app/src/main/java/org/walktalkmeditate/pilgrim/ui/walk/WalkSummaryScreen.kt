@@ -47,6 +47,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
@@ -66,7 +67,10 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
+import org.walktalkmeditate.pilgrim.ui.walk.summary.FaviconSelectorCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
+import org.walktalkmeditate.pilgrim.ui.walk.summary.MilestoneCalloutRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_FADE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
@@ -80,6 +84,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkDurationHero
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkIntentionCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkJourneyQuote
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkStatsRow
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryDetailsCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryTopBar
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkTimeBreakdownGrid
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ZOOM_HOLD_MS
@@ -97,6 +102,7 @@ fun WalkSummaryScreen(
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
     val lightReadingDisplay by viewModel.lightReadingDisplay.collectAsStateWithLifecycle()
+    val selectedFavicon by viewModel.selectedFavicon.collectAsStateWithLifecycle()
     // Stage 8-A: must be collected unconditionally here, not inside
     // the Loaded branch's `if (routePoints.size >= 2)` nested block.
     // `collectAsStateWithLifecycle` calls `remember` internally, and
@@ -286,8 +292,6 @@ fun WalkSummaryScreen(
                             WalkIntentionCard(intention = intention)
                         }
 
-                        // 4. Elevation profile — placeholder for Stage 13-F
-
                         // Stage 13-B: sections 5/6/8/9/11 fade in together once
                         // the reveal phase reaches Revealed (camera fan-out is
                         // already underway). The Spacer here provides the gap
@@ -307,6 +311,12 @@ fun WalkSummaryScreen(
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
                             ) {
+                                // 4. Elevation profile (Stage 13-F)
+                                ElevationProfile(
+                                    altitudes = s.summary.altitudeSamples.map { it.altitudeMeters },
+                                    units = distanceUnits,
+                                )
+
                                 // 5. Journey quote
                                 WalkJourneyQuote(
                                     talkMillis = s.summary.talkMillis,
@@ -318,11 +328,10 @@ fun WalkSummaryScreen(
                                 // 6. Duration hero
                                 WalkDurationHero(durationMillis = s.summary.activeMillis)
 
-                                // 7. Milestone callout — placeholder for Stage 13-F.
-                                // The Stage 4-B SealRevealOverlay below already adds an
-                                // extra haptic + hold for milestone walks; the iOS
-                                // textual callout above the stats row is the new
-                                // surface deferred to 13-F.
+                                // 7. Milestone callout (Stage 13-F partial — non-celestial branch)
+                                s.summary.milestone?.let { ms ->
+                                    MilestoneCalloutRow(milestone = ms)
+                                }
 
                                 // 8. Stats row — distance value animates 0 → final on reveal.
                                 WalkStatsRow(
@@ -358,6 +367,12 @@ fun WalkSummaryScreen(
                                     walkMillis = s.summary.activeWalkingMillis,
                                     talkMillis = s.summary.talkMillis,
                                     meditateMillis = s.summary.totalMeditatedMillis,
+                                )
+
+                                // 12. Favicon selector (Stage 13-E)
+                                FaviconSelectorCard(
+                                    selected = selectedFavicon,
+                                    onSelect = viewModel::setFavicon,
                                 )
 
                                 // 13. Activity timeline bar (Stage 13-C)
@@ -397,8 +412,6 @@ fun WalkSummaryScreen(
                             }
                         }
 
-                        // 12. Favicon selector — placeholder for Stage 13-E
-
                         // 16. Voice recordings (Stage 2-E)
                         if (recordings.isNotEmpty()) {
                             Spacer(Modifier.height(PilgrimSpacing.normal))
@@ -412,7 +425,12 @@ fun WalkSummaryScreen(
                         }
 
                         // 17. AI Prompts button — placeholder for Stage 13-X
-                        // 18. Details section — placeholder for Stage 13-G
+
+                        // 18. Details (Stage 13-G)
+                        if (s.summary.totalPausedMillis > 0L) {
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            WalkSummaryDetailsCard(pausedMillis = s.summary.totalPausedMillis)
+                        }
 
                         // 19. Light Reading card (Stage 6-B / 10-C). VM's
                         // runCatching means a compute failure yields null
