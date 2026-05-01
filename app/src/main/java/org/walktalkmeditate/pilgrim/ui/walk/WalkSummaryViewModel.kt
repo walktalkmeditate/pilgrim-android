@@ -153,9 +153,9 @@ data class WalkSummary(
      * Stage 13-F: barometric altitude samples for the post-walk
      * elevation sparkline. The composable normalizes + buckets these
      * via [org.walktalkmeditate.pilgrim.ui.walk.summary.computeElevationSparklinePoints]
-     * and self-gates render when fewer than 2 samples or `max - min <= 1m`
-     * (degenerate flat profile) — caller invokes ElevationProfile
-     * unconditionally and a no-op return emits no node.
+     * and self-gates render when fewer than 6 samples or `max - min
+     * <= 1m` (iOS parity, `WalkSummaryView.swift:288`) — caller invokes
+     * ElevationProfile unconditionally and a no-op return emits no node.
      */
     val altitudeSamples: List<AltitudeSample> = emptyList(),
     /**
@@ -241,10 +241,9 @@ class WalkSummaryViewModel @Inject constructor(
      * full [WalkSummaryUiState.Loaded] (the favicon button reads this
      * StateFlow directly).
      *
-     * Declared BEFORE [state] because `state` uses `SharingStarted.Eagerly`
-     * which triggers `buildState()` synchronously during construction —
-     * `buildState()` writes to `_selectedFavicon`, so the field must be
-     * initialized first.
+     * Grouped above [state] for readability — by the time `state`'s
+     * launched `buildState()` runs, all VM fields are initialized
+     * regardless of declaration order.
      */
     private val _selectedFavicon = MutableStateFlow<WalkFavicon?>(null)
     val selectedFavicon: StateFlow<WalkFavicon?> = _selectedFavicon.asStateFlow()
@@ -568,6 +567,14 @@ class WalkSummaryViewModel @Inject constructor(
      * StateFlow immediately, writes through to Room on [Dispatchers.IO],
      * and reverts the StateFlow on DAO failure. Tapping the same value
      * deselects (writes null).
+     *
+     * The revert uses [MutableStateFlow.compareAndSet] so a failure
+     * landing AFTER a newer tap has already updated the flow does NOT
+     * clobber the user's latest choice. Out-of-order fire-and-forget
+     * launches can still cause "last-tap wins on UI, last-IO wins on
+     * DB" divergence under sustained rapid tapping; acceptable for a
+     * mood-tag surface where serialization-by-mutex would add latency
+     * for no perceptible benefit.
      */
     fun setFavicon(favicon: WalkFavicon?) {
         val current = _selectedFavicon.value
@@ -580,7 +587,7 @@ class WalkSummaryViewModel @Inject constructor(
                 throw ce
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "setFavicon failed for walk $walkId", t)
-                _selectedFavicon.value = current
+                _selectedFavicon.compareAndSet(newValue, current)
             }
         }
     }

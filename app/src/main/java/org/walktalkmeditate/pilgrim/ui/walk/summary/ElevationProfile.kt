@@ -85,10 +85,14 @@ fun ElevationProfile(
     units: UnitSystem,
     modifier: Modifier = Modifier,
 ) {
-    if (altitudes.size < 2) return
+    // iOS gate at WalkSummaryView.swift:288 — `altitudes.count > 5 &&
+    // maxAlt - minAlt > 1`. Suppresses the chart on short walks where
+    // a 2-5 sample sparkline would render as a sparse/jagged shape
+    // that misleads more than it informs.
+    if (altitudes.size < 6) return
     val minAlt = altitudes.min()
     val maxAlt = altitudes.max()
-    if (maxAlt - minAlt <= 1.0) return // iOS guard: range > 1m
+    if (maxAlt - minAlt <= 1.0) return
 
     val stoneFill = pilgrimColors.stone
     Column(
