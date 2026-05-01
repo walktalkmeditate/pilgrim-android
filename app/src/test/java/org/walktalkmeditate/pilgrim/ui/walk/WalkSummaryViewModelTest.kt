@@ -44,6 +44,8 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
+import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestone
@@ -807,6 +809,80 @@ class WalkSummaryViewModelTest {
         assertEquals(50_000L, loaded.summary.activeMillis)
     }
 
+    // --- Stage 13-B: routeSegments classification ---------------------
+
+    @Test
+    fun routeSegments_classifiesWalkOnlyAsSingleSegment() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
+        insertRouteSample(walkId, t = 5_000L, lat = 2.0, lng = 2.0)
+        insertRouteSample(walkId, t = 10_000L, lat = 3.0, lng = 3.0)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(1, loaded.summary.routeSegments.size)
+        assertEquals(RouteActivity.Walking, loaded.summary.routeSegments[0].activity)
+    }
+
+    @Test
+    fun routeSegments_splitsAtMeditationBoundaries() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
+        insertRouteSample(walkId, t = 20_000L, lat = 2.0, lng = 2.0)
+        insertRouteSample(walkId, t = 40_000L, lat = 3.0, lng = 3.0)
+        insertActivityInterval(
+            walkId,
+            startTimestamp = 15_000L,
+            endTimestamp = 25_000L,
+            type = ActivityType.MEDITATING,
+        )
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(3, loaded.summary.routeSegments.size)
+        assertEquals(RouteActivity.Walking, loaded.summary.routeSegments[0].activity)
+        assertEquals(RouteActivity.Meditating, loaded.summary.routeSegments[1].activity)
+        assertEquals(RouteActivity.Walking, loaded.summary.routeSegments[2].activity)
+    }
+
+    @Test
+    fun routeSegments_splitsAtVoiceRecordingBoundaries() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
+        insertRouteSample(walkId, t = 20_000L, lat = 2.0, lng = 2.0)
+        insertRouteSample(walkId, t = 40_000L, lat = 3.0, lng = 3.0)
+        insertVoiceRecording(walkId, startOffset = 15_000L, durationMillis = 10_000L)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(3, loaded.summary.routeSegments.size)
+        assertEquals(RouteActivity.Walking, loaded.summary.routeSegments[0].activity)
+        assertEquals(RouteActivity.Talking, loaded.summary.routeSegments[1].activity)
+    }
+
+    @Test
+    fun routeSegments_meditationOverridesTalking() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertRouteSample(walkId, t = 10_000L, lat = 1.0, lng = 1.0)
+        insertRouteSample(walkId, t = 20_000L, lat = 2.0, lng = 2.0)
+        insertActivityInterval(
+            walkId,
+            startTimestamp = 5_000L,
+            endTimestamp = 25_000L,
+            type = ActivityType.MEDITATING,
+        )
+        insertVoiceRecording(walkId, startOffset = 10_000L, durationMillis = 10_000L)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(1, loaded.summary.routeSegments.size)
+        assertEquals(RouteActivity.Meditating, loaded.summary.routeSegments[0].activity)
+    }
+
     private suspend fun createFinishedWalk(
         durationMillis: Long,
         events: List<WalkEvent> = emptyList(),
@@ -842,6 +918,34 @@ class WalkSummaryViewModelTest {
                 walkId = walkId,
                 timestamp = ts,
                 altitudeMeters = alt,
+            ),
+        )
+    }
+
+    private suspend fun insertRouteSample(walkId: Long, t: Long, lat: Double, lng: Double) {
+        db.routeDataSampleDao().insert(
+            RouteDataSample(
+                walkId = walkId,
+                timestamp = t,
+                latitude = lat,
+                longitude = lng,
+                altitudeMeters = 0.0,
+            ),
+        )
+    }
+
+    private suspend fun insertActivityInterval(
+        walkId: Long,
+        startTimestamp: Long,
+        endTimestamp: Long,
+        type: ActivityType,
+    ) {
+        db.activityIntervalDao().insert(
+            org.walktalkmeditate.pilgrim.data.entity.ActivityInterval(
+                walkId = walkId,
+                startTimestamp = startTimestamp,
+                endTimestamp = endTimestamp,
+                activityType = type,
             ),
         )
     }
