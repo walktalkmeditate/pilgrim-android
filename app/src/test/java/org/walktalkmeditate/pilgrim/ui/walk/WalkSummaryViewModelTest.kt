@@ -45,6 +45,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
+import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -908,6 +909,27 @@ class WalkSummaryViewModelTest {
 
         assertEquals(1, loaded.summary.meditationIntervals.size)
         assertEquals(ActivityType.MEDITATING, loaded.summary.meditationIntervals[0].activityType)
+    }
+
+    @Test
+    fun walkAnnotations_populated_includesStartEndMeditationVoice() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
+        insertRouteSample(walkId, t = 30_000L, lat = 2.0, lng = 2.0)
+        insertRouteSample(walkId, t = 60_000L, lat = 3.0, lng = 3.0)
+        insertActivityInterval(walkId, startTimestamp = 28_000L, endTimestamp = 32_000L,
+            type = ActivityType.MEDITATING)
+        insertVoiceRecording(walkId, startOffset = 55_000L, durationMillis = 5_000L)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        val annotations = loaded.summary.walkAnnotations
+        assertEquals(4, annotations.size)
+        assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.StartPoint })
+        assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.EndPoint })
+        assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.Meditation })
+        assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.VoiceRecording })
     }
 
     private suspend fun createFinishedWalk(

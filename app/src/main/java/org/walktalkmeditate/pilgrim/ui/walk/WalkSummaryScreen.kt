@@ -50,6 +50,7 @@ import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
+import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.ui.walk.share.JourneyRowState
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -65,10 +66,13 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_FADE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
+import org.walktalkmeditate.pilgrim.ui.walk.summary.computeBoundsForTimeRange
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkActivityInsightsCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkActivityListCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkActivityTimelineCard
@@ -127,6 +131,9 @@ fun WalkSummaryScreen(
     // re-entering the SAME walk via back-nav also replays (matches iOS).
     val loadedWalkId = (state as? WalkSummaryUiState.Loaded)?.summary?.walk?.id
     var revealPhase by remember(loadedWalkId) { mutableStateOf(RevealPhase.Hidden) }
+    var zoomTargetBounds by remember(loadedWalkId) {
+        mutableStateOf<MapCameraBounds?>(null)
+    }
     val reduceMotion = remember {
         android.provider.Settings.Global.getFloat(
             context.contentResolver,
@@ -244,6 +251,11 @@ fun WalkSummaryScreen(
                             talking = pilgrimColors.rust,
                             meditating = pilgrimColors.dawn,
                         )
+                        val walkAnnotationColors = WalkAnnotationColors(
+                            startEnd = pilgrimColors.stone,
+                            meditation = pilgrimColors.dawn,
+                            voice = pilgrimColors.rust,
+                        )
 
                         // 1. Map — Stage 13-B bumps height to 320dp + adds the
                         // radial-gradient circular mask + plumbs the reveal
@@ -254,6 +266,9 @@ fun WalkSummaryScreen(
                             revealPhase = revealPhase,
                             segmentColors = segmentColors,
                             reduceMotion = reduceMotion,
+                            walkAnnotations = s.summary.walkAnnotations,
+                            walkAnnotationColors = walkAnnotationColors,
+                            zoomTargetBounds = zoomTargetBounds,
                         )
                         Spacer(Modifier.height(PilgrimSpacing.normal))
 
@@ -353,6 +368,14 @@ fun WalkSummaryScreen(
                                     activityIntervals = s.summary.meditationIntervals,
                                     routeSamples = s.summary.routeSamples,
                                     units = distanceUnits,
+                                    onSegmentSelected = { startMs, endMs ->
+                                        zoomTargetBounds = computeBoundsForTimeRange(
+                                            samples = s.summary.routeSamples,
+                                            startMs = startMs,
+                                            endMs = endMs,
+                                        )
+                                    },
+                                    onSegmentDeselected = { zoomTargetBounds = null },
                                 )
 
                                 // 14. Activity insights (Stage 13-C)
@@ -519,6 +542,9 @@ private fun SummaryMap(
     revealPhase: RevealPhase,
     segmentColors: RouteSegmentColors,
     reduceMotion: Boolean,
+    walkAnnotations: List<WalkMapAnnotation>,
+    walkAnnotationColors: WalkAnnotationColors,
+    zoomTargetBounds: MapCameraBounds?,
 ) {
     Card(
         modifier = Modifier
@@ -563,6 +589,9 @@ private fun SummaryMap(
                 reduceMotion = reduceMotion,
                 followLatest = false,
                 modifier = Modifier.fillMaxSize(),
+                walkAnnotations = walkAnnotations,
+                walkAnnotationColors = walkAnnotationColors,
+                zoomTargetBounds = zoomTargetBounds,
             )
         }
     }

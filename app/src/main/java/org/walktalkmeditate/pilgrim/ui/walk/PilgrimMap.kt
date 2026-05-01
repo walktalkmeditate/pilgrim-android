@@ -12,11 +12,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.util.Log
 import com.mapbox.geojson.Point
 import kotlinx.coroutines.delay
@@ -41,10 +45,15 @@ import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
+import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
+import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SEGMENT_ZOOM_EASE_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
 
 /**
  * Mapbox-backed map showing the walk's route polyline. Style follows
@@ -69,6 +78,9 @@ internal fun PilgrimMap(
     segmentColors: RouteSegmentColors? = null,
     revealPhase: RevealPhase? = null,
     reduceMotion: Boolean = false,
+    walkAnnotations: List<WalkMapAnnotation> = emptyList(),
+    walkAnnotationColors: WalkAnnotationColors? = null,
+    zoomTargetBounds: MapCameraBounds? = null,
 ) {
     val darkMode = isSystemInDarkTheme()
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -94,6 +106,36 @@ internal fun PilgrimMap(
     var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
     val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
+    // Snapshot of the waypoint list that produced the current pin set, so
+    // recomposition triggers that don't change waypoints (e.g. Stage 13-D's
+    // segment-tap zoom changes `zoomTargetBounds` → re-fires the update
+    // lambda) skip the wholesale delete-and-recreate. Same gate pattern as
+    // `renderedSegments` / `renderedWalkAnnotationsKey` below.
+    var renderedWaypoints by remember {
+        mutableStateOf<List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>?>(null)
+    }
+    // Stage 13-D annotation pins (start/end + meditation + voice). Same
+    // snapshot-rebuild pattern as `renderedSegments` above: the update
+    // lambda re-runs on every revealPhase / zoomTargetBounds tick, but we
+    // only want to delete + recreate when the annotation set or its
+    // theme-resolved colors actually change. Without the gate the pins
+    // would visibly flicker every time the user taps a timeline segment.
+    var annotationManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    var renderedWalkAnnotations by remember {
+        mutableStateOf<List<PointAnnotation>>(emptyList())
+    }
+    var renderedWalkAnnotationsKey by remember {
+        mutableStateOf<Pair<List<WalkMapAnnotation>, WalkAnnotationColors?>?>(null)
+    }
+    val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
+        walkAnnotationColors?.let { colors ->
+            mapOf(
+                "startEnd" to createCircleBitmap(colors.startEnd, darkMode),
+                "meditation" to createCircleBitmap(colors.meditation, darkMode),
+                "voice" to createCircleBitmap(colors.voice, darkMode),
+            )
+        }
+    }
     var didFitBounds by remember { mutableStateOf(false) }
     // One-shot: set the camera to [initialCenter] exactly once, on
     // whichever composition first has a non-null center AND points is
@@ -127,7 +169,7 @@ internal fun PilgrimMap(
     //
     // The style-load LaunchedEffect below owns annotation-manager lifecycle;
     // this one only touches camera state.
-    LaunchedEffect(mapView, revealPhase, points.firstOrNull(), reduceMotion) {
+    LaunchedEffect(mapView, revealPhase, points.firstOrNull(), reduceMotion, zoomTargetBounds) {
         if (revealPhase == null) return@LaunchedEffect
         val view = mapView ?: return@LaunchedEffect
         when (revealPhase) {
@@ -142,26 +184,32 @@ internal fun PilgrimMap(
                 )
             }
             RevealPhase.Revealed -> {
-                if (points.size < 2) return@LaunchedEffect
-                val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
-                val camera = view.mapboxMap.cameraForCoordinates(
-                    mapboxPoints,
-                    CameraOptions.Builder().build(),
-                    EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
-                    null,
-                    null,
-                )
-                val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
-                val target = camera.toBuilder().zoom(clampedZoom).build()
-                // Reduce-motion: snap straight to fit-bounds. iOS bypasses the
-                // 2.5s ease entirely under accessibilityReduceMotion; mirror
-                // here via setCamera in place of easeTo.
+                // Stage 13-D: when a timeline-bar segment is selected the
+                // screen feeds us `zoomTargetBounds` covering that
+                // segment's GPS samples; ease there at 350ms instead of
+                // the full 2.5s reveal. Deselect snaps `zoomTargetBounds`
+                // back to null and we re-key into the original fit-bounds
+                // path below.
+                val target = if (zoomTargetBounds != null) {
+                    cameraOptionsForBounds(view, zoomTargetBounds, paddingPx)
+                } else {
+                    if (points.size < 2) return@LaunchedEffect
+                    cameraOptionsForFitBounds(view, points, paddingPx)
+                }
+                val duration = if (zoomTargetBounds != null) {
+                    SEGMENT_ZOOM_EASE_MS
+                } else {
+                    REVEAL_CAMERA_EASE_MS
+                }
+                // Reduce-motion: snap straight to the target. iOS bypasses
+                // the camera ease entirely under accessibilityReduceMotion;
+                // mirror here via setCamera in place of easeTo.
                 if (reduceMotion) {
                     view.mapboxMap.setCamera(target)
                 } else {
                     view.mapboxMap.easeTo(
                         target,
-                        MapAnimationOptions.Builder().duration(REVEAL_CAMERA_EASE_MS).build(),
+                        MapAnimationOptions.Builder().duration(duration).build(),
                     )
                 }
             }
@@ -179,9 +227,15 @@ internal fun PilgrimMap(
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
+        renderedWaypoints = null
+        annotationManager?.let { view.annotations.removeAnnotationManager(it) }
+        annotationManager = null
+        renderedWalkAnnotations = emptyList()
+        renderedWalkAnnotationsKey = null
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
+            annotationManager = view.annotations.createPointAnnotationManager()
             // Show Mapbox's built-in "you are here" puck on the Active
             // Walk map only. The summary map is a post-hoc review; a live
             // puck there would be out of place. The default 2D puck uses
@@ -391,11 +445,15 @@ internal fun PilgrimMap(
                 }
             }
             // Sync waypoint annotations: delete existing pins and re-create
-            // for the current list. The list is short (typically <30 per
-            // walk) so wholesale replace is cheaper than diffing — and
-            // simpler than tracking row identity across recompositions.
+            // for the current list. Snapshot-rebuild gate skips the
+            // delete-and-recreate when waypoints haven't actually changed
+            // (the update lambda re-fires on Stage 13-D's segment-tap
+            // zoomTargetBounds change; without the gate, every tap would
+            // flicker every waypoint pin). The list is short (typically
+            // <30 per walk) so wholesale replace remains cheaper than
+            // diffing on actual change.
             val pointMgr = waypointManager
-            if (pointMgr != null) {
+            if (pointMgr != null && renderedWaypoints != waypoints) {
                 if (waypointAnnotations.isNotEmpty()) {
                     waypointAnnotations.forEach { pointMgr.delete(it) }
                 }
@@ -405,6 +463,40 @@ internal fun PilgrimMap(
                             .withPoint(Point.fromLngLat(wp.longitude, wp.latitude))
                             .withIconImage(waypointBitmap),
                     )
+                }
+                renderedWaypoints = waypoints
+            }
+            // Stage 13-D walk-summary annotations (start/end + meditation
+            // + voice). Snapshot-rebuild gate keyed on the (annotations,
+            // colors) pair so revealPhase / zoomTargetBounds re-fires of
+            // the update lambda don't tear the pins down. Legacy callers
+            // (Active Walk, Walk Share) pass empty annotations and skip
+            // this block entirely.
+            val annoMgr = annotationManager
+            val bitmaps = annotationBitmaps
+            if (annoMgr != null && walkAnnotations.isNotEmpty() && bitmaps != null) {
+                val key = walkAnnotations to walkAnnotationColors
+                if (renderedWalkAnnotationsKey != key) {
+                    if (renderedWalkAnnotations.isNotEmpty()) {
+                        renderedWalkAnnotations.forEach { annoMgr.delete(it) }
+                    }
+                    renderedWalkAnnotations = walkAnnotations.map { ann ->
+                        val bitmap = when (ann.kind) {
+                            WalkMapAnnotationKind.StartPoint,
+                            WalkMapAnnotationKind.EndPoint ->
+                                bitmaps.getValue("startEnd")
+                            is WalkMapAnnotationKind.Meditation ->
+                                bitmaps.getValue("meditation")
+                            is WalkMapAnnotationKind.VoiceRecording ->
+                                bitmaps.getValue("voice")
+                        }
+                        annoMgr.create(
+                            PointAnnotationOptions()
+                                .withPoint(Point.fromLngLat(ann.longitude, ann.latitude))
+                                .withIconImage(bitmap),
+                        )
+                    }
+                    renderedWalkAnnotationsKey = key
                 }
             }
         },
@@ -430,6 +522,10 @@ internal fun PilgrimMap(
                 renderedSegmentColors = null
                 waypointManager = null
                 waypointAnnotations = emptyList()
+                renderedWaypoints = null
+                annotationManager = null
+                renderedWalkAnnotations = emptyList()
+                renderedWalkAnnotationsKey = null
             }
         },
     )
@@ -473,6 +569,89 @@ private fun createWaypointBitmap(darkMode: Boolean): android.graphics.Bitmap {
     canvas.drawCircle(cx, cy, radius, fill)
     canvas.drawCircle(cx, cy, radius, stroke)
     return bitmap
+}
+
+/**
+ * Generate a parchment-stroked circle bitmap in the given fill color.
+ * Same shape as [createWaypointBitmap] but the fill is theme-resolved
+ * by the caller (start/end → stone, meditation → dawn, voice → rust).
+ * Reused across all annotations of the same kind in a walk via
+ * `remember(walkAnnotationColors, darkMode)`.
+ */
+private fun createCircleBitmap(color: Color, darkMode: Boolean): Bitmap {
+    val size = WAYPOINT_BITMAP_SIZE_PX
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val cx = size / 2f
+    val cy = size / 2f
+    val strokeWidth = size * 0.08f
+    // Parchment hex-pair matches `createWaypointBitmap` — keep in sync
+    // if the palette ever shifts. Compose ColorScheme isn't reachable
+    // from this raw Bitmap helper.
+    val parchment = if (darkMode) 0xFF1A1814.toInt() else 0xFFF5F0E6.toInt()
+    val fill = Paint().apply {
+        isAntiAlias = true
+        this.color = color.toArgb()
+        style = Paint.Style.FILL
+    }
+    val stroke = Paint().apply {
+        isAntiAlias = true
+        this.color = parchment
+        style = Paint.Style.STROKE
+        this.strokeWidth = strokeWidth
+    }
+    val radius = (size / 2f) - strokeWidth
+    canvas.drawCircle(cx, cy, radius, fill)
+    canvas.drawCircle(cx, cy, radius, stroke)
+    return bitmap
+}
+
+/**
+ * Fit the camera to a [MapCameraBounds] rectangle with uniform
+ * `paddingPx` insets on every edge, clamped to [MAX_FIT_ZOOM]. Used
+ * by the segment-tap zoom path (Stage 13-D); kept zoom-clamp parity
+ * with [cameraOptionsForFitBounds] so a tap on a tiny segment doesn't
+ * dive past street level.
+ */
+private fun cameraOptionsForBounds(
+    view: MapView,
+    bounds: MapCameraBounds,
+    paddingPx: Double,
+): CameraOptions {
+    val sw = Point.fromLngLat(bounds.swLng, bounds.swLat)
+    val ne = Point.fromLngLat(bounds.neLng, bounds.neLat)
+    val camera = view.mapboxMap.cameraForCoordinates(
+        listOf(sw, ne),
+        CameraOptions.Builder().build(),
+        EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
+        null,
+        null,
+    )
+    val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
+    return camera.toBuilder().zoom(clampedZoom).build()
+}
+
+/**
+ * Fit the camera to all [points] with uniform `paddingPx` insets on
+ * every edge, clamped to [MAX_FIT_ZOOM]. Extracted from the inline
+ * Revealed-branch fit-bounds so the segment-tap branch can read the
+ * same code path.
+ */
+private fun cameraOptionsForFitBounds(
+    view: MapView,
+    points: List<LocationPoint>,
+    paddingPx: Double,
+): CameraOptions {
+    val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
+    val camera = view.mapboxMap.cameraForCoordinates(
+        mapboxPoints,
+        CameraOptions.Builder().build(),
+        EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
+        null,
+        null,
+    )
+    val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
+    return camera.toBuilder().zoom(clampedZoom).build()
 }
 
 private const val POLYLINE_WIDTH_DP = 4.0
