@@ -94,6 +94,9 @@
     <string name="summary_stat_elevation">Elevation</string>
     <string name="walk_stat_waypoints">Waypoints</string>
     <string name="summary_recordings_header">Voice notes</string>
+    <string name="summary_breakdown_walk">Walk</string>
+    <string name="summary_breakdown_talk">Talk</string>
+    <string name="summary_breakdown_meditate">Meditate</string>
     <string name="transcription_pending">Transcribing\u2026</string>
     <string name="recording_play">Play</string>
     <string name="recording_pause">Pause</string>
