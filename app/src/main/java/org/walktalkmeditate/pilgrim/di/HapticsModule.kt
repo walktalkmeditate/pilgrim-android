@@ -33,7 +33,13 @@ object HapticsModule {
     @Singleton
     fun provideVibrator(@ApplicationContext context: Context): Vibrator =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            // Safe-cast for symmetry with the pre-API-31 path. Stripped-down
+            // ROMs (Chromebook ARC++, certain Android Auto receivers, AOSP
+            // virtual devices) can return null from `getSystemService` even
+            // for documented services. A raw `as VibratorManager` would
+            // KotlinNPE during Hilt construction.
+            val manager = (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
+                ?: error("VIBRATOR_MANAGER_SERVICE unavailable on this device")
             manager.defaultVibrator
         } else {
             // Safe-cast on the deprecated path: on rare device classes

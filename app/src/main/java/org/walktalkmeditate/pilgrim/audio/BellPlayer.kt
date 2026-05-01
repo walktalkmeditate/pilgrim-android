@@ -71,9 +71,13 @@ class BellPlayer @Inject constructor(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override fun play() = playInternal(scale = 1.0f)
+    override fun play() {
+        playInternal(scale = 1.0f)
+    }
 
-    override fun play(scale: Float) = playInternal(scale = scale)
+    override fun play(scale: Float) {
+        playInternal(scale = scale)
+    }
 
     /**
      * iOS-faithful bell + haptic. iOS fires `.medium` impact haptic
@@ -92,13 +96,27 @@ class BellPlayer @Inject constructor(
      * Stage 12-C: see Item C of `2026-04-30-stage-12-…-design.md`.
      */
     override fun play(scale: Float, withHaptic: Boolean) {
-        playInternal(scale = scale)
-        if (withHaptic && soundsPreferences.bellHapticEnabled.value) {
+        // Audio-success gate matches iOS BellPlayer.swift:21-35: iOS only
+        // fires the haptic AFTER `p.play()` succeeds; if AVAudioPlayer
+        // throws (focus denied, file missing, other-app holding exclusive
+        // audio), control jumps to the catch and the haptic skips.
+        // Without this gate Android emits a "phantom haptic" with no
+        // audio when focus is denied (e.g. user is on a phone call).
+        val audioStarted = playInternal(scale = scale)
+        if (audioStarted && withHaptic && soundsPreferences.bellHapticEnabled.value) {
             fireMediumImpact()
         }
     }
 
-    private fun playInternal(scale: Float) {
+    /**
+     * Returns `true` only when [MediaPlayer.start] returned successfully.
+     * Used by [play] (scale, withHaptic) to gate the haptic on audio
+     * success — iOS `BellPlayer.swift:21-35` only fires haptic AFTER
+     * `p.play()` succeeds; if the AVAudioPlayer throws, the haptic
+     * skips. Without this gate Android would emit a "phantom haptic"
+     * when audio focus is denied (e.g. user is on a phone call).
+     */
+    private fun playInternal(scale: Float): Boolean {
         val bellAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -186,7 +204,7 @@ class BellPlayer @Inject constructor(
             // rejected) focus request and short-circuits via the
             // cleanedUp guard if the listener happened to race here.
             cleanup()
-            return
+            return false
         }
 
         // Build MediaPlayer manually so `setAudioAttributes` runs
@@ -210,7 +228,7 @@ class BellPlayer @Inject constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "MediaPlayer release after racing cleanup failed", t)
             }
-            return
+            return false
         }
 
         try {
@@ -218,7 +236,7 @@ class BellPlayer @Inject constructor(
             val afd = context.resources.openRawResourceFd(R.raw.bell) ?: run {
                 Log.w(TAG, "bell resource file descriptor null")
                 cleanup()
-                return
+                return false
             }
             afd.use {
                 player.setDataSource(it.fileDescriptor, it.startOffset, it.length)
@@ -227,7 +245,7 @@ class BellPlayer @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer setup failed", t)
             cleanup()
-            return
+            return false
         }
 
         // Second re-check: focus revoke can fire any time during the
@@ -240,7 +258,7 @@ class BellPlayer @Inject constructor(
         // would throw IllegalStateException, caught below, but the
         // listener+handler wiring would briefly pin a released-player
         // reference. Cheaper to bail here.
-        if (cleanedUp.get()) return
+        if (cleanedUp.get()) return false
 
         // Per-play safety-net runnable captured by reference so
         // `cleanup` can remove it and avoid a stale firing after
@@ -267,7 +285,7 @@ class BellPlayer @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer listener wiring failed", t)
             cleanup()
-            return
+            return false
         }
 
         // Apply user's bellVolume preference (Eagerly StateFlow — `.value`
@@ -298,11 +316,13 @@ class BellPlayer @Inject constructor(
             // volume. Continue to start().
         }
 
-        try {
+        return try {
             player.start()
+            true
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer start failed", t)
             cleanup()
+            false
         }
     }
 

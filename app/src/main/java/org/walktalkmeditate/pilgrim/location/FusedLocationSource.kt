@@ -152,6 +152,17 @@ class FusedLocationSource @Inject constructor(
      */
     private fun meetsAccuracyGate(point: LocationPoint): Boolean {
         val accuracy = point.horizontalAccuracyMeters ?: return false
+        // Both gates evaluated for forward compatibility — today
+        // `<= 20f` strictly implies `< 100f`, so HARD_CEILING is dead
+        // code. iOS exposes a user-facing GPS Accuracy preference
+        // (Off / Standard / N m) that can raise `desiredAccuracy` above
+        // 20m; on iOS "Standard" with auto-tuning, desiredAccuracy can
+        // float up to (but never above) 20m, while a manual user pick
+        // can set it higher (e.g. 50m), at which point HARD_CEILING
+        // becomes the binding gate. Stage 12-B ships fixed 20m
+        // (no Settings UI, no auto-tuner — both deferred per spec
+        // Out-of-scope). Keep the AND so the future configurability
+        // stage doesn't have to revisit this method.
         return accuracy < HARD_CEILING_METERS && accuracy <= DESIRED_ACCURACY_METERS
     }
 
@@ -159,7 +170,12 @@ class FusedLocationSource @Inject constructor(
         const val TAG = "FusedLocationSource"
         const val UPDATE_INTERVAL_MS = 2_000L
         const val MIN_UPDATE_INTERVAL_MS = 1_000L
-        /** iOS hard ceiling: any horizontalAccuracy >= 100m is rejected. */
+        /**
+         * iOS hard ceiling: any horizontalAccuracy >= 100m is rejected.
+         * Currently dead code given DESIRED_ACCURACY = 20m, but kept
+         * for forward parity with iOS's Settings → GPS Accuracy
+         * preference (deferred Stage).
+         */
         const val HARD_CEILING_METERS = 100f
         /** iOS default `desiredAccuracy` when the user hasn't set GPS Accuracy preference. */
         const val DESIRED_ACCURACY_METERS = 20f

@@ -136,7 +136,14 @@ class OpenMeteoClient @Inject constructor(
             2 -> WeatherCondition.PARTLY_CLOUDY
             3 -> WeatherCondition.OVERCAST
             45, 48 -> WeatherCondition.FOG
-            51, 53, 55, 56, 57 -> WeatherCondition.LIGHT_RAIN
+            // Drizzle 51/53/55 — iOS `case .drizzle: .lightRain` (no wind check)
+            51, 53, 55 -> WeatherCondition.LIGHT_RAIN
+            // Freezing drizzle 56/57 — iOS WeatherService.swift:132 lumps
+            // `.freezingDrizzle` into `.snow` alongside `.freezingRain`,
+            // `.sleet`, etc. (all sub-zero precipitation). Match exactly
+            // so cross-platform `.pilgrim` import doesn't display the
+            // wrong icon for the same weather event.
+            56, 57 -> WeatherCondition.SNOW
             61, 63, 65, 80, 81, 82 ->
                 if (windSpeedMs > 5.0) WeatherCondition.HEAVY_RAIN
                 else WeatherCondition.LIGHT_RAIN

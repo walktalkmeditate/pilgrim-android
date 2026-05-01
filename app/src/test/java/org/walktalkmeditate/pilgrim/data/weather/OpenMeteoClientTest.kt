@@ -169,6 +169,8 @@ class OpenMeteoClientTest {
     @Test
     fun drizzleSkipsWindCheck() = runTest {
         // Drizzle codes 51/53/55 stay LIGHT_RAIN even at wind 6 m/s.
+        // Freezing drizzle 56/57 maps to SNOW per iOS lump (verified
+        // separately in `freezingDrizzleMapsToSnow`).
         listOf(51, 53, 55).forEach { code ->
             server.enqueue(
                 MockResponse().setBody(
@@ -178,6 +180,26 @@ class OpenMeteoClientTest {
             assertEquals(
                 "drizzle code $code never wind-checked",
                 WeatherCondition.LIGHT_RAIN,
+                client.fetchInternal(baseUrl, 0.0, 0.0)?.condition,
+            )
+        }
+    }
+
+    @Test
+    fun freezingDrizzleMapsToSnow() = runTest {
+        // iOS WeatherService.swift:132 lumps `.freezingDrizzle` into
+        // `.snow` alongside `.freezingRain`, `.sleet`, `.flurries`,
+        // `.blizzard`, `.heavySnow`, `.blowingSnow`, `.wintryMix`.
+        // WMO 56/57 (freezing drizzle light/dense) must match.
+        listOf(56, 57).forEach { code ->
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"current":{"temperature_2m":-2.0,"weather_code":$code,"wind_speed_10m":3.0}}"""
+                )
+            )
+            assertEquals(
+                "freezing drizzle code $code → SNOW (iOS lumps freezingDrizzle)",
+                WeatherCondition.SNOW,
                 client.fetchInternal(baseUrl, 0.0, 0.0)?.condition,
             )
         }
