@@ -16,6 +16,7 @@ import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -648,11 +649,20 @@ class WalkSummaryViewModel @Inject constructor(
         // talking / meditating) and group into contiguous segments for
         // the segment-tinted polyline. Pure function — see
         // [computeRouteSegments] for the priority rules.
-        val routeSegments = computeRouteSegments(
-            samples = samples,
-            intervals = activityIntervals,
-            recordings = voiceRecordings,
-        )
+        //
+        // Hopped to Dispatchers.Default because `buildState()` runs on
+        // viewModelScope's Main dispatcher (SharingStarted.Eagerly).
+        // Worst-case 90-min walk @ 1Hz GPS + 100 voice recordings is
+        // ~5400 samples × ~120 predicate evals = ~640K compares — tens
+        // of ms on mid-range hardware, enough to trip ANR thresholds
+        // when stacked with the other Main-thread work in this build.
+        val routeSegments = withContext(Dispatchers.Default) {
+            computeRouteSegments(
+                samples = samples,
+                intervals = activityIntervals,
+                recordings = voiceRecordings,
+            )
+        }
 
         val talkMillis = voiceRecordings.sumOf { it.durationMillis }
         // Stage 13-A: paused-excluded, meditation-included. Mirrors the
