@@ -427,6 +427,101 @@ class PilgrimPackageConverterTest {
     }
 
     @Test
+    fun `convert emits weather when walk has it`() {
+        val walk = Walk(
+            id = 1,
+            uuid = UUID.randomUUID().toString(),
+            startTimestamp = 1_000,
+            endTimestamp = 100_000,
+            weatherCondition = "rain",
+            weatherTemperature = 12.5,
+            weatherHumidity = 88.0,
+            weatherWindSpeed = 4.2,
+        )
+        val bundle = emptyBundle().copy(walk = walk)
+        val exported = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        val weather = exported.weather
+        assertTrue("expected non-null weather", weather != null)
+        assertEquals("rain", weather!!.condition)
+        assertEquals(12.5, weather.temperature, 0.0001)
+        assertEquals(88.0, weather.humidity!!, 0.0001)
+        assertEquals(4.2, weather.windSpeed!!, 0.0001)
+    }
+
+    @Test
+    fun `convert omits weather when columns are null`() {
+        val bundle = emptyBundle()
+        val exported = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertNull(exported.weather)
+    }
+
+    @Test
+    fun `convert omits weather when only condition is set without temperature`() {
+        // Defensive — PilgrimWeather requires both fields, partial
+        // captures should round-trip through Walk's nullable cols
+        // but never fabricate a half-populated weather payload.
+        val walk = Walk(
+            id = 1,
+            uuid = UUID.randomUUID().toString(),
+            startTimestamp = 1_000,
+            endTimestamp = 100_000,
+            weatherCondition = "rain",
+            weatherTemperature = null,
+        )
+        val bundle = emptyBundle().copy(walk = walk)
+        val exported = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertNull(exported.weather)
+    }
+
+    @Test
+    fun `convertToImport propagates weather to walk`() {
+        val pilgrimWalk = synthesizePilgrimWalk().copy(
+            weather = org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWeather(
+                condition = "snow",
+                temperature = -3.4,
+                humidity = 92.0,
+                windSpeed = 6.1,
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals("snow", pending.walk.weatherCondition)
+        assertEquals(-3.4, pending.walk.weatherTemperature!!, 0.0001)
+        assertEquals(92.0, pending.walk.weatherHumidity!!, 0.0001)
+        assertEquals(6.1, pending.walk.weatherWindSpeed!!, 0.0001)
+    }
+
+    @Test
+    fun `convertToImport handles absent weather`() {
+        val pilgrimWalk = synthesizePilgrimWalk()
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertNull(pending.walk.weatherCondition)
+        assertNull(pending.walk.weatherTemperature)
+        assertNull(pending.walk.weatherHumidity)
+        assertNull(pending.walk.weatherWindSpeed)
+    }
+
+    @Test
+    fun `convert then convertToImport round-trips weather lossless`() {
+        val originalWalk = Walk(
+            id = 1,
+            uuid = UUID.randomUUID().toString(),
+            startTimestamp = 1_000,
+            endTimestamp = 100_000,
+            weatherCondition = "clear",
+            weatherTemperature = 21.0,
+            weatherHumidity = 55.5,
+            weatherWindSpeed = 2.7,
+        )
+        val bundle = emptyBundle().copy(walk = originalWalk)
+        val exported = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        val pending = PilgrimPackageConverter.convertToImport(exported)
+        assertEquals(originalWalk.weatherCondition, pending.walk.weatherCondition)
+        assertEquals(originalWalk.weatherTemperature!!, pending.walk.weatherTemperature!!, 0.0001)
+        assertEquals(originalWalk.weatherHumidity!!, pending.walk.weatherHumidity!!, 0.0001)
+        assertEquals(originalWalk.weatherWindSpeed!!, pending.walk.weatherWindSpeed!!, 0.0001)
+    }
+
+    @Test
     fun `convertToImport meditation activity maps to MEDITATING domain enum`() {
         val pilgrimWalk = synthesizePilgrimWalk(
             activities = listOf(

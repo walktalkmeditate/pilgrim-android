@@ -22,6 +22,13 @@
          via ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. Justified by our
          foreground-service-with-ongoing-notification location tracking. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Stage 12-C: bell-coupled haptic. BellPlayer.fireMediumImpact uses
+         VibrationEffect.Composition (API 30+) or createOneShot fallback;
+         Vibrator.vibrate requires this permission. Without it, calls
+         throw SecurityException — wrapped in try/catch in BellPlayer
+         so the audio still plays, but haptic silently fails on every
+         device. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Mapbox tile downloads. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

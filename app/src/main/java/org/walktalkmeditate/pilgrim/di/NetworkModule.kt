@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.TimeUnit
+import javax.inject.Qualifier
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,8 @@ import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuidePromptBaseUrl
+import org.walktalkmeditate.pilgrim.data.weather.OpenMeteoClient
+import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 
 /**
  * First-introduction HTTP + JSON infrastructure for Stage 5-C. The
@@ -117,7 +120,53 @@ object NetworkModule {
     fun provideAudioManifestScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /**
+     * Stage 12-A: dedicated OkHttpClient for Open-Meteo current-weather
+     * fetches. Tighter timeouts than the project default
+     * ([provideOkHttpClient]) because this is on the walk-start
+     * critical path — a slow weather fetch must NOT block the user
+     * starting their walk. `retryOnConnectionFailure = true` is
+     * OkHttp's default, restated here so the policy is explicit and
+     * survives any future builder reshuffle.
+     */
+    @Provides
+    @Singleton
+    @WeatherHttpClient
+    fun provideWeatherHttpClient(): OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(WEATHER_CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .readTimeout(WEATHER_READ_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .callTimeout(WEATHER_CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 30L
     private const val CALL_TIMEOUT_SEC = 45L
+
+    private const val WEATHER_CONNECT_TIMEOUT_SEC = 5L
+    private const val WEATHER_READ_TIMEOUT_SEC = 5L
+    private const val WEATHER_CALL_TIMEOUT_SEC = 10L
+
+    /**
+     * Stage 12-A: weather seam consumed by [WalkViewModel]'s `+2s` /
+     * `+10s` retry policy. Production binding is [OpenMeteoClient];
+     * tests substitute a fake. Same `@Provides`-style binding as the
+     * Stage 11 `provideMilestoneStorage` / `provideMilestoneChecking`
+     * seams in `CollectiveModule` so this `object` module stays
+     * uniform without converting to an `abstract class`.
+     */
+    @Provides
+    @Singleton
+    fun provideWeatherFetching(impl: OpenMeteoClient): WeatherFetching = impl
 }
+
+/**
+ * Stage 12-A qualifier for the Open-Meteo OkHttpClient. Lives at
+ * file-level so [NetworkModule.provideWeatherHttpClient] and
+ * `OpenMeteoClient` (in `data/weather/`) can share the annotation
+ * without a circular import.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class WeatherHttpClient

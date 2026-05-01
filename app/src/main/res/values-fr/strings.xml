@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Stage 12-D: stub second locale verifying the values-XX/ resource
+         resolution path. ALL other strings fall back to values/strings.xml
+         (default English) — Android's standard behavior. When real
+         translations land, this file gains real fr-FR translations
+         alongside the existing English defaults in values/. -->
+    <string name="locale_resolution_marker">fr</string>
+</resources>

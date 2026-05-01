@@ -250,7 +250,14 @@ class SettingsViewModel @Inject constructor(
         // if their `bellVolume` slider is non-zero (the slider is the
         // mix-level when sounds are on, not the master mute).
         if (!soundsPreferences.soundsEnabled.value) return
-        bellPlayer.play(scale = MILESTONE_BELL_SCALE)
+        // Stage 12-C: `withHaptic = true` matches iOS exactly. iOS
+        // BellPlayer.swift:14 `func play(_ asset: AudioAsset, volume:
+        // Float = 0.7, withHaptic: Bool = true)` — the milestone caller
+        // at PracticeSummaryHeader.swift:92 calls `play(asset, volume:
+        // 0.4)` WITHOUT overriding `withHaptic`, so the default fires.
+        // Audit-explicit `true` here so the iOS-parity decision is
+        // visible at the call site.
+        bellPlayer.play(scale = MILESTONE_BELL_SCALE, withHaptic = true)
     }
 
     /**

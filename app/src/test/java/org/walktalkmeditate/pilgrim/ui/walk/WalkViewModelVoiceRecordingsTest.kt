@@ -85,6 +85,7 @@ class WalkViewModelVoiceRecordingsTest {
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.weather.FakeWeatherFetching(),
         )
     }
 

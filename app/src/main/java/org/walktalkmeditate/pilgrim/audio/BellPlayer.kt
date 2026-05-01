@@ -6,8 +6,11 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -63,15 +66,57 @@ class BellPlayer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val audioManager: AudioManager,
     private val soundsPreferences: SoundsPreferencesRepository,
+    private val vibrator: Vibrator,
 ) : BellPlaying {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override fun play() = playInternal(scale = 1.0f)
+    override fun play() {
+        playInternal(scale = 1.0f)
+    }
 
-    override fun play(scale: Float) = playInternal(scale = scale)
+    override fun play(scale: Float) {
+        playInternal(scale = scale)
+    }
 
-    private fun playInternal(scale: Float) {
+    /**
+     * iOS-faithful bell + haptic. iOS fires `.medium` impact haptic
+     * AFTER the bell audio starts (BellPlayer.swift:26,30). Mirrored
+     * here by calling [playInternal] (which ends with `MediaPlayer.start()`)
+     * and only THEN firing the haptic.
+     *
+     * The haptic is gated on:
+     *  1. Caller intent: [withHaptic] must be `true`. Sites that
+     *     deliberately don't want haptic (milestone overlay) opt out
+     *     by passing `withHaptic = false`.
+     *  2. User preference: [SoundsPreferencesRepository.bellHapticEnabled].
+     *     Even when the caller asks for haptic, a user who has flipped
+     *     the bell-haptic toggle off stays haptic-silent.
+     *
+     * Stage 12-C: see Item C of `2026-04-30-stage-12-…-design.md`.
+     */
+    override fun play(scale: Float, withHaptic: Boolean) {
+        // Audio-success gate matches iOS BellPlayer.swift:21-35: iOS only
+        // fires the haptic AFTER `p.play()` succeeds; if AVAudioPlayer
+        // throws (focus denied, file missing, other-app holding exclusive
+        // audio), control jumps to the catch and the haptic skips.
+        // Without this gate Android emits a "phantom haptic" with no
+        // audio when focus is denied (e.g. user is on a phone call).
+        val audioStarted = playInternal(scale = scale)
+        if (audioStarted && withHaptic && soundsPreferences.bellHapticEnabled.value) {
+            fireMediumImpact()
+        }
+    }
+
+    /**
+     * Returns `true` only when [MediaPlayer.start] returned successfully.
+     * Used by [play] (scale, withHaptic) to gate the haptic on audio
+     * success — iOS `BellPlayer.swift:21-35` only fires haptic AFTER
+     * `p.play()` succeeds; if the AVAudioPlayer throws, the haptic
+     * skips. Without this gate Android would emit a "phantom haptic"
+     * when audio focus is denied (e.g. user is on a phone call).
+     */
+    private fun playInternal(scale: Float): Boolean {
         val bellAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -159,7 +204,7 @@ class BellPlayer @Inject constructor(
             // rejected) focus request and short-circuits via the
             // cleanedUp guard if the listener happened to race here.
             cleanup()
-            return
+            return false
         }
 
         // Build MediaPlayer manually so `setAudioAttributes` runs
@@ -183,7 +228,7 @@ class BellPlayer @Inject constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "MediaPlayer release after racing cleanup failed", t)
             }
-            return
+            return false
         }
 
         try {
@@ -191,7 +236,7 @@ class BellPlayer @Inject constructor(
             val afd = context.resources.openRawResourceFd(R.raw.bell) ?: run {
                 Log.w(TAG, "bell resource file descriptor null")
                 cleanup()
-                return
+                return false
             }
             afd.use {
                 player.setDataSource(it.fileDescriptor, it.startOffset, it.length)
@@ -200,7 +245,7 @@ class BellPlayer @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer setup failed", t)
             cleanup()
-            return
+            return false
         }
 
         // Second re-check: focus revoke can fire any time during the
@@ -213,7 +258,7 @@ class BellPlayer @Inject constructor(
         // would throw IllegalStateException, caught below, but the
         // listener+handler wiring would briefly pin a released-player
         // reference. Cheaper to bail here.
-        if (cleanedUp.get()) return
+        if (cleanedUp.get()) return false
 
         // Per-play safety-net runnable captured by reference so
         // `cleanup` can remove it and avoid a stale firing after
@@ -240,7 +285,7 @@ class BellPlayer @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer listener wiring failed", t)
             cleanup()
-            return
+            return false
         }
 
         // Apply user's bellVolume preference (Eagerly StateFlow — `.value`
@@ -271,11 +316,63 @@ class BellPlayer @Inject constructor(
             // volume. Continue to start().
         }
 
-        try {
+        return try {
             player.start()
+            true
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer start failed", t)
             cleanup()
+            false
+        }
+    }
+
+    /**
+     * Mirror iOS's `.medium` impact haptic. Two-tier strategy:
+     *
+     *  1. **API 30+ (R)**: probe `areAllPrimitivesSupported(PRIMITIVE_CLICK)`.
+     *     If supported, build a single-PRIMITIVE_CLICK composition and
+     *     vibrate it — closest tactile match to iOS .medium on devices
+     *     with primitive-aware vibrators (most modern OEMs since 2021).
+     *  2. **API 28–29 (P/Q) OR API 30+ without PRIMITIVE_CLICK**: fall
+     *     through to a 30 ms `createOneShot` with `DEFAULT_AMPLITUDE`
+     *     — empirically the closest one-shot match to iOS .medium and
+     *     short enough that older actuators don't smear it.
+     *
+     * Probe + fallback both wrapped: a buggy OEM that reports
+     * `PRIMITIVE_CLICK` supported but rejects compose() at runtime
+     * silently degrades to the one-shot rather than killing the bell
+     * call. Logged at WARN so device QA can surface the failure.
+     */
+    private fun fireMediumImpact() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (vibrator.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_CLICK)) {
+                try {
+                    val composition = VibrationEffect.startComposition()
+                        .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f)
+                        .compose()
+                    vibrator.vibrate(composition)
+                    return
+                } catch (t: Throwable) {
+                    Log.w(TAG, "primitive composition failed; falling back to waveform", t)
+                }
+            }
+            fireWaveformFallback()
+        } else {
+            fireWaveformFallback()
+        }
+    }
+
+    private fun fireWaveformFallback() {
+        try {
+            // minSdk = 28; createOneShot is API 26+, so always available.
+            vibrator.vibrate(
+                VibrationEffect.createOneShot(
+                    HAPTIC_ONESHOT_MS,
+                    VibrationEffect.DEFAULT_AMPLITUDE,
+                ),
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "vibrator oneshot failed", t)
         }
     }
 
@@ -286,5 +383,9 @@ class BellPlayer @Inject constructor(
         // then, force-release so neither the MediaPlayer nor the
         // audio-focus request leaks.
         const val SAFETY_NET_MS = 5_000L
+
+        // 30 ms is short enough to feel tap-like (matches iOS .medium
+        // tactile envelope) without smearing on slow OEM actuators.
+        const val HAPTIC_ONESHOT_MS = 30L
     }
 }
