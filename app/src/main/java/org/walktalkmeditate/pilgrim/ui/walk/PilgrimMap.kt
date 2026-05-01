@@ -106,6 +106,14 @@ internal fun PilgrimMap(
     var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
     val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
+    // Snapshot of the waypoint list that produced the current pin set, so
+    // recomposition triggers that don't change waypoints (e.g. Stage 13-D's
+    // segment-tap zoom changes `zoomTargetBounds` → re-fires the update
+    // lambda) skip the wholesale delete-and-recreate. Same gate pattern as
+    // `renderedSegments` / `renderedWalkAnnotationsKey` below.
+    var renderedWaypoints by remember {
+        mutableStateOf<List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>?>(null)
+    }
     // Stage 13-D annotation pins (start/end + meditation + voice). Same
     // snapshot-rebuild pattern as `renderedSegments` above: the update
     // lambda re-runs on every revealPhase / zoomTargetBounds tick, but we
@@ -219,6 +227,7 @@ internal fun PilgrimMap(
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
+        renderedWaypoints = null
         annotationManager?.let { view.annotations.removeAnnotationManager(it) }
         annotationManager = null
         renderedWalkAnnotations = emptyList()
@@ -436,11 +445,15 @@ internal fun PilgrimMap(
                 }
             }
             // Sync waypoint annotations: delete existing pins and re-create
-            // for the current list. The list is short (typically <30 per
-            // walk) so wholesale replace is cheaper than diffing — and
-            // simpler than tracking row identity across recompositions.
+            // for the current list. Snapshot-rebuild gate skips the
+            // delete-and-recreate when waypoints haven't actually changed
+            // (the update lambda re-fires on Stage 13-D's segment-tap
+            // zoomTargetBounds change; without the gate, every tap would
+            // flicker every waypoint pin). The list is short (typically
+            // <30 per walk) so wholesale replace remains cheaper than
+            // diffing on actual change.
             val pointMgr = waypointManager
-            if (pointMgr != null) {
+            if (pointMgr != null && renderedWaypoints != waypoints) {
                 if (waypointAnnotations.isNotEmpty()) {
                     waypointAnnotations.forEach { pointMgr.delete(it) }
                 }
@@ -451,6 +464,7 @@ internal fun PilgrimMap(
                             .withIconImage(waypointBitmap),
                     )
                 }
+                renderedWaypoints = waypoints
             }
             // Stage 13-D walk-summary annotations (start/end + meditation
             // + voice). Snapshot-rebuild gate keyed on the (annotations,
@@ -508,6 +522,7 @@ internal fun PilgrimMap(
                 renderedSegmentColors = null
                 waypointManager = null
                 waypointAnnotations = emptyList()
+                renderedWaypoints = null
                 annotationManager = null
                 renderedWalkAnnotations = emptyList()
                 renderedWalkAnnotationsKey = null

@@ -12,12 +12,19 @@ import org.walktalkmeditate.pilgrim.domain.ActivityType
  * Pin marker on the post-walk map. iOS-faithful port of
  * `PilgrimAnnotation.Kind` (subset — photo / whisper / cairn pins
  * deferred to later stages).
+ *
+ * `@Immutable` on the sealed parent + each data subkind so Compose's
+ * stability inference walks the `WalkMapAnnotation.kind` field through
+ * — without it, `WalkMapAnnotation`'s own `@Immutable` annotation is a
+ * lie that would silently mask a real stability regression if a future
+ * subkind added a `List`/`Map` field. Stage 4-C / 7-C cascade lesson.
  */
+@Immutable
 sealed class WalkMapAnnotationKind {
-    data object StartPoint : WalkMapAnnotationKind()
-    data object EndPoint : WalkMapAnnotationKind()
-    data class Meditation(val durationMillis: Long) : WalkMapAnnotationKind()
-    data class VoiceRecording(val durationMillis: Long) : WalkMapAnnotationKind()
+    @Immutable data object StartPoint : WalkMapAnnotationKind()
+    @Immutable data object EndPoint : WalkMapAnnotationKind()
+    @Immutable data class Meditation(val durationMillis: Long) : WalkMapAnnotationKind()
+    @Immutable data class VoiceRecording(val durationMillis: Long) : WalkMapAnnotationKind()
 }
 
 @Immutable
