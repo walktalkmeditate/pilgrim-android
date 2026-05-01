@@ -43,6 +43,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
+import org.walktalkmeditate.pilgrim.data.walk.computeAscend
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -97,6 +98,9 @@ data class WalkSummary(
     val distanceMeters: Double,
     val paceSecondsPerKm: Double?,
     val waypointCount: Int,
+    val talkMillis: Long,
+    val activeMillis: Long,
+    val ascendMeters: Double,
     val routePoints: List<LocationPoint>,
     /**
      * Pre-built goshuin seal spec for the Stage 4-B reveal animation.
@@ -617,6 +621,22 @@ class WalkSummaryViewModel @Inject constructor(
             android.util.Log.w(TAG, "LightReading.from failed for walk $walkId", it)
         }.getOrNull()
 
+        // Stage 13-A: hoisted repo reads — `voiceRecordings` and
+        // `altitudeSamples` are consumed by both the new top-level
+        // summary fields below and the etegami-spec composition further
+        // down. The etegami runCatching block reuses these locals by
+        // name rather than re-reading the repo.
+        val voiceRecordings = repository.voiceRecordingsFor(walkId)
+        val altitudeSamples = repository.altitudeSamplesFor(walkId)
+
+        val talkMillis = voiceRecordings.sumOf { it.durationMillis }
+        // Stage 13-A: paused-excluded, meditation-included. Mirrors the
+        // iOS hero stat `walk.activeDuration`. Distinct from
+        // [activeWalkingMillis] above which also excludes meditation
+        // (used by the Walk card stats).
+        val activeMillis = (totalElapsed - totals.totalPausedMillis).coerceAtLeast(0L)
+        val ascendMeters = computeAscend(altitudeSamples)
+
         // Stage 7-C: compose the etegami spec. Pulls altitude samples
         // + activity intervals + voice recordings from the repo to
         // assemble elevation gain + activity markers. Sealed behind
@@ -635,9 +655,7 @@ class WalkSummaryViewModel @Inject constructor(
         // currently span. Defer to the future "live re-render of
         // generated artifacts" stage that also handles the seal.
         val etegamiSpec = runCatching {
-            val altitudeSamples = repository.altitudeSamplesFor(walkId)
             val activityIntervals = repository.activityIntervalsFor(walkId)
-            val voiceRecordings = repository.voiceRecordingsFor(walkId)
             org.walktalkmeditate.pilgrim.ui.etegami.composeEtegamiSpec(
                 walk = walk,
                 routePoints = points,
@@ -665,6 +683,9 @@ class WalkSummaryViewModel @Inject constructor(
                 distanceMeters = distance,
                 paceSecondsPerKm = pace,
                 waypointCount = waypoints.size,
+                talkMillis = talkMillis,
+                activeMillis = activeMillis,
+                ascendMeters = ascendMeters,
                 routePoints = points,
                 sealSpec = sealSpec,
                 milestone = milestone,

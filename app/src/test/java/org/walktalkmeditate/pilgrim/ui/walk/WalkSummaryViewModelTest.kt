@@ -746,6 +746,114 @@ class WalkSummaryViewModelTest {
         }
     }
 
+    // --- Stage 13-A: hero stats (talkMillis, activeMillis, ascendMeters) ---
+
+    @Test
+    fun talkMillis_sumsVoiceRecordingDurations() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertVoiceRecording(walkId, startOffset = 1_000L, durationMillis = 5_000L)
+        insertVoiceRecording(walkId, startOffset = 10_000L, durationMillis = 3_000L)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(8_000L, loaded.summary.talkMillis)
+    }
+
+    @Test
+    fun ascendMeters_sumsPositiveAltitudeDeltas() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertAltitude(walkId, 1_000L, 100.0)
+        insertAltitude(walkId, 2_000L, 110.0)
+        insertAltitude(walkId, 3_000L, 105.0)
+        insertAltitude(walkId, 4_000L, 120.0)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(25.0, loaded.summary.ascendMeters, 0.0001)
+    }
+
+    @Test
+    fun ascendMeters_zeroForFlatRoute() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertAltitude(walkId, 1_000L, 100.0)
+        insertAltitude(walkId, 2_000L, 100.0)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(0.0, loaded.summary.ascendMeters, 0.0001)
+    }
+
+    @Test
+    fun activeMillis_excludesPausedTime_includesMeditation() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(
+            durationMillis = 60_000L,
+            events = listOf(
+                // 10s paused
+                WalkEvent(walkId = 0L, timestamp = 5_000L, eventType = WalkEventType.PAUSED),
+                WalkEvent(walkId = 0L, timestamp = 15_000L, eventType = WalkEventType.RESUMED),
+                // 10s meditating
+                WalkEvent(walkId = 0L, timestamp = 30_000L, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 0L, timestamp = 40_000L, eventType = WalkEventType.MEDITATION_END),
+            ),
+        )
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        // 60s total - 10s pause = 50s active (meditation included)
+        assertEquals(50_000L, loaded.summary.activeMillis)
+    }
+
+    private suspend fun createFinishedWalk(
+        durationMillis: Long,
+        events: List<WalkEvent> = emptyList(),
+    ): Long {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        events.forEach { e ->
+            repository.recordEvent(e.copy(walkId = walk.id))
+        }
+        repository.finishWalk(walk, endTimestamp = durationMillis)
+        return walk.id
+    }
+
+    private suspend fun insertVoiceRecording(
+        walkId: Long,
+        startOffset: Long,
+        durationMillis: Long,
+    ): Long {
+        val walk = repository.getWalk(walkId)!!
+        val rec = VoiceRecording(
+            walkId = walkId,
+            startTimestamp = walk.startTimestamp + startOffset,
+            endTimestamp = walk.startTimestamp + startOffset + durationMillis,
+            durationMillis = durationMillis,
+            fileRelativePath = "recordings/${walk.uuid}/rec-$startOffset.wav",
+            transcription = null,
+        )
+        return repository.recordVoice(rec)
+    }
+
+    private suspend fun insertAltitude(walkId: Long, ts: Long, alt: Double) {
+        db.altitudeSampleDao().insert(
+            org.walktalkmeditate.pilgrim.data.entity.AltitudeSample(
+                walkId = walkId,
+                timestamp = ts,
+                altitudeMeters = alt,
+            ),
+        )
+    }
+
+    private suspend fun awaitLoaded(vm: WalkSummaryViewModel): WalkSummaryUiState.Loaded {
+        return withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(10_000L) {
+                vm.state.first { it is WalkSummaryUiState.Loaded } as WalkSummaryUiState.Loaded
+            }
+        }
+    }
+
     // UUID-suffixed so parallel test forks can't collide on file path.
     private val hemisphereStoreName: String = "walk-summary-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 }
