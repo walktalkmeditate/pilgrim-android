@@ -326,10 +326,7 @@ Expected: Only matches in `WalkSummaryScreen.kt` (the spot we're about to delete
 
 - [ ] **Step 3: Apply XML edits**
 
-Delete the line:
-```xml
-<string name="summary_title">Walk complete.</string>
-```
+(Note: `summary_title` deletion is deferred to Task 12 — its consumer in `WalkSummaryScreen.kt` is removed atomically there. Don't delete it in Task 4; just add new keys.)
 
 Add (anywhere among the existing summary keys):
 ```xml
