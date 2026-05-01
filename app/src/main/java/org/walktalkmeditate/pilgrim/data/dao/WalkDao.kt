@@ -26,6 +26,9 @@ interface WalkDao {
     @Query("UPDATE walks SET intention = :intention WHERE id = :walkId")
     suspend fun updateIntention(walkId: Long, intention: String?)
 
+    @Query("UPDATE walks SET favicon = :favicon WHERE id = :walkId")
+    suspend fun updateFavicon(walkId: Long, favicon: String?)
+
     @Query(
         "UPDATE walks SET distance_meters = :distanceMeters, " +
             "meditation_seconds = :meditationSeconds WHERE id = :id",
