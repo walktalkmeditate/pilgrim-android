@@ -90,6 +90,8 @@
     <string name="summary_quote_small_arrival">Every step, a small arrival.</string>
     <string name="summary_quote_quiet_walk">A quiet walk, a gentle return.</string>
     <string name="summary_waypoints_count">%1$d waypoint(s)</string>
+    <string name="summary_stat_distance">Distance</string>
+    <string name="summary_stat_elevation">Elevation</string>
     <string name="walk_stat_waypoints">Waypoints</string>
     <string name="summary_recordings_header">Voice notes</string>
     <string name="transcription_pending">Transcribing\u2026</string>
