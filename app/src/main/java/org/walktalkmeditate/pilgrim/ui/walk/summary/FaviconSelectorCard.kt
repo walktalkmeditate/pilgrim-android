@@ -22,8 +22,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
@@ -95,8 +98,14 @@ private fun FaviconButton(
         animationSpec = tween(durationMillis = 200),
         label = "favicon-label",
     )
+    val selectedLabel = stringResource(R.string.summary_favicon_state_selected)
     Column(
-        modifier = Modifier.clickable(onClick = onTap),
+        modifier = Modifier
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                if (isSelected) stateDescription = selectedLabel
+            }
+            .clickable(onClick = onTap),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
     ) {

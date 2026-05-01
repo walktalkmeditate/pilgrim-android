@@ -2,6 +2,10 @@
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.app.Application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -37,15 +41,19 @@ class FaviconSelectorCardTest {
     fun tapsSameButtonTwice_deselects() {
         val selections = mutableListOf<WalkFavicon?>()
         composeRule.setContent {
+            var selected by remember { mutableStateOf<WalkFavicon?>(null) }
             PilgrimTheme {
                 FaviconSelectorCard(
-                    selected = null,
-                    onSelect = { selections += it },
+                    selected = selected,
+                    onSelect = {
+                        selected = it
+                        selections += it
+                    },
                 )
             }
         }
         composeRule.onNodeWithText("Peaceful").performClick()
-        // First tap selects LEAF
-        assertEquals(WalkFavicon.LEAF, selections.last())
+        composeRule.onNodeWithText("Peaceful").performClick()
+        assertEquals(listOf(WalkFavicon.LEAF, null), selections)
     }
 }
