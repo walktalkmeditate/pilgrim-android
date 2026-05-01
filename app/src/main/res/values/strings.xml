@@ -79,9 +79,15 @@
 
     <string name="meditation_done">Done</string>
 
-    <string name="summary_title">Walk complete.</string>
     <string name="summary_action_done">Done</string>
     <string name="summary_unavailable">This walk\'s details couldn\'t be loaded.</string>
+    <string name="summary_quote_walk_talk_meditate">You walked, spoke your mind, and found stillness.</string>
+    <string name="summary_quote_meditate_short_distance">A moment of stillness, right where you are.</string>
+    <string name="summary_quote_meditate_with_distance">A journey inward, %1$s along the way.</string>
+    <string name="summary_quote_talk_only">You walked and gave voice to your thoughts.</string>
+    <string name="summary_quote_long_road">A long road, well traveled.</string>
+    <string name="summary_quote_small_arrival">Every step, a small arrival.</string>
+    <string name="summary_quote_quiet_walk">A quiet walk, a gentle return.</string>
     <string name="summary_waypoints_count">%1$d waypoint(s)</string>
     <string name="walk_stat_waypoints">Waypoints</string>
     <string name="summary_recordings_header">Voice notes</string>
