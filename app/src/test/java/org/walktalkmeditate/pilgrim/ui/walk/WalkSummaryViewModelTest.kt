@@ -883,6 +883,33 @@ class WalkSummaryViewModelTest {
         assertEquals(RouteActivity.Meditating, loaded.summary.routeSegments[0].activity)
     }
 
+    @Test
+    fun voiceRecordings_populatedFromRepo() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertVoiceRecording(walkId, startOffset = 1_000L, durationMillis = 5_000L)
+        insertVoiceRecording(walkId, startOffset = 10_000L, durationMillis = 3_000L)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(2, loaded.summary.voiceRecordings.size)
+    }
+
+    @Test
+    fun meditationIntervals_filtered_excludesNonMeditationTypes() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertActivityInterval(walkId, startTimestamp = 5_000L, endTimestamp = 15_000L,
+            type = ActivityType.MEDITATING)
+        insertActivityInterval(walkId, startTimestamp = 20_000L, endTimestamp = 30_000L,
+            type = ActivityType.WALKING)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(1, loaded.summary.meditationIntervals.size)
+        assertEquals(ActivityType.MEDITATING, loaded.summary.meditationIntervals[0].activityType)
+    }
+
     private suspend fun createFinishedWalk(
         durationMillis: Long,
         events: List<WalkEvent> = emptyList(),
