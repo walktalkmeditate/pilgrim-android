@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -130,6 +131,11 @@ private fun TimelineBar(
     onSegmentTapped: (Int) -> Unit,
 ) {
     var widthPx by remember { mutableIntStateOf(0) }
+    // pointerInput re-keys only on `segments`. A future caller that swaps
+    // onSegmentTapped without changing segments (e.g. lifting selectedId
+    // out of the composable) would fire stale-closure taps. rememberUpdatedState
+    // closes the gap defensively. Stage 4-B `rememberUpdatedState` precedent.
+    val currentOnTap by rememberUpdatedState(onSegmentTapped)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -143,7 +149,7 @@ private fun TimelineBar(
                     val frac = offset.x / widthPx
                     segments.firstOrNull {
                         frac >= it.startFraction && frac <= it.startFraction + it.widthFraction
-                    }?.let { onSegmentTapped(it.id) }
+                    }?.let { currentOnTap(it.id) }
                 }
             },
         // iOS centers shorter segments (talk = 10dp) vertically within the
