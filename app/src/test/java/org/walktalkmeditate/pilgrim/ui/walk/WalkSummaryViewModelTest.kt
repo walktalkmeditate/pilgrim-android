@@ -21,6 +21,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -44,6 +45,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.ActivityType
@@ -930,6 +932,65 @@ class WalkSummaryViewModelTest {
         assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.EndPoint })
         assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.Meditation })
         assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.VoiceRecording })
+    }
+
+    // --- Stage 13-EFG: altitudeSamples + selectedFavicon -----------------
+
+    @Test
+    fun setFavicon_persistsAndUpdatesFlow() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        val vm = newViewModel(walkId)
+        awaitLoaded(vm)
+        assertNull(vm.selectedFavicon.value)
+
+        vm.setFavicon(WalkFavicon.LEAF)
+        advanceUntilIdle()
+
+        assertEquals(WalkFavicon.LEAF, vm.selectedFavicon.value)
+        // The DAO write runs on Dispatchers.IO (real thread, not the
+        // virtual-time test dispatcher) — advanceUntilIdle alone won't
+        // wait for it. Bridge to wall-clock the same way the
+        // pinPhotos suite does.
+        val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                var w = repository.getWalk(walkId)
+                while (w?.favicon == null) {
+                    kotlinx.coroutines.delay(10)
+                    w = repository.getWalk(walkId)
+                }
+                w
+            }
+        }
+        assertEquals("leaf", persisted.favicon)
+
+        // Tap same → deselects
+        vm.setFavicon(WalkFavicon.LEAF)
+        advanceUntilIdle()
+
+        assertNull(vm.selectedFavicon.value)
+        val persistedNull = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                var w = repository.getWalk(walkId)
+                while (w?.favicon != null) {
+                    kotlinx.coroutines.delay(10)
+                    w = repository.getWalk(walkId)
+                }
+                w
+            }
+        }
+        assertNull(persistedNull?.favicon)
+    }
+
+    @Test
+    fun altitudeSamples_populatedFromRepo() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        insertAltitude(walkId, 1_000L, 100.0)
+        insertAltitude(walkId, 2_000L, 110.0)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(2, loaded.summary.altitudeSamples.size)
     }
 
     private suspend fun createFinishedWalk(
