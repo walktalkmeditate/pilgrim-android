@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
@@ -60,11 +61,26 @@ fun WalkSummaryTopBar(
             .padding(horizontal = PilgrimSpacing.normal),
     ) {
         if (dateText != null) {
+            // Symmetric horizontal padding equal to the trailing TextButton's
+            // touch zone keeps the title TRULY centered (geometric center of
+            // the bar) without colliding with the Done button. Without this
+            // guard, long month names ("September 28, 2026") on narrow
+            // devices grow into the Done button's bounding box — children of
+            // a Box are measured independently against the Box's full content
+            // constraints, so Alignment.Center centers across the full width
+            // and the title can overlap the right-aligned button.
+            // 72dp ≈ TextButton min-touch (48dp) + horizontal content padding
+            // (~12dp each side). One ellipsis line for any pathological date
+            // string the formatter could produce in a future locale.
             Text(
                 text = dateText,
                 style = pilgrimType.heading,
                 color = pilgrimColors.ink,
-                modifier = Modifier.align(Alignment.Center),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 72.dp),
             )
         }
         TextButton(
