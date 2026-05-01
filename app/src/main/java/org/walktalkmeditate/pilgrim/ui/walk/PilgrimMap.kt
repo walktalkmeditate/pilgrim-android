@@ -68,6 +68,7 @@ internal fun PilgrimMap(
     routeSegments: List<RouteSegment> = emptyList(),
     segmentColors: RouteSegmentColors? = null,
     revealPhase: RevealPhase? = null,
+    reduceMotion: Boolean = false,
 ) {
     val darkMode = isSystemInDarkTheme()
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -82,6 +83,14 @@ internal fun PilgrimMap(
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var segmentPolylines by remember { mutableStateOf<List<PolylineAnnotation>>(emptyList()) }
+    // Snapshot of the segments + colors that produced the current polyline
+    // set, so subsequent recompositions (e.g. revealPhase transitions) skip
+    // the delete-and-recreate when the segments themselves haven't changed.
+    // Without this guard the multi-segment branch fires on every `update`
+    // pass that revealPhase touches — visible flicker as Mapbox tears
+    // annotations down and back up.
+    var renderedSegments by remember { mutableStateOf<List<RouteSegment>?>(null) }
+    var renderedSegmentColors by remember { mutableStateOf<RouteSegmentColors?>(null) }
     var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
     val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
@@ -112,7 +121,7 @@ internal fun PilgrimMap(
     // does the initial load, and subsequent theme changes trigger a clean
     // reload. Any prior annotation manager is detached before a new one
     // is created to avoid orphaning it on the stale style.
-    LaunchedEffect(mapView, revealPhase, points.firstOrNull()) {
+    LaunchedEffect(mapView, revealPhase, points.firstOrNull(), reduceMotion) {
         if (revealPhase == null) return@LaunchedEffect
         val view = mapView ?: return@LaunchedEffect
         when (revealPhase) {
@@ -138,10 +147,17 @@ internal fun PilgrimMap(
                 )
                 val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
                 val target = camera.toBuilder().zoom(clampedZoom).build()
-                view.mapboxMap.easeTo(
-                    target,
-                    MapAnimationOptions.Builder().duration(REVEAL_CAMERA_EASE_MS).build(),
-                )
+                // Reduce-motion: snap straight to fit-bounds. iOS bypasses the
+                // 2.5s ease entirely under accessibilityReduceMotion; mirror
+                // here via setCamera in place of easeTo.
+                if (reduceMotion) {
+                    view.mapboxMap.setCamera(target)
+                } else {
+                    view.mapboxMap.easeTo(
+                        target,
+                        MapAnimationOptions.Builder().duration(REVEAL_CAMERA_EASE_MS).build(),
+                    )
+                }
             }
         }
     }
@@ -152,6 +168,8 @@ internal fun PilgrimMap(
         polylineManager = null
         polyline = null
         segmentPolylines = emptyList()
+        renderedSegments = null
+        renderedSegmentColors = null
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
@@ -245,27 +263,35 @@ internal fun PilgrimMap(
         update = { view ->
             val manager = polylineManager ?: return@AndroidView
             if (routeSegments.isNotEmpty() && segmentColors != null) {
-                // Multi-segment path. Re-create polylines per composition pass —
-                // segment counts stay small (typically <20 per walk) so wholesale
-                // replace is cheaper than diffing. Preserves the existing
-                // single-polyline path for Active Walk and Walk Share (where
-                // routeSegments is empty).
-                if (segmentPolylines.isNotEmpty()) {
-                    segmentPolylines.forEach { manager.delete(it) }
-                }
-                segmentPolylines = routeSegments.map { seg ->
-                    val mapboxPoints = seg.points.map { Point.fromLngLat(it.longitude, it.latitude) }
-                    val color = when (seg.activity) {
-                        RouteActivity.Walking -> segmentColors.walking.toArgb()
-                        RouteActivity.Talking -> segmentColors.talking.toArgb()
-                        RouteActivity.Meditating -> segmentColors.meditating.toArgb()
+                // Multi-segment path. Skip the delete-and-recreate when the
+                // segment list AND colors are structurally identical to what's
+                // already rendered (revealPhase changes re-fire the update
+                // lambda but don't change segments, so without this guard the
+                // polylines would visibly flicker during the reveal sequence).
+                val needsRebuild =
+                    renderedSegments != routeSegments ||
+                        renderedSegmentColors != segmentColors
+                if (needsRebuild) {
+                    if (segmentPolylines.isNotEmpty()) {
+                        segmentPolylines.forEach { manager.delete(it) }
                     }
-                    manager.create(
-                        PolylineAnnotationOptions()
-                            .withPoints(mapboxPoints)
-                            .withLineColor(color)
-                            .withLineWidth(POLYLINE_WIDTH_DP),
-                    )
+                    segmentPolylines = routeSegments.map { seg ->
+                        val mapboxPoints =
+                            seg.points.map { Point.fromLngLat(it.longitude, it.latitude) }
+                        val color = when (seg.activity) {
+                            RouteActivity.Walking -> segmentColors.walking.toArgb()
+                            RouteActivity.Talking -> segmentColors.talking.toArgb()
+                            RouteActivity.Meditating -> segmentColors.meditating.toArgb()
+                        }
+                        manager.create(
+                            PolylineAnnotationOptions()
+                                .withPoints(mapboxPoints)
+                                .withLineColor(color)
+                                .withLineWidth(POLYLINE_WIDTH_DP),
+                        )
+                    }
+                    renderedSegments = routeSegments
+                    renderedSegmentColors = segmentColors
                 }
             } else if (points.size >= 2) {
                 val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
@@ -394,6 +420,8 @@ internal fun PilgrimMap(
                 polylineManager = null
                 polyline = null
                 segmentPolylines = emptyList()
+                renderedSegments = null
+                renderedSegmentColors = null
                 waypointManager = null
                 waypointAnnotations = emptyList()
             }

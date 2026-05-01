@@ -144,9 +144,16 @@ fun WalkSummaryScreen(
     }
     val targetDistance =
         (state as? WalkSummaryUiState.Loaded)?.summary?.distanceMeters?.toFloat() ?: 0f
+    // Reduce-motion: snap to target instantly with a zero-duration tween.
+    // iOS uses `@Environment(\.accessibilityReduceMotion)` to bypass the
+    // count-up entirely; Android's equivalent is `ANIMATOR_DURATION_SCALE`.
     val animatedDistanceMeters by animateFloatAsState(
         targetValue = if (revealPhase == RevealPhase.Revealed) targetDistance else 0f,
-        animationSpec = tween(durationMillis = COUNT_UP_DURATION_MS, easing = SmoothStepEasing),
+        animationSpec = if (reduceMotion) {
+            tween(durationMillis = 0)
+        } else {
+            tween(durationMillis = COUNT_UP_DURATION_MS, easing = SmoothStepEasing)
+        },
         label = "summary-distance-countup",
     )
 
@@ -243,6 +250,7 @@ fun WalkSummaryScreen(
                             routeSegments = s.summary.routeSegments,
                             revealPhase = revealPhase,
                             segmentColors = segmentColors,
+                            reduceMotion = reduceMotion,
                         )
                         Spacer(Modifier.height(PilgrimSpacing.normal))
 
@@ -269,9 +277,13 @@ fun WalkSummaryScreen(
                         // inter-section spacing is handled by the spacedBy
                         // arrangement inside the wrapper.
                         Spacer(Modifier.height(PilgrimSpacing.normal))
+                        // Reduce-motion: collapse the fade-in to zero duration so
+                        // sections appear instantly along with the (also snapped)
+                        // camera and count-up.
+                        val fadeDuration = if (reduceMotion) 0 else REVEAL_FADE_MS
                         AnimatedVisibility(
                             visible = revealPhase == RevealPhase.Revealed,
-                            enter = fadeIn(animationSpec = tween(durationMillis = REVEAL_FADE_MS)),
+                            enter = fadeIn(animationSpec = tween(durationMillis = fadeDuration)),
                             exit = ExitTransition.None,
                         ) {
                             Column(
@@ -477,6 +489,7 @@ private fun SummaryMap(
     routeSegments: List<RouteSegment>,
     revealPhase: RevealPhase,
     segmentColors: RouteSegmentColors,
+    reduceMotion: Boolean,
 ) {
     Card(
         modifier = Modifier
@@ -518,6 +531,7 @@ private fun SummaryMap(
                 routeSegments = routeSegments,
                 segmentColors = segmentColors,
                 revealPhase = revealPhase,
+                reduceMotion = reduceMotion,
                 followLatest = false,
                 modifier = Modifier.fillMaxSize(),
             )
