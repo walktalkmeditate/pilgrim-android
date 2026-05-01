@@ -117,6 +117,7 @@
     <string name="summary_favicon_transformative">Transformative</string>
     <string name="summary_favicon_peaceful">Peaceful</string>
     <string name="summary_favicon_extraordinary">Extraordinary</string>
+    <string name="summary_favicon_state_selected">Selected</string>
 
     <!-- Stage 13-F milestone callout prose -->
     <string name="summary_milestone_first_walk">Your first walk</string>
