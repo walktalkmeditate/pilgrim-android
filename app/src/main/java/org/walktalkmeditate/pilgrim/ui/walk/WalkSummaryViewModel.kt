@@ -153,7 +153,9 @@ data class WalkSummary(
      * Stage 13-F: barometric altitude samples for the post-walk
      * elevation sparkline. The composable normalizes + buckets these
      * via [org.walktalkmeditate.pilgrim.ui.walk.summary.computeElevationSparklinePoints]
-     * (caller-side gates render on `< 2 samples` or `range <= 1m`).
+     * and self-gates render when fewer than 2 samples or `max - min <= 1m`
+     * (degenerate flat profile) — caller invokes ElevationProfile
+     * unconditionally and a no-op return emits no node.
      */
     val altitudeSamples: List<AltitudeSample> = emptyList(),
     /**
