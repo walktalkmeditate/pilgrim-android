@@ -41,9 +41,11 @@ import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
+import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
@@ -148,6 +150,13 @@ data class WalkSummary(
      */
     val routeSamples: List<RouteDataSample> = emptyList(),
     /**
+     * Stage 13-F: barometric altitude samples for the post-walk
+     * elevation sparkline. The composable normalizes + buckets these
+     * via [org.walktalkmeditate.pilgrim.ui.walk.summary.computeElevationSparklinePoints]
+     * (caller-side gates render on `< 2 samples` or `range <= 1m`).
+     */
+    val altitudeSamples: List<AltitudeSample> = emptyList(),
+    /**
      * Pre-built goshuin seal spec for the Stage 4-B reveal animation.
      * [SealSpec.ink] is [Color.Transparent] here — the composable
      * resolves the real seasonal-shifted color via
@@ -221,6 +230,22 @@ class WalkSummaryViewModel @Inject constructor(
      * metric label at generation time — see TODO in [buildState].
      */
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
+
+    /**
+     * Stage 13-E: VM-level favicon selection. Seeded from the persisted
+     * `walk.favicon` column inside [buildState] and updated optimistically
+     * by [setFavicon] (revert on DAO failure). Separate from the loaded
+     * summary payload so a user tap flips the UI without re-emitting the
+     * full [WalkSummaryUiState.Loaded] (the favicon button reads this
+     * StateFlow directly).
+     *
+     * Declared BEFORE [state] because `state` uses `SharingStarted.Eagerly`
+     * which triggers `buildState()` synchronously during construction —
+     * `buildState()` writes to `_selectedFavicon`, so the field must be
+     * initialized first.
+     */
+    private val _selectedFavicon = MutableStateFlow<WalkFavicon?>(null)
+    val selectedFavicon: StateFlow<WalkFavicon?> = _selectedFavicon.asStateFlow()
 
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
@@ -537,6 +562,28 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
+     * Stage 13-E: persist a favicon selection. Optimistic — flips the
+     * StateFlow immediately, writes through to Room on [Dispatchers.IO],
+     * and reverts the StateFlow on DAO failure. Tapping the same value
+     * deselects (writes null).
+     */
+    fun setFavicon(favicon: WalkFavicon?) {
+        val current = _selectedFavicon.value
+        val newValue = if (favicon == current) null else favicon
+        _selectedFavicon.value = newValue
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.setFavicon(walkId, newValue?.rawValue)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "setFavicon failed for walk $walkId", t)
+                _selectedFavicon.value = current
+            }
+        }
+    }
+
+    /**
      * Best-effort `DATE_TAKEN` read off a picker URI. Returns null when
      * the query yields no row, the column is missing, or the URI scheme
      * doesn't support metadata queries (SAF-fallback URIs on older
@@ -582,6 +629,9 @@ class WalkSummaryViewModel @Inject constructor(
         // the state flow would propagate the exception. Treat unfinished
         // walks as Not Found instead.
         if (walk.endTimestamp == null) return WalkSummaryUiState.NotFound
+        // Stage 13-E: seed the favicon StateFlow from the persisted
+        // column so the selector reflects prior user choice on load.
+        _selectedFavicon.value = WalkFavicon.fromRawValue(walk.favicon)
         val samples = repository.locationSamplesFor(walkId)
         val events = repository.eventsFor(walkId)
         val waypoints = repository.waypointsFor(walkId)
@@ -779,6 +829,7 @@ class WalkSummaryViewModel @Inject constructor(
                     it.activityType == ActivityType.MEDITATING
                 },
                 routeSamples = samples,
+                altitudeSamples = altitudeSamples,
                 sealSpec = sealSpec,
                 milestone = milestone,
                 lightReading = lightReading,
