@@ -111,6 +111,24 @@
     <string name="summary_compact_duration_seconds">%1$d sec</string>
     <string name="summary_compact_duration_minutes">%1$d min</string>
     <string name="summary_compact_duration_minutes_seconds">%1$d min %2$d sec</string>
+
+    <!-- Stage 13-E favicon -->
+    <string name="summary_favicon_caption">Mark this walk</string>
+    <string name="summary_favicon_transformative">Transformative</string>
+    <string name="summary_favicon_peaceful">Peaceful</string>
+    <string name="summary_favicon_extraordinary">Extraordinary</string>
+
+    <!-- Stage 13-F milestone callout prose -->
+    <string name="summary_milestone_first_walk">Your first walk</string>
+    <string name="summary_milestone_longest_walk">Your longest walk yet</string>
+    <string name="summary_milestone_nth_walk">Your %1$s walk</string>
+    <string name="summary_milestone_first_of_spring">Your first walk of Spring</string>
+    <string name="summary_milestone_first_of_summer">Your first walk of Summer</string>
+    <string name="summary_milestone_first_of_autumn">Your first walk of Autumn</string>
+    <string name="summary_milestone_first_of_winter">Your first walk of Winter</string>
+
+    <!-- Stage 13-G details -->
+    <string name="summary_details_paused">Paused</string>
     <string name="transcription_pending">Transcribing\u2026</string>
     <string name="recording_play">Play</string>
     <string name="recording_pause">Pause</string>

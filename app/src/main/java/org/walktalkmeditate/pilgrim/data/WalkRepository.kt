@@ -87,6 +87,9 @@ open class WalkRepository @Inject constructor(
         walkDao.updateIntention(walkId = walkId, intention = intention)
     }
 
+    suspend fun setFavicon(walkId: Long, favicon: String?) =
+        walkDao.updateFavicon(walkId, favicon)
+
     /**
      * Stage 12-A: persist a [WeatherSnapshot] to the four weather
      * columns on `walks`. Pass-through to [WalkDao.updateWeather] —
