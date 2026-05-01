@@ -40,6 +40,8 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
@@ -47,6 +49,7 @@ import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.computeAscend
 import org.walktalkmeditate.pilgrim.data.walk.computeRouteSegments
+import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -114,6 +117,26 @@ data class WalkSummary(
      * GPS samples landed (single point can't draw a polyline).
      */
     val routeSegments: List<RouteSegment> = emptyList(),
+    /**
+     * Stage 13-C: voice recordings for this walk, ordered by repository
+     * default. Consumed by the activity timeline bar (talk segments) and
+     * the activity list card.
+     */
+    val voiceRecordings: List<VoiceRecording> = emptyList(),
+    /**
+     * Stage 13-C: meditation intervals only — `activityIntervalsFor`
+     * filtered to [ActivityType.MEDITATING] in the VM so consumers don't
+     * each repeat the filter. Talk segments come from [voiceRecordings];
+     * walking is implicit (the bar's background fill).
+     */
+    val meditationIntervals: List<ActivityInterval> = emptyList(),
+    /**
+     * Stage 13-C: raw GPS samples for the pace sparkline. Speed values
+     * are nullable per-sample; the sparkline helper filters and buckets
+     * them. Same data the route polyline derives from — stored here so
+     * the timeline card doesn't need its own repo dependency.
+     */
+    val routeSamples: List<RouteDataSample> = emptyList(),
     /**
      * Pre-built goshuin seal spec for the Stage 4-B reveal animation.
      * [SealSpec.ink] is [Color.Transparent] here — the composable
@@ -722,6 +745,11 @@ class WalkSummaryViewModel @Inject constructor(
                 ascendMeters = ascendMeters,
                 routePoints = points,
                 routeSegments = routeSegments,
+                voiceRecordings = voiceRecordings,
+                meditationIntervals = activityIntervals.filter {
+                    it.activityType == ActivityType.MEDITATING
+                },
+                routeSamples = samples,
                 sealSpec = sealSpec,
                 milestone = milestone,
                 lightReading = lightReading,

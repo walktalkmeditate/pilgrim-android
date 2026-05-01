@@ -96,6 +96,21 @@
     <string name="summary_breakdown_walk">Walk</string>
     <string name="summary_breakdown_talk">Talk</string>
     <string name="summary_breakdown_meditate">Meditate</string>
+    <!-- Stage 13-C: Insights / Activities / Timeline copy -->
+    <string name="summary_insights_header">Insights</string>
+    <string name="summary_insight_meditated_once">Meditated once for %1$s</string>
+    <string name="summary_insight_meditated_multiple">Meditated %1$d times (longest: %2$s)</string>
+    <string name="summary_insight_talked_pct">Talked for %1$d%% of the walk</string>
+    <string name="summary_activities_header">Activities</string>
+    <string name="summary_activity_talk">Talk</string>
+    <string name="summary_activity_meditate">Meditate</string>
+    <string name="summary_timeline_legend_walk">Walk</string>
+    <string name="summary_timeline_legend_talk">Talk</string>
+    <string name="summary_timeline_legend_meditate">Meditate</string>
+    <string name="summary_timeline_pace_label">Pace %1$s</string>
+    <string name="summary_compact_duration_seconds">%1$d sec</string>
+    <string name="summary_compact_duration_minutes">%1$d min</string>
+    <string name="summary_compact_duration_minutes_seconds">%1$d min %2$d sec</string>
     <string name="transcription_pending">Transcribing\u2026</string>
     <string name="recording_play">Play</string>
     <string name="recording_pause">Pause</string>
