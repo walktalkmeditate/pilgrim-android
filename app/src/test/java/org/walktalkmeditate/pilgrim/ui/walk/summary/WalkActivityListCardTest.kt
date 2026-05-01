@@ -3,9 +3,11 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,5 +59,39 @@ class WalkActivityListCardTest {
             }
         }
         composeRule.onNodeWithText("Activities").assertIsDisplayed()
+    }
+
+    @Test
+    fun sortsEntriesByStartTimestamp() {
+        // Meditation starts BEFORE the recording — list should render
+        // Meditate row above Talk row regardless of input list order.
+        val meditation = ActivityInterval(
+            walkId = 1L, startTimestamp = 1_700_000_000_000L,
+            endTimestamp = 1_700_000_300_000L,
+            activityType = ActivityType.MEDITATING,
+        )
+        val recording = VoiceRecording(
+            walkId = 1L, startTimestamp = 1_700_000_500_000L,
+            endTimestamp = 1_700_000_522_000L, durationMillis = 22_000L,
+            fileRelativePath = "x.wav", transcription = null,
+        )
+        composeRule.setContent {
+            PilgrimTheme {
+                WalkActivityListCard(
+                    // Pass in REVERSED order to verify sort, not input ordering.
+                    voiceRecordings = listOf(recording),
+                    meditationIntervals = listOf(meditation),
+                )
+            }
+        }
+        val meditateTop = composeRule.onNodeWithText("Meditate")
+            .getUnclippedBoundsInRoot().top
+        val talkTop = composeRule.onNodeWithText("Talk")
+            .getUnclippedBoundsInRoot().top
+        assertTrue(
+            "Meditate row (earlier start) should render above Talk row " +
+                "(meditate.top=$meditateTop, talk.top=$talkTop)",
+            meditateTop < talkTop,
+        )
     }
 }

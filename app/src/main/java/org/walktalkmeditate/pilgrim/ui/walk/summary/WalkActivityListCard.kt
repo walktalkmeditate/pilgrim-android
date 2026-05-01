@@ -21,6 +21,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -131,6 +132,15 @@ private fun ActivityRow(entry: ActivityListEntry) {
     }
 }
 
+/**
+ * `@Immutable` because Compose can't infer stability from `ImageVector`
+ * + `Color` field types. Without the annotation, the parent's
+ * `forEach { ActivityRow(it) }` recomposes EVERY row on any unrelated
+ * recomposition (theme flip, reveal-phase transition, etc.). Same
+ * lesson as Stage 4-C `GoshuinSeal` — external-module field types
+ * cascade Unstable unless the holding class declares the contract.
+ */
+@Immutable
 private data class ActivityListEntry(
     val icon: ImageVector,
     val tint: Color,
