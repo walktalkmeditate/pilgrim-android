@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.FormatListBulleted
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.SelfImprovement
 import androidx.compose.material3.Card
@@ -71,7 +71,7 @@ fun WalkActivityListCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Rounded.FormatListBulleted,
+                    imageVector = Icons.AutoMirrored.Rounded.FormatListBulleted,
                     contentDescription = null,
                     tint = pilgrimColors.stone,
                     modifier = Modifier.size(16.dp),

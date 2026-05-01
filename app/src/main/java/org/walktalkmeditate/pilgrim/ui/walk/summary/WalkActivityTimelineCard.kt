@@ -146,6 +146,11 @@ private fun TimelineBar(
                     }?.let { onSegmentTapped(it.id) }
                 }
             },
+        // iOS centers shorter segments (talk = 10dp) vertically within the
+        // 16dp bar via ZStack's default vertical alignment. Compose Box's
+        // default is TopStart, which would push talk segments to the top of
+        // the bar with 6dp empty below. CenterStart matches iOS.
+        contentAlignment = Alignment.CenterStart,
     ) {
         // Meditation segments first (taller — drawn under talks).
         segments.filter { it.type == TimelineSegmentType.Meditating }.forEach { seg ->
