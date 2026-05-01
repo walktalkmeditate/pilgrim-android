@@ -34,6 +34,14 @@ internal const val ZOOM_HOLD_MS = 800L
 /** Camera ease duration for Zoomed → Revealed transition. */
 internal const val REVEAL_CAMERA_EASE_MS = 2_500L
 
+/**
+ * Camera ease duration when a timeline-bar segment tap zooms the
+ * Walk Summary map into the segment's GPS bounds. Quick — the user
+ * is interacting; a long ease feels unresponsive. iOS uses 350ms
+ * (`WalkSummaryView.swift:954`).
+ */
+internal const val SEGMENT_ZOOM_EASE_MS = 350L
+
 /** Below-map sections fade-in duration on Revealed. */
 internal const val REVEAL_FADE_MS = 600
 
@@ -50,4 +58,18 @@ data class RouteSegmentColors(
     val walking: Color,
     val talking: Color,
     val meditating: Color,
+)
+
+/**
+ * Theme-resolved colors for the Walk Summary map's annotation pins
+ * (start/end + meditation + voice recording). Same packaging pattern
+ * as [RouteSegmentColors] — read at the @Composable layer
+ * (LocalPilgrimColors), passed into [PilgrimMap] so it doesn't need
+ * to depend on the theme module directly.
+ */
+@Immutable
+data class WalkAnnotationColors(
+    val startEnd: Color,
+    val meditation: Color,
+    val voice: Color,
 )

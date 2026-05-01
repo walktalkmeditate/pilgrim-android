@@ -68,6 +68,8 @@ fun WalkActivityTimelineCard(
     routeSamples: List<RouteDataSample>,
     units: UnitSystem,
     modifier: Modifier = Modifier,
+    onSegmentSelected: ((startMs: Long, endMs: Long) -> Unit)? = null,
+    onSegmentDeselected: (() -> Unit)? = null,
 ) {
     val segments = remember(startTimestamp, endTimestamp, activityIntervals, voiceRecordings) {
         computeTimelineSegments(startTimestamp, endTimestamp, activityIntervals, voiceRecordings)
@@ -80,6 +82,8 @@ fun WalkActivityTimelineCard(
     }
     var selectedId by remember(segments) { mutableStateOf<Int?>(null) }
     var showRelativeTime by remember { mutableStateOf(true) }
+    val currentOnSelected by rememberUpdatedState(onSegmentSelected)
+    val currentOnDeselected by rememberUpdatedState(onSegmentDeselected)
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -95,7 +99,15 @@ fun WalkActivityTimelineCard(
                 segments = segments,
                 selectedId = selectedId,
                 onSegmentTapped = { id ->
-                    selectedId = if (selectedId == id) null else id
+                    val newSelectedId = if (selectedId == id) null else id
+                    selectedId = newSelectedId
+                    if (newSelectedId == null) {
+                        currentOnDeselected?.invoke()
+                    } else {
+                        segments.firstOrNull { it.id == newSelectedId }?.let { seg ->
+                            currentOnSelected?.invoke(seg.startMillis, seg.endMillis)
+                        }
+                    }
                 },
             )
             selectedId?.let { id ->
