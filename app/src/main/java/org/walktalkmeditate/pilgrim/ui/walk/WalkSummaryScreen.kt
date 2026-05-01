@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +49,12 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkDurationHero
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkIntentionCard
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkJourneyQuote
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkStatsRow
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryTopBar
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkTimeBreakdownGrid
 
 @Composable
 fun WalkSummaryScreen(
@@ -135,152 +139,195 @@ fun WalkSummaryScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Summary content renders first (z-order: behind the overlay).
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(PilgrimSpacing.big),
-        ) {
-            Text(
-                text = stringResource(R.string.summary_title),
-                style = pilgrimType.displayMedium,
-                color = pilgrimColors.ink,
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Stage 13-A: top bar lives OUTSIDE the scroll — iOS parity
+            // (a top bar shouldn't slide off as the user scrolls). For
+            // Loading + NotFound branches the timestamp is unavailable;
+            // fall back to 0L (epoch) — momentary state, NotFound users
+            // see the unavailable copy below regardless.
+            val titleTimestamp = (state as? WalkSummaryUiState.Loaded)
+                ?.summary?.walk?.startTimestamp
+                ?: 0L
+            WalkSummaryTopBar(
+                startTimestamp = titleTimestamp,
+                onDone = onDone,
             )
-            Spacer(Modifier.height(PilgrimSpacing.big))
-
-            when (val s = state) {
-                is WalkSummaryUiState.Loading -> {
-                    SummaryMapPlaceholder()
-                    Spacer(Modifier.height(PilgrimSpacing.big))
-                    LoadingRow()
-                }
-                is WalkSummaryUiState.NotFound -> {
-                    SummaryMapPlaceholder()
-                    Spacer(Modifier.height(PilgrimSpacing.big))
-                    Text(
-                        text = stringResource(R.string.summary_unavailable),
-                        style = pilgrimType.body,
-                        color = pilgrimColors.fog,
-                    )
-                }
-                is WalkSummaryUiState.Loaded -> {
-                    SummaryMap(points = s.summary.routePoints)
-                    Spacer(Modifier.height(PilgrimSpacing.big))
-                    SummaryStats(summary = s.summary, units = distanceUnits)
-                    // Stage 12-A: weather line below the stats block.
-                    // Matches iOS WalkSummaryView.weatherLine placement.
-                    // Renders only when the persisted condition resolves
-                    // to a known enum AND a temperature is present —
-                    // legacy walks captured before Stage 12-A have null
-                    // weather columns and skip silently. Imperial
-                    // coupling follows the user's distance preference,
-                    // matching iOS where temperature units track
-                    // `distanceMeasurementType`.
-                    s.summary.walk.weatherCondition?.let { conditionRaw ->
-                        val condition = WeatherCondition.fromRawValue(conditionRaw)
-                            ?: return@let
-                        val temperature = s.summary.walk.weatherTemperature
-                            ?: return@let
-                        WalkSummaryWeatherLine(
-                            condition = condition,
-                            temperatureCelsius = temperature,
-                            imperial = distanceUnits == UnitSystem.Imperial,
-                            modifier = Modifier.padding(top = 8.dp),
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(PilgrimSpacing.big),
+            ) {
+                when (val s = state) {
+                    is WalkSummaryUiState.Loading -> {
+                        SummaryMapPlaceholder()
+                        Spacer(Modifier.height(PilgrimSpacing.big))
+                        LoadingRow()
+                    }
+                    is WalkSummaryUiState.NotFound -> {
+                        SummaryMapPlaceholder()
+                        Spacer(Modifier.height(PilgrimSpacing.big))
+                        Text(
+                            text = stringResource(R.string.summary_unavailable),
+                            style = pilgrimType.body,
+                            color = pilgrimColors.fog,
                         )
                     }
-                    // Stage 7-A: the reliquary sits between the
-                    // objective stats and the interpretive Light
-                    // Reading — tangible artifacts first, felt content
-                    // after. Section always renders; its header
-                    // carries the "Add photos" affordance even with an
-                    // empty grid.
-                    Spacer(Modifier.height(PilgrimSpacing.big))
-                    PhotoReliquarySection(
-                        photos = pinnedPhotos,
-                        onPinPhotos = viewModel::pinPhotos,
-                        onUnpinPhoto = viewModel::unpinPhoto,
-                    )
-                    // Stage 6-B: contemplative payoff card below the
-                    // stats. VM's runCatching means a compute failure
-                    // yields null here and the card just doesn't
-                    // render. Room's autoGenerate guarantees the
-                    // walkId > 0 precondition LightReading.from needs,
-                    // so null is unreachable in production today.
-                    //
-                    // Stage 10-C: read from `lightReadingDisplay` (live
-                    // combine of summary + celestialAwarenessEnabled
-                    // pref) so toggling the pref while the summary is
-                    // open immediately shows / hides the card.
-                    lightReadingDisplay?.let { reading ->
-                        Spacer(Modifier.height(PilgrimSpacing.big))
-                        WalkLightReadingCard(reading = reading)
-                    }
-                    // Stage 8-A: wrap BOTH the 7-C/7-D etegami card +
-                    // share row AND the 8-A journey-share row in a
-                    // single hasRoute guard — iOS WalkSharingButtons
-                    // parity (whole card is absent for walks with
-                    // fewer than 2 GPS points). Share endpoint also
-                    // rejects routes < 2 points server-side.
-                    if (s.summary.routePoints.size >= 2) {
-                        s.summary.etegamiSpec?.let { etegami ->
-                            Spacer(Modifier.height(PilgrimSpacing.big))
-                            WalkEtegamiCard(spec = etegami)
-                            WalkEtegamiShareRow(
-                                busyAction = etegamiBusy,
-                                onShare = { viewModel.shareEtegami(etegami) },
-                                onSave = { viewModel.saveEtegamiToGallery(etegami) },
-                                onSavePermissionDenied = {
-                                    viewModel.notifyEtegamiSaveNeedsPermission()
+                    is WalkSummaryUiState.Loaded -> {
+                        // 1. Map — height stays 200dp until Stage 13-B
+                        SummaryMap(points = s.summary.routePoints)
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+
+                        // 2. Photo Reliquary
+                        PhotoReliquarySection(
+                            photos = pinnedPhotos,
+                            onPinPhotos = viewModel::pinPhotos,
+                            onUnpinPhoto = viewModel::unpinPhoto,
+                        )
+
+                        // 3. Intention card (guarded — only when set)
+                        val intention = s.summary.walk.intention
+                        if (!intention.isNullOrBlank()) {
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            WalkIntentionCard(intention = intention)
+                        }
+
+                        // 4. Elevation profile — placeholder for Stage 13-F
+
+                        // 5. Journey quote
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+                        WalkJourneyQuote(
+                            talkMillis = s.summary.talkMillis,
+                            meditateMillis = s.summary.totalMeditatedMillis,
+                            distanceMeters = s.summary.distanceMeters,
+                            distanceUnits = distanceUnits,
+                        )
+
+                        // 6. Duration hero
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+                        WalkDurationHero(durationMillis = s.summary.activeMillis)
+
+                        // 7. Milestone callout — placeholder for Stage 13-F
+                        // (the existing reveal-overlay halo remains)
+
+                        // 8. Stats row
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+                        WalkStatsRow(
+                            distanceMeters = s.summary.distanceMeters,
+                            ascendMeters = s.summary.ascendMeters,
+                            units = distanceUnits,
+                        )
+
+                        // 9. Weather line (Stage 12-A). Renders only when the
+                        // persisted condition resolves to a known enum AND a
+                        // temperature is present — legacy walks captured before
+                        // Stage 12-A have null weather columns and skip silently.
+                        // Imperial coupling follows the user's distance
+                        // preference, matching iOS where temperature units track
+                        // `distanceMeasurementType`.
+                        s.summary.walk.weatherCondition?.let { conditionRaw ->
+                            val condition = WeatherCondition.fromRawValue(conditionRaw)
+                                ?: return@let
+                            val temperature = s.summary.walk.weatherTemperature
+                                ?: return@let
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            WalkSummaryWeatherLine(
+                                condition = condition,
+                                temperatureCelsius = temperature,
+                                imperial = distanceUnits == UnitSystem.Imperial,
+                            )
+                        }
+
+                        // 10. Celestial line — placeholder for Stage 13-F
+
+                        // 11. Time breakdown grid — Walk card uses
+                        // activeWalkingMillis (paused-AND-meditate-excluded).
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+                        WalkTimeBreakdownGrid(
+                            walkMillis = s.summary.activeWalkingMillis,
+                            talkMillis = s.summary.talkMillis,
+                            meditateMillis = s.summary.totalMeditatedMillis,
+                        )
+
+                        // 12. Favicon selector — placeholder for Stage 13-E
+                        // 13-15. Activity timeline + insights + list — Stage 13-C
+
+                        // 16. Voice recordings (Stage 2-E)
+                        if (recordings.isNotEmpty()) {
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            VoiceRecordingsSection(
+                                walkStartTimestamp = s.summary.walk.startTimestamp,
+                                recordings = recordings,
+                                playbackUiState = playbackUiState,
+                                onPlay = viewModel::playRecording,
+                                onPause = viewModel::pausePlayback,
+                            )
+                        }
+
+                        // 17. AI Prompts button — placeholder for Stage 13-X
+                        // 18. Details section — placeholder for Stage 13-G
+
+                        // 19. Light Reading card (Stage 6-B / 10-C). VM's
+                        // runCatching means a compute failure yields null
+                        // here and the card just doesn't render. Read from
+                        // `lightReadingDisplay` (live combine of summary +
+                        // celestialAwarenessEnabled pref) so toggling the
+                        // pref while the summary is open immediately shows /
+                        // hides the card.
+                        lightReadingDisplay?.let { reading ->
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            WalkLightReadingCard(reading = reading)
+                        }
+
+                        // 20. Etegami + Share Journey (Stage 7-D + 8-A).
+                        // Wrap BOTH the etegami card + share row AND the
+                        // journey-share row in a single hasRoute guard — iOS
+                        // WalkSharingButtons parity (whole card is absent for
+                        // walks with fewer than 2 GPS points). Share endpoint
+                        // also rejects routes < 2 points server-side.
+                        if (s.summary.routePoints.size >= 2) {
+                            s.summary.etegamiSpec?.let { etegami ->
+                                Spacer(Modifier.height(PilgrimSpacing.normal))
+                                WalkEtegamiCard(spec = etegami)
+                                WalkEtegamiShareRow(
+                                    busyAction = etegamiBusy,
+                                    onShare = { viewModel.shareEtegami(etegami) },
+                                    onSave = { viewModel.saveEtegamiToGallery(etegami) },
+                                    onSavePermissionDenied = {
+                                        viewModel.notifyEtegamiSaveNeedsPermission()
+                                    },
+                                )
+                            }
+                            // `cachedShare` is collected unconditionally at the
+                            // composable's top (see hoisting comment there);
+                            // map to the row's tri-state at the call site.
+                            val rowState = cachedShare.toJourneyRowState()
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareJourneyRow(
+                                state = rowState,
+                                onShareJourney = onShareJourney,
+                                onReshare = onShareJourney,
+                                onReopenModal = onShareJourney,
+                                onCopyUrl = { url ->
+                                    org.walktalkmeditate.pilgrim.ui.walk.share.copyUrl(
+                                        context,
+                                        url,
+                                        msgCopied,
+                                    )
+                                },
+                                onShareUrl = { url ->
+                                    org.walktalkmeditate.pilgrim.ui.walk.share.launchShareChooser(
+                                        activity ?: context,
+                                        url,
+                                        msgChooserTitle,
+                                    )
                                 },
                             )
                         }
-                        // Stage 8-A: journey-share section (web page).
-                        // `cachedShare` is collected unconditionally at the
-                        // composable's top (see hoisting comment there);
-                        // map to the row's tri-state at the call site.
-                        val rowState = cachedShare.toJourneyRowState()
-                        Spacer(Modifier.height(PilgrimSpacing.big))
-                        org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareJourneyRow(
-                            state = rowState,
-                            onShareJourney = onShareJourney,
-                            onReshare = onShareJourney,
-                            onReopenModal = onShareJourney,
-                            onCopyUrl = { url ->
-                                org.walktalkmeditate.pilgrim.ui.walk.share.copyUrl(
-                                    context,
-                                    url,
-                                    msgCopied,
-                                )
-                            },
-                            onShareUrl = { url ->
-                                org.walktalkmeditate.pilgrim.ui.walk.share.launchShareChooser(
-                                    activity ?: context,
-                                    url,
-                                    msgChooserTitle,
-                                )
-                            },
-                        )
-                    }
-                    if (recordings.isNotEmpty()) {
-                        Spacer(Modifier.height(PilgrimSpacing.big))
-                        VoiceRecordingsSection(
-                            walkStartTimestamp = s.summary.walk.startTimestamp,
-                            recordings = recordings,
-                            playbackUiState = playbackUiState,
-                            onPlay = viewModel::playRecording,
-                            onPause = viewModel::pausePlayback,
-                        )
                     }
                 }
-            }
 
-            Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
-
-            Button(
-                onClick = onDone,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(R.string.summary_action_done))
+                Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
             }
         }
 
@@ -384,69 +431,6 @@ private fun SummaryMapPlaceholder() {
         ),
     ) {}
 }
-
-@Composable
-private fun SummaryStats(
-    summary: WalkSummary,
-    units: org.walktalkmeditate.pilgrim.data.units.UnitSystem,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal)) {
-        SummaryRow(
-            label = stringResource(R.string.walk_stat_duration),
-            value = WalkFormat.duration(summary.totalElapsedMillis),
-        )
-        SummaryRow(
-            label = stringResource(R.string.walk_stat_active_walking),
-            value = WalkFormat.duration(summary.activeWalkingMillis),
-        )
-        SummaryRow(
-            label = stringResource(R.string.walk_stat_distance),
-            value = WalkFormat.distance(summary.distanceMeters, units),
-        )
-        SummaryRow(
-            label = stringResource(R.string.walk_stat_pace),
-            value = WalkFormat.pace(summary.paceSecondsPerKm, units),
-        )
-        if (summary.totalPausedMillis > 0) {
-            SummaryRow(
-                label = stringResource(R.string.walk_stat_paused_time),
-                value = WalkFormat.duration(summary.totalPausedMillis),
-            )
-        }
-        if (summary.totalMeditatedMillis > 0) {
-            SummaryRow(
-                label = stringResource(R.string.walk_stat_meditation_time),
-                value = WalkFormat.duration(summary.totalMeditatedMillis),
-            )
-        }
-        if (summary.waypointCount > 0) {
-            SummaryRow(
-                label = stringResource(R.string.walk_stat_waypoints),
-                value = summary.waypointCount.toString(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SummaryRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            text = label,
-            style = pilgrimType.body,
-            color = pilgrimColors.fog,
-        )
-        Text(
-            text = value,
-            style = pilgrimType.statValue,
-            color = pilgrimColors.ink,
-        )
-    }
-}
-
 
 /**
  * Stage 8-A: CachedShare → JourneyRowState projection. `null` or
