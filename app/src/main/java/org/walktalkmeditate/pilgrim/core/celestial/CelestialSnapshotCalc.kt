@@ -24,6 +24,7 @@ internal object CelestialSnapshotCalc {
         val jd = SunCalc.julianDayFromEpochMillis(atEpochMillis)
         val T = SunCalc.julianCenturies(jd)
 
+        val ayanamsa = PlanetCalc.ayanamsa(T)
         val positions = Planet.entries.map { planet ->
             val longitude = when (planet) {
                 Planet.Sun -> SunCalc.solarLongitude(T)
@@ -35,14 +36,23 @@ internal object CelestialSnapshotCalc {
                 Planet.Saturn -> PlanetCalc.saturnLongitude(T)
             }
             val tropical = PlanetCalc.zodiacPosition(longitude)
-            val sidereal = PlanetCalc.zodiacPosition(longitude - PlanetCalc.ayanamsa(T))
+            val sidereal = PlanetCalc.zodiacPosition(longitude - ayanamsa)
+            // iOS `CelestialCalculator.swift:415-431` checks ingress
+            // against the active-system longitude, not the raw tropical.
+            // A planet at tropical 1° (Aries 1° → ingress) is at
+            // sidereal ~337° (Pisces 7° → not ingress) — Lahiri shifts
+            // the boundary by ~24°. Without this branch, Sidereal users
+            // would see ingress flags computed against the wrong frame.
+            // Latent today (no UI consumer); guards a future ingress
+            // badge from inheriting the bug.
+            val activeLongitude = if (system == ZodiacSystem.Tropical) longitude else longitude - ayanamsa
             PlanetaryPosition(
                 planet = planet,
                 longitude = longitude,
                 tropical = tropical,
                 sidereal = sidereal,
                 isRetrograde = PlanetCalc.isRetrograde(planet, T),
-                isIngress = PlanetCalc.isIngress(longitude),
+                isIngress = PlanetCalc.isIngress(activeLongitude),
             )
         }
 
