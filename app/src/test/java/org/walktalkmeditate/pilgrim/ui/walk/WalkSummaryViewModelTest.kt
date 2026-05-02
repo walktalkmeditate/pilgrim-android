@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
@@ -70,6 +71,7 @@ class WalkSummaryViewModelTest {
     private lateinit var hemisphereLocation: FakeLocationSource
     private lateinit var hemisphereRepo: HemisphereRepository
     private lateinit var hemisphereScope: CoroutineScope
+    private lateinit var persistenceScope: CoroutineScope
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -115,6 +117,10 @@ class WalkSummaryViewModelTest {
         hemisphereLocation = FakeLocationSource()
         hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, hemisphereLocation, hemisphereScope)
+        // Pipe persistence-scope writes through the same test dispatcher
+        // so DAO calls land on Room's test executor (set up at line ~95).
+        // SupervisorJob mirrors the production provider's failure isolation.
+        persistenceScope = CoroutineScope(SupervisorJob() + dispatcher)
     }
 
     private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
@@ -146,6 +152,7 @@ class WalkSummaryViewModelTest {
             cachedShareStore = cachedShareStore,
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             practicePreferences = practicePreferences,
+            persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
     }
@@ -154,6 +161,7 @@ class WalkSummaryViewModelTest {
     fun tearDown() {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
+        persistenceScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
         // Stage 8-A: WalkSummaryViewModel.cachedShareFlow opens the
         // share_cache DataStore eagerly via SharingStarted.Eagerly.
@@ -979,6 +987,37 @@ class WalkSummaryViewModelTest {
             }
         }
         assertNull(persistedNull?.favicon)
+    }
+
+    @Test
+    fun setFavicon_persistsAfterViewModelCleared() = runTest(dispatcher) {
+        // Regression: setFavicon must run on persistenceScope (process
+        // lifetime), NOT viewModelScope. Otherwise a tap-then-back-nav
+        // sequence cancels the in-flight DAO call and the user's
+        // selection is lost on reload. iOS uses CoreStore's
+        // background queue for the same reason.
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        val vm = newViewModel(walkId)
+        awaitLoaded(vm)
+
+        vm.setFavicon(WalkFavicon.STAR)
+        // Cancel viewModelScope IMMEDIATELY — simulates user tapping
+        // favicon then tapping Done within ~1ms (back-nav cancels VM).
+        // Using direct Job cancellation rather than ViewModel.onCleared()
+        // (protected) — same effect on any viewModelScope.launch in flight.
+        vm.viewModelScope.coroutineContext[Job]?.cancel()
+
+        val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                var w = repository.getWalk(walkId)
+                while (w?.favicon == null) {
+                    kotlinx.coroutines.delay(10)
+                    w = repository.getWalk(walkId)
+                }
+                w
+            }
+        }
+        assertEquals("star", persisted.favicon)
     }
 
     @Test

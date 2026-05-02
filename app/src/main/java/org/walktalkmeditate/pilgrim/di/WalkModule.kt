@@ -27,6 +27,12 @@ object WalkModule {
 
     @Provides
     @Singleton
+    @PersistenceScope
+    fun providePersistenceScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Provides
+    @Singleton
     @WalkFinalizationObservedState
     fun provideWalkFinalizationObservedState(
         controller: WalkController,
