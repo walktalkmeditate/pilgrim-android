@@ -95,10 +95,11 @@ class VoicePreferencesRepositoryTest {
     fun `autoTranscribe migration — upgrade with appearance_mode set seeds true`() = runTest {
         // Pre-seed: simulate a Stage 9.5-E user who has appearance_mode written.
         dataStore.edit { it[stringPreferencesKey("appearance_mode")] = "system" }
-        runBlocking { kotlinx.coroutines.delay(50) }
         val repo = DataStoreVoicePreferencesRepository(dataStore, scope)
-        runBlocking { kotlinx.coroutines.delay(100) }
-        assertTrue(repo.autoTranscribe.value)
+        // Use awaitAutoTranscribe() — gates on migrationComplete deterministically.
+        // Polling `.value` after a delay flakes on slower CI runners (the prior
+        // 100ms wait wasn't enough on GitHub Actions Linux).
+        assertTrue(repo.awaitAutoTranscribe())
     }
 
     @Test
@@ -120,10 +121,10 @@ class VoicePreferencesRepositoryTest {
         // Also pre-seed an upgrade-indicator key — without the explicit write,
         // the migration would try to seed true. The explicit write must win.
         dataStore.edit { it[stringPreferencesKey("appearance_mode")] = "system" }
-        runBlocking { kotlinx.coroutines.delay(50) }
         val repo = DataStoreVoicePreferencesRepository(dataStore, scope)
-        runBlocking { kotlinx.coroutines.delay(100) }
-        assertFalse(repo.autoTranscribe.value)
+        // awaitAutoTranscribe() gates on migrationComplete deterministically,
+        // unlike the prior delay+poll which flaked on slower CI runners.
+        assertFalse(repo.awaitAutoTranscribe())
     }
 
     @Test
