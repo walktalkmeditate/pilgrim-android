@@ -337,6 +337,15 @@ class WalkSummaryViewModel @Inject constructor(
      * [buildState] and is captured on
      * [WalkSummary.calloutInputs]; the display flow only re-derives
      * the prose itself, never refetches.
+     *
+     * Note: `calloutInputs.units` is captured at buildState time, so
+     * toggling Metric ↔ Imperial in Settings while the Summary is
+     * open does NOT re-derive the TotalDistance threshold prose — a
+     * 10-km crossing prose stays "10 km total" even after the user
+     * flips to Imperial (where 10 mi ≈ 16 km would be a different
+     * threshold). Same staleness window as the seal artwork +
+     * etegami spec; deferred to a future "live re-render of generated
+     * artifacts" stage.
      */
     val walkSummaryCalloutProseDisplay: StateFlow<String?> =
         kotlinx.coroutines.flow.combine(

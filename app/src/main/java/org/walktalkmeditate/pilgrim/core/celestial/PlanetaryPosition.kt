@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.celestial
 
+import androidx.compose.runtime.Immutable
+
 /**
  * One planet's full state at a moment in time.
  *
@@ -11,6 +13,7 @@ package org.walktalkmeditate.pilgrim.core.celestial
  * Moon always return `false`.
  * `isIngress` is true when within 1° of a sign boundary.
  */
+@Immutable
 data class PlanetaryPosition(
     val planet: Planet,
     val longitude: Double,
