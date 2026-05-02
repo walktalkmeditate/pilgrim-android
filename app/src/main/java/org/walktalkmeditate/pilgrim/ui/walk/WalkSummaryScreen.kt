@@ -336,9 +336,13 @@ fun WalkSummaryScreen(
                                 // 6. Duration hero
                                 WalkDurationHero(durationMillis = s.summary.activeMillis)
 
-                                // 7. Milestone callout (Stage 13-F partial — non-celestial branch)
+                                // 7. Milestone callout — bridge during Stage 13-Cel migration.
+                                // Task 14 replaces this with the live `walkSummaryCalloutProseDisplay`
+                                // StateFlow consumer (iOS computeMilestone priority chain).
                                 s.summary.milestone?.let { ms ->
-                                    MilestoneCalloutRow(milestone = ms)
+                                    MilestoneCalloutRow(
+                                        prose = org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones.label(ms),
+                                    )
                                 }
 
                                 // 8. Stats row — distance value animates 0 → final on reveal.

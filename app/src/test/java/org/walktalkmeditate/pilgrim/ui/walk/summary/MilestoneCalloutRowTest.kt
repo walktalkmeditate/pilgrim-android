@@ -10,8 +10,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestone
-import org.walktalkmeditate.pilgrim.ui.goshuin.Season
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 @RunWith(RobolectricTestRunner::class)
@@ -21,36 +19,18 @@ class MilestoneCalloutRowTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun firstWalk_rendersCorrectProse() {
+    fun rendersGivenProse() {
         composeRule.setContent {
-            PilgrimTheme { MilestoneCalloutRow(GoshuinMilestone.FirstWalk) }
-        }
-        composeRule.onNodeWithText("Your first walk").assertIsDisplayed()
-    }
-
-    @Test
-    fun longestWalk_rendersCorrectProse() {
-        composeRule.setContent {
-            PilgrimTheme { MilestoneCalloutRow(GoshuinMilestone.LongestWalk) }
+            PilgrimTheme { MilestoneCalloutRow(prose = "Your longest walk yet") }
         }
         composeRule.onNodeWithText("Your longest walk yet").assertIsDisplayed()
     }
 
     @Test
-    fun nthWalk_includesOrdinal() {
+    fun rendersDifferentProse() {
         composeRule.setContent {
-            PilgrimTheme { MilestoneCalloutRow(GoshuinMilestone.NthWalk(5)) }
+            PilgrimTheme { MilestoneCalloutRow(prose = "You walked on the Spring Equinox") }
         }
-        composeRule.onNodeWithText("Your 5th walk").assertIsDisplayed()
-    }
-
-    @Test
-    fun firstOfSeason_includesSeasonName() {
-        composeRule.setContent {
-            PilgrimTheme {
-                MilestoneCalloutRow(GoshuinMilestone.FirstOfSeason(Season.Spring))
-            }
-        }
-        composeRule.onNodeWithText("Your first walk of Spring").assertIsDisplayed()
+        composeRule.onNodeWithText("You walked on the Spring Equinox").assertIsDisplayed()
     }
 }
