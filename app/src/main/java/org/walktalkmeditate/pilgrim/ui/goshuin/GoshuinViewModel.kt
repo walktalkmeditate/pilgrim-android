@@ -82,6 +82,7 @@ class GoshuinViewModel @Inject constructor(
                         uuid = walk.uuid,
                         startTimestamp = walk.startTimestamp,
                         distanceMeters = distances.getValue(walk.id),
+                        meditateDurationMillis = (walk.meditationSeconds ?: 0L) * 1000L,
                     )
                 }
                 // Snapshot the hemisphere at flow-emission time. A
