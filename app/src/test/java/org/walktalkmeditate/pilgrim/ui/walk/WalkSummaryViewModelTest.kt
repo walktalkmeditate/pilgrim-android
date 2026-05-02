@@ -1147,14 +1147,13 @@ class WalkSummaryViewModelTest {
 
     @Test
     fun longestMeditation_callout_fires_on_strict_improvement() = runTest(dispatcher) {
-        // Insert a prior walk with 5 min (300s) meditation persisted
-        // on Walk.meditationSeconds, then a current walk with 10 min
-        // (600s). Strict-improvement-over-nonzero gate fires →
-        // chain returns the LongestMeditation prose string.
-        //
-        // Walks are inserted via repo helpers; meditationSeconds is
-        // updated through the WalkDao.updateAggregates() path that
-        // production also uses.
+        // Prior walk with 300s persisted meditation column; current
+        // walk with 600s of MEDITATION_START/END events (live event-
+        // replay total feeds the callout for the current walk —
+        // Walk.meditationSeconds may not be populated yet for a
+        // freshly-finished walk; see WalkSummaryViewModel comment on
+        // currentMeditationSeconds). Strict-improvement-over-nonzero
+        // gate fires → chain returns LongestMeditation prose.
         val priorWalk = repository.startWalk(startTimestamp = 0L)
         repository.finishWalk(priorWalk, endTimestamp = 60_000L)
         db.walkDao().updateAggregates(
@@ -1164,12 +1163,24 @@ class WalkSummaryViewModelTest {
         )
 
         val currentWalk = repository.startWalk(startTimestamp = 100_000L)
-        repository.finishWalk(currentWalk, endTimestamp = 160_000L)
-        db.walkDao().updateAggregates(
-            id = currentWalk.id,
-            distanceMeters = 0.0,
-            meditationSeconds = 600L,
+        // 600s = 600_000ms of meditation, between t=100_000 and
+        // t=700_000 wall-clock (relative to walk start). End the walk
+        // after the meditation window closes.
+        repository.recordEvent(
+            WalkEvent(
+                walkId = currentWalk.id,
+                timestamp = 100_000L,
+                eventType = WalkEventType.MEDITATION_START,
+            ),
         )
+        repository.recordEvent(
+            WalkEvent(
+                walkId = currentWalk.id,
+                timestamp = 700_000L,
+                eventType = WalkEventType.MEDITATION_END,
+            ),
+        )
+        repository.finishWalk(currentWalk, endTimestamp = 760_000L)
 
         val vm = newViewModel(currentWalk.id)
         awaitLoaded(vm)
