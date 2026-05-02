@@ -25,6 +25,11 @@ object WalkModule {
     fun provideWalkFinalizationScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // PersistenceScope is generic (not walk-specific); housed here for now
+    // because WalkSummaryViewModel is the first consumer. Move to a
+    // dedicated `CoroutineScopesModule` when a second VM injects it
+    // (Settings VM toggles + WalkVM dwell-screen writes are the obvious
+    // next candidates per the sweep PR triage).
     @Provides
     @Singleton
     @PersistenceScope
