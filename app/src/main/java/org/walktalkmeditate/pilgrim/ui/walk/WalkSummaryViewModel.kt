@@ -310,10 +310,12 @@ class WalkSummaryViewModel @Inject constructor(
     /**
      * Stage 13-Cel: celestial snapshot for the inline row (section 10).
      * Returns null when celestialAwarenessEnabled is OFF — toggling
-     * the pref flips the row immediately. Mirrors the
-     * [lightReadingDisplay] precedent: snapshot is always computed in
-     * [buildState] (cheap), gating happens only at display time so
-     * the user can flip the toggle while the summary is open.
+     * the pref flips the row immediately. Same combine pattern as
+     * [lightReadingDisplay] (snapshot always computed in [buildState],
+     * gated at display time), but uses [SharingStarted.WhileSubscribed]
+     * instead of `Eagerly` since the only consumer is the screen via
+     * `collectAsStateWithLifecycle` — no `.value` reads anywhere need
+     * the cache warm before subscription.
      */
     val celestialSnapshotDisplay: StateFlow<CelestialSnapshot?> =
         kotlinx.coroutines.flow.combine(
