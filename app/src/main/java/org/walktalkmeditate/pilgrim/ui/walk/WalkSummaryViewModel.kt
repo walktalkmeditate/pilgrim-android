@@ -15,6 +15,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -48,6 +49,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
+import org.walktalkmeditate.pilgrim.di.PersistenceScope
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.computeAscend
@@ -209,6 +211,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val cachedShareStore: CachedShareStore,
     unitsPreferences: UnitsPreferencesRepository,
     private val practicePreferences: PracticePreferencesRepository,
+    @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -394,10 +397,12 @@ class WalkSummaryViewModel @Inject constructor(
 
     /**
      * Stage 7-A: commit a batch of photo-picker URIs as pins for this
-     * walk. Runs on [Dispatchers.IO] because it touches ContentResolver
-     * (persistable URI grant + `DATE_TAKEN` cursor) and Room. All rows
-     * share the same `pinnedAt` wall-clock so they sort together and
-     * arrive as a single grid diff.
+     * walk. Runs on [persistenceScope] + [Dispatchers.IO] so the URI
+     * grant + Room insert survive the user immediately tapping Done
+     * after picking — viewModelScope would cancel mid-write. Touches
+     * ContentResolver (persistable URI grant + `DATE_TAKEN` cursor)
+     * and Room. All rows share the same `pinnedAt` wall-clock so
+     * they sort together and arrive as a single grid diff.
      *
      * Clipping to the cap is performed by the repo under the SAME Room
      * transaction that inserts — so concurrent pinPhotos calls cannot
@@ -408,7 +413,7 @@ class WalkSummaryViewModel @Inject constructor(
      */
     fun pinPhotos(uris: List<Uri>) {
         if (uris.isEmpty()) return
-        viewModelScope.launch(Dispatchers.IO) {
+        persistenceScope.launch {
             // Pre-clip optimistically against the current StateFlow
             // snapshot so we only request a persistable grant on URIs
             // likely to land. The repo's transactional clip is still
@@ -534,9 +539,13 @@ class WalkSummaryViewModel @Inject constructor(
      * (e.g. because `takePersistableUriPermission` threw at pin time)
      * raises SecurityException; swallow via runCatching. The worst
      * case of a missed release is one grant leaked, not user-visible.
+     *
+     * Runs on [persistenceScope] so the Room delete + URI release
+     * survive viewModelScope cancellation when the user immediately
+     * back-navs after tapping unpin.
      */
     fun unpinPhoto(photo: WalkPhoto) {
-        viewModelScope.launch(Dispatchers.IO) {
+        persistenceScope.launch {
             val result = try {
                 repository.unpinPhoto(photo.id)
             } catch (ce: CancellationException) {
@@ -564,9 +573,13 @@ class WalkSummaryViewModel @Inject constructor(
 
     /**
      * Stage 13-E: persist a favicon selection. Optimistic — flips the
-     * StateFlow immediately, writes through to Room on [Dispatchers.IO],
-     * and reverts the StateFlow on DAO failure. Tapping the same value
-     * deselects (writes null).
+     * StateFlow immediately, writes through to Room on
+     * [persistenceScope] (process-lifetime, IO dispatcher) so the
+     * write survives the user tapping a favicon and immediately tapping
+     * Done — `viewModelScope.launch` would cancel mid-write within the
+     * ~1ms window between optimistic flip + DAO call landing, losing
+     * the user's choice. Reverts the StateFlow on DAO failure.
+     * Tapping the same value deselects (writes null).
      *
      * The revert uses [MutableStateFlow.compareAndSet] so a failure
      * landing AFTER a newer tap has already updated the flow does NOT
@@ -580,7 +593,7 @@ class WalkSummaryViewModel @Inject constructor(
         val current = _selectedFavicon.value
         val newValue = if (favicon == current) null else favicon
         _selectedFavicon.value = newValue
-        viewModelScope.launch(Dispatchers.IO) {
+        persistenceScope.launch {
             try {
                 repository.setFavicon(walkId, newValue?.rawValue)
             } catch (ce: CancellationException) {
