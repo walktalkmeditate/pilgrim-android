@@ -122,6 +122,7 @@
     <!-- Stage 13-F milestone callout prose -->
     <string name="summary_milestone_first_walk">Your first walk</string>
     <string name="summary_milestone_longest_walk">Your longest walk yet</string>
+    <string name="summary_milestone_longest_meditation">Your longest meditation yet</string>
     <string name="summary_milestone_nth_walk">Your %1$s walk</string>
     <string name="summary_milestone_first_of_spring">Your first walk of Spring</string>
     <string name="summary_milestone_first_of_summer">Your first walk of Summer</string>
