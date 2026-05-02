@@ -311,9 +311,17 @@ fun WalkSummaryScreen(
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
                             ) {
-                                // 4. Elevation profile (Stage 13-F)
+                                // 4. Elevation profile (Stage 13-F).
+                                // `remember` the altitudeMeters projection — the
+                                // animated count-up at line ~338 re-invalidates this
+                                // Column lambda every frame for ~1s during reveal,
+                                // and the underlying altitudeSamples list is stable
+                                // across recomposes (immutable WalkSummary).
+                                val altitudeMeters = remember(s.summary.altitudeSamples) {
+                                    s.summary.altitudeSamples.map { it.altitudeMeters }
+                                }
                                 ElevationProfile(
-                                    altitudes = s.summary.altitudeSamples.map { it.altitudeMeters },
+                                    altitudes = altitudeMeters,
                                     units = distanceUnits,
                                 )
 
