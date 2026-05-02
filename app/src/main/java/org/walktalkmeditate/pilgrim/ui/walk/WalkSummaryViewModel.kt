@@ -34,6 +34,8 @@ import kotlinx.coroutines.sync.Mutex
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
+import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
+import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
@@ -77,6 +79,8 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.WalkMilestoneInput
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.MAX_PINS_PER_WALK
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutInputs
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutProse
 
 /**
  * Three-state load for the summary screen: the VM's [summary] flow
@@ -198,6 +202,29 @@ data class WalkSummary(
      * `produceState` on first composition.
      */
     val etegamiSpec: org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec? = null,
+    /**
+     * Stage 13-Cel: time-only celestial snapshot for the inline row
+     * (planetary positions, planetary hour, element balance, seasonal
+     * marker). ALWAYS computed at summary build (cheap, deterministic
+     * from `walk.startTimestamp`); the celestial-awareness gate is
+     * applied at the screen level via [celestialSnapshotDisplay] so
+     * toggling the pref while the summary is open flips the row
+     * immediately. Null iff `CelestialSnapshotCalc.snapshot` threw
+     * (not expected today; guarded via `runCatching` for defensive
+     * logging).
+     */
+    val celestialSnapshot: CelestialSnapshot? = null,
+    /**
+     * Stage 13-Cel: pre-composed inputs for the milestone-callout
+     * priority chain (SeasonalMarker → LongestMeditation →
+     * LongestWalk → TotalDistance). Captured at build time so the
+     * display flow [walkSummaryCalloutProseDisplay] can re-derive
+     * prose on celestial-pref toggle without re-querying past walks.
+     * Required (non-null): every Loaded summary needs it to drive
+     * the callout row — even when the chain returns null prose, the
+     * row consumes the inputs to decide whether to render at all.
+     */
+    val calloutInputs: WalkSummaryCalloutInputs,
 )
 
 @HiltViewModel
@@ -277,6 +304,52 @@ class WalkSummaryViewModel @Inject constructor(
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.Eagerly,
+            initialValue = null,
+        )
+
+    /**
+     * Stage 13-Cel: celestial snapshot for the inline row (section 10).
+     * Returns null when celestialAwarenessEnabled is OFF — toggling
+     * the pref flips the row immediately. Mirrors the
+     * [lightReadingDisplay] precedent: snapshot is always computed in
+     * [buildState] (cheap), gating happens only at display time so
+     * the user can flip the toggle while the summary is open.
+     */
+    val celestialSnapshotDisplay: StateFlow<CelestialSnapshot?> =
+        kotlinx.coroutines.flow.combine(
+            state,
+            practicePreferences.celestialAwarenessEnabled,
+        ) { s, enabled ->
+            if (s is WalkSummaryUiState.Loaded && enabled) s.summary.celestialSnapshot else null
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = null,
+        )
+
+    /**
+     * Stage 13-Cel: prose for the milestone callout (section 7).
+     * Recomputes on celestialAwarenessEnabled toggle so the
+     * SeasonalMarker branch enters/leaves the priority chain live.
+     * The expensive past-walks query already happened in
+     * [buildState] and is captured on
+     * [WalkSummary.calloutInputs]; the display flow only re-derives
+     * the prose itself, never refetches.
+     */
+    val walkSummaryCalloutProseDisplay: StateFlow<String?> =
+        kotlinx.coroutines.flow.combine(
+            state,
+            practicePreferences.celestialAwarenessEnabled,
+        ) { s, enabled ->
+            if (s !is WalkSummaryUiState.Loaded) return@combine null
+            WalkSummaryCalloutProse.compute(
+                inputs = s.summary.calloutInputs,
+                celestialEnabled = enabled,
+                context = context,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = null,
         )
 
@@ -830,6 +903,49 @@ class WalkSummaryViewModel @Inject constructor(
             android.util.Log.w(TAG, "composeEtegamiSpec failed for walk $walkId", it)
         }.getOrNull()
 
+        // Stage 13-Cel: time-only celestial snapshot for the inline
+        // row. Always computed (cheap, deterministic from
+        // walk.startTimestamp); display gating handled by
+        // [celestialSnapshotDisplay] so the celestial-awareness
+        // toggle flips the row live without rebuilding the summary.
+        // `runCatching` is defense-in-depth — the calc is pure and
+        // expected to succeed; on failure we log and degrade to null
+        // (the row simply doesn't render).
+        val celestialSnapshot = runCatching {
+            CelestialSnapshotCalc.snapshot(
+                atEpochMillis = walk.startTimestamp,
+                zoneId = ZoneId.systemDefault(),
+                system = practicePreferences.zodiacSystem.value,
+            )
+        }.onFailure {
+            android.util.Log.w(TAG, "CelestialSnapshotCalc.snapshot failed for walk $walkId", it)
+        }.getOrNull()
+
+        // Stage 13-Cel: callout inputs for the milestone-callout
+        // priority chain (SeasonalMarker / LongestMeditation /
+        // LongestWalk / TotalDistance). Past walks are queried once
+        // here; the live-display flow re-derives prose only.
+        //
+        // 100-most-recent cap matches iOS `fetchLimit = 100`. The
+        // chain documents itself as "cumulative over recent
+        // activity," not "lifetime total" — older walks (>100 ago)
+        // are intentionally excluded. Filter excludes the current
+        // walk so a re-open doesn't compare it against itself.
+        val pastFinished = repository.allWalks().asSequence()
+            .filter { it.endTimestamp != null && it.id != walk.id }
+            .sortedByDescending { it.endTimestamp ?: 0L }
+            .take(100)
+            .toList()
+        val calloutInputs = WalkSummaryCalloutInputs(
+            currentDistanceMeters = distance,
+            currentMeditationSeconds = walk.meditationSeconds ?: 0L,
+            pastWalksMaxDistance = pastFinished.maxOfOrNull { it.distanceMeters ?: 0.0 } ?: 0.0,
+            pastWalksMaxMeditation = pastFinished.maxOfOrNull { it.meditationSeconds ?: 0L } ?: 0L,
+            pastWalksDistanceSum = pastFinished.sumOf { it.distanceMeters ?: 0.0 },
+            units = distanceUnits.value,
+            seasonalMarker = celestialSnapshot?.seasonalMarker,
+        )
+
         return WalkSummaryUiState.Loaded(
             WalkSummary(
                 walk = walk,
@@ -856,6 +972,8 @@ class WalkSummaryViewModel @Inject constructor(
                 milestone = milestone,
                 lightReading = lightReading,
                 etegamiSpec = etegamiSpec,
+                celestialSnapshot = celestialSnapshot,
+                calloutInputs = calloutInputs,
             ),
         )
     }
