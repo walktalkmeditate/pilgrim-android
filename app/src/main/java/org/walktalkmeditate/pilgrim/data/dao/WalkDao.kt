@@ -74,4 +74,18 @@ interface WalkDao {
             "ORDER BY end_timestamp DESC, id DESC LIMIT :limit",
     )
     suspend fun getRecentFinished(limit: Int): List<Walk>
+
+    /**
+     * Walks finished BEFORE the given start timestamp, capped to
+     * [limit] most recent (DESC by end time). Used by Walk Summary's
+     * milestone-callout chain so re-opening an older walk's summary
+     * doesn't include later walks in the past-totals comparison.
+     * Verbatim port of iOS `WalkSummaryView.swift:436` predicate.
+     */
+    @Query(
+        "SELECT * FROM walks WHERE end_timestamp IS NOT NULL " +
+            "AND start_timestamp < :currentStart " +
+            "ORDER BY end_timestamp DESC, id DESC LIMIT :limit",
+    )
+    suspend fun getRecentFinishedBefore(currentStart: Long, limit: Int): List<Walk>
 }

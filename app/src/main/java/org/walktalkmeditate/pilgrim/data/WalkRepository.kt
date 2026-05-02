@@ -51,6 +51,17 @@ open class WalkRepository @Inject constructor(
     suspend fun recentFinishedWalks(limit: Int): List<Walk> =
         walkDao.getRecentFinished(limit)
 
+    /**
+     * Walks finished BEFORE [currentStart], DESC by end time, capped
+     * to [limit]. Drives the Walk Summary milestone-callout chain
+     * (LongestMeditation / LongestWalk / TotalDistance) — re-opening
+     * an older walk's summary correctly compares against only walks
+     * that started before it. Verbatim port of iOS
+     * `WalkSummaryView.swift:436` predicate.
+     */
+    suspend fun recentFinishedWalksBefore(currentStart: Long, limit: Int): List<Walk> =
+        walkDao.getRecentFinishedBefore(currentStart, limit)
+
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
     suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)

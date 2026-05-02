@@ -933,21 +933,15 @@ class WalkSummaryViewModel @Inject constructor(
         // activity," not "lifetime total" — older walks (>100 ago)
         // are intentionally excluded. Filter follows iOS verbatim
         // (`_startDate < walk.startDate`): only walks that started
-        // BEFORE this one count as "past." Without the start-time
-        // gate, re-opening an older walk's summary would mis-fire
-        // milestones — e.g. a 9km walk re-opened after a later 2km
-        // walk would retroactively trigger "10 km total" on the older
-        // walk. The `it.id != walk.id` clause is now defensive cover
-        // for clock-skew or duplicate timestamps.
-        val pastFinished = repository.allWalks().asSequence()
-            .filter {
-                it.endTimestamp != null &&
-                    it.startTimestamp < walk.startTimestamp &&
-                    it.id != walk.id
-            }
-            .sortedByDescending { it.endTimestamp ?: 0L }
-            .take(100)
-            .toList()
+        // BEFORE this one count as "past." Targeted DAO query keeps
+        // the read O(101) rather than full-table-scan + in-memory
+        // sort (Stage 13-Cel review caught: a 10k-walk power user
+        // would otherwise pay full table read on every Walk Summary
+        // open).
+        val pastFinished = repository.recentFinishedWalksBefore(
+            currentStart = walk.startTimestamp,
+            limit = MILESTONE_CALLOUT_PAST_WALKS_LIMIT,
+        )
         val calloutInputs = WalkSummaryCalloutInputs(
             currentDistanceMeters = distance,
             // Live event-replay total — Walk.meditationSeconds is the
@@ -1168,6 +1162,7 @@ class WalkSummaryViewModel @Inject constructor(
         const val ARG_WALK_ID = "walkId"
         private const val SUBSCRIBER_GRACE_MS = 5_000L
         private const val TAG = "WalkSummaryViewModel"
+        private const val MILESTONE_CALLOUT_PAST_WALKS_LIMIT = 100
     }
 }
 
