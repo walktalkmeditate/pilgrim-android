@@ -129,6 +129,25 @@
     <string name="summary_milestone_first_of_autumn">Your first walk of Autumn</string>
     <string name="summary_milestone_first_of_winter">Your first walk of Winter</string>
 
+    <!-- Stage 13-Cel celestial line -->
+    <string name="summary_celestial_moon_in">Moon in %1$s</string>
+    <string name="summary_celestial_hour_of">Hour of %1$s</string>
+    <string name="summary_celestial_predominates">%1$s predominates</string>
+
+    <!-- Stage 13-Cel SeasonalMarker callout (Walk Summary only) -->
+    <string name="summary_milestone_seasonal_spring_equinox">You walked on the Spring Equinox</string>
+    <string name="summary_milestone_seasonal_summer_solstice">You walked on the Summer Solstice</string>
+    <string name="summary_milestone_seasonal_autumn_equinox">You walked on the Autumn Equinox</string>
+    <string name="summary_milestone_seasonal_winter_solstice">You walked on the Winter Solstice</string>
+    <string name="summary_milestone_seasonal_imbolc">You walked on the Imbolc</string>
+    <string name="summary_milestone_seasonal_beltane">You walked on the Beltane</string>
+    <string name="summary_milestone_seasonal_lughnasadh">You walked on the Lughnasadh</string>
+    <string name="summary_milestone_seasonal_samhain">You walked on the Samhain</string>
+
+    <!-- Stage 13-Cel TotalDistance callout (Walk Summary only) -->
+    <string name="summary_milestone_total_distance_km">You\'ve now walked %1$s km total</string>
+    <string name="summary_milestone_total_distance_mi">You\'ve now walked %1$s mi total</string>
+
     <!-- Stage 13-G details -->
     <string name="summary_details_paused">Paused</string>
     <string name="transcription_pending">Transcribing\u2026</string>
