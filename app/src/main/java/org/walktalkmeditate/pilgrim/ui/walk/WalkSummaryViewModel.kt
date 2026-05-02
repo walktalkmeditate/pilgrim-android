@@ -397,11 +397,11 @@ class WalkSummaryViewModel @Inject constructor(
 
     /**
      * Stage 7-A: commit a batch of photo-picker URIs as pins for this
-     * walk. Runs on [persistenceScope] + [Dispatchers.IO] so the URI
-     * grant + Room insert survive the user immediately tapping Done
-     * after picking — viewModelScope would cancel mid-write. Touches
-     * ContentResolver (persistable URI grant + `DATE_TAKEN` cursor)
-     * and Room. All rows share the same `pinnedAt` wall-clock so
+     * walk. Runs on [persistenceScope] (process-lifetime, IO dispatcher
+     * under the hood) so the URI grant + Room insert survive the user
+     * immediately tapping Done after picking — viewModelScope would
+     * cancel mid-write. Touches ContentResolver (persistable URI grant
+     * + `DATE_TAKEN` cursor) and Room. All rows share the same `pinnedAt` wall-clock so
      * they sort together and arrive as a single grid diff.
      *
      * Clipping to the cap is performed by the repo under the SAME Room

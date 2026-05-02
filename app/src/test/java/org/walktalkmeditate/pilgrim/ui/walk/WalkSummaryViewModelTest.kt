@@ -17,7 +17,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -127,6 +129,7 @@ class WalkSummaryViewModelTest {
 
     private fun newViewModel(
         walkId: Long,
+        repositoryOverride: WalkRepository = repository,
         practicePreferences: org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository =
             // Stage 10-C: light reading is gated on celestialAwarenessEnabled.
             // The legacy tests in this file all assert non-null lightReading
@@ -144,7 +147,7 @@ class WalkSummaryViewModelTest {
         val cachedShareStore = org.walktalkmeditate.pilgrim.data.share.CachedShareStore(context, json)
         return WalkSummaryViewModel(
             context = context,
-            repository = repository,
+            repository = repositoryOverride,
             playback = playback,
             sweeper = sweeper,
             photoAnalysisScheduler = photoAnalysisScheduler,
@@ -994,18 +997,48 @@ class WalkSummaryViewModelTest {
         // Regression: setFavicon must run on persistenceScope (process
         // lifetime), NOT viewModelScope. Otherwise a tap-then-back-nav
         // sequence cancels the in-flight DAO call and the user's
-        // selection is lost on reload. iOS uses CoreStore's
-        // background queue for the same reason.
+        // selection is lost on reload. iOS uses CoreStore's background
+        // queue for the same reason.
+        //
+        // We force the test to actually distinguish viewModelScope from
+        // persistenceScope by gating the DAO call on a CompletableDeferred.
+        // Without the gate, UnconfinedTestDispatcher inlines the DAO call
+        // before the test can issue cancel — the assertion would pass
+        // under either implementation (the trap the closing reviewer
+        // caught). With the gate: the launch suspends past the cancel
+        // point, so cancellation actually decides whether the write
+        // lands.
+        val gate = CompletableDeferred<Unit>()
         val walkId = createFinishedWalk(durationMillis = 60_000L)
-        val vm = newViewModel(walkId)
+        val gatingDao = object : org.walktalkmeditate.pilgrim.data.dao.WalkDao by db.walkDao() {
+            override suspend fun updateFavicon(walkId: Long, favicon: String?) {
+                gate.await()
+                db.walkDao().updateFavicon(walkId, favicon)
+            }
+        }
+        val gatingRepo = WalkRepository(
+            database = db,
+            walkDao = gatingDao,
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = db.walkEventDao(),
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+        )
+        val vm = newViewModel(walkId, repositoryOverride = gatingRepo)
         awaitLoaded(vm)
 
         vm.setFavicon(WalkFavicon.STAR)
-        // Cancel viewModelScope IMMEDIATELY — simulates user tapping
-        // favicon then tapping Done within ~1ms (back-nav cancels VM).
-        // Using direct Job cancellation rather than ViewModel.onCleared()
-        // (protected) — same effect on any viewModelScope.launch in flight.
+        // Launch is now suspended at gate.await(). Cancel viewModelScope.
         vm.viewModelScope.coroutineContext[Job]?.cancel()
+        runCurrent()
+        // Release the gate. If the launch was on viewModelScope, it has
+        // already been cancelled — gate.await() throws CancellationException
+        // and the DAO call never runs. If on persistenceScope, the launch
+        // is still alive — it proceeds past the gate and writes.
+        gate.complete(Unit)
 
         val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(3_000L) {
