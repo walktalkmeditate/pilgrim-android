@@ -72,15 +72,7 @@ internal object SunCalc {
         val geomMeanAnom = 357.52911 + tCenturies * (35999.05029 - 0.0001537 * tCenturies)
         val eccentricity = 0.016708634 - tCenturies * (0.000042037 + 0.0000001267 * tCenturies)
 
-        val sunEqCenter = run {
-            val m = Math.toRadians(geomMeanAnom)
-            sin(m) * (1.914602 - tCenturies * (0.004817 + 0.000014 * tCenturies)) +
-                sin(2 * m) * (0.019993 - 0.000101 * tCenturies) +
-                sin(3 * m) * 0.000289
-        }
-
-        val sunTrueLong = geomMeanLong + sunEqCenter
-        val sunAppLong = sunTrueLong - 0.00569 - 0.00478 * sin(Math.toRadians(125.04 - 1934.136 * tCenturies))
+        val sunAppLong = solarLongitude(tCenturies)
 
         val meanObliquity = run {
             val s = 21.448 - tCenturies * (46.815 + tCenturies * (0.00059 - tCenturies * 0.001813))
@@ -133,12 +125,41 @@ internal object SunCalc {
         return SunTimes(sunrise = sunrise, sunset = sunset, solarNoon = solarNoon)
     }
 
-    private fun julianDay(instant: Instant): Double =
+    internal fun julianDay(instant: Instant): Double =
         instant.toEpochMilli() / 86_400_000.0 + 2_440_587.5
 
-    private fun julianCenturies(jd: Double): Double = (jd - 2_451_545.0) / 36_525.0
+    /**
+     * Convenience overload for callers that have a UTC epoch
+     * milliseconds value rather than an [Instant]. Formula identical
+     * to [julianDay].
+     */
+    internal fun julianDayFromEpochMillis(epochMillis: Long): Double =
+        epochMillis / 86_400_000.0 + 2_440_587.5
 
-    private fun normalizeDeg(deg: Double): Double {
+    internal fun julianCenturies(jd: Double): Double = (jd - 2_451_545.0) / 36_525.0
+
+    /**
+     * Apparent solar ecliptic longitude in degrees, normalized to
+     * `[0, 360)`. Implements the same Meeus polynomial used inline by
+     * [sunTimes]; extracted so [PlanetCalc]'s geocentric corrections
+     * can share one source-of-truth.
+     *
+     * Inputs:
+     * - [T]: Julian centuries since J2000.0 (use [julianCenturies]).
+     */
+    internal fun solarLongitude(T: Double): Double {
+        val geomMeanLong = normalizeDeg(280.46646 + T * (36000.76983 + T * 0.0003032))
+        val geomMeanAnom = 357.52911 + T * (35999.05029 - 0.0001537 * T)
+        val mRad = Math.toRadians(geomMeanAnom)
+        val sunEqCenter = sin(mRad) * (1.914602 - T * (0.004817 + 0.000014 * T)) +
+            sin(2 * mRad) * (0.019993 - 0.000101 * T) +
+            sin(3 * mRad) * 0.000289
+        val sunTrueLong = geomMeanLong + sunEqCenter
+        val sunAppLong = sunTrueLong - 0.00569 - 0.00478 * sin(Math.toRadians(125.04 - 1934.136 * T))
+        return normalizeDeg(sunAppLong)
+    }
+
+    internal fun normalizeDeg(deg: Double): Double {
         val r = deg % 360.0
         return if (r < 0) r + 360.0 else r
     }
