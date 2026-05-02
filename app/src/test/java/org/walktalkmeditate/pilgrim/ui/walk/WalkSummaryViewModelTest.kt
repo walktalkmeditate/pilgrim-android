@@ -1015,6 +1015,12 @@ class WalkSummaryViewModelTest {
                 gate.await()
                 db.walkDao().updateFavicon(walkId, favicon)
             }
+            // Explicit forward — Kotlin `by` interface delegation generates
+            // forwarders at compile time, which can race Room's KSP
+            // regeneration of new query methods. Forwarding manually avoids
+            // a class-load hang seen on incremental rebuilds.
+            override suspend fun getRecentFinishedBefore(currentStart: Long, limit: Int): List<org.walktalkmeditate.pilgrim.data.entity.Walk> =
+                db.walkDao().getRecentFinishedBefore(currentStart, limit)
         }
         val gatingRepo = WalkRepository(
             database = db,
