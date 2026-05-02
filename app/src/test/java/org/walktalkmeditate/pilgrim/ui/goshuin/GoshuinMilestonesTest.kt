@@ -14,6 +14,7 @@ class GoshuinMilestonesTest {
         id: Long,
         date: LocalDate,
         distance: Double = 1_000.0,
+        meditateDurationMillis: Long = 0L,
     ): WalkMilestoneInput {
         val ts = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         return WalkMilestoneInput(
@@ -21,6 +22,7 @@ class GoshuinMilestonesTest {
             uuid = "uuid-$id",
             startTimestamp = ts,
             distanceMeters = distance,
+            meditateDurationMillis = meditateDurationMillis,
         )
     }
 
@@ -221,9 +223,85 @@ class GoshuinMilestonesTest {
         assertEquals("101st", GoshuinMilestones.ordinal(101))
     }
 
+    @Test fun `longestMeditation - fires when current walk is global max`() {
+        // Three walks so the walk being tested (walkIndex=1) has walkNumber=2
+        // and doesn't trip FirstWalk. The oldest walk (walkIndex=2, walkNumber=1)
+        // is FirstWalk by definition, so it's excluded from this assertion.
+        // Give oldest the highest distance so it wins LongestWalk and the middle
+        // walk (our target) can win LongestMeditation.
+        val oldest = walk(1L, LocalDate.of(2026, 4, 18), distance = 9_999.0, meditateDurationMillis = 0L)
+        val longer = walk(2L, LocalDate.of(2026, 4, 19), distance = 1_000.0, meditateDurationMillis = 600_000L)
+        val newer = walk(3L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 300_000L)
+        // most-recent-first: newer=0, longer=1, oldest=2
+        val list = listOf(newer, longer, oldest)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = longer, allFinished = list, hemisphere = Hemisphere.Northern)
+        assertEquals(GoshuinMilestone.LongestMeditation, m)
+    }
+
+    @Test fun `longestMeditation - does not fire when other walk has longer meditation`() {
+        // Give the middle walk (the one with MORE meditation) the highest distance
+        // so the current walk (index=0, our target) doesn't win LongestWalk via
+        // the tie-break and LongestMeditation can't fire for it either.
+        val oldest = walk(1L, LocalDate.of(2026, 4, 18), distance = 1_000.0, meditateDurationMillis = 300_000L)
+        val longer = walk(2L, LocalDate.of(2026, 4, 19), distance = 9_999.0, meditateDurationMillis = 600_000L)
+        val current = walk(3L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 120_000L)
+        // most-recent-first: current=0, longer=1, oldest=2
+        val list = listOf(current, longer, oldest)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = current, allFinished = list, hemisphere = Hemisphere.Northern)
+        // current has the smallest meditation and is not LongestWalk — null
+        assertNull(m)
+    }
+
+    @Test fun `longestMeditation - does not fire when no walks have meditation`() {
+        // Give the older walk a larger distance so the newer walk (our target,
+        // walkIndex=0) doesn't win LongestWalk via the tie-break.
+        val w1 = walk(1L, LocalDate.of(2026, 4, 19), distance = 9_999.0, meditateDurationMillis = 0L)
+        val w2 = walk(2L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 0L)
+        // most-recent-first: w2=0, w1=1
+        val list = listOf(w2, w1)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list, hemisphere = Hemisphere.Northern)
+        // No candidates with meditation > 0 — LongestMeditation must not fire.
+        // w2 is walkNumber=2 (not FirstWalk), not LongestWalk, not a multiple
+        // of 10 — falls through to FirstOfSeason. Both walks are in the same
+        // April 2026 Spring season so hasEarlierInSeason is true → null.
+        assertNull(m)
+    }
+
+    @Test fun `longestMeditation - fires for single walk-with-meditation when surrounded by zero-meditation walks`() {
+        // Three walks so the meditating walk is not the first overall. The oldest
+        // (walkIndex=2, walkNumber=1) carries firstWalk. Give oldest the highest
+        // distance so it wins LongestWalk and the meditating walk (index=1) can
+        // win LongestMeditation as the sole walk with meditation > 0.
+        val noMed1 = walk(1L, LocalDate.of(2026, 4, 17), distance = 9_999.0, meditateDurationMillis = 0L)
+        val meditates = walk(2L, LocalDate.of(2026, 4, 18), distance = 1_000.0, meditateDurationMillis = 60_000L)
+        val noMed3 = walk(3L, LocalDate.of(2026, 4, 19), distance = 1_000.0, meditateDurationMillis = 0L)
+        // most-recent-first: noMed3=0, meditates=1, noMed1=2
+        val list = listOf(noMed3, meditates, noMed1)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = meditates, allFinished = list, hemisphere = Hemisphere.Northern)
+        assertEquals(GoshuinMilestone.LongestMeditation, m)
+    }
+
+    @Test fun `longestMeditation - loses to longestWalk when both apply`() {
+        // Three walks so the champion walk (walkIndex=1) has walkNumber=2 and
+        // doesn't trip FirstWalk. Champion has both the longest distance AND the
+        // longest meditation. LongestWalk has higher precedence.
+        val oldest = walk(1L, LocalDate.of(2026, 4, 18), distance = 1_000.0, meditateDurationMillis = 0L)
+        val champion = walk(2L, LocalDate.of(2026, 4, 19), distance = 5_000.0, meditateDurationMillis = 600_000L)
+        val other = walk(3L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 300_000L)
+        // most-recent-first: other=0, champion=1, oldest=2
+        val list = listOf(other, champion, oldest)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = champion, allFinished = list, hemisphere = Hemisphere.Northern)
+        assertEquals(GoshuinMilestone.LongestWalk, m)
+    }
+
+    @Test fun `label - longestMeditation`() {
+        assertEquals("Longest Meditation", GoshuinMilestones.label(GoshuinMilestone.LongestMeditation))
+    }
+
     @Test fun `label - exhaustive coverage`() {
         assertEquals("First Walk", GoshuinMilestones.label(GoshuinMilestone.FirstWalk))
         assertEquals("Longest Walk", GoshuinMilestones.label(GoshuinMilestone.LongestWalk))
+        assertEquals("Longest Meditation", GoshuinMilestones.label(GoshuinMilestone.LongestMeditation))
         assertEquals("10th Walk", GoshuinMilestones.label(GoshuinMilestone.NthWalk(10)))
         assertEquals("21st Walk", GoshuinMilestones.label(GoshuinMilestone.NthWalk(21)))
         assertEquals("First of Spring", GoshuinMilestones.label(GoshuinMilestone.FirstOfSeason(Season.Spring)))

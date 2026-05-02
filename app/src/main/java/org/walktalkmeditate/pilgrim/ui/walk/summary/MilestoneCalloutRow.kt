@@ -35,12 +35,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  *
  * Caller-side gate: render only when `summary.milestone != null`.
  *
- * iOS divergence: iOS computes "Your longest meditation yet" + "You've
- * now walked N km total" inside `computeMilestone`. Android's
- * GoshuinMilestone (Stage 4-D) has no equivalent variants. Adding them
- * ripples through the goshuin grid + halo + reveal-overlay surface;
- * deferred to a focused follow-up. This composable handles only the
- * existing variants today.
+ * iOS divergence: iOS computes "You've now walked N km total" inside
+ * `computeMilestone`. Android has no equivalent variant; deferred to a
+ * focused follow-up. All other iOS milestone variants are handled here.
  */
 @Composable
 fun MilestoneCalloutRow(
@@ -78,6 +75,8 @@ private fun milestoneSummaryProse(milestone: GoshuinMilestone): String = when (m
         stringResource(R.string.summary_milestone_first_walk)
     GoshuinMilestone.LongestWalk ->
         stringResource(R.string.summary_milestone_longest_walk)
+    GoshuinMilestone.LongestMeditation ->
+        stringResource(R.string.summary_milestone_longest_meditation)
     is GoshuinMilestone.NthWalk ->
         stringResource(R.string.summary_milestone_nth_walk, GoshuinMilestones.ordinal(milestone.n))
     is GoshuinMilestone.FirstOfSeason -> stringResource(
