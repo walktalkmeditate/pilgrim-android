@@ -890,6 +890,7 @@ class WalkSummaryViewModel @Inject constructor(
                 uuid = walk.uuid,
                 startTimestamp = walk.startTimestamp,
                 distanceMeters = d,
+                meditateDurationMillis = (walk.meditationSeconds ?: 0L) * 1000L,
             )
         }
         val currentIndex = finished.indexOfFirst { it.id == currentWalk.id }
