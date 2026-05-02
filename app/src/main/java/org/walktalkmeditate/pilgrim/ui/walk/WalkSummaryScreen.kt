@@ -67,6 +67,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.CelestialLineRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
 import org.walktalkmeditate.pilgrim.ui.walk.summary.FaviconSelectorCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
@@ -113,6 +114,8 @@ fun WalkSummaryScreen(
     // with IllegalStateException. Today's single-emission state
     // flow happens to mask the bug; hoist pre-emptively.
     val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
+    val celestialSnapshot by viewModel.celestialSnapshotDisplay.collectAsStateWithLifecycle()
+    val walkSummaryCalloutProse by viewModel.walkSummaryCalloutProseDisplay.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
@@ -336,13 +339,13 @@ fun WalkSummaryScreen(
                                 // 6. Duration hero
                                 WalkDurationHero(durationMillis = s.summary.activeMillis)
 
-                                // 7. Milestone callout — bridge during Stage 13-Cel migration.
-                                // Task 14 replaces this with the live `walkSummaryCalloutProseDisplay`
-                                // StateFlow consumer (iOS computeMilestone priority chain).
-                                s.summary.milestone?.let { ms ->
-                                    MilestoneCalloutRow(
-                                        prose = org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones.label(ms),
-                                    )
+                                // 7. Milestone callout (Stage 13-Cel — iOS computeMilestone
+                                // priority chain: SeasonalMarker → LongestMeditation →
+                                // LongestWalk → TotalDistance → null. NO fallthrough to
+                                // FirstWalk/FirstOfSeason/NthWalk on Walk Summary callout
+                                // — those only appear on Goshuin grid).
+                                walkSummaryCalloutProse?.let { prose ->
+                                    MilestoneCalloutRow(prose = prose)
                                 }
 
                                 // 8. Stats row — distance value animates 0 → final on reveal.
@@ -371,7 +374,12 @@ fun WalkSummaryScreen(
                                     )
                                 }
 
-                                // 10. Celestial line — placeholder for Stage 13-F
+                                // 10. Celestial line (Stage 13-Cel). Gated by VM's
+                                // celestialSnapshotDisplay flow which combines summary
+                                // + practicePreferences.celestialAwarenessEnabled.
+                                celestialSnapshot?.let { snap ->
+                                    CelestialLineRow(snapshot = snap)
+                                }
 
                                 // 11. Time breakdown grid — Walk card uses
                                 // activeWalkingMillis (paused-AND-meditate-excluded).
