@@ -15,6 +15,7 @@ data class WalkMilestoneInput(
     val uuid: String,
     val startTimestamp: Long,
     val distanceMeters: Double,
+    val meditateDurationMillis: Long = 0L,
 )
 
 /**
@@ -27,8 +28,9 @@ data class WalkMilestoneInput(
  *
  *   1. [GoshuinMilestone.FirstWalk]
  *   2. [GoshuinMilestone.LongestWalk]
- *   3. [GoshuinMilestone.NthWalk]
- *   4. [GoshuinMilestone.FirstOfSeason]
+ *   3. [GoshuinMilestone.LongestMeditation]
+ *   4. [GoshuinMilestone.NthWalk]
+ *   5. [GoshuinMilestone.FirstOfSeason]
  *
  * iOS uses `Set<Milestone>.first` which depends on Swift's hash-based
  * iteration order — non-deterministic across processes. Android fixes
@@ -84,6 +86,20 @@ object GoshuinMilestones {
             return GoshuinMilestone.LongestWalk
         }
 
+        // LongestMeditation: walk has the global max meditate duration AND
+        // some walk has meditation > 0. Mirrors iOS goshuin-grid rule:
+        // Set<Milestone>.insert when current walk == filter-positive max.
+        // Distinct from the Walk Summary callout rule (which adds strict-
+        // improvement-over-nonzero gate via WalkSummaryCalloutProse).
+        val meditationCandidates = allFinished.filter { it.meditateDurationMillis > 0L }
+        if (meditationCandidates.isNotEmpty()) {
+            val maxMeditation = meditationCandidates.maxOf { it.meditateDurationMillis }
+            val longestMedId = meditationCandidates.maxByOrNull { it.meditateDurationMillis }?.walkId
+            if (longestMedId == walk.walkId && walk.meditateDurationMillis > 0L && walk.meditateDurationMillis == maxMeditation) {
+                return GoshuinMilestone.LongestMeditation
+            }
+        }
+
         if (walkNumber > 0 && walkNumber % 10 == 0) {
             return GoshuinMilestone.NthWalk(walkNumber)
         }
@@ -136,6 +152,7 @@ object GoshuinMilestones {
     fun label(milestone: GoshuinMilestone): String = when (milestone) {
         GoshuinMilestone.FirstWalk -> "First Walk"
         GoshuinMilestone.LongestWalk -> "Longest Walk"
+        GoshuinMilestone.LongestMeditation -> "Longest Meditation"
         is GoshuinMilestone.NthWalk -> "${ordinal(milestone.n)} Walk"
         is GoshuinMilestone.FirstOfSeason -> "First of ${seasonLabel(milestone.season)}"
     }
