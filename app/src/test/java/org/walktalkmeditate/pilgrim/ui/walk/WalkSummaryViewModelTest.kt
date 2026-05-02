@@ -1065,6 +1065,128 @@ class WalkSummaryViewModelTest {
         assertEquals(2, loaded.summary.altitudeSamples.size)
     }
 
+    // --- Stage 13-Cel: celestial snapshot + callout integration -------
+
+    @Test
+    fun celestialSnapshot_populated_in_buildState() = runTest(dispatcher) {
+        // Snapshot is unconditionally computed at build time (cheap,
+        // deterministic from walk.startTimestamp). The display gating
+        // happens at the screen level via celestialSnapshotDisplay,
+        // not by skipping computation here.
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertNotNull(loaded.summary.celestialSnapshot)
+        // Seven classical planets — covers the full Chaldean set used
+        // by PlanetaryHourCalc + the celestial line UI.
+        assertEquals(7, loaded.summary.celestialSnapshot!!.positions.size)
+    }
+
+    @Test
+    fun celestialSnapshotDisplay_null_when_pref_off() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        val vm = newViewModel(
+            walkId = walkId,
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+                initialCelestialAwarenessEnabled = false,
+            ),
+        )
+        awaitLoaded(vm)
+
+        assertNull(vm.celestialSnapshotDisplay.value)
+    }
+
+    @Test
+    fun celestialSnapshotDisplay_nonNull_when_pref_on() = runTest(dispatcher) {
+        // newViewModel default flips celestialAwarenessEnabled = true
+        // (Stage 10-C convenience for the legacy lightReading suite).
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        val vm = newViewModel(walkId)
+        awaitLoaded(vm)
+
+        // WhileSubscribed flow + .value read: subscribe a small
+        // collector so the upstream actually starts emitting, then
+        // wait for a non-null snapshot.
+        val snap = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                vm.celestialSnapshotDisplay.first { it != null }
+            }
+        }
+        assertNotNull(snap)
+    }
+
+    @Test
+    fun walkSummaryCalloutProseDisplay_null_when_no_chain_applies() = runTest(dispatcher) {
+        // Single finished walk, default fixture: no past walks (so
+        // both Long*Improvement gates fail — they require nonzero
+        // priors), no SeasonalMarker (depends on date/sun longitude;
+        // with current=startTimestamp 0L the marker is unlikely to
+        // hit), and TotalDistance threshold isn't crossed by a single
+        // ~zero-distance walk. Chain returns null prose.
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+        val vm = newViewModel(walkId)
+        awaitLoaded(vm)
+
+        // WhileSubscribed: subscribe so the combine actually fires.
+        // Tolerate both initial null and post-collect null — the
+        // expectation is "no prose ever materializes."
+        val prose = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                // Drain: subscribe then read .value once the upstream
+                // has had a chance to settle.
+                val job = launch { vm.walkSummaryCalloutProseDisplay.collect { } }
+                kotlinx.coroutines.delay(50)
+                val v = vm.walkSummaryCalloutProseDisplay.value
+                job.cancel()
+                v
+            }
+        }
+        assertNull(prose)
+    }
+
+    @Test
+    fun longestMeditation_callout_fires_on_strict_improvement() = runTest(dispatcher) {
+        // Insert a prior walk with 5 min (300s) meditation persisted
+        // on Walk.meditationSeconds, then a current walk with 10 min
+        // (600s). Strict-improvement-over-nonzero gate fires →
+        // chain returns the LongestMeditation prose string.
+        //
+        // Walks are inserted via repo helpers; meditationSeconds is
+        // updated through the WalkDao.updateAggregates() path that
+        // production also uses.
+        val priorWalk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(priorWalk, endTimestamp = 60_000L)
+        db.walkDao().updateAggregates(
+            id = priorWalk.id,
+            distanceMeters = 0.0,
+            meditationSeconds = 300L,
+        )
+
+        val currentWalk = repository.startWalk(startTimestamp = 100_000L)
+        repository.finishWalk(currentWalk, endTimestamp = 160_000L)
+        db.walkDao().updateAggregates(
+            id = currentWalk.id,
+            distanceMeters = 0.0,
+            meditationSeconds = 600L,
+        )
+
+        val vm = newViewModel(currentWalk.id)
+        awaitLoaded(vm)
+
+        val prose = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            withTimeout(3_000L) {
+                vm.walkSummaryCalloutProseDisplay.first { it != null }
+            }
+        }
+        assertEquals(
+            context.getString(
+                org.walktalkmeditate.pilgrim.R.string.summary_milestone_longest_meditation,
+            ),
+            prose,
+        )
+    }
+
     private suspend fun createFinishedWalk(
         durationMillis: Long,
         events: List<WalkEvent> = emptyList(),
