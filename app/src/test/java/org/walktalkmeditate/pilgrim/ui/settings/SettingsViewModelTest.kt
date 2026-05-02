@@ -11,9 +11,11 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,6 +145,15 @@ class SettingsViewModelTest {
 
     @After
     fun tearDown() {
+        // Cancel viewModelScope BEFORE db.close() so any in-flight Room
+        // observers (recordingsAggregate uses WhileSubscribed(5_000) on
+        // walkRepository.observeAllVoiceRecordings → VoiceRecordingDao.
+        // observeAll) tear down cleanly. Otherwise db.close() races the
+        // active flow and the resulting "connection pool has been
+        // closed" exception leaks past tearDown to surface as
+        // UncaughtExceptionsBeforeTest in a LATER test in the same
+        // JVM fork — typically PracticeCardTest (Stage 7-A pattern).
+        vm.viewModelScope.coroutineContext[Job]?.cancel()
         db.close()
         scope.cancel()
         dataStoreScope.cancel()
