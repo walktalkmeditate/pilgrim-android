@@ -957,7 +957,19 @@ class WalkSummaryViewModel @Inject constructor(
      */
     private suspend fun rebuildListingAfterCustomChange(updatedStyles: List<CustomPromptStyle>) {
         val cached = _cachedActivityContext.value
-        val ctx = cached?.first ?: promptsCoordinator.buildContext(walkId)
+        val ctx = try {
+            cached?.first ?: promptsCoordinator.buildContext(walkId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // Persist already succeeded; only the rebuild lookup failed.
+            // Null the cache so the next openPromptsSheet retries from
+            // scratch, and leave the existing sheet state intact (better
+            // than collapsing to Closed and stranding the user mid-edit).
+            android.util.Log.e(TAG, "rebuildListingAfterCustomChange: buildContext threw", t)
+            _cachedActivityContext.value = null
+            return
+        }
         if (ctx == null) {
             // Walk row gone — fall back to closing the sheet rather than
             // leaving stale state up.
@@ -965,7 +977,17 @@ class WalkSummaryViewModel @Inject constructor(
             _promptsSheetState.value = PromptsSheetState.Closed
             return
         }
-        val prompts = promptsCoordinator.generateAll(ctx, updatedStyles)
+        val prompts = try {
+            promptsCoordinator.generateAll(ctx, updatedStyles)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            android.util.Log.e(TAG, "rebuildListingAfterCustomChange: generateAll threw", t)
+            // Cache the new context but keep the prior prompts list — the
+            // next openPromptsSheet cache hit serves a slightly stale
+            // listing rather than crashing.
+            return
+        }
         _cachedActivityContext.value = ctx to prompts
         when (val current = _promptsSheetState.value) {
             is PromptsSheetState.Editor -> {
