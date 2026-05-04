@@ -41,6 +41,25 @@ foundation / 14-B chrome / 14-C overlays / 14-D polish).
   has `androidTest`-only seed paths sufficient for QA. (Audit Gap 2.)
 - **Long-press preview** — vestigial on iOS (Audit Gap 13). The expand card
   on tap covers the use case.
+- **Live talk-arc rendering for native walks** — Stage 14 ships WITHOUT a
+  live `ActivityIntervalCoordinator`. The only construction site of
+  `ActivityInterval` today is `data/pilgrim/builder/PilgrimPackageConverter.kt`
+  (the .pilgrim ZIP importer); native walks recorded on Android never write
+  TALKING intervals to `activity_intervals`. As a result: talk arcs and
+  counts will not render until live ActivityInterval recording lands in a
+  future stage (TODO Stage 14.X "wire live ActivityInterval recording from
+  WalkViewModel"). Talk shows as 0 in the activity bar / pills /
+  journey-summary cycler — visually correct (no talk happened) but
+  functionally degraded for users importing from .pilgrim ZIPs that contain
+  talk intervals from iOS. Meditation totals are unaffected because
+  `Walk.meditationSeconds` is already populated by `WalkMetricsCache` for
+  every native walk; Stage 14 reads from that cached column directly.
+- **Scenery seasonal/time-of-day sub-effects** — canopy seasonal swap,
+  falling leaves, dewdrops, alpenglow, snow flakes, moon clouds + stars +
+  rays, torii shimenawa rope + shide are deferred to Stage 14.5. Stage 14
+  ships scenery shapes as **static `Path` fills** tinted by the walk's
+  seasonal color (no animations, no time/season-driven color shifts beyond
+  per-walk tint). Drops the scenery-bucket scope from ~2k LOC to ~400 LOC.
 - **Per-walk live unit toggle reactivity beyond what `HomeViewModel` already
   combines** — units already flow through `unitsPreferences.distanceUnits`
   combine; Stage 14 reuses that path. iOS's `id(unitKey)` viewport reset is
@@ -73,22 +92,42 @@ foundation / 14-B chrome / 14-C overlays / 14-D polish).
 ### Layout shape
 
 The Stage 3-A `Column { card, card, card }` over a `CalligraphyPath` Canvas
-is replaced by a **LazyColumn** whose items emit zero-height "anchor" rows
-positioned above a single `behindCanvas` that draws **everything**: ribbon
-segments, walk dots (favicon + arcs + halo), distance labels, scenery,
-date dividers, lunar markers, milestone markers. The LazyColumn handles
-virtualization; `behindCanvas` reads `LazyListState.firstVisibleItemIndex`
-+ `firstVisibleItemScrollOffset` to compute viewport-relative draw Ys.
+is replaced by a **LazyColumn** whose items render the per-walk
+`WalkDot` Composable directly (positioned via `Modifier.offset { x =
+xPositionPx, y = 0 }` inside a fixed-height row) plus its distance-label
+sibling. Each row has a fixed `verticalSpacing = 90 dp` height
+(iOS-verbatim; reverts the Stage 3-F-tuned 132 dp; see Documented iOS
+deviations note 9). The decorative ribbon path/segments/scenery/lunar
+markers/milestone bars/date dividers/turning banner are drawn by a single
+`Canvas(Modifier.matchParentSize())` placed BEHIND the LazyColumn (a
+`drawBehind` on the parent `Box`). Per-dot tap is the `WalkDot`
+composable's own `Modifier.clickable` so accessibility labels + ripple
+indication work without a hand-rolled hit-test layer.
+
+**Coordinate math:** the parent Canvas knows row positions in canvas-space
+via the formula
+```
+firstVisibleRowYpx_inCanvas = firstVisibleItemIndex * 90.dp.toPx() + firstVisibleItemScrollOffset_px
+```
+For the haptic state-machine, viewport-center Y in canvas-space is
+`firstVisibleRowYpx_inCanvas + viewportHeightPx / 2`. The state-machine
+walks pre-computed dot Y-positions (`List<Float>` indexed by snapshot
+order) and triggers when the viewport center crosses any dot ± 20 px (or
+± 25 px for milestone bars).
 
 Cards are **gone**. Per-walk content collapses to:
 - The dot itself (8-22 dp, color-coded by season + turning-day, favicon
   glyph overlay, activity-duration arcs, optional newest ripple, optional
-  shared-ring stroke).
+  shared-ring stroke). Lives inside the LazyColumn row at offset
+  `xPositionPx`.
 - A small distance label (`pilgrimType.micro`, `fog @ 0.5α`) at the dot's
-  Y position offset 32 dp on the side OPPOSITE the dot's X meander.
+  Y position offset 32 dp on the side OPPOSITE the dot's X meander. Also
+  inside the row, opacity = `dotOpacity(index, total) * 0.7` (iOS
+  `InkScrollView.swift:636`).
 - A month/year date divider (`pilgrimType.caption`, `fog @ 0.5α`) at the
   first walk-row of each new month, anchored to the OPPOSITE side from
-  the dot.
+  the dot. Drawn by the behind-Canvas, NOT the row, since it spans the
+  same Y as the row but is decorative.
 
 Tap a dot → Material 3 ModalBottomSheet (skipPartiallyExpanded = false)
 opens the **expand card**: `[footprint] [favicon icon] [date+time]
@@ -129,23 +168,65 @@ val journalState: StateFlow<JournalUiState> = combine(
 `buildSnapshots(walks, ...)` per-walk:
 1. Reads route samples → haversine distance (already in
    `walkDistanceMeters(samples)`).
-2. Issues an aggregate-sum query through the new
-   `WalkRepository.activitySumsFor(walkId)` returning
-   `Map<ActivityType, Long>` (sum of `end - start` ms per type). NO schema
-   change — pure DAO `@Query` aggregating `activity_intervals`.
-3. Reduces cumulative distance left-to-right (oldest → newest), assigns to
+2. Reads pause-aware active duration via
+   `WalkMetricsMath.computeActiveDurationSeconds(walk, walkRepo.walkEventsFor(walkId))`.
+   `walkEventsFor` is a new repo helper delegating to
+   `WalkEventDao.getForWalk(walkId)`. iOS `walk.activeDuration` ALREADY
+   deducts pause time (per `Walk.swift`); the naive
+   `(end - start) / 1000` would silently inflate duration on any walk the
+   user paused, breaking pace + activity-bar fractions.
+3. Issues activity sums via the new repo helper
+   `WalkRepository.activitySumsFor(walkId): Pair<Long, Long>` returning
+   `(talkSec, meditateSec)`. **For Stage 14**: `talkSec` is always 0L
+   (no live ActivityInterval writer for native walks; see Non-goals);
+   `meditateSec` reads `walk.meditationSeconds ?: 0L` (the cached column
+   populated by `WalkMetricsCache`). When live ActivityInterval recording
+   lands in Stage 14.X this helper switches to a real DAO aggregate,
+   leaving the call sites unchanged. Imported .pilgrim ZIPs contribute
+   talk intervals via `PilgrimPackageConverter` but the spec accepts
+   talk-arc rendering as 0 for those until the helper signature widens.
+4. Reduces cumulative distance left-to-right (oldest → newest), assigns to
    the snapshot, then reverses the list so the LazyColumn renders newest
    first.
-4. Resolves `isShared` from `shareCache[walk.uuid]?.isExpiredAt(nowMs) ==
+5. Resolves `isShared` from `shareCache[walk.uuid]?.isExpiredAt(nowMs) ==
    false` (and the cache key existing).
-5. Picks `favicon`, `weatherCondition` from the existing `Walk` columns.
-6. Pre-computes haptic dot-Y positions via the **dotSize** formula so the
+6. Picks `favicon`, `weatherCondition` from the existing `Walk` columns.
+7. Pre-computes haptic dot-Y positions via the **dotSize** formula so the
    `ScrollHapticEngine` Android equivalent doesn't need to re-derive on
    every viewport offset emit.
 
 The journey-summary aggregates (`totalTalkSec`, `totalMeditateSec`,
 `talkers`, `meditators`, `firstWalkStartMs`) live on the same VM emission
 to avoid a second collect on the same flow.
+
+### Latest-seal pipeline
+
+The GoshuinFAB shows a 44 dp thumbnail of the newest finished walk's
+goshuin seal. Pipeline:
+
+1. **`HomeViewModel.latestSealSpec: StateFlow<SealSpec?>`** — derived
+   from the newest finished walk + the resolved seasonal ink. Built via
+   `walk.toSealSpec(distanceMeters, ink, displayDistance, unitLabel)`
+   (the actual signature; see `ui/design/seals/SealSpec.kt:91`).
+   `ink` resolves through the existing
+   `SeasonalInkFlavor.toSeasonalColor(units, hemisphere, LocalDate.now(zone), Intensity.Full)`
+   composition (units pref + hemisphere repo + today's date).
+2. **`HomeViewModel.latestSealBitmap: StateFlow<ImageBitmap?>`** — emits
+   `null` initially. On every `latestSealSpec` emission, the VM launches
+   `viewModelScope.launch(Dispatchers.Default) { ... }` that calls
+   `EtegamiSealBitmapRenderer.renderToBitmap(spec, ink, sizePx, context)`
+   (already shipped Stage 7-C), then converts via `bitmap.asImageBitmap()`
+   and updates the StateFlow on the Main dispatcher.
+3. **Cache key:** `Pair(SealSpec, sizePx)` — `sizePx` matters because
+   thumbnail dp → px depends on the device density.
+4. **GoshuinFAB Composable** observes `latestSealBitmap`. When `null`
+   (cold start, ~190 ms render), it falls back to
+   `Icons.Outlined.Explore` (the existing compass placeholder, matching
+   iOS `Image(systemName: "seal")`). On completion, swaps in
+   `Image(bitmap = latestSealBitmap)`.
+
+This pipeline reuses `EtegamiSealBitmapRenderer` from `ui/etegami/`
+verbatim — no new helper class is introduced.
 
 ### iOS-Android type mapping
 
@@ -156,8 +237,8 @@ to avoid a second collect on the same flow.
 | `walks: [Walk]` (CoreStore) | `journalState.walks: List<Walk>` (Room) |
 | `loadWalks()` (manual fetch) | `combine(observeAllWalks, ...)` Flow |
 | `Calendar.current.dateComponents` | `LocalDate` / `YearMonth` (java.time) |
-| `walk.activeDuration` | `(walk.endTimestamp - walk.startTimestamp) / 1000.0` |
-| `walk.talkDuration`, `walk.meditateDuration` (computed) | `activitySumsFor(walkId)[TALKING]`, `activitySumsFor(walkId)[MEDITATING]` |
+| `walk.activeDuration` | `WalkMetricsMath.computeActiveDurationSeconds(walk, walkRepository.walkEventsFor(walkId))` (pause-aware; the naive `(end - start) / 1000` would silently inflate paused walks) |
+| `walk.talkDuration`, `walk.meditateDuration` (computed) | `walkRepository.activitySumsFor(walkId): Pair<Long, Long>` returning `(talkSec, meditateSec)`. Stage 14 stub: talkSec = 0L always (no live writer); meditateSec = `walk.meditationSeconds ?: 0L` (cached column populated by `WalkMetricsCache`). See Non-goals + TODO Stage 14.X. |
 | `walk.routeData.first?.latitude` (hemisphere seed) | `repository.locationSamplesFor(walk.id).firstOrNull()?.latitude` (already used by `WalkViewModel.finishWalk`) |
 | `ScrollViewReader` + `onScrollGeometryChange` | `LazyListState.firstVisibleItemIndex` + `firstVisibleItemScrollOffset` |
 | `sensoryFeedback(.impact(weight: .light))` | `VibrationEffect.Composition.PRIMITIVE_TICK` (intensity 1.0) |
@@ -171,10 +252,10 @@ to avoid a second collect on the same flow.
 | `AnyShape` type-eraser | `(DrawScope.(Size) -> Unit)` lambda |
 | `.sheet(item: $expandedSnapshot)` | `ModalBottomSheet(onDismissRequest = ...)` |
 | `.toolbar { ToolbarItem(placement: .principal) { Text("Pilgrim Log") } }` | `CenterAlignedTopAppBar(title = { Text("Pilgrim Log") }, colors = transparent over parchment)` |
-| `GoshuinFAB.thumbnail: UIImage?` | `ImageBitmap?` rendered via off-screen Canvas snapshot of `SealRenderer` at 44 dp |
-| `SealGenerator.thumbnail(from: input)` | `SealRenderer.renderToImageBitmap(spec, sizePx)` (new helper, drawn on `Dispatchers.Default`) |
+| `GoshuinFAB.thumbnail: UIImage?` | `ImageBitmap?` rendered by `EtegamiSealBitmapRenderer.renderToBitmap` (Bitmap → `Bitmap.asImageBitmap()`) at 44 dp |
+| `SealGenerator.thumbnail(from: input)` | **Reuse** `EtegamiSealBitmapRenderer.renderToBitmap(spec, ink, sizePx, context): Bitmap` (already shipped Stage 7-C); convert with `Bitmap.asImageBitmap()` for Compose consumption. Drawn on `Dispatchers.Default`, cached by `Pair(SealSpec, sizePx)` in the VM. NO new helper. |
 | `WalkFavicon.icon` (SF Symbol name) | `WalkFavicon.materialIcon` (Material `ImageVector`) — already mapped in Stage 4-D |
-| `WeatherCondition.icon` (SF Symbol) | `WeatherCondition.materialIcon` (already exists from Stage 12-A) |
+| `WeatherCondition.icon` (SF Symbol) | `WeatherCondition.iconRes` (`@DrawableRes Int` — already exists from Stage 12-A). Render via `Icon(painterResource(condition.iconRes), ...)` in the expand card; NO new ImageVector field. |
 | `Color.parchment`, `.ink`, `.fog`, `.stone`, `.moss`, `.rust`, `.dawn` | `pilgrimColors.*` tokens (already mapped) |
 | `SeasonalColorEngine.seasonalColor(named:intensity:on:)` | `SeasonalInkFlavor.X.toBaseColor() + SeasonalColorEngine.applySeasonalShift(...)` (already exists) |
 | `TurningDayService.turning(for:hemisphere:)` | new `TurningDayService.turningFor(localDate, hemisphere)` Kotlin object |
@@ -182,7 +263,7 @@ to avoid a second collect on the same flow.
 | `SeasonalMarker.color` (asset color) | `SeasonalMarker.turningColor()` extension reading from `PilgrimColors.turningJade/Gold/Claret/Indigo` |
 | `SeasonalMarker.kanji` | `SeasonalMarker.kanji: String?` extension (verbatim copy) |
 | `SeasonalMarker.bannerText` | `SeasonalMarker.bannerTextRes: Int?` (`R.string.turning_equinox_banner` / `R.string.turning_solstice_banner`) |
-| `LunarPhase.current(date:)` | `MoonCalc.moonPhase(instant)` (already exists) — note iOS uses `synodicMonth = 29.53058770576` while Android uses `29.530588770576` (carry-over from iOS port; trailing-zero only, no behavior difference) |
+| `LunarPhase.current(date:)` | `MoonCalc.moonPhase(instant)` (already exists) — note iOS uses `synodicMonth = 29.53058770576` while Android uses `29.530588770576` (extra `8` digit at fractional position 6; drift < 3 s over 30 lunations; Stage 5-A artifact, documented but acceptable) |
 | `SceneryGenerator.scenery(for:)` | `object SceneryGenerator.scenery(snapshot)` (verbatim) |
 | `SceneryItemView` (TimelineView per type) | `SceneryItem(type, tintColor, sizePx, walkDate)` Composable |
 | `SceneryType` enum + `AnyShape` | `enum class SceneryType` + per-type Compose `Path` builder fns |
@@ -193,11 +274,13 @@ to avoid a second collect on the same flow.
 ### Sub-stage groupings
 
 **14-A foundation** (data + virtualization + dot composable):
-WalkSnapshot data class, `activitySumsFor` DAO, `HomeViewModel` rewrite,
-LazyColumn migration, WalkDot composable (size formula + favicon overlay
-+ activity arcs + halo + shared-ring), per-walk distance label, scroll
-haptics state-machine + `VibrationEffect.Composition` dispatcher. Reduce-
-motion guards on the haptics path.
+WalkSnapshot data class, `activitySumsFor` Stage-14 stub
+(returning `(0L, walk.meditationSeconds)`), `walkEventsFor` repo helper,
+`HomeViewModel` rewrite, LazyColumn migration with per-row WalkDot
+Composable (size formula + favicon overlay + activity arcs + halo +
+shared-ring), per-walk distance label, scroll haptics state-machine +
+`VibrationEffect.Composition` dispatcher. Reduce-motion guards on the
+haptics path (handler-time `Settings.Global` read; see I10).
 
 **14-B chrome** (top + bottom + journey-summary + expand card):
 Top "Pilgrim Log" `CenterAlignedTopAppBar`, journey-summary 3-state
@@ -217,14 +300,15 @@ year-month). Additionally adds `SeasonalMarker.kanji` and
 
 **14-D polish** (animation + accessibility + empty state):
 Scenery (7 types — tree/grass/lantern/butterfly/mountain/torii/moon —
-each as a sub-Composable; scenery animation throttled by `withFrameNanos`
-at iOS framerates), parallax horizontal offset by viewport-vertical
-distance, cascading fade-in (segment delay = `index * 30 + 200 ms`,
-duration 1200 ms; dot delay = `index * 30 + 300 ms`, duration 500 ms),
-newest-walk ripple (Canvas with breathing circles + glow at 10 fps),
-reduce-motion checks on ALL animation entry points (collapse to static),
-empty-state tail + stone dot composable + `R.string.home_empty_begin`
-("Begin"). Replaces the `R.string.home_empty_message` Text.
+each as a sub-Composable rendering a STATIC `Path` fill tinted by the
+walk's seasonal color; sub-effects deferred to Stage 14.5), parallax
+horizontal offset by viewport-vertical distance, cascading fade-in
+(segment delay = `index * 30 + 200 ms`, duration 1200 ms; dot delay =
+`index * 30 + 300 ms`, duration 500 ms), newest-walk ripple (Canvas with
+breathing circles + glow at 10 fps), reduce-motion checks on ALL
+animation entry points (collapse to static), empty-state tail + stone
+dot composable + `R.string.home_empty_begin` ("Begin"). Replaces the
+`R.string.home_empty_message` Text.
 
 ## Files to create
 
@@ -255,8 +339,21 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   for favicon overlay, activity arcs, halo, shared ring.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/dot/WalkDotMath.kt` —
   pure-Kotlin `dotSize(durationSec): Float` + `dotColor(snapshot, hemisphere,
-  pilgrimColors): Color`. Exposed `internal` so a Robolectric test exercises
-  the size + color formulas without composition.
+  pilgrimColors): Color` + `dotOpacity(index: Int, total: Int): Float` +
+  `labelOpacity(index, total): Float`. Exposed `internal` so a Robolectric
+  test exercises the size + color + opacity formulas without composition.
+
+  ```kotlin
+  // Verbatim port of iOS InkScrollView.swift:493-497 (dot α newest 1.0 → oldest 0.5)
+  fun dotOpacity(index: Int, total: Int): Float =
+      if (total <= 1) 1f else 1f - (index.toFloat() / (total - 1)) * 0.5f
+
+  // iOS InkScrollView.swift:636 — distance-label α = dotOpacity * 0.7
+  fun labelOpacity(index: Int, total: Int): Float =
+      dotOpacity(index, total) * 0.7f
+  ```
+  (Distinct from segment opacity, which is 0.35 → 0.15 — kept inside the
+  Canvas-behind painter.)
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/scroll/ScrollHapticState.kt` —
   port of iOS `ScrollHapticState`: holds `dotPositionsPx: List<Float>`,
   `dotSizesPx: List<Float>`, `milestonePositionsPx: List<Float>`,
@@ -266,13 +363,43 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   for dots, 25 px for milestones (verbatim iOS); large-dot cutoff:
   `dotSize > 15 px`.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/scroll/JournalHapticDispatcher.kt` —
-  `class @Singleton @Inject` wrapping `Vibrator`; takes a `HapticEvent` and
-  dispatches the right `VibrationEffect.Composition` (Stage 4-D pattern,
-  with `areAllPrimitivesSupported` guard + `createOneShot` fallback).
-  Reduce-motion + `soundsEnabled` gating.
-- `app/src/main/java/org/walktalkmeditate/pilgrim/data/dao/WalkRepository.kt` —
-  ADD `open suspend fun activitySumsFor(walkId: Long): Map<ActivityType, Long>`.
-  Implementation: new DAO method `@Query("SELECT activity_type, SUM(end_timestamp - start_timestamp) AS dur_ms FROM activity_intervals WHERE walk_id = :walkId GROUP BY activity_type")` returning a list of small DTOs the repo flattens to a map. Defaults missing types to 0 in the map.
+  `class @Singleton @Inject` wrapping `Vibrator` + `@ApplicationContext context`;
+  takes a `HapticEvent` and dispatches the right `VibrationEffect.Composition`
+  (Stage 4-D pattern, with `areAllPrimitivesSupported` guard +
+  `createOneShot` fallback).
+
+  **Reduce-motion gating is HANDLER-TIME, not Composition-time.** Each
+  `dispatch()` call reads
+  `Settings.Global.getFloat(context.contentResolver, Settings.Global.TRANSITION_ANIMATION_SCALE, 1f) == 0f`
+  in-line (microsecond cost; settled at OS level). This is intentionally
+  decoupled from `LocalReduceMotion.current` so users can flip
+  Quick-Settings reduce-motion mid-scroll and the next haptic respects
+  the new setting. `LocalReduceMotion` remains the source of truth for
+  Composition-time animation gating elsewhere.
+
+  **50 ms min-interval guard** (Open-Question #3): track a per-instance
+  `lastDispatchNs: Long` and skip dispatches within 50 ms of the previous
+  one. Defends against multi-finger / scroll-fling haptic flooding.
+
+  Also gates on `soundsEnabled` (existing settings flow).
+- `app/src/main/java/org/walktalkmeditate/pilgrim/data/WalkRepository.kt` —
+  ADD `open suspend fun activitySumsFor(walkId: Long, walk: Walk): Pair<Long, Long>`.
+  **Stage 14 stub:** returns `Pair(0L, walk.meditationSeconds ?: 0L)`. The
+  first component (talk seconds) is hard-zeroed because no live
+  `ActivityIntervalCoordinator` exists yet — the only construction site
+  of `ActivityInterval` today is `data/pilgrim/builder/PilgrimPackageConverter.kt`
+  (the .pilgrim ZIP importer); native walks never write talk intervals.
+  When live recording lands in Stage 14.X this method switches to a real
+  DAO aggregate (`@Query("SELECT activity_type, SUM(end_timestamp - start_timestamp) FROM activity_intervals WHERE walk_id = :walkId GROUP BY activity_type")`)
+  and the call sites stay unchanged. Caller passes the already-loaded
+  `Walk` so we don't double-fetch from the DB. Add a TODO comment in the
+  method body: `// TODO Stage 14.X: wire live ActivityInterval recording from WalkViewModel`.
+
+  ALSO ADD `open suspend fun walkEventsFor(walkId: Long): List<WalkEvent>`
+  delegating to `walkEventDao.getForWalk(walkId)` (verified DAO method
+  name in `data/dao/WalkEventDao.kt`). Used by `HomeViewModel.buildSnapshots`
+  so `WalkMetricsMath.computeActiveDurationSeconds(walk, events)` can run
+  pause-aware duration math.
 
 ### 14-B chrome
 
@@ -286,7 +413,22 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   `@Composable ExpandCardSheet(snapshot, celestialSnapshot?, onViewDetails,
   onDismissRequest)` rendering a `ModalBottomSheet` with verbatim iOS
   layout. Wraps the 7 internal composables: header row, divider,
-  3-stat row, mini activity bar, activity pills, "View details →" button.
+  3-stat row, mini activity bar, activity pills, "View details" button.
+
+  **Date format:** the header row's date+time text uses
+  ```kotlin
+  DateTimeFormatter.ofLocalizedDateTime(FormatStyle.FULL, FormatStyle.SHORT)
+      .withLocale(Locale.getDefault())
+      .withZone(ZoneId.systemDefault())
+      .format(Instant.ofEpochMilli(snapshot.startMs))
+  ```
+  (`FormatStyle.FULL` for date so weekday + full month name render;
+  `FormatStyle.SHORT` for time so it's compact next to the favicon row.)
+
+  **"View details" button arrow:** use `Icons.AutoMirrored.Filled.ArrowForward`
+  (NOT a Unicode `→`). The Unicode arrow does NOT auto-flip in RTL
+  locales; `AutoMirrored.ArrowForward` does, matching iOS
+  `Image(systemName: "arrow.right")` RTL behavior.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/expand/MiniActivityBar.kt` —
   Capsule-clipped 6-dp Row of 3 `RoundedRectangle(2.dp)` segments scaled by
   `walkOnlyDuration / total`, `talkDuration / total`, `meditateDuration / total`.
@@ -298,11 +440,16 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   `CenterAlignedTopAppBar` with title `R.string.journal_title` ("Pilgrim
   Log"), transparent container so the parchment shows through.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/goshuin/SealThumbnail.kt` —
-  `@Composable LatestSealThumbnail(latestSealSpec, sizeDp = 44.dp)` or a
-  helper `suspend fun renderSealToImageBitmap(spec, sizePx, density): ImageBitmap`
-  that uses `Picture` + `Canvas` from `androidx.compose.ui.graphics.Canvas`
-  to snapshot the existing `SealRenderer` to an ImageBitmap on
-  `Dispatchers.Default`. Cached by `SealSpec` identity in the VM.
+  `@Composable LatestSealThumbnail(latestSealBitmap: ImageBitmap?, sizeDp = 44.dp)`.
+  Display-only Composable — when `latestSealBitmap == null` shows
+  `Icons.Outlined.Explore` (compass placeholder, matching iOS
+  `Image(systemName: "seal")`); else `Image(bitmap = latestSealBitmap, contentScale = Fit)`.
+
+  Bitmap rendering happens IN THE VM (not here) by reusing
+  `EtegamiSealBitmapRenderer.renderToBitmap(spec, ink, sizePx, context)` —
+  no new helper class. The VM caches the result by
+  `Pair(SealSpec, sizePx)` and exposes `latestSealBitmap: StateFlow<ImageBitmap?>`.
+  See "Latest-seal pipeline" in Architecture section.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/GoshuinFAB.kt` —
   Replaces the inline FAB code in `HomeScreen.kt` with a dedicated
   composable that observes `homeViewModel.latestSealSpec` and renders the
@@ -337,10 +484,13 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   `isNearFull = abs(age - 14.76) < 1.5`; if neither, advance by 1 day; else
   refine peak via `±36 hour` window in 6-hour steps maximizing illumination
   (full) or 1−illumination (new), record event, advance by `Int(halfCycle) -
-  1 = 13` days. Constant `halfCycle = 14.76` verbatim. Then for each event
-  date, locate adjacent dot positions whose start dates bracket it, lerp
-  position along Y and X, offset X by ±20 px on the side opposite the dot
-  meander.
+  1 = 13` days. Constant `halfCycle = 14.76` verbatim — note iOS uses the
+  literal `14.76` here, NOT `synodicMonth / 2.0` (which would equal
+  `29.53058770576 / 2 = 14.76529...`); Android matches iOS verbatim with
+  the literal. The `< 1.5 day` window absorbs the rounding. Then for each
+  event date, locate adjacent dot positions whose start dates bracket it,
+  lerp position along Y and X, offset X by ±20 px on the side opposite
+  the dot meander.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/markers/LunarMarkerDot.kt` —
   `@Composable` 10×10 dp Circle. Full moon: filled ellipse with α 0.4 light /
   0.6 dark (`isSystemInDarkTheme` gate); new moon: stroke-only with α 0.5
@@ -355,8 +505,31 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   pure functions `fun milestoneThresholds(): List<Double>` returning
   `[100_000.0, 500_000.0, 1_000_000.0]` then a generated tail
   `2_000_000.0 .. 100_000_000.0 step 1_000_000.0`. Plus
-  `fun computeMilestonePositions(snapshots, dotYPositions): List<MilestonePosition(distance, yPx)>`
-  iterating thresholds × snapshots, picking the first crossing-walk per threshold.
+  `fun computeMilestonePositions(snapshots, dotYPositions): List<MilestonePosition(distance, yPx)>`.
+
+  **Algorithm — INTENTIONAL iOS-DIVERGENCE.** iOS `InkScrollView.swift:751-778`
+  iterates `snapshots` in display order (newest-first) computing
+  `prevCumulative = i > 0 ? snapshots[i-1].cumulativeDistance : 0`, then
+  checks `prev < threshold && curr >= threshold`. Because `snapshots` is
+  newest-first, `cumulativeDistance` is monotonically *decreasing* with
+  `i`, so the check only ever satisfies at `i = 0` (the newest walk
+  always has the largest cumulative). The iOS algorithm has a latent bug
+  here that the Android port must NOT reproduce.
+
+  **Android iterates oldest-first.** Internally reverse `snapshots` to
+  build `oldestFirst: List<WalkSnapshot>` (iOS order is `oldest .. newest`
+  before the display reverse). For each threshold in
+  `milestoneThresholds()`, walk `oldestFirst` with index `i`:
+  `prev = if (i == 0) 0.0 else oldestFirst[i-1].cumulativeDistance`;
+  `curr = oldestFirst[i].cumulativeDistance`; if
+  `prev < threshold && threshold <= curr`, record the marker at this
+  walk's `dotYPositions[displayIndex]` (where `displayIndex` is the
+  pre-reverse mapping).
+
+  **Regression test fixture:** 4 walks of 30 km each, cumulative `30 / 60
+  / 90 / 120 km`. Expected: 100 km marker on the 4th-oldest walk (the
+  newest). NOT all milestones stacked on the newest walk (which the
+  verbatim iOS port would produce).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/markers/DateDividerCalc.kt` —
   `data class DateDivider(idTag: Int, text: String, xPx: Float, yPx: Float)`
   + `fun computeDateDividers(snapshots, dotPositions, viewportWidthPx, locale): List<DateDivider>`.
@@ -377,17 +550,71 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   Kotlin object port. `data class SceneryPlacement(type, side, offset)`,
   `fun scenery(snapshot): SceneryPlacement?` with the FNV deterministic seed
   + 4-roll verbatim algorithm. `sceneryChance = 0.35`. Weights table verbatim.
+
+  **Seed function — distinct from `CalligraphyStrokeSpec.fnv1aHash`.**
+  iOS `SceneryGenerator` mixes:
+  - the walk's UUID raw bytes,
+  - `startDate.timeIntervalSince1970` (seconds, **not** millis),
+  - `distance * 100` (centimeters),
+  - `duration` (seconds).
+
+  Android port: `internal fun sceneryFnv1aSeed(uuid: String, startMillis: Long, distanceMeters: Double, durationSeconds: Long): ULong`
+  mixing four iOS-equivalent fields with Android-shifted units:
+  ```kotlin
+  internal fun sceneryFnv1aSeed(
+      uuid: String,
+      startMillis: Long,
+      distanceMeters: Double,
+      durationSeconds: Long,
+  ): ULong {
+      val prime: ULong = 1099511628211UL
+      var h: ULong = 14695981039346656037UL
+      // Stage 3-C UUID-bytes deviation carries here: Swift hashes raw UUID bytes,
+      // Kotlin hashes UTF-16 code units. Acceptable per Stage 3-C precedent.
+      uuid.forEach { c -> h = (h xor c.code.toULong()) * prime }
+      // iOS `timeIntervalSince1970` is seconds; Android stores millis — divide.
+      h = (h xor (startMillis / 1000L).toULong()) * prime
+      // iOS `distance * 100` packs cm into the seed; Android matches.
+      h = (h xor (distanceMeters * 100.0).toLong().toULong()) * prime
+      h = (h xor durationSeconds.toULong()) * prime
+      return h
+  }
+  ```
+
+  **`seededRandom` — SplitMix64 verbatim.** iOS uses Swift's `&*`/`&+`
+  (overflow-wrapping arithmetic) and evaluates left-to-right with `*`
+  precedence, so the Swift expression `salt &* 6364136223846793005 &+
+  seed` reads as `seed + (salt * 6364136223846793005)`:
+  ```kotlin
+  private fun seededRandom(seed: ULong, salt: ULong): Double {
+      var mixed = seed + (salt * 6364136223846793005UL)
+      mixed = mixed xor (mixed shr 33)
+      mixed *= 0xff51afd7ed558ccdUL
+      mixed = mixed xor (mixed shr 33)
+      mixed *= 0xc4ceb9fe1a85ec53UL
+      mixed = mixed xor (mixed shr 33)
+      return (mixed % 10000UL).toDouble() / 10000.0
+  }
+  ```
+
+  **Stage 14 scenery is STATIC** — `scenery(snapshot)` returns a placement
+  + type, but the rendering Composable draws ONLY a `Path.fill` tinted by
+  the walk's seasonal color. No `withFrameNanos` animation, no seasonal
+  swap (canopy → bare), no time-of-day modifiers. All sub-effects deferred
+  to Stage 14.5 (see Non-goals).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/scenery/SceneryItem.kt` —
-  `@Composable SceneryItem(type, tintColor, sizePx, walkDate, reduceMotion)`
-  switch-dispatching to per-type composables.
+  `@Composable SceneryItem(type, tintColor, sizePx)` switch-dispatching to
+  per-type Composables. **No `walkDate` or `reduceMotion` parameter** —
+  scenery is static (Stage 14 scope; sub-effects deferred to Stage 14.5).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/scenery/TreeScenery.kt`,
   `LanternScenery.kt`, `ButterflyScenery.kt`, `MoonScenery.kt`,
   `MountainScenery.kt`, `GrassScenery.kt`, `ToriiScenery.kt` — one per type.
-  Each draws via `Canvas + Path`, animation throttled by `withFrameNanos`
-  at the iOS-matching framerate. **Reduce-motion**: each composable has a
-  static fallback (no time-driven sin/cos terms; static `Path.fill` only).
-  iOS-verbatim ratios (size × 1.08 echo, size × 0.88 inner, etc.)
-  preserved as constants per file.
+  Each draws via `Canvas + Path.fill` ONLY, NO `withFrameNanos`, NO
+  time-driven sin/cos. iOS-verbatim path-shape constants (size × 1.08
+  echo, size × 0.88 inner, etc.) preserved as constants per file. Tree
+  composable picks `treePath` vs `winterTreePath` once at composition
+  based on the walk's `LocalDate.month` (no observation; Stage 14.5 will
+  handle seasonal canopy swap if revisited).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/scenery/SceneryShapes.kt` —
   pure path builders: `treePath`, `lanternPath`, `lanternWindowPath`,
   `mountainPath`, `moonPath`, `winterTreePath`, `butterflyPath` (the
@@ -395,14 +622,26 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   needed). Each takes `(size: Size): Path` so reuse + Robolectric tests
   exercise them directly.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/dot/RippleEffect.kt` —
-  `@Composable RippleEffect(color, dotSizePx, reduceMotion)`. Reduce-motion
-  short-circuit → `Canvas { drawCircle(stroke, color α 0.15) }`. Else
+  `@Composable RippleEffect(color, dotSizePx)`. Reads
+  `LocalReduceMotion.current`. Reduce-motion short-circuit →
+  `Canvas(Modifier.size((dotSize + 16.dp))) { drawCircle(color = color, radius = (dotSizePx + 16.dp.toPx()) / 2f, style = Stroke(width = 1.5.dp.toPx()), alpha = 0.15f) }`
+  (fallback dimensions: `frame(width: dotSize + 16, height: dotSize + 16)`,
+  `lineWidth: 1.5` — verbatim iOS reduce-motion fallback). Else
   `produceState(initial = 0L) + withFrameNanos { now -> if (now - last >=
   100 ms) emit(now); else null }` driving a Canvas that traces 2 expanding
   circles (phase wraps at 1.0, radius `= dotSizePx * 0.5 + phase *
   dotSizePx * 1.2`, opacity `= (1 − phase) * 0.2`) plus a breathing glow
   (`sin(time * 1.2) * 0.5 + 0.5`, glowRadius = `dotSizePx * 1.5`, fill α
   `= 0.04 + breath * 0.04`). Verbatim coefficients.
+- `app/src/main/java/org/walktalkmeditate/pilgrim/ui/design/LocalReduceMotion.kt` —
+  CompositionLocal so 14-A → 14-D animation entry points share a single
+  source of truth (I6). `val LocalReduceMotion: ProvidableCompositionLocal<Boolean> = staticCompositionLocalOf { false }`.
+  The provider in `MainActivity` / `PilgrimTheme` reads
+  `rememberReducedMotion()` (existing internal helper) and wraps content
+  in `CompositionLocalProvider(LocalReduceMotion provides reducedMotion) { content() }`.
+  Consumers read `LocalReduceMotion.current` (Composition-time gating).
+  See `JournalHapticDispatcher` for the OBSERVER-time gating path
+  (handler-time read, not Composition-time).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/empty/EmptyJournalState.kt` —
   `@Composable EmptyJournalState(widthPx)` drawing a tapered tail (path
   120 dp tall, half-width 1 dp top tapering to 0.2 dp bottom and back to
@@ -435,7 +674,14 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   `app/src/test/java/org/walktalkmeditate/pilgrim/ui/home/HomeViewModelJournalTest.kt`,
   `app/src/test/java/org/walktalkmeditate/pilgrim/ui/home/scroll/JournalHapticDispatcherTest.kt`
   (Robolectric for `VibrationEffect.Composition.build()` exercise — Stage
-  2-F lesson).
+  2-F lesson),
+  `app/src/test/java/org/walktalkmeditate/pilgrim/data/WalkRepositoryActivitySumsTest.kt`
+  (verifies `activitySumsFor` Stage-14 stub returns
+  `(0L, walk.meditationSeconds ?: 0L)`; covers the cached-meditation
+  fallback for missing meditationSeconds → 0L),
+  `app/src/test/java/org/walktalkmeditate/pilgrim/data/share/CachedShareStoreTest.kt`
+  (round-trip UUID → key → reconstructed UUID assertion + multi-key
+  observeAll() verification).
 
 ## Files to modify
 
@@ -447,17 +693,31 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/HomeViewModel.kt` —
   Rewrite the `uiState` flow to emit `JournalUiState` with `WalkSnapshot`s.
   Add `latestSealSpec: StateFlow<SealSpec?>` (newest finished walk → SealSpec
-  via the existing `SealSpec.from(walk)` helper). Add `expandedSnapshotId:
-  MutableStateFlow<Long?>` + `expandedCelestialSnapshot: StateFlow<CelestialSnapshot?>`
-  driven by combining `expandedSnapshotId` with
-  `practicePreferences.celestialAwarenessEnabled` (eager off, cold
-  computation on demand off `Dispatchers.Default`). **Cancel viewModelScope
-  before db.close()** in tearDown of any test (Stage 7-A flake fix).
+  via `walk.toSealSpec(distanceMeters, ink, displayDistance, unitLabel)`
+  — the actual extension fn signature; see `ui/design/seals/SealSpec.kt:91`).
+  Add `latestSealBitmap: StateFlow<ImageBitmap?>` driven by
+  `latestSealSpec` × `Pair(SealSpec, sizePx)`-keyed cache —
+  `viewModelScope.launch(Dispatchers.Default) { renderToBitmap(...).asImageBitmap() }`
+  on each cache miss; emits `null` while rendering.
+
+  Add `expandedSnapshotId: MutableStateFlow<Long?>`. Add
+  `_expandedCelestialSnapshot: MutableStateFlow<CelestialSnapshot?>` plus
+  a `celestialJob: Job? = null` field. **Lifecycle:** when
+  `expandedSnapshotId` flips to a non-null id AND
+  `practicePreferences.celestialAwarenessEnabled.value == true`, cancel
+  any in-flight `celestialJob`, then
+  `celestialJob = viewModelScope.launch(Dispatchers.Default) { _expandedCelestialSnapshot.value = CelestialSnapshotCalc.snapshot(snapshot.startMs, ZoneId.systemDefault(), zodiacSystem) }`.
+  Reset to `null` on flip-to-null. Cancel `celestialJob` on next flip.
+
+  **Cancel viewModelScope before db.close()** in tearDown of any test
+  (Stage 7-A flake fix).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/HomeWalkRowComposable.kt` —
   **Delete file** (HomeWalkRowCard wholly replaced by dot + expand card).
-- `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/HomeWalkRow.kt` —
-  **Delete file** (replaced by `WalkSnapshot.kt`). Update any references
-  in tests.
+- `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/HomeUiState.kt` —
+  **Delete the `HomeWalkRow` data class** (lives in `HomeUiState.kt`,
+  not its own file). Either delete the file outright (if HomeUiState is
+  also being replaced by `JournalUiState.kt` — preferred), or rename to
+  `JournalUiState.kt` and replace the contents. Update any test references.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/design/calligraphy/CalligraphyPath.kt` —
   Add `fun dotPositions(strokes, widthPx, verticalSpacingDp, topInsetDp): List<DotPosition(centerXPx, yPx)>` so the parent Canvas can read positions for haptics + lunar/milestone calc. Stage 3-C made dot Y derivation private to the renderer; promote `xOffsetPx` access to a `dotPositions` helper. **Don't change** existing draw lambda — additive only.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/dao/ActivityIntervalDao.kt` —
@@ -468,22 +728,92 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
   (delegates to DAO, materializes a defaulted map — entries for missing
   types collapse to 0 so callers don't NPE).
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/share/CachedShareStore.kt` —
-  Add `fun observeAll(): Flow<Map<String, CachedShare>>` reading `data.map { prefs -> prefs.asMap().filterKeys { it.name.startsWith("share_cache_") }.mapNotNull { (k, v) -> ... } }.distinctUntilChanged()`. Snapshots all per-uuid keys at once — VM consumes from a single combine.
-- `app/src/main/java/org/walktalkmeditate/pilgrim/ui/theme/PilgrimColors.kt` —
-  Add four turning-day colors: `turningJade`, `turningGold`, `turningClaret`,
-  `turningIndigo`. RGB triples: copy from iOS's Asset Catalog hex values
-  (audit pulls them — TODO note: spec author needs to verify exact hex
-  tomorrow against iOS xcassets; if unavailable in audit, use approximation
-  values listed below and document the divergence). Light/dark variants both.
-  Approximate fallback: jade `#5e8b6e`, gold `#c79a3a`, claret `#7a3636`,
-  indigo `#3b3d6c` (replace with actual values from iOS xcassets when
-  auditing during implementation).
+  Add `fun observeAll(): Flow<Map<String, CachedShare>>` snapshotting all
+  per-uuid keys so the VM consumes from a single combine.
+
+  Implementation:
+  ```kotlin
+  fun observeAll(): Flow<Map<String, CachedShare>> =
+      context.cachedShareDataStore.data
+          .map { prefs ->
+              prefs.asMap().asSequence()
+                  .filter { (key, _) -> key.name.startsWith("share_cache_") }
+                  .mapNotNull { (key, value) ->
+                      val blob = value as? String ?: return@mapNotNull null
+                      val cached = decode(blob) ?: return@mapNotNull null
+                      val uuid = reconstructUuid(key.name.removePrefix("share_cache_"))
+                      uuid to cached
+                  }
+                  .toMap()
+          }
+          .distinctUntilChanged()
+  ```
+
+  **DataStore key gotcha:** `keyFor(walkUuid)` strips hyphens via
+  `walkUuid.replace("-", "")` so the persisted key has NO hyphens. To
+  re-emit `Map<canonical-uuid-with-hyphens, CachedShare>` (the shape the
+  rest of the app uses), `reconstructUuid(noHyphensKey)` must re-insert
+  hyphens at canonical UUID positions: `8-13-18-23` →
+  ```kotlin
+  private fun reconstructUuid(noHyphens: String): String {
+      require(noHyphens.length == 32) { "Expected 32-char UUID-no-hyphens, got ${noHyphens.length}" }
+      return "${noHyphens.substring(0, 8)}-${noHyphens.substring(8, 12)}-${noHyphens.substring(12, 16)}-${noHyphens.substring(16, 20)}-${noHyphens.substring(20, 32)}"
+  }
+  ```
+  Round-trip test (round-trip: random UUID → `keyFor` → strip prefix →
+  `reconstructUuid` → assertEquals original) lives in
+  `CachedShareStoreTest`.
+- `app/src/main/java/org/walktalkmeditate/pilgrim/ui/theme/Color.kt` —
+  Add four turning-day colors with light + dark variants. Hex values
+  pulled VERBATIM from
+  `pilgrim-ios/Pilgrim/Support Files/Assets.xcassets/turning{Jade,Gold,Claret,Indigo}.colorset/Contents.json`
+  (sRGB 0.0-1.0 components × 255, rounded):
+
+  ```kotlin
+  data class TurningColors(val light: Color, val dark: Color)
+
+  // turningJade: light (0.455, 0.706, 0.584) → #74B495
+  //              dark  (0.533, 0.769, 0.627) → #88C4A0
+  val turningJade = TurningColors(
+      light = Color(0xFF74B495),
+      dark  = Color(0xFF88C4A0),
+  )
+
+  // turningGold: light (0.788, 0.651, 0.275) → #C9A646
+  //              dark  (0.835, 0.710, 0.365) → #D5B55D
+  val turningGold = TurningColors(
+      light = Color(0xFFC9A646),
+      dark  = Color(0xFFD5B55D),
+  )
+
+  // turningClaret: light (0.545, 0.267, 0.333) → #8B4455
+  //                dark  (0.635, 0.376, 0.439) → #A26070
+  val turningClaret = TurningColors(
+      light = Color(0xFF8B4455),
+      dark  = Color(0xFFA26070),
+  )
+
+  // turningIndigo: light (0.137, 0.467, 0.643) → #2377A4
+  //                dark  (0.275, 0.569, 0.729) → #4691BA
+  val turningIndigo = TurningColors(
+      light = Color(0xFF2377A4),
+      dark  = Color(0xFF4691BA),
+  )
+  ```
+
+  Names jade/gold/claret/indigo preserved iOS-canonical. Add four fields
+  to `PilgrimColors` data class (`turningJade: Color`, `turningGold:
+  Color`, `turningClaret: Color`, `turningIndigo: Color`) and resolve via
+  `pilgrimLightColors() / pilgrimDarkColors()` factory functions reading
+  from the appropriate variant.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/entity/WalkFavicon.kt` —
   Add a `materialIcon: ImageVector` field if not already present (Stage 4-D
   added; verify). Map: FLAME → `Icons.Outlined.LocalFireDepartment`,
   LEAF → `Icons.Outlined.Spa`, STAR → `Icons.Outlined.Star`.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/weather/WeatherCondition.kt` —
-  Verify all 10 conditions have a `materialIcon` (Stage 12-A). Add if missing.
+  Already has `@DrawableRes val iconRes: Int` per condition (Stage 12-A).
+  NO CHANGES NEEDED. Render in expand card via
+  `Icon(painterResource(condition.iconRes), contentDescription = ...)`.
 - `app/src/main/res/values/strings.xml` — see Strings section.
 - `app/src/test/java/org/walktalkmeditate/pilgrim/ui/home/HomeViewModelTest.kt` —
   Update for the new `WalkSnapshot` shape. **Cancel `vm.viewModelScope`
@@ -527,7 +857,7 @@ empty-state tail + stone dot composable + `R.string.home_empty_begin`
 <string name="journal_expand_pill_walk">walk</string>
 <string name="journal_expand_pill_talk">talk</string>
 <string name="journal_expand_pill_meditate">meditate</string>
-<string name="journal_expand_view_details">View details &#8594;</string>  <!-- → -->
+<string name="journal_expand_view_details">View details</string>  <!-- arrow rendered as Icons.AutoMirrored.Filled.ArrowForward in the Button trailing slot -->
 
 <!-- Accessibility -->
 <string name="journal_dot_a11y_walk_on_date_distance_duration">Walk on %1$s, %2$s, %3$s</string>
@@ -552,7 +882,7 @@ a Kotlin `formatDuration(seconds: Long): String` helper using
 | `leaf.fill` (favicon) | `Icons.Outlined.Spa` |
 | `star.fill` (favicon) | `Icons.Outlined.Star` |
 | `link` (shared marker in expand card) | `Icons.Outlined.Link` |
-| `arrow.right` (in "View details →") | use Unicode `→` (U+2192) inline, NOT an icon (matches the iOS `Image(systemName: "arrow.right")` rendering more gracefully + survives RTL flipping if the user's locale is RTL). |
+| `arrow.right` (in "View details") | `Icons.AutoMirrored.Filled.ArrowForward` — auto-flips in RTL locales matching iOS `Image(systemName: "arrow.right")`. (Unicode `→` does NOT auto-flip; rejected.) |
 | `seal` (FAB fallback) | `Icons.Outlined.Explore` (existing) — use only when the latest walk's seal hasn't rendered yet. |
 | `ladybug` (DEBUG menu icon) | NOT PORTED (Non-goal). |
 
@@ -563,8 +893,9 @@ tree variant for winter). All path-math constants ported verbatim from iOS
 shape files (`/pilgrim-ios/Pilgrim/Views/Scenery/*.swift`).
 
 WeatherCondition glyph mapping is already established by Stage 12-A —
-reuse `WeatherCondition.materialIcon`. If the field doesn't exist yet,
-audit + add.
+reuse `WeatherCondition.iconRes` (`@DrawableRes Int`). Render via
+`Icon(painterResource(condition.iconRes), ...)`. NO new ImageVector
+field needed.
 
 Planetary-hour symbols (sun/moon/mercury/venus/mars/jupiter/saturn) and
 zodiac symbols are already mapped in Stage 13-Cel; reuse those Unicode
@@ -579,11 +910,15 @@ stage can be split mid-implementation if scope creeps.
 
 ### Bucket 14-A — foundation (5 tasks)
 
-1. **`activitySumsFor` DAO + Repository** — Add `@Query` aggregating
-   `activity_intervals`, return `Map<ActivityType, Long>`. DAO-level test
-   inserts 3 talk + 2 meditate intervals + 1 walk and asserts sums.
-   Repository test wraps the DAO (keep signature `open suspend fun` for
-   fakes).
+1. **`activitySumsFor` + `walkEventsFor` Repository helpers** — Stage 14
+   stub: `activitySumsFor(walkId, walk): Pair<Long, Long>` returns
+   `Pair(0L, walk.meditationSeconds ?: 0L)` (no live ActivityInterval
+   writer — see Non-goals). `walkEventsFor(walkId): List<WalkEvent>`
+   delegates to `walkEventDao.getForWalk(walkId)` (verified DAO method).
+   Add a `// TODO Stage 14.X: wire live ActivityInterval recording from WalkViewModel`
+   comment in the activitySumsFor body. Tests: meditationSeconds = 600L
+   → `(0L, 600L)`; null → `(0L, 0L)`. Both `open suspend fun` so fakes
+   can override.
 2. **`WalkSnapshot` + `JournalUiState` data classes** — Pure data; both
    `@Immutable`. Includes `JourneySummary` and `StatMode` enum.
 3. **`WalkDotMath` + `ScrollHapticState`** (batched) — Pure-Kotlin: `dotSize`
@@ -621,11 +956,15 @@ stage can be split mid-implementation if scope creeps.
    `setExpandedSnapshotId(id)`. `BackHandler` to close. `rememberUpdatedState`
    on the dismiss callback (Stage 4-B lesson). Robolectric snapshot test
    asserting all sub-composables present given a sample snapshot.
-8. **`SealRenderer.renderToImageBitmap` helper + `LatestSealThumbnail`** —
-   Off-screen Canvas snapshot of the existing `SealRenderer` to an
-   `ImageBitmap`, on `Dispatchers.Default`. Cache by `SealSpec` identity
-   in the VM (`MutableStateFlow<ImageBitmap?>`). Test: re-rendering the
-   same SealSpec twice returns the same bitmap reference.
+8. **VM bitmap cache via `EtegamiSealBitmapRenderer.renderToBitmap` +
+   `LatestSealThumbnail`** — REUSE the existing
+   `EtegamiSealBitmapRenderer` (Stage 7-C, in `ui/etegami/`); convert
+   via `bitmap.asImageBitmap()`. VM caches by `Pair(SealSpec, sizePx)`
+   in a `LinkedHashMap` (size 4) wrapped in `MutableStateFlow<ImageBitmap?>`.
+   Render runs on `Dispatchers.Default`. `LatestSealThumbnail` is a
+   display-only Composable consuming `latestSealBitmap`. Test:
+   re-rendering the same `(SealSpec, sizePx)` twice returns from cache
+   (no second render coroutine launched).
 9. **`GoshuinFAB` swap-in** — Replace inline `FloatingActionButton(Icons.Outlined.Explore)`
    with the new `GoshuinFAB(latestSealBitmap)`. Falls back to the explore
    icon while the bitmap renders (matches iOS `Image(systemName: "seal")`
@@ -666,15 +1005,18 @@ stage can be split mid-implementation if scope creeps.
 ### Bucket 14-D — polish (5 tasks)
 
 16. **`SceneryGenerator` + `SceneryShapes` path builders** (batched) —
-    Verbatim FNV-seeded probability port; 7 path builders (each tested
+    Verbatim FNV-seeded probability port (`sceneryFnv1aSeed` + SplitMix64
+    `seededRandom` — see Files-to-create); 7 path builders (each tested
     via `Path.getBounds()` to assert shapes don't escape their declared
     size). Includes `winterTreePath` for the winter `tree` variant. Stage
     3-C path-test pattern.
-17. **`SceneryItem` Composable + 7 per-type sub-composables** — Each
-    sub-composable has a reduce-motion branch (static fallback). Frame
-    throttling via `withFrameNanos`. Robolectric `composeRule.setContent`
-    smoke tests assert each type composes without crash; bounds-tests
-    cover the path math.
+17. **`SceneryItem` Composable + 7 per-type sub-composables (STATIC
+    FILLS ONLY)** — Each sub-composable draws ONE `Path.fill` call tinted
+    by the walk's seasonal color. NO `withFrameNanos`, NO sin/cos, NO
+    seasonal swap (canopy → bare done at composition based on month, no
+    re-observation). Robolectric `composeRule.setContent` smoke tests
+    assert each type composes without crash; bounds-tests cover the path
+    math. (Sub-effects deferred to Stage 14.5 per Non-goals.)
 18. **Cascading fade-in + horizontal parallax offset** — Segments and dots
     each get an alpha that animates `0 → 1` driven by `animateFloatAsState`
     keyed on a `hasAppeared: Boolean` flag (set true via `LaunchedEffect(Unit)`
@@ -690,7 +1032,13 @@ stage can be split mid-implementation if scope creeps.
 20. **`EmptyJournalState`** + reduce-motion sweep + final QA wiring —
     Empty state replaces the existing empty Text. Sweep: every animation
     entry point in 14-A → 14-D consults a single
-    `LocalReduceMotion.current` boolean (existing in Stage 5-A). Final QA
+    `LocalReduceMotion.current` boolean from the new
+    `ui/design/LocalReduceMotion.kt` CompositionLocal (provided once in
+    `MainActivity`/`PilgrimTheme` via the existing `rememberReducedMotion()`
+    helper as the default value source). `JournalHapticDispatcher`
+    EXPLICITLY does NOT consume this Local — it reads `Settings.Global`
+    at handler-time so Quick-Settings flips mid-scroll take effect on
+    the next dispatch (see I10 in Files-to-create). Final QA
     integration test: full JournalScreen with 12 fixture walks renders to
     a Robolectric snapshot without exception, exercises tap → expand
     sheet, tap → "View details" → nav callback fires.
@@ -716,9 +1064,13 @@ stage can be split mid-implementation if scope creeps.
 - `TurningDayServiceTest` — solstice/equinox dates 2023/2024/2025 across
   hemispheres (northern + southern flip); cross-quarter dates → null;
   non-turning dates → null.
-- `WalkRepository.activitySumsForTest` — 3 talk intervals + 2 meditate +
-  1 walk (mixed durations) → sums match arithmetic; missing types map
-  to 0.
+- `WalkRepositoryActivitySumsTest` — Stage 14 stub: returns
+  `Pair(0L, walk.meditationSeconds ?: 0L)`. Tests:
+  (1) `meditationSeconds = 600L` → `(0L, 600L)`;
+  (2) `meditationSeconds = null` → `(0L, 0L)`;
+  (3) talk seconds always 0L regardless of any persisted ActivityIntervals
+  (since native walks don't write any). When live recording lands in
+  Stage 14.X this test expands to cover the real DAO aggregate.
 
 **ViewModel:**
 
@@ -781,22 +1133,41 @@ stage can be split mid-implementation if scope creeps.
 
 ## Open questions for review
 
-1. **Turning-day color hex values** — the spec uses placeholders
-   (jade `#5e8b6e` etc.). Implementation MUST audit
-   `pilgrim-ios/Pilgrim/Resources/Assets.xcassets/turningJade.colorset/Contents.json`
-   et al. and copy the exact light + dark hex pairs. Document any
-   divergence in the implementation comments.
-2. **`renderSealToImageBitmap` perf budget** — first-frame seal render on
-   OnePlus 13 was ~190 ms in Stage 4-A QA; cold-start FAB will show
-   `Icons.Outlined.Explore` for that duration. If the bitmap render
-   blocks the UI more than 250 ms on a low-end device, consider
-   pre-warming on `JournalScreen.LaunchedEffect(Unit)` BEFORE the FAB is
-   composed. Investigate during 14-B implementation.
-3. **`activitySumsFor` correctness during long-running activity intervals
-   that span the walk's `endTimestamp`** — Stage 9.5-D guarantees
-   intervals are clipped to the walk window, but verify in the DAO test.
-   If clipping is post-hoc, the SUM(end - start) will overshoot. Audit
-   the existing `ActivityIntervalCoordinator` behavior.
+1. **Hemisphere reactivity in dot color** — `dotColor` reads the user's
+   hemisphere to pick the seasonal palette. **Decision:** read
+   `hemisphereRepository.hemisphere.value` ONCE at snapshot-build time
+   (in `HomeViewModel.buildSnapshots`), passing the snapshot a frozen
+   `hemisphere: Hemisphere`. No live recomposition on hemisphere flip.
+   Rationale: hemisphere is set at first walk + rarely flipped; the cost
+   of re-snapshot + re-render on flip > the cost of a cold-restart
+   refresh. iOS does the same (computed once when `WalkSnapshot` is
+   constructed). RECOMMENDED.
+2. **Active-walk in-progress filter race** — the existing
+   `walks.filter { it.endTimestamp != null }` correctly excludes
+   in-progress walks. The Stage 7-A + 11-A finalize race surfaces in
+   THIS filter (the Flow can emit a walk with null endTimestamp briefly
+   between INSERT-with-startMs and UPDATE-with-endMs). Stage 14
+   inherits the existing pattern's correctness — no new guards needed.
+3. **Multi-finger / scroll-fling haptic flooding** — `JournalHapticDispatcher`
+   tracks `lastDispatchNs: Long` and skips any dispatch within 50 ms of
+   the previous one. Defends against multi-finger gestures + fast-fling
+   producing 30+ haptics per second. Documented in Files-to-create.
+4. **WalkSnapshot stable identity for ModalBottomSheet open/close** —
+   when the underlying snapshots list changes (e.g. a new walk is
+   recorded while the sheet is open), the `expandedSnapshotId: Long?`
+   should re-resolve to the matching snapshot in the new emission. If
+   the snapshot's id is no longer present (deleted), the VM clears
+   `_expandedSnapshotId.value = null` (which dismisses the sheet).
+   Decision: re-derive the visible snapshot from current snapshots on
+   every emission and clear `expandedSnapshotId` if missing.
+5. **Scope split — internal mid-stage merge gate** — Stage 14 ships in
+   ONE PR (per Stage 13-XZ precedent), but with a deliberate
+   "mid-implementation device QA pause" between bucket 14-A
+   (foundation: dots + LazyColumn + haptics) and buckets 14-B/C/D
+   (chrome + overlays + polish). At end-of-14-A: dogfood on OnePlus 13
+   for 24h to catch regressions in the dot/scroll/haptic core BEFORE
+   adding 15+ overlay & polish surfaces. If 14-A regresses, fix-and-pause
+   instead of stacking more code on top.
 
 ## Documented iOS deviations (in code comments)
 
@@ -807,13 +1178,20 @@ comment with the rationale linking back to this spec.
    Already documented in `CalligraphyStrokeSpec.kt`. No action; carries
    forward into `WalkSnapshot` since the renderer reads `uuid` not raw
    bytes.
-2. **Talk-duration via DAO aggregate, not denormalized column** — iOS reads
-   `walk.talkDuration` from a CoreData computed property. Android reads
-   `activitySumsFor(walkId)[ActivityType.TALKING]`. Rationale: avoids
-   adding two columns + a migration for fields that are pure arithmetic
-   on existing data. Performance: one extra `GROUP BY` per walk per
-   journal load — well within the IO-dispatcher budget; cached in the
-   VM's snapshot.
+2. **Talk-duration is hard-zero for native walks; meditation reads cached
+   `Walk.meditationSeconds`** — iOS reads `walk.talkDuration` and
+   `walk.meditateDuration` as CoreData computed properties from
+   `activity_intervals`. Android Stage 14 has no live
+   `ActivityIntervalCoordinator`; native walks never write talk
+   intervals. Rather than stand up the coordinator inside Stage 14, we
+   substitute `Walk.meditationSeconds` (already populated by
+   `WalkMetricsCache`) for meditation totals and zero-out talk. Imported
+   .pilgrim ZIPs from iOS contain talk intervals but Stage 14 does NOT
+   surface them — visually correct (no talk happened on this device)
+   but functionally degraded for ZIP-imported walks. `activitySumsFor`
+   signature is `Pair<Long, Long>` (talkSec, meditateSec) so the call
+   sites stay stable when Stage 14.X wires the live coordinator. TODO
+   Stage 14.X: wire live ActivityInterval recording from WalkViewModel.
 3. **Expand card via Material 3 ModalBottomSheet, NOT iOS overlay sheet** —
    Android idiom; matches Stage 13-XZ PromptListSheet precedent. Behavior
    parity (open from below, dismissible, semi-modal) preserved; visual
@@ -821,18 +1199,44 @@ comment with the rationale linking back to this spec.
 4. **Long-press dot preview omitted** — Audit Gap 13 (vestigial on iOS).
 5. **DEBUG seed/clear menu omitted** — Audit Gap 2 (out of scope; instrumentation
    covers QA).
-6. **`renderSealToImageBitmap` is Android-specific** — iOS uses
-   `SealGenerator.thumbnail(from: input) -> UIImage` (CPU-rendered). Android
-   uses an off-screen Compose Canvas snapshot to `ImageBitmap`. Rendering
-   cost ~190 ms; cached by SealSpec identity in the VM.
+6. **Reuse existing `EtegamiSealBitmapRenderer` for FAB thumbnail** — iOS
+   uses `SealGenerator.thumbnail(from: input) -> UIImage` (CPU-rendered).
+   Android reuses `EtegamiSealBitmapRenderer.renderToBitmap` (Stage 7-C,
+   in `ui/etegami/`) verbatim, converting the result via
+   `Bitmap.asImageBitmap()` for Compose consumption. Rendering cost
+   ~190 ms cold; cached by `Pair(SealSpec, sizePx)` in the VM. NO new
+   helper class introduced — the etegami renderer was already shipped.
 7. **`MoonCalc.SYNODIC_DAYS = 29.530588770576` vs iOS
-   `LunarPhase.synodicMonth = 29.53058770576`** — Android value is more
-   precise (one trailing digit). Already shipped Stage 5-A. No-op
-   difference (period drift < 1 day over 30 lunations). Flagged in code
-   comments.
-8. **No `id(unitKey)` viewport reset** — iOS uses `.id(unitKey)` on
-   `InkScrollView` to nuke the entire view tree on unit toggle (forcing a
-   re-render). Compose recomposes naturally on the units StateFlow flip,
-   so no manual key needed. iOS comment is for the SwiftUI quirk where
-   `.contentTransition(.numericText())` doesn't re-render distance labels
-   on unit flip without a viewport key.
+   `LunarPhase.synodicMonth = 29.53058770576`** — Android value has an
+   extra `8` digit at fractional position 6 (`29.530**5**88...` vs
+   `29.5305**8**8...`). NOT a "trailing zero" difference — the Android
+   port mistakenly inserted a digit during Stage 5-A. Drift < 3 s over
+   30 lunations. Acceptable but documented. Flagged in code comments.
+8. **`halfCycle = 14.76` literal in `LunarMarkerCalc`** — iOS uses the
+   literal `14.76` for the half-synodic-month constant in lunar-event
+   detection, NOT `synodicMonth / 2.0` (which would be `14.76529...`).
+   Android matches iOS verbatim with the literal so the marker positions
+   are byte-identical. The `< 1.5 day` window absorbs the rounding.
+9. **`verticalSpacing = 90 dp, topInset = 40 dp` reverts Stage 3-F's
+   132-dp tuning** — Stage 3-F bumped row stride to 132 dp because the
+   cards justified extra breathing room. Stage 14 deletes the cards;
+   the 90-dp iOS-verbatim value is correct for dot-primary layout.
+   Re-QA on OnePlus 13 expected to confirm acceptable density.
+10. **No `id(unitKey)` viewport reset** — iOS uses `.id(unitKey)` on
+    `InkScrollView` to nuke the entire view tree on unit toggle (forcing a
+    re-render). Compose recomposes naturally on the units StateFlow flip,
+    so no manual key needed. iOS comment is for the SwiftUI quirk where
+    `.contentTransition(.numericText())` doesn't re-render distance labels
+    on unit flip without a viewport key.
+11. **`computeMilestonePositions` walks oldest→newest, NOT verbatim
+    iOS newest-first** — iOS `InkScrollView.swift:751-778` iterates
+    `snapshots` in display (newest-first) order with
+    `prevCumulative = i > 0 ? snapshots[i-1].cumulativeDistance : 0`,
+    then checks `prev < threshold && curr >= threshold`. With
+    newest-first ordering, `cumulativeDistance` is monotonically
+    *decreasing* with `i`, so the check satisfies only at `i = 0` —
+    iOS effectively places EVERY milestone on the newest walk. Stage
+    14 ports the algorithm with reversed iteration to fix this latent
+    iOS bug; regression test with 4 walks of 30 km each (cumul 30/60/90/120)
+    asserts the 100 km marker lands on the 4th-oldest walk (newest),
+    NOT all milestones stacked there.
