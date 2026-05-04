@@ -586,4 +586,18 @@
          en.lproj only). When real localization arrives, both apps need
          translators + plural rules together. -->
     <string name="locale_resolution_marker">en</string>
+
+    <!-- Stage 13-XZ AI Prompts: built-in styles -->
+    <string name="prompt_style_contemplative_title">Contemplative</string>
+    <string name="prompt_style_contemplative_desc">Sit with what emerged from movement</string>
+    <string name="prompt_style_reflective_title">Reflective</string>
+    <string name="prompt_style_reflective_desc">Identify patterns and emotional undercurrents</string>
+    <string name="prompt_style_creative_title">Creative</string>
+    <string name="prompt_style_creative_desc">Transform thoughts into poetry or metaphor</string>
+    <string name="prompt_style_gratitude_title">Gratitude</string>
+    <string name="prompt_style_gratitude_desc">Find thanksgiving in observations</string>
+    <string name="prompt_style_philosophical_title">Philosophical</string>
+    <string name="prompt_style_philosophical_desc">Explore deeper meaning and wisdom</string>
+    <string name="prompt_style_journaling_title">Journaling</string>
+    <string name="prompt_style_journaling_desc">Structure raw thoughts into a journal entry</string>
 </resources>
