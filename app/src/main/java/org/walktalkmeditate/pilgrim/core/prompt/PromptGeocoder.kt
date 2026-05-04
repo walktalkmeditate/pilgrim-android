@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
  * async variant is a future upgrade.
  */
 @Singleton
-open class PromptGeocoder @Inject constructor(
+open class PromptGeocoder internal constructor(
     @ApplicationContext private val context: Context,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     /** Test seam — production wires the real [Geocoder]. */
@@ -39,6 +39,21 @@ open class PromptGeocoder @Inject constructor(
     /** Test seam — production resolves to system default. */
     private val localeProvider: () -> Locale = Locale::getDefault,
 ) {
+    /**
+     * Hilt-only constructor — Dagger does not honor Kotlin default
+     * parameter values, so the test-seam parameters above can't be
+     * the `@Inject` entry point. Production code reaches the same
+     * defaults through this constructor; tests use the `internal`
+     * primary constructor directly.
+     */
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(
+        context = context,
+        ioDispatcher = Dispatchers.IO,
+        geocoderFactory = ::defaultGeocoder,
+        localeProvider = Locale::getDefault,
+    )
+
     open suspend fun geocodeStart(coord: LatLng): PlaceContext? = withContext(ioDispatcher) {
         runReverseGeocode(coord)?.let { name ->
             PlaceContext(name = name, coordinate = coord, role = PlaceRole.Start)

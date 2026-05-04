@@ -17,12 +17,16 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +41,10 @@ import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
+import org.walktalkmeditate.pilgrim.core.prompt.ActivityContext
+import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
+import org.walktalkmeditate.pilgrim.core.prompt.GeneratedPrompt
+import org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -238,6 +246,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val cachedShareStore: CachedShareStore,
     unitsPreferences: UnitsPreferencesRepository,
     private val practicePreferences: PracticePreferencesRepository,
+    private val promptsCoordinator: PromptsCoordinator,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -277,6 +286,55 @@ class WalkSummaryViewModel @Inject constructor(
      */
     private val _selectedFavicon = MutableStateFlow<WalkFavicon?>(null)
     val selectedFavicon: StateFlow<WalkFavicon?> = _selectedFavicon.asStateFlow()
+
+    /**
+     * Stage 13-XZ: AI Prompts sheet state machine. Closed → Loading
+     * (one-shot [PromptsCoordinator.buildContext] + `generateAll` on first
+     * [openPromptsSheet]) → Listing → Detail / Editor → Listing → Closed.
+     *
+     * The built [ActivityContext] + generated prompts are cached in
+     * [_cachedActivityContext] so subsequent reopens skip the rebuild.
+     * The cache invalidates whenever the pinned-photo count OR
+     * transcribed-recording count changes (see [promptsCacheInvalidator]):
+     * voice-recording invalidation is critical because Stage 2-D auto-
+     * transcription runs async after walk finish, so opening prompts
+     * pre- then post-transcription must NOT see a stale empty-
+     * transcription cache.
+     */
+    private val _promptsSheetState = MutableStateFlow<PromptsSheetState>(PromptsSheetState.Closed)
+    val promptsSheetState: StateFlow<PromptsSheetState> = _promptsSheetState.asStateFlow()
+
+    private val _cachedActivityContext =
+        MutableStateFlow<Pair<ActivityContext, List<GeneratedPrompt>>?>(null)
+
+    /** Hot list of custom styles for the listing/editor UI. */
+    val customPromptStyles: StateFlow<List<CustomPromptStyle>> = promptsCoordinator.customStyles
+
+    /**
+     * Combine pinned-photo count + transcribed-recording count; either
+     * change → null the cache so the next [openPromptsSheet] rebuilds.
+     * `.drop(1)` skips the initial combine emission (first composition,
+     * not a real change) so a fresh VM doesn't immediately invalidate
+     * its own about-to-be-built cache.
+     *
+     * If invalidation fires while the sheet is currently in Listing /
+     * Detail / Editor, we INTENTIONALLY do not close it. The user will
+     * see stale text until they reopen — matches iOS sheet semantics
+     * (iOS doesn't observe-and-rebuild either).
+     */
+    @Suppress("unused")
+    private val promptsCacheInvalidator: Job = viewModelScope.launch {
+        combine(
+            repository.observePhotosFor(walkId).map { it.size }.distinctUntilChanged(),
+            repository.observeVoiceRecordings(walkId)
+                .map { recs -> recs.count { it.transcription != null } }
+                .distinctUntilChanged(),
+        ) { _, _ -> Unit }
+            .drop(1)
+            .collect {
+                _cachedActivityContext.value = null
+            }
+    }
 
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
@@ -687,6 +745,144 @@ class WalkSummaryViewModel @Inject constructor(
                 _selectedFavicon.compareAndSet(newValue, current)
             }
         }
+    }
+
+    // --- Stage 13-XZ: AI Prompts sheet --------------------------------
+
+    /**
+     * Open the prompts sheet. First open per VM lifetime runs
+     * [PromptsCoordinator.buildContext] + `generateAll` and caches the
+     * result; subsequent reopens hit the cache and go straight to
+     * [PromptsSheetState.Listing] (cache nulled by
+     * [promptsCacheInvalidator] on photo / transcribed-recording
+     * count change).
+     *
+     * If `buildContext` returns null (walk row missing — should be
+     * unreachable since the UI button is gated on a Loaded state) the
+     * state falls back to [PromptsSheetState.Closed]. Race: if the user
+     * dismisses the sheet during the in-flight build, we don't clobber
+     * the post-dismiss state.
+     */
+    fun openPromptsSheet() {
+        val cached = _cachedActivityContext.value
+        if (cached != null) {
+            _promptsSheetState.value = PromptsSheetState.Listing(cached.first, cached.second)
+            return
+        }
+        _promptsSheetState.value = PromptsSheetState.Loading
+        viewModelScope.launch {
+            val ctx = promptsCoordinator.buildContext(walkId)
+            if (ctx == null) {
+                android.util.Log.w(TAG, "openPromptsSheet: buildContext returned null for walkId=$walkId")
+                if (_promptsSheetState.value == PromptsSheetState.Loading) {
+                    _promptsSheetState.value = PromptsSheetState.Closed
+                }
+                return@launch
+            }
+            val prompts = promptsCoordinator.generateAll(walkId)
+            _cachedActivityContext.value = ctx to prompts
+            if (_promptsSheetState.value == PromptsSheetState.Loading) {
+                _promptsSheetState.value = PromptsSheetState.Listing(ctx, prompts)
+            }
+        }
+    }
+
+    fun closePromptsSheet() {
+        _promptsSheetState.value = PromptsSheetState.Closed
+    }
+
+    /**
+     * Open the detail dialog over the current listing. No-op when the
+     * sheet is currently [PromptsSheetState.Closed] / [Loading] (no
+     * listing to attach to — defensive guard against tap races).
+     */
+    fun openPromptDetail(prompt: GeneratedPrompt) {
+        val listing = currentListing() ?: return
+        _promptsSheetState.value = PromptsSheetState.Detail(listing, prompt)
+    }
+
+    /**
+     * Open the custom-prompt editor over the current listing.
+     * `editing == null` means create-new; pass an existing
+     * [CustomPromptStyle] to edit. No-op when not in Listing / Detail /
+     * Editor (defensive guard).
+     */
+    fun openCustomPromptEditor(editing: CustomPromptStyle? = null) {
+        val listing = currentListing() ?: return
+        _promptsSheetState.value = PromptsSheetState.Editor(listing, editing)
+    }
+
+    /** Dismiss Detail or Editor back to the underlying Listing. */
+    fun dismissDetailOrEditor() {
+        val current = _promptsSheetState.value
+        val listing = when (current) {
+            is PromptsSheetState.Detail -> current.listing
+            is PromptsSheetState.Editor -> current.listing
+            else -> return
+        }
+        _promptsSheetState.value = listing
+    }
+
+    /**
+     * Persist a new or edited custom prompt and invalidate the cache so
+     * the next [openPromptsSheet] regenerates with the change.
+     *
+     * Runs on [persistenceScope] (process-lifetime) so the DataStore
+     * write survives the user immediately backing out of the sheet —
+     * `viewModelScope` would cancel mid-write.
+     *
+     * Returns the editor to its underlying listing immediately. The
+     * listing's `prompts` field is NOT auto-rebuilt here — the user
+     * sees the new style after they reopen the sheet (matches iOS
+     * behavior; iOS regenerates on its own state-flip). A future
+     * polish pass could rebuild in place.
+     */
+    fun saveCustomPrompt(style: CustomPromptStyle) {
+        persistenceScope.launch {
+            try {
+                promptsCoordinator.saveCustomStyle(style)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "saveCustomPrompt failed for style=${style.id}", t)
+                return@launch
+            }
+            _cachedActivityContext.value = null
+            val current = _promptsSheetState.value
+            if (current is PromptsSheetState.Editor) {
+                _promptsSheetState.value = current.listing
+            }
+        }
+    }
+
+    /**
+     * Delete a persisted custom prompt and invalidate the cache.
+     * Same persistenceScope rationale as [saveCustomPrompt]; same
+     * stale-listing limitation (user sees the change after reopen).
+     */
+    fun deleteCustomPrompt(style: CustomPromptStyle) {
+        persistenceScope.launch {
+            try {
+                promptsCoordinator.deleteCustomStyle(style)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "deleteCustomPrompt failed for style=${style.id}", t)
+                return@launch
+            }
+            _cachedActivityContext.value = null
+            val current = _promptsSheetState.value
+            if (current is PromptsSheetState.Editor) {
+                _promptsSheetState.value = current.listing
+            }
+        }
+    }
+
+    private fun currentListing(): PromptsSheetState.Listing? = when (val s = _promptsSheetState.value) {
+        is PromptsSheetState.Listing -> s
+        is PromptsSheetState.Detail -> s.listing
+        is PromptsSheetState.Editor -> s.listing
+        else -> null
     }
 
     /**

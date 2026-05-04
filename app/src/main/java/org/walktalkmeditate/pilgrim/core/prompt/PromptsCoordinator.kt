@@ -64,7 +64,7 @@ import org.walktalkmeditate.pilgrim.domain.haversineMeters
  * not its icon.
  */
 @Singleton
-class PromptsCoordinator @Inject constructor(
+open class PromptsCoordinator @Inject constructor(
     private val repository: WalkRepository,
     private val customStyleStore: CustomPromptStyleStore,
     private val photoContextAnalyzer: PhotoContextAnalyzer,
@@ -76,7 +76,7 @@ class PromptsCoordinator @Inject constructor(
 ) {
 
     /** Hot StateFlow surface from the underlying store. */
-    val customStyles: StateFlow<List<CustomPromptStyle>> get() = customStyleStore.styles
+    open val customStyles: StateFlow<List<CustomPromptStyle>> get() = customStyleStore.styles
 
     /**
      * Build the full [ActivityContext] for [walkId] — orchestrates every
@@ -86,7 +86,7 @@ class PromptsCoordinator @Inject constructor(
      *
      * Returns null when no walk row exists for [walkId].
      */
-    suspend fun buildContext(walkId: Long, zone: ZoneId = ZoneId.systemDefault()): ActivityContext? {
+    open suspend fun buildContext(walkId: Long, zone: ZoneId = ZoneId.systemDefault()): ActivityContext? {
         val walk = repository.getWalk(walkId) ?: return null
 
         val fetches = coroutineScope {
@@ -184,7 +184,7 @@ class PromptsCoordinator @Inject constructor(
      * plus one per persisted custom style. Returns empty when no walk
      * matches [walkId].
      */
-    suspend fun generateAll(walkId: Long, zone: ZoneId = ZoneId.systemDefault()): List<GeneratedPrompt> {
+    open suspend fun generateAll(walkId: Long, zone: ZoneId = ZoneId.systemDefault()): List<GeneratedPrompt> {
         val context = buildContext(walkId, zone) ?: return emptyList()
         val imperial = unitsPreferences.distanceUnits.value == UnitSystem.Imperial
         val weatherLabel = weatherLabelResolver()
@@ -207,9 +207,9 @@ class PromptsCoordinator @Inject constructor(
         return builtins + customs
     }
 
-    suspend fun saveCustomStyle(style: CustomPromptStyle) = customStyleStore.save(style)
+    open suspend fun saveCustomStyle(style: CustomPromptStyle) = customStyleStore.save(style)
 
-    suspend fun deleteCustomStyle(style: CustomPromptStyle) = customStyleStore.delete(style)
+    open suspend fun deleteCustomStyle(style: CustomPromptStyle) = customStyleStore.delete(style)
 
     /** Wraps a custom style as a [WalkPromptVoice] for callers that want to assemble manually. */
     fun customVoiceFor(style: CustomPromptStyle): WalkPromptVoice = CustomPromptStyleVoice(style)
