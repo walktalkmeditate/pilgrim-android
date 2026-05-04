@@ -9,9 +9,12 @@ import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
@@ -61,7 +64,7 @@ import org.walktalkmeditate.pilgrim.domain.haversineMeters
  * carries the correct icon when surfaced by the listing / detail UI.
  */
 @Singleton
-open class PromptsCoordinator @Inject constructor(
+open class PromptsCoordinator internal constructor(
     private val repository: WalkRepository,
     private val customStyleStore: CustomPromptStyleStore,
     private val photoContextAnalyzer: PhotoContextAnalyzer,
@@ -70,7 +73,51 @@ open class PromptsCoordinator @Inject constructor(
     private val practicePreferences: PracticePreferencesRepository,
     private val unitsPreferences: UnitsPreferencesRepository,
     @ApplicationContext private val appContext: Context,
+    /**
+     * CPU-bound dispatcher for the [buildContext] orchestration. The body
+     * does CPU work (per-sample haversine for `routeSpeeds`, celestial /
+     * lunar math, recent-walk snippet truncation) that would otherwise
+     * block Main when called from `viewModelScope.launch` (which defaults
+     * to Main). Suspend Room calls + the geocoder's own
+     * `withContext(Dispatchers.IO)` already hop off this dispatcher
+     * internally, so [Dispatchers.Default] is correct for the orchestration
+     * itself.
+     *
+     * Production wires [Dispatchers.Default] via the [Inject]-annotated
+     * secondary constructor; tests pass a `TestDispatcher` so virtual time
+     * stays deterministic.
+     */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
+
+    /**
+     * Hilt-only constructor — Dagger does not honor Kotlin default
+     * parameter values, so the test-seam parameter above can't be the
+     * `@Inject` entry point. Production reaches the same default through
+     * this constructor; tests use the `internal` primary constructor
+     * directly.
+     */
+    @Inject
+    constructor(
+        repository: WalkRepository,
+        customStyleStore: CustomPromptStyleStore,
+        photoContextAnalyzer: PhotoContextAnalyzer,
+        geocoder: PromptGeocoder,
+        promptGenerator: PromptGenerator,
+        practicePreferences: PracticePreferencesRepository,
+        unitsPreferences: UnitsPreferencesRepository,
+        @ApplicationContext appContext: Context,
+    ) : this(
+        repository = repository,
+        customStyleStore = customStyleStore,
+        photoContextAnalyzer = photoContextAnalyzer,
+        geocoder = geocoder,
+        promptGenerator = promptGenerator,
+        practicePreferences = practicePreferences,
+        unitsPreferences = unitsPreferences,
+        appContext = appContext,
+        defaultDispatcher = Dispatchers.Default,
+    )
 
     /** Hot StateFlow surface from the underlying store. */
     open val customStyles: StateFlow<List<CustomPromptStyle>> get() = customStyleStore.styles
@@ -83,8 +130,11 @@ open class PromptsCoordinator @Inject constructor(
      *
      * Returns null when no walk row exists for [walkId].
      */
-    open suspend fun buildContext(walkId: Long, zone: ZoneId = ZoneId.systemDefault()): ActivityContext? {
-        val walk = repository.getWalk(walkId) ?: return null
+    open suspend fun buildContext(
+        walkId: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): ActivityContext? = withContext(defaultDispatcher) {
+        val walk = repository.getWalk(walkId) ?: return@withContext null
 
         val fetches = coroutineScope {
             val samplesAsync = async { repository.locationSamplesFor(walkId) }
@@ -155,7 +205,7 @@ open class PromptsCoordinator @Inject constructor(
         val weather = ContextFormatter.formatWeather(walk, weatherLabelResolver(), imperial)
         val routeSpeeds = computeRouteSpeeds(locationSamples)
 
-        return ActivityContext(
+        return@withContext ActivityContext(
             recordings = recordingContexts,
             meditations = meditationContexts,
             durationSeconds = (walk.endTimestamp ?: walk.startTimestamp).let { end ->
