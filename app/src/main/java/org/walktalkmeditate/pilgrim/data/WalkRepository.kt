@@ -62,6 +62,21 @@ open class WalkRepository @Inject constructor(
     open suspend fun recentFinishedWalksBefore(currentStart: Long, limit: Int): List<Walk> =
         walkDao.getRecentFinishedBefore(currentStart, limit)
 
+    /**
+     * Stage 14 stub: returns `(talkSec, meditateSec)`. talkSec is hard-zeroed
+     * because no live ActivityIntervalCoordinator exists yet — native walks
+     * don't write talk intervals. meditateSec reads `Walk.meditationSeconds`
+     * (cached column populated by WalkMetricsCache).
+     *
+     * TODO Stage 14.X: wire live ActivityInterval recording from WalkViewModel.
+     */
+    open suspend fun activitySumsFor(walkId: Long, walk: Walk): Pair<Long, Long> =
+        Pair(0L, walk.meditationSeconds ?: 0L)
+
+    /** Pause-aware duration math input for [HomeViewModel.buildSnapshots]. */
+    open suspend fun walkEventsFor(walkId: Long): List<WalkEvent> =
+        walkEventDao.getForWalk(walkId)
+
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
     open suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)
