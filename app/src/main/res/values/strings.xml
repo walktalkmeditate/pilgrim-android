@@ -611,6 +611,7 @@
     <string name="prompts_sheet_title">AI Prompts</string>
 
     <!-- Stage 13-XZ AI Prompts: detail dialog -->
+    <string name="prompt_detail_done">Done</string>
     <string name="prompt_detail_copy">Copy</string>
     <string name="prompt_detail_copied">Copied!</string>
     <string name="prompt_detail_share">Share</string>
