@@ -600,4 +600,37 @@
     <string name="prompt_style_philosophical_desc">Explore deeper meaning and wisdom</string>
     <string name="prompt_style_journaling_title">Journaling</string>
     <string name="prompt_style_journaling_desc">Structure raw thoughts into a journal entry</string>
+
+    <!-- Stage 13-XZ AI Prompts: button + sheet -->
+    <string name="prompts_button_title">Generate AI Prompts</string>
+    <string name="prompts_button_subtitle_no_speech">Reflect on your walk</string>
+    <plurals name="prompts_button_subtitle_with_speech">
+        <item quantity="one">%d transcription available</item>
+        <item quantity="other">%d transcriptions available</item>
+    </plurals>
+    <string name="prompts_sheet_title">AI Prompts</string>
+
+    <!-- Stage 13-XZ AI Prompts: detail dialog -->
+    <string name="prompt_detail_copy">Copy</string>
+    <string name="prompt_detail_copied">Copied!</string>
+    <string name="prompt_detail_share">Share</string>
+    <string name="prompt_detail_paste_in_ai">Paste in your favorite AI</string>
+    <string name="prompt_detail_pill_chatgpt">ChatGPT</string>
+    <string name="prompt_detail_pill_claude">Claude</string>
+
+    <!-- Stage 13-XZ AI Prompts: custom editor -->
+    <string name="custom_prompt_create_title">Create Your Own</string>
+    <string name="custom_prompt_edit_title">Edit Custom Prompt</string>
+    <string name="custom_prompt_title_label">Title</string>
+    <string name="custom_prompt_title_placeholder">e.g., Letter to Future Self</string>
+    <string name="custom_prompt_icon_label">Icon</string>
+    <string name="custom_prompt_instruction_label">Instruction</string>
+    <string name="custom_prompt_instruction_placeholder">Describe how the AI should respond to your walking thoughts…</string>
+    <string name="custom_prompt_save">Save</string>
+    <string name="custom_prompt_delete">Delete</string>
+    <string name="custom_prompt_edit_action">Edit</string>
+    <plurals name="custom_prompt_counter">
+        <item quantity="one">%d of 3 custom styles</item>
+        <item quantity="other">%d of 3 custom styles</item>
+    </plurals>
 </resources>
