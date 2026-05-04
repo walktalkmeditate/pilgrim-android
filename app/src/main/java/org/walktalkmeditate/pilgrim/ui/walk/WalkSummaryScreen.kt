@@ -657,7 +657,6 @@ fun WalkSummaryScreen(
             PromptListSheet(
                 builtInPrompts = builtIn,
                 customPrompts = custom,
-                customStyles = customPromptStyles,
                 onPromptClick = viewModel::openPromptDetail,
                 onCreateCustom = { viewModel.openCustomPromptEditor(editing = null) },
                 onEditCustom = { viewModel.openCustomPromptEditor(editing = it) },
