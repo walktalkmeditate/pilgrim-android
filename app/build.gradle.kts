@@ -251,6 +251,12 @@ dependencies {
     // kotlinx-coroutines-play-services bridges ML Kit's Task<T> into
     // `suspend` via `.await()`.
     implementation(libs.mlkit.image.labeling)
+    // Stage 13-XZ Task 3: text recognition + face detection for the
+    // PhotoContextAnalyzer prompt-pipeline (a separate ImageLabeler
+    // instance is used inside the analyzer at confidence 0.3 vs the
+    // goshuin labeler's 0.6).
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.mlkit.face.detection)
     implementation(libs.kotlinx.coroutines.play.services)
 
     testImplementation(libs.junit)
