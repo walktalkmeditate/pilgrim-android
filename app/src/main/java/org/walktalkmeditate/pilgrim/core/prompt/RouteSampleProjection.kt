@@ -57,13 +57,17 @@ object RouteSampleProjection {
 
 /**
  * Truncates [this] string to at most [maxLength] characters, lopping at
- * the last whitespace boundary at-or-before [maxLength]. When no space is
- * found, hard-cuts at [maxLength]. No ellipsis appended — matches iOS
- * `String.truncatedAtWordBoundary(maxLength:)`.
+ * the last whitespace boundary at-or-before [maxLength]. When no space
+ * is found, hard-cuts at [maxLength]. Always appends `"..."` when the
+ * string was truncated. Verbatim port of iOS
+ * `String.truncatedAtWordBoundary(maxLength:)` in
+ * `Pilgrim/Models/PromptGenerator.swift` (default `maxLength = 200`
+ * matches iOS).
  */
-fun String.truncatedAtWordBoundary(maxLength: Int): String {
+fun String.truncatedAtWordBoundary(maxLength: Int = 200): String {
     if (length <= maxLength) return this
     val head = take(maxLength)
     val lastSpace = head.lastIndexOf(' ')
-    return if (lastSpace >= 0) head.substring(0, lastSpace) else head
+    val body = if (lastSpace >= 0) head.substring(0, lastSpace) else head
+    return "$body..."
 }
