@@ -228,7 +228,7 @@ open class PromptsCoordinator @Inject constructor(
                 customStyle = custom,
                 activityContext = context,
                 imperial = imperial,
-                customIconResolver = ::resolveCustomPromptIcon,
+                customIconResolver = ::resolveCustomPromptIconLocal,
                 weatherLabel = weatherLabel,
                 zone = zone,
             )
@@ -339,8 +339,13 @@ open class PromptsCoordinator @Inject constructor(
     private fun weatherLabelResolver(): (WeatherCondition) -> String =
         { appContext.getString(it.labelRes) }
 
-    private fun resolveCustomPromptIcon(iconKey: String): ImageVector =
-        org.walktalkmeditate.pilgrim.core.prompt.resolveCustomPromptIcon(iconKey)
+    /**
+     * Indirection to the package-level [resolveCustomPromptIcon] so the
+     * `::` member-reference at the [generateAll] call site stays clean
+     * (a top-level reference would need a fully-qualified path).
+     */
+    private fun resolveCustomPromptIconLocal(iconKey: String): ImageVector =
+        resolveCustomPromptIcon(iconKey)
 
     private companion object {
         const val RECENT_WALKS_LOOKBACK = 20
