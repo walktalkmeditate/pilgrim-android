@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.time.ZoneId
@@ -82,6 +83,17 @@ class WalkSummaryViewModelPromptsTest {
     private val dispatcher = UnconfinedTestDispatcher()
     private val hemisphereStoreName = "wsvm-prompts-${java.util.UUID.randomUUID()}"
 
+    /**
+     * Stage 7-A leak pattern: every VM constructed in a test gets parked
+     * here so tearDown can cancel its `viewModelScope` BEFORE `db.close()`.
+     * `WalkSummaryViewModel.promptsCacheInvalidator` collects from two
+     * Room flows inside `viewModelScope.launch`; without cancelling the
+     * scope first, the observer fires onto a closed Room db and the
+     * resulting `IllegalStateException` can poison later tests in the
+     * same JVM.
+     */
+    private val createdViewModels = mutableListOf<WalkSummaryViewModel>()
+
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
@@ -119,6 +131,14 @@ class WalkSummaryViewModelPromptsTest {
     fun tearDown() {
         // Stage 7-A: cancel viewModelScope-equivalent collectors BEFORE
         // db.close() to keep Room observers from firing on a closed db.
+        // Each VM owns a `promptsCacheInvalidator` that observes two
+        // Room flows; leaving them subscribed past `db.close()` would
+        // throw IllegalStateException onto whichever test runs next in
+        // the JVM.
+        for (vm in createdViewModels) {
+            vm.viewModelScope.coroutineContext[Job]?.cancel()
+        }
+        createdViewModels.clear()
         persistenceScope.coroutineContext[Job]?.cancel()
         hemisphereScope.coroutineContext[Job]?.cancel()
         db.close()
@@ -150,6 +170,7 @@ class WalkSummaryViewModelPromptsTest {
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
+        createdViewModels += vm
         return vm to coordinator
     }
 

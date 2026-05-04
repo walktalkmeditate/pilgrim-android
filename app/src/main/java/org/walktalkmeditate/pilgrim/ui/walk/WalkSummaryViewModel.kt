@@ -307,6 +307,21 @@ class WalkSummaryViewModel @Inject constructor(
     private val _cachedActivityContext =
         MutableStateFlow<Pair<ActivityContext, List<GeneratedPrompt>>?>(null)
 
+    /**
+     * Tracks the in-flight [PromptsCoordinator.buildContext] launch so
+     * dismiss-then-reopen during the build window does NOT spawn a
+     * second build. Without this guard the sequence (tap → dismiss →
+     * tap-again-while-build-still-running) would launch two parallel
+     * builds, each costing ~1.1s of geocoder rate-limit + ML Kit photo
+     * analysis. Both writes to [_cachedActivityContext] would land,
+     * last-write-wins, but the wasted work is real.
+     *
+     * [closePromptsSheet] intentionally does NOT cancel this job — the
+     * build's only side effect is the cache write, which we want to keep
+     * for a subsequent reopen.
+     */
+    private var promptsBuildJob: Job? = null
+
     /** Hot list of custom styles for the listing/editor UI. */
     val customPromptStyles: StateFlow<List<CustomPromptStyle>> = promptsCoordinator.customStyles
 
@@ -769,15 +784,22 @@ class WalkSummaryViewModel @Inject constructor(
             _promptsSheetState.value = PromptsSheetState.Listing(cached.first, cached.second)
             return
         }
-        // Re-entry guard: bail if a build is already in flight from an
-        // earlier tap (state == Loading). Two parallel buildContext
-        // calls would do redundant geocoding (1.1s rate-limit delay
-        // each) + ML Kit photo analysis and race _cachedActivityContext
-        // writes. The check is non-atomic but openPromptsSheet is only
-        // called from Main (UI tap) so re-entry is sequential.
-        if (_promptsSheetState.value == PromptsSheetState.Loading) return
+        // Re-entry guard: bail if a build is already in flight, regardless
+        // of current sheet state. Covers BOTH double-tap-while-Loading
+        // (state == Loading) AND dismiss-then-reopen-during-build
+        // (state == Closed but [promptsBuildJob] still active). Without
+        // this guard the second open would launch a second
+        // buildContext, doubling geocoder rate-limit (1.1s × 2) and ML
+        // Kit photo-analysis work. openPromptsSheet runs on Main so the
+        // active-check is sequential w.r.t. the assignment below.
+        if (promptsBuildJob?.isActive == true) {
+            // Re-show Loading so the dismiss-then-reopen path lands the
+            // user back on a loading state (not an empty Closed sheet).
+            _promptsSheetState.value = PromptsSheetState.Loading
+            return
+        }
         _promptsSheetState.value = PromptsSheetState.Loading
-        viewModelScope.launch {
+        promptsBuildJob = viewModelScope.launch {
             val ctx = promptsCoordinator.buildContext(walkId)
             if (ctx == null) {
                 android.util.Log.w(TAG, "openPromptsSheet: buildContext returned null for walkId=$walkId")
