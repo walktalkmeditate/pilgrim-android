@@ -91,6 +91,16 @@ open class PromptGeocoder internal constructor(
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "geocoder rejected coords lat=${coord.latitude} lon=${coord.longitude}", e)
             null
+        } catch (t: Throwable) {
+            // Some OEM Geocoder implementations throw RuntimeException
+            // ("Service not Available", `RemoteException`-wrapped, etc.)
+            // outside the documented IOException contract. Spec says
+            // silent omission of the location section on any failure;
+            // matches iOS CLGeocoder's error-eats-to-nil behavior. CE
+            // is re-thrown above so structured-concurrency teardown
+            // still works.
+            Log.w(TAG, "geocoder unexpected failure", t)
+            null
         }
     }
 
