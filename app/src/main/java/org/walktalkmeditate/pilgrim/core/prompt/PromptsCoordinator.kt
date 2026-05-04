@@ -3,8 +3,6 @@ package org.walktalkmeditate.pilgrim.core.prompt
 
 import android.content.Context
 import android.net.Uri
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.ui.graphics.vector.ImageVector
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
@@ -55,13 +53,12 @@ import org.walktalkmeditate.pilgrim.domain.haversineMeters
  * persisted [CustomPromptStyle], in the order the styles store reports
  * them.
  *
- * **Custom-icon resolution.** Stage 13-XZ Task 16 owns the Material
- * icon table that maps a [CustomPromptStyle.icon] key to an
- * [ImageVector]. Until that lands, this coordinator stubs the resolver
- * with a single neutral pencil icon. Task 12 will inject the real
- * lookup at the UI seam if it wants per-style icons; the stub is
- * harmless because Task 10 callers consume the prompt's [text] field,
- * not its icon.
+ * **Custom-icon resolution.** [resolveCustomPromptIcon] (in
+ * `core/prompt/CustomPromptIcons.kt`) maps a [CustomPromptStyle.icon]
+ * key (an iOS SF Symbol name persisted across platforms) to a Material
+ * [ImageVector] for rendering on Android. The coordinator hands this
+ * resolver to [PromptGenerator.generateCustom] so each generated prompt
+ * carries the correct icon when surfaced by the listing / detail UI.
  */
 @Singleton
 open class PromptsCoordinator @Inject constructor(
@@ -231,7 +228,7 @@ open class PromptsCoordinator @Inject constructor(
                 customStyle = custom,
                 activityContext = context,
                 imperial = imperial,
-                customIconResolver = ::resolveCustomIcon,
+                customIconResolver = ::resolveCustomPromptIcon,
                 weatherLabel = weatherLabel,
                 zone = zone,
             )
@@ -342,14 +339,8 @@ open class PromptsCoordinator @Inject constructor(
     private fun weatherLabelResolver(): (WeatherCondition) -> String =
         { appContext.getString(it.labelRes) }
 
-    /**
-     * Stub icon resolver — Stage 13-XZ Task 16 owns the 20-icon
-     * Material lookup table. Returns a neutral pencil icon so the
-     * GeneratedPrompt has a non-null vector; consumers (Task 14
-     * PromptListSheet) don't surface custom icons through this seam.
-     */
-    private fun resolveCustomIcon(@Suppress("UNUSED_PARAMETER") iconKey: String): ImageVector =
-        Icons.Outlined.Edit
+    private fun resolveCustomPromptIcon(iconKey: String): ImageVector =
+        org.walktalkmeditate.pilgrim.core.prompt.resolveCustomPromptIcon(iconKey)
 
     private companion object {
         const val RECENT_WALKS_LOOKBACK = 20

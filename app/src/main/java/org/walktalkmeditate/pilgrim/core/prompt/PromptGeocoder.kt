@@ -73,6 +73,8 @@ open class PromptGeocoder internal constructor(
     private suspend fun runReverseGeocode(coord: LatLng): String? {
         val client = try {
             geocoderFactory(context, localeProvider())
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "geocoder construction failed", t)
             return null
