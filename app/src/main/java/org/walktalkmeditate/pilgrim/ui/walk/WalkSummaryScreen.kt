@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -47,6 +45,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -66,14 +65,25 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
+import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CelestialLineRow
+import org.walktalkmeditate.pilgrim.ui.walk.summary.CustomPromptEditorDialog
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
 import org.walktalkmeditate.pilgrim.ui.walk.summary.FaviconSelectorCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MilestoneCalloutRow
-import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_FADE_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.PromptDetailDialog
+import org.walktalkmeditate.pilgrim.ui.walk.summary.PromptListSheet
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DELAY_BREAKDOWN_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DELAY_CELESTIAL_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DELAY_STATS_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_CALLOUT_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_DEFAULT_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_HERO_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_QUOTE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
+import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
@@ -116,6 +126,11 @@ fun WalkSummaryScreen(
     val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
     val celestialSnapshot by viewModel.celestialSnapshotDisplay.collectAsStateWithLifecycle()
     val walkSummaryCalloutProse by viewModel.walkSummaryCalloutProseDisplay.collectAsStateWithLifecycle()
+    // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
+    // the user taps the section-17 row; transitions through Loading →
+    // Listing → Detail / Editor.
+    val promptsSheetState by viewModel.promptsSheetState.collectAsStateWithLifecycle()
+    val customPromptStyles by viewModel.customPromptStyles.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
@@ -295,140 +310,207 @@ fun WalkSummaryScreen(
                             WalkIntentionCard(intention = intention)
                         }
 
-                        // Stage 13-B: sections 5/6/8/9/11 fade in together once
-                        // the reveal phase reaches Revealed (camera fan-out is
-                        // already underway). The Spacer here provides the gap
-                        // from the section above (Reliquary or IntentionCard);
-                        // inter-section spacing is handled by the spacedBy
-                        // arrangement inside the wrapper.
+                        // Stage 13-XZ: per-section reveal stagger replaces the
+                        // single-block AnimatedVisibility wrapper. Each of
+                        // sections 5-11 fades in independently via
+                        // Modifier.alpha(rememberRevealAlpha(...)), matching
+                        // iOS WalkSummaryView.swift line 320-542 timing.
+                        // ElevationProfile + sections 12-15 render WITHOUT
+                        // alpha (iOS doesn't fade them either). The Spacer
+                        // here provides the gap from the section above
+                        // (Reliquary or IntentionCard); inter-section spacing
+                        // is handled by the spacedBy arrangement of the
+                        // wrapper Column below.
                         Spacer(Modifier.height(PilgrimSpacing.normal))
-                        // Reduce-motion: collapse the fade-in to zero duration so
-                        // sections appear instantly along with the (also snapped)
-                        // camera and count-up.
-                        val fadeDuration = if (reduceMotion) 0 else REVEAL_FADE_MS
-                        AnimatedVisibility(
-                            visible = revealPhase == RevealPhase.Revealed,
-                            enter = fadeIn(animationSpec = tween(durationMillis = fadeDuration)),
-                            exit = ExitTransition.None,
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
                         ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
-                            ) {
-                                // 4. Elevation profile (Stage 13-F).
-                                // `remember` the altitudeMeters projection — the
-                                // animated count-up at line ~338 re-invalidates this
-                                // Column lambda every frame for ~1s during reveal,
-                                // and the underlying altitudeSamples list is stable
-                                // across recomposes (immutable WalkSummary).
-                                val altitudeMeters = remember(s.summary.altitudeSamples) {
-                                    s.summary.altitudeSamples.map { it.altitudeMeters }
-                                }
-                                ElevationProfile(
-                                    altitudes = altitudeMeters,
-                                    units = distanceUnits,
+                            // 4. Elevation profile (Stage 13-F). NO alpha —
+                            // iOS doesn't fade the chart on reveal.
+                            // `remember` the altitudeMeters projection — the
+                            // animated count-up below re-invalidates this
+                            // Column lambda every frame for ~1s during reveal,
+                            // and the underlying altitudeSamples list is stable
+                            // across recomposes (immutable WalkSummary).
+                            val altitudeMeters = remember(s.summary.altitudeSamples) {
+                                s.summary.altitudeSamples.map { it.altitudeMeters }
+                            }
+                            ElevationProfile(
+                                altitudes = altitudeMeters,
+                                units = distanceUnits,
+                            )
+
+                            // 5. Journey quote — duration 800ms, delay 0.
+                            WalkJourneyQuote(
+                                talkMillis = s.summary.talkMillis,
+                                meditateMillis = s.summary.totalMeditatedMillis,
+                                distanceMeters = s.summary.distanceMeters,
+                                distanceUnits = distanceUnits,
+                                modifier = Modifier.alpha(
+                                    rememberRevealAlpha(
+                                        revealPhase = revealPhase,
+                                        durationMs = REVEAL_DURATION_QUOTE_MS,
+                                        delayMs = 0,
+                                        reduceMotion = reduceMotion,
+                                    ),
+                                ),
+                            )
+
+                            // 6. Duration hero — duration 600ms, delay 0,
+                            // fires on Zoomed (one phase earlier than the
+                            // rest) so the duration text appears WITH the
+                            // map zoom, matching iOS.
+                            WalkDurationHero(
+                                durationMillis = s.summary.activeMillis,
+                                modifier = Modifier.alpha(
+                                    rememberRevealAlpha(
+                                        revealPhase = revealPhase,
+                                        durationMs = REVEAL_DURATION_HERO_MS,
+                                        delayMs = 0,
+                                        reduceMotion = reduceMotion,
+                                        fireOnZoomed = true,
+                                    ),
+                                ),
+                            )
+
+                            // 7. Milestone callout (Stage 13-Cel — iOS computeMilestone
+                            // priority chain: SeasonalMarker → LongestMeditation →
+                            // LongestWalk → TotalDistance → null. NO fallthrough to
+                            // FirstWalk/FirstOfSeason/NthWalk on Walk Summary callout
+                            // — those only appear on Goshuin grid).
+                            // Duration 800ms, delay 300ms.
+                            walkSummaryCalloutProse?.let { prose ->
+                                MilestoneCalloutRow(
+                                    prose = prose,
+                                    modifier = Modifier.alpha(
+                                        rememberRevealAlpha(
+                                            revealPhase = revealPhase,
+                                            durationMs = REVEAL_DURATION_CALLOUT_MS,
+                                            delayMs = REVEAL_DELAY_CELESTIAL_MS,
+                                            reduceMotion = reduceMotion,
+                                        ),
+                                    ),
                                 )
+                            }
 
-                                // 5. Journey quote
-                                WalkJourneyQuote(
-                                    talkMillis = s.summary.talkMillis,
-                                    meditateMillis = s.summary.totalMeditatedMillis,
-                                    distanceMeters = s.summary.distanceMeters,
-                                    distanceUnits = distanceUnits,
+                            // 8. Stats row — distance value animates 0 → final
+                            // on reveal. Duration 600ms, delay 200ms.
+                            WalkStatsRow(
+                                distanceMeters = animatedDistanceMeters.toDouble(),
+                                ascendMeters = s.summary.ascendMeters,
+                                units = distanceUnits,
+                                modifier = Modifier.alpha(
+                                    rememberRevealAlpha(
+                                        revealPhase = revealPhase,
+                                        durationMs = REVEAL_DURATION_DEFAULT_MS,
+                                        delayMs = REVEAL_DELAY_STATS_MS,
+                                        reduceMotion = reduceMotion,
+                                    ),
+                                ),
+                            )
+
+                            // 9. Weather line (Stage 12-A). Renders only when the
+                            // persisted condition resolves to a known enum AND a
+                            // temperature is present — legacy walks captured before
+                            // Stage 12-A have null weather columns and skip silently.
+                            // Imperial coupling follows the user's distance
+                            // preference, matching iOS where temperature units track
+                            // `distanceMeasurementType`. Duration 600ms, delay 200ms.
+                            s.summary.walk.weatherCondition?.let { conditionRaw ->
+                                val condition = WeatherCondition.fromRawValue(conditionRaw)
+                                    ?: return@let
+                                val temperature = s.summary.walk.weatherTemperature
+                                    ?: return@let
+                                WalkSummaryWeatherLine(
+                                    condition = condition,
+                                    temperatureCelsius = temperature,
+                                    imperial = distanceUnits == UnitSystem.Imperial,
+                                    modifier = Modifier.alpha(
+                                        rememberRevealAlpha(
+                                            revealPhase = revealPhase,
+                                            durationMs = REVEAL_DURATION_DEFAULT_MS,
+                                            delayMs = REVEAL_DELAY_STATS_MS,
+                                            reduceMotion = reduceMotion,
+                                        ),
+                                    ),
                                 )
+                            }
 
-                                // 6. Duration hero
-                                WalkDurationHero(durationMillis = s.summary.activeMillis)
-
-                                // 7. Milestone callout (Stage 13-Cel — iOS computeMilestone
-                                // priority chain: SeasonalMarker → LongestMeditation →
-                                // LongestWalk → TotalDistance → null. NO fallthrough to
-                                // FirstWalk/FirstOfSeason/NthWalk on Walk Summary callout
-                                // — those only appear on Goshuin grid).
-                                walkSummaryCalloutProse?.let { prose ->
-                                    MilestoneCalloutRow(prose = prose)
-                                }
-
-                                // 8. Stats row — distance value animates 0 → final on reveal.
-                                WalkStatsRow(
-                                    distanceMeters = animatedDistanceMeters.toDouble(),
-                                    ascendMeters = s.summary.ascendMeters,
-                                    units = distanceUnits,
+                            // 10. Celestial line (Stage 13-Cel). Gated by VM's
+                            // celestialSnapshotDisplay flow which combines summary
+                            // + practicePreferences.celestialAwarenessEnabled.
+                            // Duration 600ms, delay 300ms.
+                            celestialSnapshot?.let { snap ->
+                                CelestialLineRow(
+                                    snapshot = snap,
+                                    modifier = Modifier.alpha(
+                                        rememberRevealAlpha(
+                                            revealPhase = revealPhase,
+                                            durationMs = REVEAL_DURATION_DEFAULT_MS,
+                                            delayMs = REVEAL_DELAY_CELESTIAL_MS,
+                                            reduceMotion = reduceMotion,
+                                        ),
+                                    ),
                                 )
+                            }
 
-                                // 9. Weather line (Stage 12-A). Renders only when the
-                                // persisted condition resolves to a known enum AND a
-                                // temperature is present — legacy walks captured before
-                                // Stage 12-A have null weather columns and skip silently.
-                                // Imperial coupling follows the user's distance
-                                // preference, matching iOS where temperature units track
-                                // `distanceMeasurementType`.
-                                s.summary.walk.weatherCondition?.let { conditionRaw ->
-                                    val condition = WeatherCondition.fromRawValue(conditionRaw)
-                                        ?: return@let
-                                    val temperature = s.summary.walk.weatherTemperature
-                                        ?: return@let
-                                    WalkSummaryWeatherLine(
-                                        condition = condition,
-                                        temperatureCelsius = temperature,
-                                        imperial = distanceUnits == UnitSystem.Imperial,
+                            // 11. Time breakdown grid — Walk card uses
+                            // activeWalkingMillis (paused-AND-meditate-excluded).
+                            // Duration 600ms, delay 400ms.
+                            WalkTimeBreakdownGrid(
+                                walkMillis = s.summary.activeWalkingMillis,
+                                talkMillis = s.summary.talkMillis,
+                                meditateMillis = s.summary.totalMeditatedMillis,
+                                modifier = Modifier.alpha(
+                                    rememberRevealAlpha(
+                                        revealPhase = revealPhase,
+                                        durationMs = REVEAL_DURATION_DEFAULT_MS,
+                                        delayMs = REVEAL_DELAY_BREAKDOWN_MS,
+                                        reduceMotion = reduceMotion,
+                                    ),
+                                ),
+                            )
+
+                            // 12. Favicon selector (Stage 13-E) — NO alpha,
+                            // renders immediately (matches iOS).
+                            FaviconSelectorCard(
+                                selected = selectedFavicon,
+                                onSelect = viewModel::setFavicon,
+                            )
+
+                            // 13. Activity timeline bar (Stage 13-C)
+                            WalkActivityTimelineCard(
+                                startTimestamp = s.summary.walk.startTimestamp,
+                                endTimestamp = s.summary.walk.endTimestamp ?: s.summary.walk.startTimestamp,
+                                voiceRecordings = s.summary.voiceRecordings,
+                                activityIntervals = s.summary.meditationIntervals,
+                                routeSamples = s.summary.routeSamples,
+                                units = distanceUnits,
+                                onSegmentSelected = { startMs, endMs ->
+                                    zoomTargetBounds = computeBoundsForTimeRange(
+                                        samples = s.summary.routeSamples,
+                                        startMs = startMs,
+                                        endMs = endMs,
                                     )
-                                }
+                                },
+                                onSegmentDeselected = { zoomTargetBounds = null },
+                            )
 
-                                // 10. Celestial line (Stage 13-Cel). Gated by VM's
-                                // celestialSnapshotDisplay flow which combines summary
-                                // + practicePreferences.celestialAwarenessEnabled.
-                                celestialSnapshot?.let { snap ->
-                                    CelestialLineRow(snapshot = snap)
-                                }
-
-                                // 11. Time breakdown grid — Walk card uses
-                                // activeWalkingMillis (paused-AND-meditate-excluded).
-                                WalkTimeBreakdownGrid(
-                                    walkMillis = s.summary.activeWalkingMillis,
+                            // 14. Activity insights (Stage 13-C)
+                            if (s.summary.talkMillis > 0L || s.summary.meditationIntervals.isNotEmpty()) {
+                                WalkActivityInsightsCard(
                                     talkMillis = s.summary.talkMillis,
-                                    meditateMillis = s.summary.totalMeditatedMillis,
+                                    activeMillis = s.summary.activeMillis,
+                                    meditationIntervals = s.summary.meditationIntervals,
                                 )
+                            }
 
-                                // 12. Favicon selector (Stage 13-E)
-                                FaviconSelectorCard(
-                                    selected = selectedFavicon,
-                                    onSelect = viewModel::setFavicon,
-                                )
-
-                                // 13. Activity timeline bar (Stage 13-C)
-                                WalkActivityTimelineCard(
-                                    startTimestamp = s.summary.walk.startTimestamp,
-                                    endTimestamp = s.summary.walk.endTimestamp ?: s.summary.walk.startTimestamp,
+                            // 15. Activity list (Stage 13-C)
+                            if (s.summary.voiceRecordings.isNotEmpty() || s.summary.meditationIntervals.isNotEmpty()) {
+                                WalkActivityListCard(
                                     voiceRecordings = s.summary.voiceRecordings,
-                                    activityIntervals = s.summary.meditationIntervals,
-                                    routeSamples = s.summary.routeSamples,
-                                    units = distanceUnits,
-                                    onSegmentSelected = { startMs, endMs ->
-                                        zoomTargetBounds = computeBoundsForTimeRange(
-                                            samples = s.summary.routeSamples,
-                                            startMs = startMs,
-                                            endMs = endMs,
-                                        )
-                                    },
-                                    onSegmentDeselected = { zoomTargetBounds = null },
+                                    meditationIntervals = s.summary.meditationIntervals,
                                 )
-
-                                // 14. Activity insights (Stage 13-C)
-                                if (s.summary.talkMillis > 0L || s.summary.meditationIntervals.isNotEmpty()) {
-                                    WalkActivityInsightsCard(
-                                        talkMillis = s.summary.talkMillis,
-                                        activeMillis = s.summary.activeMillis,
-                                        meditationIntervals = s.summary.meditationIntervals,
-                                    )
-                                }
-
-                                // 15. Activity list (Stage 13-C)
-                                if (s.summary.voiceRecordings.isNotEmpty() || s.summary.meditationIntervals.isNotEmpty()) {
-                                    WalkActivityListCard(
-                                        voiceRecordings = s.summary.voiceRecordings,
-                                        meditationIntervals = s.summary.meditationIntervals,
-                                    )
-                                }
                             }
                         }
 
@@ -444,7 +526,18 @@ fun WalkSummaryScreen(
                             )
                         }
 
-                        // 17. AI Prompts button — placeholder for Stage 13-X
+                        // 17. AI Prompts button (Stage 13-XZ). Subtitle reflects
+                        // the count of recordings whose transcription has
+                        // resolved — see AIPromptsRow for the plural / "Reflect
+                        // on your walk" branch when count == 0.
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+                        val transcribedRecordingsCount = recordings.count {
+                            it.transcription != null
+                        }
+                        AIPromptsRow(
+                            transcribedRecordingsCount = transcribedRecordingsCount,
+                            onClick = viewModel::openPromptsSheet,
+                        )
 
                         // 18. Details (Stage 13-G)
                         if (s.summary.totalPausedMillis > 0L) {
@@ -547,6 +640,45 @@ fun WalkSummaryScreen(
             )
         }
 
+        // Stage 13-XZ: AI Prompts sheet + dialogs. The Listing sheet
+        // stays mounted under the Detail / Editor dialog so dismissing
+        // the dialog returns the user to the listing without rebuilding.
+        // Loading state intentionally renders nothing — first open shows
+        // a brief gap (~0-2s) before the listing materialises; subsequent
+        // opens hit the cache and go straight to Listing instantly.
+        val promptsListing: PromptsSheetState.Listing? = when (val sheet = promptsSheetState) {
+            is PromptsSheetState.Listing -> sheet
+            is PromptsSheetState.Detail -> sheet.listing
+            is PromptsSheetState.Editor -> sheet.listing
+            else -> null
+        }
+        promptsListing?.let { listing ->
+            val (builtIn, custom) = listing.prompts.splitAt(6)
+            PromptListSheet(
+                builtInPrompts = builtIn,
+                customPrompts = custom,
+                customStyles = customPromptStyles,
+                onPromptClick = viewModel::openPromptDetail,
+                onCreateCustom = { viewModel.openCustomPromptEditor(editing = null) },
+                onEditCustom = { viewModel.openCustomPromptEditor(editing = it) },
+                onDeleteCustom = viewModel::deleteCustomPrompt,
+                onDismiss = viewModel::closePromptsSheet,
+            )
+        }
+        when (val sheet = promptsSheetState) {
+            is PromptsSheetState.Detail -> PromptDetailDialog(
+                prompt = sheet.prompt,
+                onDismiss = viewModel::dismissDetailOrEditor,
+            )
+            is PromptsSheetState.Editor -> CustomPromptEditorDialog(
+                editing = sheet.editing,
+                existingStyleCount = customPromptStyles.size,
+                onSave = viewModel::saveCustomPrompt,
+                onDismiss = viewModel::dismissDetailOrEditor,
+            )
+            else -> Unit
+        }
+
         // Stage 7-D: snackbar anchored to the bottom of the screen so
         // Save/Share feedback doesn't collide with the SealReveal
         // overlay (which lives above the summary column).
@@ -555,6 +687,19 @@ fun WalkSummaryScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
+}
+
+/**
+ * Stage 13-XZ: split a flat prompts list at the built-in/custom boundary.
+ * `PromptsCoordinator` returns 6 built-in prompts followed by N custom
+ * prompts (one per [CustomPromptStyle]) — see
+ * [org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator] contract.
+ * This split is then handed to [PromptListSheet] as the parallel built-in
+ * + custom lists it expects.
+ */
+private fun <T> List<T>.splitAt(index: Int): Pair<List<T>, List<T>> {
+    if (index >= size) return this to emptyList()
+    return take(index) to drop(index)
 }
 
 @Composable
