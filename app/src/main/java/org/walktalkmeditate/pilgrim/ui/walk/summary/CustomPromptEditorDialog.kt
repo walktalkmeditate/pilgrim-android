@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -129,7 +130,12 @@ internal fun CustomPromptEditorContent(
         onSave(style)
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    // imePadding so the multiline instruction TextField stays scrollable
+    // above the soft keyboard. Without it the bottom of the inner
+    // verticalScroll Column lies BEHIND the IME and the user can't reach
+    // the field's tail end via scroll. Save/Cancel live in the TopAppBar
+    // (top of screen) so they are not obscured either way.
+    Column(modifier = Modifier.fillMaxSize().imePadding()) {
         TopAppBar(
             title = {
                 Text(
