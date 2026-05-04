@@ -18,7 +18,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.prompt.CUSTOM_PROMPT_ICON_OPTIONS
 import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
+import org.walktalkmeditate.pilgrim.core.prompt.resolveCustomPromptIcon
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 @RunWith(RobolectricTestRunner::class)
