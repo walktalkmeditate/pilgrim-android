@@ -182,10 +182,42 @@ open class PromptsCoordinator @Inject constructor(
     /**
      * Convenience: build the context and render every built-in prompt
      * plus one per persisted custom style. Returns empty when no walk
-     * matches [walkId].
+     * matches [walkId]. Callers that have already built the context
+     * should prefer the [generateAll] overload that takes the context
+     * directly to avoid re-running geocoding + photo analysis.
      */
     open suspend fun generateAll(walkId: Long, zone: ZoneId = ZoneId.systemDefault()): List<GeneratedPrompt> {
         val context = buildContext(walkId, zone) ?: return emptyList()
+        return generateAll(context, zone)
+    }
+
+    /**
+     * Render every built-in prompt plus one per persisted custom style
+     * for an already-built [context]. Used by the VM's `openPromptsSheet`
+     * path so the expensive `buildContext` (geocoding + photo analysis +
+     * recent-walk celestial summaries) runs exactly once per first-open.
+     *
+     * Reads the custom-style list from [customStyleStore.styles.value] —
+     * callers that just persisted a save/delete should prefer the
+     * [generateAll] overload that takes an explicit `customStyles`
+     * parameter, since the StateFlow may not have re-emitted by the time
+     * the persist suspend returns.
+     */
+    open fun generateAll(context: ActivityContext, zone: ZoneId = ZoneId.systemDefault()): List<GeneratedPrompt> =
+        generateAll(context, customStyleStore.styles.value, zone)
+
+    /**
+     * Render every built-in prompt plus one per [customStyles] entry for
+     * an already-built [context]. Used by the prompts-listing rebuild
+     * path after a save/delete: the caller has the post-write style list
+     * in hand and reads it directly here, sidestepping the DataStore
+     * StateFlow's emission lag.
+     */
+    open fun generateAll(
+        context: ActivityContext,
+        customStyles: List<CustomPromptStyle>,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<GeneratedPrompt> {
         val imperial = unitsPreferences.distanceUnits.value == UnitSystem.Imperial
         val weatherLabel = weatherLabelResolver()
         val builtins = promptGenerator.generateAll(
@@ -194,7 +226,7 @@ open class PromptsCoordinator @Inject constructor(
             weatherLabel = weatherLabel,
             zone = zone,
         )
-        val customs = customStyleStore.styles.value.map { custom ->
+        val customs = customStyles.map { custom ->
             promptGenerator.generateCustom(
                 customStyle = custom,
                 activityContext = context,
@@ -207,9 +239,19 @@ open class PromptsCoordinator @Inject constructor(
         return builtins + customs
     }
 
-    open suspend fun saveCustomStyle(style: CustomPromptStyle) = customStyleStore.save(style)
+    /**
+     * Persist [style] and return the post-write style list. The return
+     * value is authoritative — see [CustomPromptStyleStore.save].
+     */
+    open suspend fun saveCustomStyle(style: CustomPromptStyle): List<CustomPromptStyle> =
+        customStyleStore.save(style)
 
-    open suspend fun deleteCustomStyle(style: CustomPromptStyle) = customStyleStore.delete(style)
+    /**
+     * Delete [style] and return the post-write style list. The return
+     * value is authoritative — see [CustomPromptStyleStore.delete].
+     */
+    open suspend fun deleteCustomStyle(style: CustomPromptStyle): List<CustomPromptStyle> =
+        customStyleStore.delete(style)
 
     /** Wraps a custom style as a [WalkPromptVoice] for callers that want to assemble manually. */
     fun customVoiceFor(style: CustomPromptStyle): WalkPromptVoice = CustomPromptStyleVoice(style)

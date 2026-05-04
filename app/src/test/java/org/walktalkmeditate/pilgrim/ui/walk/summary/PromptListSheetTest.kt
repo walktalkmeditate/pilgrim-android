@@ -54,6 +54,29 @@ class PromptListSheetTest {
         instruction = instruction,
     )
 
+    /**
+     * Custom prompts MUST carry a non-null `customStyle` per the
+     * PromptGenerator contract — `PromptListSheetContent` derives the
+     * Edit / Delete style from `prompt.customStyle` directly. Test
+     * fixtures that previously paired a `fakePrompt` with a separate
+     * `fakeCustomStyle` should now use this helper so the fields stay
+     * coupled.
+     */
+    private fun fakeCustomPrompt(
+        title: String,
+        subtitle: String = "instruction for $title",
+        id: String = title,
+        styleId: String = "style-$title",
+    ): GeneratedPrompt = GeneratedPrompt(
+        id = id,
+        style = null,
+        customStyle = fakeCustomStyle(title = title, instruction = subtitle, id = styleId),
+        title = title,
+        subtitle = subtitle,
+        text = "prompt body",
+        icon = Icons.Outlined.Spa,
+    )
+
     private val sixBuiltIns = listOf(
         fakePrompt("Reflective"),
         fakePrompt("Gratitude"),
@@ -69,7 +92,6 @@ class PromptListSheetTest {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = emptyList(),
-                    customStyles = emptyList(),
                     onPromptClick = {},
                     onCreateCustom = {},
                     onEditCustom = {},
@@ -88,14 +110,12 @@ class PromptListSheetTest {
     }
 
     @Test fun `renders 6 built-in plus 2 custom rows`() {
-        val customs = listOf(fakePrompt("Letter to Self"), fakePrompt("Future Me"))
-        val styles = listOf(fakeCustomStyle("Letter to Self"), fakeCustomStyle("Future Me"))
+        val customs = listOf(fakeCustomPrompt("Letter to Self"), fakeCustomPrompt("Future Me"))
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = customs,
-                    customStyles = styles,
                     onPromptClick = {},
                     onCreateCustom = {},
                     onEditCustom = {},
@@ -119,7 +139,6 @@ class PromptListSheetTest {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = emptyList(),
-                    customStyles = emptyList(),
                     onPromptClick = {},
                     onCreateCustom = { created++ },
                     onEditCustom = {},
@@ -134,15 +153,13 @@ class PromptListSheetTest {
     }
 
     @Test fun `Create Your Own enabled at two customs`() {
-        val customs = listOf(fakePrompt("A"), fakePrompt("B"))
-        val styles = listOf(fakeCustomStyle("A"), fakeCustomStyle("B"))
+        val customs = listOf(fakeCustomPrompt("A"), fakeCustomPrompt("B"))
         var created = 0
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = customs,
-                    customStyles = styles,
                     onPromptClick = {},
                     onCreateCustom = { created++ },
                     onEditCustom = {},
@@ -157,15 +174,13 @@ class PromptListSheetTest {
     }
 
     @Test fun `Create Your Own disabled at three customs swallows clicks`() {
-        val customs = listOf(fakePrompt("A"), fakePrompt("B"), fakePrompt("C"))
-        val styles = listOf(fakeCustomStyle("A"), fakeCustomStyle("B"), fakeCustomStyle("C"))
+        val customs = listOf(fakeCustomPrompt("A"), fakeCustomPrompt("B"), fakeCustomPrompt("C"))
         var created = 0
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = customs,
-                    customStyles = styles,
                     onPromptClick = {},
                     onCreateCustom = { created++ },
                     onEditCustom = {},
@@ -186,7 +201,6 @@ class PromptListSheetTest {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = emptyList(),
-                    customStyles = emptyList(),
                     onPromptClick = { clicked = it },
                     onCreateCustom = {},
                     onEditCustom = {},
@@ -200,14 +214,13 @@ class PromptListSheetTest {
     }
 
     @Test fun `clicking a custom row invokes onPromptClick with the row's prompt`() {
-        val custom = fakePrompt("Letter to Self")
+        val custom = fakeCustomPrompt("Letter to Self")
         var clicked: GeneratedPrompt? = null
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = listOf(custom),
-                    customStyles = listOf(fakeCustomStyle("Letter to Self")),
                     onPromptClick = { clicked = it },
                     onCreateCustom = {},
                     onEditCustom = {},
@@ -222,16 +235,15 @@ class PromptListSheetTest {
     }
 
     @Test fun `clicking Edit on a custom row invokes onEditCustom with the parallel-indexed style`() {
-        val customs = listOf(fakePrompt("A"), fakePrompt("B"))
-        val styleA = fakeCustomStyle("A")
-        val styleB = fakeCustomStyle("B")
+        val customA = fakeCustomPrompt("A")
+        val customB = fakeCustomPrompt("B")
+        val styleA = customA.customStyle!!
         var edited: CustomPromptStyle? = null
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
-                    customPrompts = customs,
-                    customStyles = listOf(styleA, styleB),
+                    customPrompts = listOf(customA, customB),
                     onPromptClick = {},
                     onCreateCustom = {},
                     onEditCustom = { edited = it },
@@ -246,16 +258,15 @@ class PromptListSheetTest {
     }
 
     @Test fun `clicking Delete on a custom row invokes onDeleteCustom with the parallel-indexed style`() {
-        val customs = listOf(fakePrompt("A"), fakePrompt("B"))
-        val styleA = fakeCustomStyle("A")
-        val styleB = fakeCustomStyle("B")
+        val customA = fakeCustomPrompt("A")
+        val customB = fakeCustomPrompt("B")
+        val styleB = customB.customStyle!!
         var deleted: CustomPromptStyle? = null
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
-                    customPrompts = customs,
-                    customStyles = listOf(styleA, styleB),
+                    customPrompts = listOf(customA, customB),
                     onPromptClick = {},
                     onCreateCustom = {},
                     onEditCustom = {},
@@ -275,8 +286,7 @@ class PromptListSheetTest {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
-                    customPrompts = listOf(fakePrompt("A")),
-                    customStyles = listOf(fakeCustomStyle("A")),
+                    customPrompts = listOf(fakeCustomPrompt("A")),
                     onPromptClick = {},
                     onCreateCustom = {},
                     onEditCustom = {},
@@ -290,14 +300,12 @@ class PromptListSheetTest {
     }
 
     @Test fun `custom counter renders pluralized text when three customs`() {
-        val customs = listOf(fakePrompt("A"), fakePrompt("B"), fakePrompt("C"))
-        val styles = listOf(fakeCustomStyle("A"), fakeCustomStyle("B"), fakeCustomStyle("C"))
+        val customs = listOf(fakeCustomPrompt("A"), fakeCustomPrompt("B"), fakeCustomPrompt("C"))
         composeRule.setContent {
             PilgrimTheme {
                 PromptListSheetContent(
                     builtInPrompts = sixBuiltIns,
                     customPrompts = customs,
-                    customStyles = styles,
                     onPromptClick = {},
                     onCreateCustom = {},
                     onEditCustom = {},

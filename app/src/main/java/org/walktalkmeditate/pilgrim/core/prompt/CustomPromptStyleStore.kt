@@ -52,7 +52,16 @@ class CustomPromptStyleStore @Inject constructor(
         .distinctUntilChanged()
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    suspend fun save(style: CustomPromptStyle) {
+    /**
+     * Persist [style] (replacing by id when present, appending if under
+     * [MAX_STYLES]) and return the post-write list. The return value is
+     * authoritative: callers that need to render the new list
+     * immediately after a save (e.g. the prompts-listing rebuild path)
+     * should consume this rather than `styles.value`, which may not
+     * have re-emitted by the time the suspend returns.
+     */
+    suspend fun save(style: CustomPromptStyle): List<CustomPromptStyle> {
+        var written: List<CustomPromptStyle> = emptyList()
         dataStore.edit { prefs ->
             val current = decode(prefs[KEY_STYLES])
             val existingIndex = current.indexOfFirst { it.id == style.id }
@@ -62,15 +71,24 @@ class CustomPromptStyleStore @Inject constructor(
                 else -> current
             }
             prefs[KEY_STYLES] = json.encodeToString(LIST_SERIALIZER, updated)
+            written = updated
         }
+        return written
     }
 
-    suspend fun delete(style: CustomPromptStyle) {
+    /**
+     * Remove [style] (no-op for unknown ids) and return the post-write
+     * list. Same return-the-truth rationale as [save].
+     */
+    suspend fun delete(style: CustomPromptStyle): List<CustomPromptStyle> {
+        var written: List<CustomPromptStyle> = emptyList()
         dataStore.edit { prefs ->
             val current = decode(prefs[KEY_STYLES])
             val updated = current.filterNot { it.id == style.id }
             prefs[KEY_STYLES] = json.encodeToString(LIST_SERIALIZER, updated)
+            written = updated
         }
+        return written
     }
 
     private fun decode(raw: String?): List<CustomPromptStyle> {

@@ -779,7 +779,10 @@ class WalkSummaryViewModel @Inject constructor(
                 }
                 return@launch
             }
-            val prompts = promptsCoordinator.generateAll(walkId)
+            // Pass the already-built context to avoid re-running the
+            // expensive geocoder (1.1s rate-limit delay) + ML Kit photo
+            // analysis + recent-walk celestial summaries a second time.
+            val prompts = promptsCoordinator.generateAll(ctx)
             _cachedActivityContext.value = ctx to prompts
             if (_promptsSheetState.value == PromptsSheetState.Loading) {
                 _promptsSheetState.value = PromptsSheetState.Listing(ctx, prompts)
@@ -824,22 +827,24 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
-     * Persist a new or edited custom prompt and invalidate the cache so
-     * the next [openPromptsSheet] regenerates with the change.
+     * Persist a new or edited custom prompt and rebuild the listing in
+     * place so the user immediately sees the new/updated row.
      *
      * Runs on [persistenceScope] (process-lifetime) so the DataStore
      * write survives the user immediately backing out of the sheet —
      * `viewModelScope` would cancel mid-write.
      *
-     * Returns the editor to its underlying listing immediately. The
-     * listing's `prompts` field is NOT auto-rebuilt here — the user
-     * sees the new style after they reopen the sheet (matches iOS
-     * behavior; iOS regenerates on its own state-flip). A future
-     * polish pass could rebuild in place.
+     * The cached [ActivityContext] is reused (no need to re-geocode or
+     * re-analyze photos) but [PromptsCoordinator.generateAll] re-runs to
+     * include the newly-saved style. The Listing in [_promptsSheetState]
+     * is replaced so its `prompts` field stays parallel-indexed with the
+     * hot [customPromptStyles] flow — failure to rebuild here would
+     * crash the screen's `require(customPrompts.size == customStyles.size)`
+     * guard the next time Compose recomposes the list.
      */
     fun saveCustomPrompt(style: CustomPromptStyle) {
         persistenceScope.launch {
-            try {
+            val updated = try {
                 promptsCoordinator.saveCustomStyle(style)
             } catch (ce: CancellationException) {
                 throw ce
@@ -847,22 +852,18 @@ class WalkSummaryViewModel @Inject constructor(
                 android.util.Log.e(TAG, "saveCustomPrompt failed for style=${style.id}", t)
                 return@launch
             }
-            _cachedActivityContext.value = null
-            val current = _promptsSheetState.value
-            if (current is PromptsSheetState.Editor) {
-                _promptsSheetState.value = current.listing
-            }
+            rebuildListingAfterCustomChange(updated)
         }
     }
 
     /**
-     * Delete a persisted custom prompt and invalidate the cache.
-     * Same persistenceScope rationale as [saveCustomPrompt]; same
-     * stale-listing limitation (user sees the change after reopen).
+     * Delete a persisted custom prompt and rebuild the listing in place.
+     * Same persistenceScope rationale and rebuild rationale as
+     * [saveCustomPrompt].
      */
     fun deleteCustomPrompt(style: CustomPromptStyle) {
         persistenceScope.launch {
-            try {
+            val updated = try {
                 promptsCoordinator.deleteCustomStyle(style)
             } catch (ce: CancellationException) {
                 throw ce
@@ -870,11 +871,54 @@ class WalkSummaryViewModel @Inject constructor(
                 android.util.Log.e(TAG, "deleteCustomPrompt failed for style=${style.id}", t)
                 return@launch
             }
+            rebuildListingAfterCustomChange(updated)
+        }
+    }
+
+    /**
+     * Re-runs `generateAll` against the cached [ActivityContext] (or
+     * rebuilds it if invalidated) and replaces the in-flight Listing /
+     * Editor / Detail state so the prompts list stays parallel-indexed
+     * with the hot [customPromptStyles] flow.
+     *
+     * [updatedStyles] is the post-write style list returned directly
+     * from the store, NOT a re-read of `customStyleStore.styles.value`,
+     * because the DataStore-backed StateFlow may not have re-emitted by
+     * the time the persist suspend returns. Without this hand-off the
+     * `PromptListSheet`'s
+     * `require(customPrompts.size == customStyles.size)` guard could
+     * fire briefly when the screen recomposes between the StateFlow
+     * emission and the listing rebuild.
+     */
+    private suspend fun rebuildListingAfterCustomChange(updatedStyles: List<CustomPromptStyle>) {
+        val cached = _cachedActivityContext.value
+        val ctx = cached?.first ?: promptsCoordinator.buildContext(walkId)
+        if (ctx == null) {
+            // Walk row gone — fall back to closing the sheet rather than
+            // leaving stale state up.
             _cachedActivityContext.value = null
-            val current = _promptsSheetState.value
-            if (current is PromptsSheetState.Editor) {
-                _promptsSheetState.value = current.listing
+            _promptsSheetState.value = PromptsSheetState.Closed
+            return
+        }
+        val prompts = promptsCoordinator.generateAll(ctx, updatedStyles)
+        _cachedActivityContext.value = ctx to prompts
+        when (val current = _promptsSheetState.value) {
+            is PromptsSheetState.Editor -> {
+                _promptsSheetState.value = PromptsSheetState.Listing(ctx, prompts)
             }
+            is PromptsSheetState.Detail -> {
+                // Keep the user's place in the detail view but refresh
+                // the underlying listing so a subsequent dismiss returns
+                // to a parallel-indexed list.
+                _promptsSheetState.value = PromptsSheetState.Detail(
+                    listing = PromptsSheetState.Listing(ctx, prompts),
+                    prompt = current.prompt,
+                )
+            }
+            is PromptsSheetState.Listing -> {
+                _promptsSheetState.value = PromptsSheetState.Listing(ctx, prompts)
+            }
+            else -> Unit
         }
     }
 

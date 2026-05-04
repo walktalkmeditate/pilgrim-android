@@ -300,7 +300,7 @@ class WalkSummaryViewModelPromptsTest {
     }
 
     @Test
-    fun saveCustomPrompt_callsCoordinatorAndInvalidatesCache_returnsToListing() = runTest(dispatcher) {
+    fun saveCustomPrompt_callsCoordinatorAndRebuildsListingInPlace() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
         val (vm, coordinator) = newViewModel(
             walkId,
@@ -313,20 +313,25 @@ class WalkSummaryViewModelPromptsTest {
         assertTrue(vm.promptsSheetState.value is PromptsSheetState.Editor)
 
         val style = CustomPromptStyle(title = "Walking notes", icon = "edit", instruction = "Note things.")
+        val initialGenerateCalls = coordinator.generateAllCalls.get()
         vm.saveCustomPrompt(style)
         advanceUntilIdle()
 
         assertEquals(listOf(style), coordinator.savedStyles)
         assertTrue(vm.promptsSheetState.value is PromptsSheetState.Listing)
-        // Cache invalidated → next open triggers another buildContext.
+        // The rebuild path re-renders the listing in place: generateAll
+        // fires once more for the new styles, but buildContext is reused
+        // from cache (no second sub-fetch round-trip).
+        assertEquals(initialGenerateCalls + 1, coordinator.generateAllCalls.get())
         vm.closePromptsSheet()
         vm.openPromptsSheet()
         advanceUntilIdle()
-        assertEquals(2, coordinator.buildContextCalls.get())
+        // Cache stays warm across the rebuild — next open is instant.
+        assertEquals(1, coordinator.buildContextCalls.get())
     }
 
     @Test
-    fun deleteCustomPrompt_callsCoordinatorAndInvalidatesCache_returnsToListing() = runTest(dispatcher) {
+    fun deleteCustomPrompt_callsCoordinatorAndRebuildsListingInPlace() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
         val style = CustomPromptStyle(title = "x", icon = "edit", instruction = "y")
         val (vm, coordinator) = newViewModel(
@@ -343,15 +348,17 @@ class WalkSummaryViewModelPromptsTest {
         vm.openCustomPromptEditor(editing = style)
         assertTrue(vm.promptsSheetState.value is PromptsSheetState.Editor)
 
+        val initialGenerateCalls = coordinator.generateAllCalls.get()
         vm.deleteCustomPrompt(style)
         advanceUntilIdle()
 
         assertEquals(listOf(style), coordinator.deletedStyles)
         assertTrue(vm.promptsSheetState.value is PromptsSheetState.Listing)
+        assertEquals(initialGenerateCalls + 1, coordinator.generateAllCalls.get())
         vm.closePromptsSheet()
         vm.openPromptsSheet()
         advanceUntilIdle()
-        assertEquals(2, coordinator.buildContextCalls.get())
+        assertEquals(1, coordinator.buildContextCalls.get())
     }
 
     // --- cache invalidation observers --------------------------------------
@@ -565,14 +572,32 @@ private class FakePromptsCoordinator(
         return generateAllResult
     }
 
-    override suspend fun saveCustomStyle(style: CustomPromptStyle) {
-        savedStyles += style
-        _customStyles.value = (_customStyles.value.filterNot { it.id == style.id } + style)
+    override fun generateAll(context: ActivityContext, zone: ZoneId): List<GeneratedPrompt> {
+        generateAllCalls.incrementAndGet()
+        return generateAllResult
     }
 
-    override suspend fun deleteCustomStyle(style: CustomPromptStyle) {
+    override fun generateAll(
+        context: ActivityContext,
+        customStyles: List<CustomPromptStyle>,
+        zone: ZoneId,
+    ): List<GeneratedPrompt> {
+        generateAllCalls.incrementAndGet()
+        return generateAllResult
+    }
+
+    override suspend fun saveCustomStyle(style: CustomPromptStyle): List<CustomPromptStyle> {
+        savedStyles += style
+        val updated = (_customStyles.value.filterNot { it.id == style.id } + style)
+        _customStyles.value = updated
+        return updated
+    }
+
+    override suspend fun deleteCustomStyle(style: CustomPromptStyle): List<CustomPromptStyle> {
         deletedStyles += style
-        _customStyles.value = _customStyles.value.filterNot { it.id == style.id }
+        val updated = _customStyles.value.filterNot { it.id == style.id }
+        _customStyles.value = updated
+        return updated
     }
 }
 

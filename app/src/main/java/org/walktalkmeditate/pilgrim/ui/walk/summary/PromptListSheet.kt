@@ -65,6 +65,15 @@ internal const val MAX_CUSTOM_STYLES = 3
  * affordance is more discoverable on Android (no hidden gesture) and
  * stays unit-testable without a gesture harness.
  *
+ * **Custom-style derivation.** The Edit / Delete actions need the
+ * underlying [CustomPromptStyle] (not the [GeneratedPrompt]). Rather than
+ * accept a parallel `customStyles: List<CustomPromptStyle>` parameter
+ * (which can desync from `customPrompts` for a single recompose window
+ * after a save / delete and crash a `require` guard), the styles are
+ * derived from `customPrompts.mapNotNull { it.customStyle }`. Custom
+ * prompts are guaranteed to carry a non-null `customStyle` by
+ * [org.walktalkmeditate.pilgrim.core.prompt.PromptGenerator.generateCustom].
+ *
  * **Testability.** [ModalBottomSheet]'s animation harness can be flaky
  * under Robolectric. Sheet content lives in [PromptListSheetContent]
  * (an internal composable) so unit tests can drive the row rendering
@@ -75,7 +84,6 @@ internal const val MAX_CUSTOM_STYLES = 3
 fun PromptListSheet(
     builtInPrompts: List<GeneratedPrompt>,
     customPrompts: List<GeneratedPrompt>,
-    customStyles: List<CustomPromptStyle>,
     onPromptClick: (GeneratedPrompt) -> Unit,
     onCreateCustom: () -> Unit,
     onEditCustom: (CustomPromptStyle) -> Unit,
@@ -93,7 +101,6 @@ fun PromptListSheet(
         PromptListSheetContent(
             builtInPrompts = builtInPrompts,
             customPrompts = customPrompts,
-            customStyles = customStyles,
             onPromptClick = onPromptClick,
             onCreateCustom = onCreateCustom,
             onEditCustom = onEditCustom,
@@ -106,18 +113,22 @@ fun PromptListSheet(
 internal fun PromptListSheetContent(
     builtInPrompts: List<GeneratedPrompt>,
     customPrompts: List<GeneratedPrompt>,
-    customStyles: List<CustomPromptStyle>,
     onPromptClick: (GeneratedPrompt) -> Unit,
     onCreateCustom: () -> Unit,
     onEditCustom: (CustomPromptStyle) -> Unit,
     onDeleteCustom: (CustomPromptStyle) -> Unit,
 ) {
-    // Defensive guard: caller (Task 18) supplies parallel lists by
-    // splitting PromptsCoordinator's combined list at the built-in/custom
-    // boundary. If they ever desync, fail fast in debug rather than
-    // silently rendering the wrong style for an Edit/Delete tap.
-    require(customPrompts.size == customStyles.size) {
-        "customPrompts (${customPrompts.size}) and customStyles (${customStyles.size}) must be parallel"
+    // Custom-prompt rows pair their Edit/Delete actions with the
+    // underlying CustomPromptStyle pulled directly from the prompt — the
+    // PromptGenerator contract guarantees `customStyle != null` for any
+    // prompt produced via `generateCustom`. Deriving from the prompts
+    // (rather than passing `customStyles` as a parallel parameter) keeps
+    // the two lists impossible-to-desync, so a save / delete that races
+    // the screen recompose cannot trip a parallel-size require.
+    val customStylesForActions: List<CustomPromptStyle> = customPrompts.mapNotNull { it.customStyle }
+    require(customStylesForActions.size == customPrompts.size) {
+        "customPrompts entries must each carry a non-null customStyle (got " +
+            "${customPrompts.size - customStylesForActions.size} stripped)"
     }
     Column(modifier = Modifier.fillMaxWidth().padding(bottom = PilgrimSpacing.normal)) {
         Text(
@@ -153,7 +164,7 @@ internal fun PromptListSheetContent(
                 items = customPrompts,
                 key = { _, prompt -> "custom-${prompt.id}" },
             ) { index, prompt ->
-                val style = customStyles[index]
+                val style = customStylesForActions[index]
                 PromptStyleRow(
                     icon = prompt.icon,
                     title = prompt.title,
@@ -197,16 +208,16 @@ internal fun PromptListSheetContent(
                 )
             }
             item("create-your-own") {
-                val canAdd = customStyles.size < MAX_CUSTOM_STYLES
+                val canAdd = customStylesForActions.size < MAX_CUSTOM_STYLES
                 CreateYourOwnRow(enabled = canAdd, onClick = onCreateCustom)
             }
-            if (customStyles.isNotEmpty()) {
+            if (customStylesForActions.isNotEmpty()) {
                 item("counter") {
                     Text(
                         text = pluralStringResource(
                             id = R.plurals.custom_prompt_counter,
-                            count = customStyles.size,
-                            customStyles.size,
+                            count = customStylesForActions.size,
+                            customStylesForActions.size,
                         ),
                         style = pilgrimType.caption,
                         color = pilgrimColors.fog,
