@@ -71,11 +71,14 @@ class RouteSampleProjectionTest {
 
     @Test
     fun truncate_atWord_returnsTrimmedHead() {
-        assertEquals("the quick", "the quick brown fox".truncatedAtWordBoundary(maxLength = 10))
+        assertEquals(
+            "the quick...",
+            "the quick brown fox".truncatedAtWordBoundary(maxLength = 10),
+        )
     }
 
     @Test
     fun truncate_noSpace_returnsHardCut() {
-        assertEquals("super", "supercalifragilistic".truncatedAtWordBoundary(maxLength = 5))
+        assertEquals("super...", "supercalifragilistic".truncatedAtWordBoundary(maxLength = 5))
     }
 }
