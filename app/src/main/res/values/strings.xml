@@ -628,6 +628,7 @@
     <string name="custom_prompt_instruction_label">Instruction</string>
     <string name="custom_prompt_instruction_placeholder">Describe how the AI should respond to your walking thoughts…</string>
     <string name="custom_prompt_save">Save</string>
+    <string name="custom_prompt_cancel">Cancel</string>
     <string name="custom_prompt_delete">Delete</string>
     <string name="custom_prompt_edit_action">Edit</string>
     <plurals name="custom_prompt_counter">
