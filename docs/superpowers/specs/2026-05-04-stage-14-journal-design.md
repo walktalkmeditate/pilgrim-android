@@ -254,7 +254,7 @@ verbatim — no new helper class is introduced.
 | `.toolbar { ToolbarItem(placement: .principal) { Text("Pilgrim Log") } }` | `CenterAlignedTopAppBar(title = { Text("Pilgrim Log") }, colors = transparent over parchment)` |
 | `GoshuinFAB.thumbnail: UIImage?` | `ImageBitmap?` rendered by `EtegamiSealBitmapRenderer.renderToBitmap` (Bitmap → `Bitmap.asImageBitmap()`) at 44 dp |
 | `SealGenerator.thumbnail(from: input)` | **Reuse** `EtegamiSealBitmapRenderer.renderToBitmap(spec, ink, sizePx, context): Bitmap` (already shipped Stage 7-C); convert with `Bitmap.asImageBitmap()` for Compose consumption. Drawn on `Dispatchers.Default`, cached by `Pair(SealSpec, sizePx)` in the VM. NO new helper. |
-| `WalkFavicon.icon` (SF Symbol name) | `WalkFavicon.materialIcon` (Material `ImageVector`) — already mapped in Stage 4-D |
+| `WalkFavicon.icon` (SF Symbol name) | `WalkFavicon.icon` (`ImageVector`) — already mapped in Stage 4-D. Production names: FLAME → `Icons.Filled.LocalFireDepartment`, LEAF → `Icons.Outlined.Spa`, STAR → `Icons.Filled.Star` (Filled, NOT Outlined for Flame/Star). Use `walkFavicon.icon` directly. |
 | `WeatherCondition.icon` (SF Symbol) | `WeatherCondition.iconRes` (`@DrawableRes Int` — already exists from Stage 12-A). Render via `Icon(painterResource(condition.iconRes), ...)` in the expand card; NO new ImageVector field. |
 | `Color.parchment`, `.ink`, `.fog`, `.stone`, `.moss`, `.rust`, `.dawn` | `pilgrimColors.*` tokens (already mapped) |
 | `SeasonalColorEngine.seasonalColor(named:intensity:on:)` | `SeasonalInkFlavor.X.toBaseColor() + SeasonalColorEngine.applySeasonalShift(...)` (already exists) |
@@ -720,13 +720,17 @@ dot composable + `R.string.home_empty_begin` ("Begin"). Replaces the
   `JournalUiState.kt` and replace the contents. Update any test references.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/design/calligraphy/CalligraphyPath.kt` —
   Add `fun dotPositions(strokes, widthPx, verticalSpacingDp, topInsetDp): List<DotPosition(centerXPx, yPx)>` so the parent Canvas can read positions for haptics + lunar/milestone calc. Stage 3-C made dot Y derivation private to the renderer; promote `xOffsetPx` access to a `dotPositions` helper. **Don't change** existing draw lambda — additive only.
-- `app/src/main/java/org/walktalkmeditate/pilgrim/data/dao/ActivityIntervalDao.kt` —
-  Add `@Query("SELECT activity_type AS type, SUM(end_timestamp - start_timestamp) AS durationMs FROM activity_intervals WHERE walk_id = :walkId GROUP BY activity_type") suspend fun activitySumsFor(walkId: Long): List<ActivityTypeDuration>`.
-  Plus `data class ActivityTypeDuration(val type: ActivityType, val durationMs: Long)`.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/WalkRepository.kt` —
-  Add `open suspend fun activitySumsFor(walkId: Long): Map<ActivityType, Long>`
-  (delegates to DAO, materializes a defaulted map — entries for missing
-  types collapse to 0 so callers don't NPE).
+  Add `open suspend fun activitySumsFor(walkId: Long, walk: Walk): Pair<Long, Long>`
+  Stage 14 stub: `(0L, walk.meditationSeconds ?: 0L)`. Talk arc deferred
+  to Stage 14.X (no live ActivityInterval writer exists yet — see
+  Non-goals). The `walk` parameter avoids a duplicate `walkDao.getById`
+  read since callers already have the row in hand from the snapshot
+  build pass. NOTE: NO `ActivityIntervalDao.activitySumsFor` query
+  added — stub reads the cached column only.
+- `app/src/main/java/org/walktalkmeditate/pilgrim/data/WalkRepository.kt` —
+  Add `suspend fun walkEventsFor(walkId: Long): List<WalkEvent> = walkEventDao.getForWalk(walkId)`
+  thin pass-through used by `buildSnapshots` for `WalkMetricsMath.computeActiveDurationSeconds`.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/share/CachedShareStore.kt` —
   Add `fun observeAll(): Flow<Map<String, CachedShare>>` snapshotting all
   per-uuid keys so the VM consumes from a single combine.
@@ -807,9 +811,11 @@ dot composable + `R.string.home_empty_begin` ("Begin"). Replaces the
   `pilgrimLightColors() / pilgrimDarkColors()` factory functions reading
   from the appropriate variant.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/entity/WalkFavicon.kt` —
-  Add a `materialIcon: ImageVector` field if not already present (Stage 4-D
-  added; verify). Map: FLAME → `Icons.Outlined.LocalFireDepartment`,
-  LEAF → `Icons.Outlined.Spa`, STAR → `Icons.Outlined.Star`.
+  NO CHANGES NEEDED. Production already exposes `icon: ImageVector` per
+  Stage 4-D: FLAME → `Icons.Filled.LocalFireDepartment`, LEAF →
+  `Icons.Outlined.Spa`, STAR → `Icons.Filled.Star` (Flame + Star are
+  Filled, NOT Outlined — match production verbatim). Stage 14 reads
+  `walkFavicon.icon` directly in the expand card + dot overlay.
 - `app/src/main/java/org/walktalkmeditate/pilgrim/data/weather/WeatherCondition.kt` —
   Already has `@DrawableRes val iconRes: Int` per condition (Stage 12-A).
   NO CHANGES NEEDED. Render in expand card via
@@ -878,9 +884,9 @@ a Kotlin `formatDuration(seconds: Long): String` helper using
 
 | iOS SF Symbol | Material `ImageVector` |
 |---|---|
-| `flame.fill` (favicon) | `Icons.Outlined.LocalFireDepartment` |
-| `leaf.fill` (favicon) | `Icons.Outlined.Spa` |
-| `star.fill` (favicon) | `Icons.Outlined.Star` |
+| `flame.fill` (favicon) | `Icons.Filled.LocalFireDepartment` (production WalkFavicon.FLAME — Filled) |
+| `leaf.fill` (favicon) | `Icons.Outlined.Spa` (production WalkFavicon.LEAF) |
+| `star.fill` (favicon) | `Icons.Filled.Star` (production WalkFavicon.STAR — Filled) |
 | `link` (shared marker in expand card) | `Icons.Outlined.Link` |
 | `arrow.right` (in "View details") | `Icons.AutoMirrored.Filled.ArrowForward` — auto-flips in RTL locales matching iOS `Image(systemName: "arrow.right")`. (Unicode `→` does NOT auto-flip; rejected.) |
 | `seal` (FAB fallback) | `Icons.Outlined.Explore` (existing) — use only when the latest walk's seal hasn't rendered yet. |
@@ -934,13 +940,20 @@ stage can be split mid-implementation if scope creeps.
    tear down `vm.viewModelScope.cancel()` before `db.close()` (Stage 7-A
    flake-fix lesson).
 5. **`WalkDot` + `JournalHapticDispatcher` + LazyColumn migration** —
-   Replace `Column { ... }` with `LazyColumn` whose items emit zero-height
-   anchors; introduce a parent `Canvas(modifier.matchParentSize())`
-   reading dot positions from `CalligraphyPath.dotPositions` to draw dots.
-   Wire `LazyListState` scroll observer → `ScrollHapticState` →
-   `JournalHapticDispatcher`. Robolectric test exercises
-   `VibrationEffect.Composition.build()` (Stage 2-F lesson — this is the
-   PR's first runtime-validated builder, MUST device-test before merge).
+   Replace `Column { ... }` with `LazyColumn` whose items render the
+   per-row `WalkDot` Composable inside a 90-dp-tall Box (`xPositionPx`
+   resolved at composition time from `CalligraphyPath.dotPositions`).
+   Each `WalkDot` carries its own `Modifier.clickable` for accessibility
+   + ripple — NOT zero-height anchors with the dot drawn into a behind-
+   Canvas. The parent `Canvas(matchParentSize())` behind the LazyColumn
+   draws ONLY decorative chrome (path/segments/scenery/markers/date
+   dividers) — never the dots themselves. Wire `LazyListState` scroll
+   observer → `ScrollHapticState` → `JournalHapticDispatcher` using the
+   per-row pixel math from the Architecture section
+   (`firstVisibleRowYpx_inCanvas = firstVisibleItemIndex * 90.dp.toPx() + firstVisibleItemScrollOffset_px`).
+   Robolectric test exercises `VibrationEffect.Composition.build()`
+   (Stage 2-F lesson — this is the PR's first runtime-validated
+   builder, MUST device-test before merge).
 
 ### Bucket 14-B — chrome (5 tasks)
 
