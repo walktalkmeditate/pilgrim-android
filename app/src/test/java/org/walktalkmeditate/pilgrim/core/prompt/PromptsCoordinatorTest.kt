@@ -121,6 +121,7 @@ class PromptsCoordinatorTest {
         practicePreferences = practicePrefs,
         unitsPreferences = unitsPrefs,
         appContext = context,
+        defaultDispatcher = dispatcher,
     )
 
     /**
