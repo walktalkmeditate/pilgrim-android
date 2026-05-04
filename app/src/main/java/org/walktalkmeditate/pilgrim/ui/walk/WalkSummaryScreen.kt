@@ -45,7 +45,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
-import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -653,7 +652,13 @@ fun WalkSummaryScreen(
             else -> null
         }
         promptsListing?.let { listing ->
-            val (builtIn, custom) = listing.prompts.splitAt(6)
+            // Partition by GeneratedPrompt origin: built-in prompts carry a
+            // non-null `style`; custom prompts carry `style == null` +
+            // `customStyle != null`. Robust to any future change in the
+            // built-in PromptStyle.entries count (was previously a hardcoded
+            // splitAt(6) which would silently bucket a 7th built-in into
+            // the custom list).
+            val (builtIn, custom) = listing.prompts.partition { it.style != null }
             PromptListSheet(
                 builtInPrompts = builtIn,
                 customPrompts = custom,
@@ -686,19 +691,6 @@ fun WalkSummaryScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
-}
-
-/**
- * Stage 13-XZ: split a flat prompts list at the built-in/custom boundary.
- * `PromptsCoordinator` returns 6 built-in prompts followed by N custom
- * prompts (one per [CustomPromptStyle]) — see
- * [org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator] contract.
- * This split is then handed to [PromptListSheet] as the parallel built-in
- * + custom lists it expects.
- */
-private fun <T> List<T>.splitAt(index: Int): Pair<List<T>, List<T>> {
-    if (index >= size) return this to emptyList()
-    return take(index) to drop(index)
 }
 
 @Composable
