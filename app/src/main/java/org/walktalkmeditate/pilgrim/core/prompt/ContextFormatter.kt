@@ -263,7 +263,13 @@ object ContextFormatter {
         return line.toString()
     }
 
-    private fun formatTime(timestamp: Long, zone: ZoneId): String =
+    /**
+     * Short localized time-of-day string ("9:41 AM"). Promoted from
+     * `private` to `internal` so [PromptAssembler] can render waypoint
+     * + photo headers using the same time format the recordings and
+     * meditations sections use.
+     */
+    internal fun formatTime(timestamp: Long, zone: ZoneId): String =
         timeFormatter.format(Instant.ofEpochMilli(timestamp).atZone(zone))
 
     private fun formatDateTime(timestamp: Long, zone: ZoneId): String =
