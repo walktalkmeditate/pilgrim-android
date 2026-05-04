@@ -155,9 +155,72 @@ class WalkSummaryViewModelTest {
             cachedShareStore = cachedShareStore,
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             practicePreferences = practicePreferences,
+            promptsCoordinator = newStubPromptsCoordinator(),
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
+    }
+
+    /**
+     * Stage 13-XZ: legacy `WalkSummaryViewModelTest` cases don't exercise
+     * the prompts surface — wire a minimal subclass that stays inert
+     * (buildContext returns null so any accidental `openPromptsSheet`
+     * resolves to Closed without touching the production graph).
+     * State-machine + cache-invalidation coverage lives in
+     * `WalkSummaryViewModelPromptsTest`.
+     */
+    private fun newStubPromptsCoordinator(): org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator {
+        val ctxApp = context
+        return object : org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator(
+            repository = repository,
+            customStyleStore = org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyleStore(
+                dataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            ctxApp.cacheDir,
+                            "vmtest-styles-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+                json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+            ),
+            photoContextAnalyzer = org.walktalkmeditate.pilgrim.core.prompt.PhotoContextAnalyzer(
+                dataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            ctxApp.cacheDir,
+                            "vmtest-photo-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+                json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+                bitmapLoader = object : org.walktalkmeditate.pilgrim.data.photo.BitmapLoader {
+                    override suspend fun load(uri: android.net.Uri) = null
+                },
+                imageLabeler = object : org.walktalkmeditate.pilgrim.core.prompt.ImageLabelerClient {
+                    override suspend fun label(bitmap: android.graphics.Bitmap) =
+                        emptyList<org.walktalkmeditate.pilgrim.core.prompt.LabeledTag>()
+                },
+                textRecognizer = object : org.walktalkmeditate.pilgrim.core.prompt.TextRecognizerClient {
+                    override suspend fun recognize(bitmap: android.graphics.Bitmap) = emptyList<String>()
+                },
+                faceDetector = object : org.walktalkmeditate.pilgrim.core.prompt.FaceDetectorClient {
+                    override suspend fun detect(bitmap: android.graphics.Bitmap) = 0
+                },
+            ),
+            geocoder = org.walktalkmeditate.pilgrim.core.prompt.PromptGeocoder(ctxApp),
+            promptGenerator = org.walktalkmeditate.pilgrim.core.prompt.PromptGenerator(ctxApp),
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
+            unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            appContext = ctxApp,
+        ) {
+            override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
+            override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =
+                emptyList<org.walktalkmeditate.pilgrim.core.prompt.GeneratedPrompt>()
+        }
     }
 
     @After
