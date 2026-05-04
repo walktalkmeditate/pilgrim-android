@@ -25,7 +25,7 @@ import kotlin.math.floor
  * to apply the right ayanamsa correction. The pref already persists
  * via Stage 10-C; the runtime consumer just hasn't been written yet.
  */
-internal object MoonCalc {
+object MoonCalc {
 
     /**
      * Synodic month length in days. Promoted from `private` to

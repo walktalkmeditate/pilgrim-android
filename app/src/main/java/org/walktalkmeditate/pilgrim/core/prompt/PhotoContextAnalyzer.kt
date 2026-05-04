@@ -75,7 +75,7 @@ interface FaceDetectorClient {
  * MediaStore — re-edits produce a new URI.
  */
 @Singleton
-class PhotoContextAnalyzer @Inject constructor(
+open class PhotoContextAnalyzer @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val json: Json,
     private val bitmapLoader: BitmapLoader,
@@ -85,7 +85,7 @@ class PhotoContextAnalyzer @Inject constructor(
 ) {
     private val mutex = Mutex()
 
-    suspend fun analyze(uri: Uri): PhotoContext {
+    open suspend fun analyze(uri: Uri): PhotoContext {
         val cacheKey = stringPreferencesKey(cacheKeyFor(uri))
 
         readCached(cacheKey)?.let { return it }
