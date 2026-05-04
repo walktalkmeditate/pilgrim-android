@@ -13,7 +13,7 @@ import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
  *
  * Verbatim port of iOS `CelestialCalculator.snapshot(for:system:)`.
  */
-internal object CelestialSnapshotCalc {
+object CelestialSnapshotCalc {
 
     fun snapshot(
         atEpochMillis: Long,

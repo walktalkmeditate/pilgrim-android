@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
  * async variant is a future upgrade.
  */
 @Singleton
-class PromptGeocoder @Inject constructor(
+open class PromptGeocoder @Inject constructor(
     @ApplicationContext private val context: Context,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     /** Test seam — production wires the real [Geocoder]. */
@@ -39,13 +39,13 @@ class PromptGeocoder @Inject constructor(
     /** Test seam — production resolves to system default. */
     private val localeProvider: () -> Locale = Locale::getDefault,
 ) {
-    suspend fun geocodeStart(coord: LatLng): PlaceContext? = withContext(ioDispatcher) {
+    open suspend fun geocodeStart(coord: LatLng): PlaceContext? = withContext(ioDispatcher) {
         runReverseGeocode(coord)?.let { name ->
             PlaceContext(name = name, coordinate = coord, role = PlaceRole.Start)
         }
     }
 
-    suspend fun geocodeEnd(coord: LatLng, distanceFromStartMeters: Double): PlaceContext? {
+    open suspend fun geocodeEnd(coord: LatLng, distanceFromStartMeters: Double): PlaceContext? {
         if (distanceFromStartMeters <= DISTANCE_GATE_METERS) return null
         return withContext(ioDispatcher) {
             delay(RATE_LIMIT_DELAY_MS)

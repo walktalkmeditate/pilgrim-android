@@ -59,12 +59,12 @@ open class WalkRepository @Inject constructor(
      * that started before it. Verbatim port of iOS
      * `WalkSummaryView.swift:436` predicate.
      */
-    suspend fun recentFinishedWalksBefore(currentStart: Long, limit: Int): List<Walk> =
+    open suspend fun recentFinishedWalksBefore(currentStart: Long, limit: Int): List<Walk> =
         walkDao.getRecentFinishedBefore(currentStart, limit)
 
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
-    suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)
+    open suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)
 
     suspend fun startWalk(startTimestamp: Long, intention: String? = null): Walk {
         val draft = Walk(startTimestamp = startTimestamp, intention = intention)
@@ -156,7 +156,7 @@ open class WalkRepository @Inject constructor(
 
     suspend fun addWaypoint(waypoint: Waypoint): Long = waypointDao.insert(waypoint)
 
-    suspend fun waypointsFor(walkId: Long): List<Waypoint> = waypointDao.getForWalk(walkId)
+    open suspend fun waypointsFor(walkId: Long): List<Waypoint> = waypointDao.getForWalk(walkId)
 
     fun observeWaypoints(walkId: Long): Flow<List<Waypoint>> =
         waypointDao.observeForWalk(walkId)
@@ -176,7 +176,7 @@ open class WalkRepository @Inject constructor(
     suspend fun getVoiceRecording(id: Long): VoiceRecording? =
         voiceRecordingDao.getById(id)
 
-    suspend fun voiceRecordingsFor(walkId: Long): List<VoiceRecording> =
+    open suspend fun voiceRecordingsFor(walkId: Long): List<VoiceRecording> =
         voiceRecordingDao.getForWalk(walkId)
 
     fun observeVoiceRecordings(walkId: Long): Flow<List<VoiceRecording>> =
@@ -302,6 +302,16 @@ open class WalkRepository @Inject constructor(
 
     fun observePhotosFor(walkId: Long): Flow<List<WalkPhoto>> =
         walkPhotoDao.observeForWalk(walkId)
+
+    /**
+     * One-shot read of pinned photos for [walkId] in the same order
+     * [observePhotosFor] emits. Used by the Stage 13-XZ
+     * [org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator] to
+     * snapshot the reliquary contents inside `buildContext` without
+     * paying the Flow-collector overhead of `observePhotosFor(...).first()`.
+     */
+    open suspend fun photosFor(walkId: Long): List<WalkPhoto> =
+        walkPhotoDao.getForWalk(walkId)
 
     // --- Stage 7-B: photo analysis ------------------------------------
 
