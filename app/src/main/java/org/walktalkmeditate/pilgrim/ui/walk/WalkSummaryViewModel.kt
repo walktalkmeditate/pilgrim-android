@@ -339,16 +339,28 @@ class WalkSummaryViewModel @Inject constructor(
      */
     @Suppress("unused")
     private val promptsCacheInvalidator: Job = viewModelScope.launch {
-        combine(
-            repository.observePhotosFor(walkId).map { it.size }.distinctUntilChanged(),
-            repository.observeVoiceRecordings(walkId)
-                .map { recs -> recs.count { it.transcription != null } }
-                .distinctUntilChanged(),
-        ) { _, _ -> Unit }
-            .drop(1)
-            .collect {
-                _cachedActivityContext.value = null
-            }
+        try {
+            combine(
+                repository.observePhotosFor(walkId).map { it.size }.distinctUntilChanged(),
+                repository.observeVoiceRecordings(walkId)
+                    .map { recs -> recs.count { it.transcription != null } }
+                    .distinctUntilChanged(),
+            ) { _, _ -> Unit }
+                .drop(1)
+                .collect {
+                    _cachedActivityContext.value = null
+                }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // Defensive: a Room observer throwing here would otherwise
+            // kill the cache-invalidator coroutine for the rest of the
+            // VM lifetime, leaving the next `openPromptsSheet` cache hit
+            // serving stale data after a photo pin / transcription
+            // landing. Logging keeps the failure visible without
+            // poisoning siblings on the SupervisorJob.
+            android.util.Log.e(TAG, "promptsCacheInvalidator collect failed", t)
+        }
     }
 
     val state: StateFlow<WalkSummaryUiState> = flow {
@@ -800,7 +812,21 @@ class WalkSummaryViewModel @Inject constructor(
         }
         _promptsSheetState.value = PromptsSheetState.Loading
         promptsBuildJob = viewModelScope.launch {
-            val ctx = promptsCoordinator.buildContext(walkId)
+            val ctx = try {
+                promptsCoordinator.buildContext(walkId)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                // Defensive: a buildContext throw (unexpected — every
+                // sub-fetch should swallow its own failures) would
+                // otherwise strand the sheet in [Loading] forever.
+                // Reset to Closed so the user can retry by re-tapping.
+                android.util.Log.e(TAG, "openPromptsSheet: buildContext threw for walkId=$walkId", t)
+                if (_promptsSheetState.value == PromptsSheetState.Loading) {
+                    _promptsSheetState.value = PromptsSheetState.Closed
+                }
+                return@launch
+            }
             if (ctx == null) {
                 android.util.Log.w(TAG, "openPromptsSheet: buildContext returned null for walkId=$walkId")
                 if (_promptsSheetState.value == PromptsSheetState.Loading) {
@@ -811,7 +837,17 @@ class WalkSummaryViewModel @Inject constructor(
             // Pass the already-built context to avoid re-running the
             // expensive geocoder (1.1s rate-limit delay) + ML Kit photo
             // analysis + recent-walk celestial summaries a second time.
-            val prompts = promptsCoordinator.generateAll(ctx)
+            val prompts = try {
+                promptsCoordinator.generateAll(ctx)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "openPromptsSheet: generateAll threw for walkId=$walkId", t)
+                if (_promptsSheetState.value == PromptsSheetState.Loading) {
+                    _promptsSheetState.value = PromptsSheetState.Closed
+                }
+                return@launch
+            }
             _cachedActivityContext.value = ctx to prompts
             if (_promptsSheetState.value == PromptsSheetState.Loading) {
                 _promptsSheetState.value = PromptsSheetState.Listing(ctx, prompts)
