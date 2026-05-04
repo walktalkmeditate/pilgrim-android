@@ -218,6 +218,26 @@ class WalkSummaryViewModelPromptsTest {
     }
 
     @Test
+    fun openPromptsSheet_doubleTapWhileBuildInFlight_dedupsBuildContext() = runTest(dispatcher) {
+        val walkId = freshFinishedWalkId()
+        val (vm, coordinator) = newViewModel(
+            walkId,
+            FakePromptsCoordinator(buildContextResult = stubActivityContext(), generateAllResult = stubPrompts(6)),
+        )
+
+        // Two rapid taps before the first launch coroutine has resumed.
+        vm.openPromptsSheet()
+        vm.openPromptsSheet()
+        advanceUntilIdle()
+
+        // Re-entry guard: the second tap saw state == Loading and bailed,
+        // so only one buildContext + generateAll round-trip ran.
+        assertEquals(1, coordinator.buildContextCalls.get())
+        assertEquals(1, coordinator.generateAllCalls.get())
+        assertTrue(vm.promptsSheetState.value is PromptsSheetState.Listing)
+    }
+
+    @Test
     fun closePromptsSheet_closes() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
         val (vm, _) = newViewModel(

@@ -769,6 +769,13 @@ class WalkSummaryViewModel @Inject constructor(
             _promptsSheetState.value = PromptsSheetState.Listing(cached.first, cached.second)
             return
         }
+        // Re-entry guard: bail if a build is already in flight from an
+        // earlier tap (state == Loading). Two parallel buildContext
+        // calls would do redundant geocoding (1.1s rate-limit delay
+        // each) + ML Kit photo analysis and race _cachedActivityContext
+        // writes. The check is non-atomic but openPromptsSheet is only
+        // called from Main (UI tap) so re-entry is sequential.
+        if (_promptsSheetState.value == PromptsSheetState.Loading) return
         _promptsSheetState.value = PromptsSheetState.Loading
         viewModelScope.launch {
             val ctx = promptsCoordinator.buildContext(walkId)
