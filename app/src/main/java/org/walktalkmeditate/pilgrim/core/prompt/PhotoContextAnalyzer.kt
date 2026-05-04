@@ -8,6 +8,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -83,7 +84,21 @@ open class PhotoContextAnalyzer @Inject constructor(
     private val textRecognizer: TextRecognizerClient,
     private val faceDetector: FaceDetectorClient,
 ) {
-    private val mutex = Mutex()
+    /**
+     * Per-URI mutex map. Prevents two concurrent `analyze(uri)` calls
+     * with the SAME uri from both running the ML Kit pipeline (the
+     * second would do redundant CPU work and a redundant cache write).
+     * Different URIs can analyze in parallel — important because the
+     * coordinator's `analyzePhotos` launches one async block per pinned
+     * photo, and a global mutex would serialize all of them
+     * (~3s for 5 photos vs ~600ms in parallel).
+     *
+     * `ConcurrentHashMap.computeIfAbsent` is atomic, so two callers
+     * with the same URI will both observe the same Mutex instance.
+     * Entries are not pruned — at most one Mutex per ever-analyzed URI;
+     * with the per-walk pin cap this stays small.
+     */
+    private val perUriMutexes = ConcurrentHashMap<String, Mutex>()
 
     open suspend fun analyze(uri: Uri): PhotoContext {
         val cacheKey = stringPreferencesKey(cacheKeyFor(uri))
@@ -91,6 +106,7 @@ open class PhotoContextAnalyzer @Inject constructor(
         readCached(cacheKey)?.let { return it }
 
         return withContext(Dispatchers.IO) {
+            val mutex = perUriMutexes.computeIfAbsent(uri.toString()) { Mutex() }
             mutex.withLock {
                 readCached(cacheKey)?.let { return@withLock it }
 
