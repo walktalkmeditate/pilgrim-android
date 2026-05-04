@@ -34,6 +34,8 @@ kotlinxSerialization = "1.7.3"
 coil = "3.4.0"
 
 mlkitImageLabeling = "17.0.9"
+mlkitTextRecognition = "16.0.1"
+mlkitFaceDetection = "16.1.7"
 coroutinesPlayServices = "1.10.2"
 
 junit = "4.13.2"
@@ -97,6 +99,8 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 
 mlkit-image-labeling = { group = "com.google.mlkit", name = "image-labeling", version.ref = "mlkitImageLabeling" }
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
+mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
