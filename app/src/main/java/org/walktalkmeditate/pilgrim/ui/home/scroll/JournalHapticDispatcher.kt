@@ -43,7 +43,7 @@ class JournalHapticDispatcher internal constructor(
         }
     }
 
-    private var lastDispatchNs: Long = 0L
+    private var lastDotDispatchNs: Long = 0L
     private val minIntervalNs: Long = 50_000_000L // 50 ms
 
     fun dispatch(event: HapticEvent) {
@@ -51,9 +51,14 @@ class JournalHapticDispatcher internal constructor(
         if (!soundsEnabledProvider()) return
         if (isReduceMotion()) return
 
+        // kaijutsu PR #86 review: milestones bypass the throttle (rare +
+        // important events). Dot throttle remains to defend against
+        // scroll-fling flooding when crossing many dots in <50 ms.
         val nowNs = SystemClock.elapsedRealtimeNanos()
-        if (nowNs - lastDispatchNs < minIntervalNs) return
-        lastDispatchNs = nowNs
+        if (event !is HapticEvent.Milestone) {
+            if (nowNs - lastDotDispatchNs < minIntervalNs) return
+            lastDotDispatchNs = nowNs
+        }
 
         val v = vibrator ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
