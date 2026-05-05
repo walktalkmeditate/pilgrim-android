@@ -10,6 +10,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
+import org.walktalkmeditate.pilgrim.ui.design.rememberReducedMotion
 
 @Composable
 fun PilgrimTheme(
@@ -93,9 +95,12 @@ fun PilgrimTheme(
         )
     }
 
+    val reducedMotion = rememberReducedMotion()
+
     CompositionLocalProvider(
         LocalPilgrimColors provides colors,
         LocalPilgrimTypography provides type,
+        LocalReduceMotion provides reducedMotion,
     ) {
         MaterialTheme(
             colorScheme = m3,
