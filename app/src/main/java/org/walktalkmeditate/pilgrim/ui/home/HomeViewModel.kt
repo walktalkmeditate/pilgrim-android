@@ -2,127 +2,281 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import android.content.Context
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
+import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.SeasonalInkFlavor
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
+import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
+import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
- * Backing VM for the Home walk list. Observes all walks, filters to
- * finished ones (`endTimestamp != null`), maps each to a
- * [HomeWalkRow] with the text fields precomputed. Row recomposition
- * is then a no-op pass-through of already-formatted strings.
- *
- * Stage 3-E additions:
- * - [hemisphere] proxied from [HemisphereRepository] so the HomeScreen
- *   can observe hemisphere changes alongside the walk list without
- *   bundling them into [HomeUiState].
- * - [HomeWalkRow] now carries raw `uuid`/`startTimestamp`/
- *   `distanceMeters`/`durationSeconds` for the calligraphy thread
- *   backdrop's stroke synthesis.
+ * Stage 14 rewrite — observes the full walk list, share cache, units, and
+ * celestial-awareness pref, and emits a [JournalUiState] containing
+ * pre-built per-walk [WalkSnapshot]s + a roll-up [JourneySummary]. CPU
+ * work happens inside `withContext(defaultDispatcher)` (Stage 13-XZ B2
+ * lesson); IO-side per-walk DAO reads run on `ioDispatcher`.
  */
 @HiltViewModel
-class HomeViewModel @Inject constructor(
+class HomeViewModel internal constructor(
     @ApplicationContext private val context: Context,
     private val repository: WalkRepository,
     private val clock: Clock,
     hemisphereRepository: HemisphereRepository,
     unitsPreferences: UnitsPreferencesRepository,
+    private val cachedShareStore: CachedShareStore,
+    private val practicePreferences: PracticePreferencesRepository,
+    private val defaultDispatcher: CoroutineDispatcher,
+    private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
-    /**
-     * Proxied from [HemisphereRepository]. Separate from [uiState] so
-     * a rare hemisphere flip doesn't force a row-list recomposition;
-     * the HomeScreen `remember(rows, hemisphere)` keys on both
-     * explicitly and invalidates the strokes list on either change.
-     *
-     * Note on first-frame behavior: after a user's very first walk
-     * (which wrote Southern to DataStore via
-     * [org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel.finishWalk]),
-     * the first HomeScreen render may briefly show Northern before
-     * the DataStore read propagates (tens of ms). The
-     * `distinctUntilChanged` inside [HemisphereRepository] prevents a
-     * redundant second emit; the `@Composable`'s `remember` re-keys
-     * on the hemisphere change and re-tints without a visible flicker.
-     * Accepted as imperceptible for a one-time first-install edge case.
-     */
-    val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        repository: WalkRepository,
+        clock: Clock,
+        hemisphereRepository: HemisphereRepository,
+        unitsPreferences: UnitsPreferencesRepository,
+        cachedShareStore: CachedShareStore,
+        practicePreferences: PracticePreferencesRepository,
+    ) : this(
+        context = context,
+        repository = repository,
+        clock = clock,
+        hemisphereRepository = hemisphereRepository,
+        unitsPreferences = unitsPreferences,
+        cachedShareStore = cachedShareStore,
+        practicePreferences = practicePreferences,
+        defaultDispatcher = Dispatchers.Default,
+        ioDispatcher = Dispatchers.IO,
+    )
 
-    /**
-     * Stage 10-C: passthrough of the units preference. Combined into
-     * the row-mapping flow below so distance text re-formats as soon
-     * as the user toggles units in Settings — no manual refresh.
-     */
+    val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
-    val uiState: StateFlow<HomeUiState> = combine(
+    private val _expandedSnapshotId = MutableStateFlow<Long?>(null)
+    val expandedSnapshotId: StateFlow<Long?> = _expandedSnapshotId.asStateFlow()
+
+    private val _expandedCelestialSnapshot = MutableStateFlow<CelestialSnapshot?>(null)
+    val expandedCelestialSnapshot: StateFlow<CelestialSnapshot?> =
+        _expandedCelestialSnapshot.asStateFlow()
+    private var celestialJob: Job? = null
+
+    private val _latestSealBitmap = MutableStateFlow<ImageBitmap?>(null)
+    val latestSealBitmap: StateFlow<ImageBitmap?> = _latestSealBitmap.asStateFlow()
+
+    private val _latestSealSpec = MutableStateFlow<SealSpec?>(null)
+    val latestSealSpec: StateFlow<SealSpec?> = _latestSealSpec.asStateFlow()
+
+    private val sealCache = LinkedHashMap<Pair<SealSpec, Int>, ImageBitmap>(8, 0.75f, true)
+    private var sealRenderJob: Job? = null
+
+    val journalState: StateFlow<JournalUiState> = combine(
         repository.observeAllWalks(),
         unitsPreferences.distanceUnits,
-    ) { walks, units ->
+        cachedShareStore.observeAll(),
+        practicePreferences.celestialAwarenessEnabled,
+        hemisphereRepository.hemisphere,
+    ) { walks, units, shareCache, celestialEnabled, hemisphere ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
-            HomeUiState.Empty
+            JournalUiState.Empty
         } else {
-            // Iterable.map's lambda is non-suspend, so we step through
-            // the list manually — `mapToRow` is a `suspend fun` (it
-            // reads route samples + recording counts off the IO
-            // dispatcher).
-            val rows = finished.map { mapToRow(it, units) }
-            HomeUiState.Loaded(rows)
+            buildSnapshots(finished, units, shareCache, hemisphere, clock.now(), celestialEnabled)
         }
     }
-        .stateIn(
-            scope = viewModelScope,
-            // WhileSubscribed matches Stage 2-E's pattern: unit tests
-            // that don't subscribe don't leave a never-completing
-            // collector running in viewModelScope (runTest would wait
-            // on it forever otherwise).
-            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
-            initialValue = HomeUiState.Loading,
-        )
+        .flowOn(ioDispatcher)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, JournalUiState.Loading)
 
-    private suspend fun mapToRow(walk: Walk, units: UnitSystem): HomeWalkRow {
-        val endMs = walk.endTimestamp ?: clock.now()
-        val elapsedMs = endMs - walk.startTimestamp
-        val samples = repository.locationSamplesFor(walk.id).map {
-            LocationPoint(timestamp = it.timestamp, latitude = it.latitude, longitude = it.longitude)
-        }
-        val distance = walkDistanceMeters(samples)
-        val recordingCount = repository.countVoiceRecordingsFor(walk.id)
-        return HomeWalkRow(
-            walkId = walk.id,
-            uuid = walk.uuid,
-            startTimestamp = walk.startTimestamp,
-            distanceMeters = distance,
-            durationSeconds = elapsedMs / 1000.0,
-            relativeDate = HomeFormat.relativeDate(
-                context = context,
-                timestampMs = walk.startTimestamp,
-                nowMs = clock.now(),
-            ),
-            durationText = WalkFormat.duration(elapsedMs),
-            distanceText = WalkFormat.distance(distance, units),
-            recordingCountText = HomeFormat.recordingCountLabel(context, recordingCount),
-            intention = walk.intention?.takeIf { it.isNotBlank() },
+    private suspend fun buildSnapshots(
+        walks: List<Walk>,
+        units: UnitSystem,
+        shareCache: Map<String, CachedShare>,
+        hemisphere: Hemisphere,
+        nowMs: Long,
+        celestialAwarenessEnabled: Boolean,
+    ): JournalUiState.Loaded {
+        // IO: per-walk DAO reads on ioDispatcher.
+        data class WalkInputs(
+            val walk: Walk,
+            val distanceM: Double,
+            val activeDurSec: Long,
+            val talkSec: Long,
+            val meditateSec: Long,
         )
+        val perWalk = walks.sortedBy { it.startTimestamp }.map { walk ->
+            val samples = repository.locationSamplesFor(walk.id).map {
+                LocationPoint(
+                    timestamp = it.timestamp,
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                )
+            }
+            val events = repository.walkEventsFor(walk.id)
+            val (talkSec, meditateSec) = repository.activitySumsFor(walk.id, walk)
+            val distanceM = walk.distanceMeters ?: walkDistanceMeters(samples)
+            val activeDur = WalkMetricsMath.computeActiveDurationSeconds(walk, events)
+            WalkInputs(walk, distanceM, activeDur, talkSec, meditateSec)
+        }
+
+        // Default: CPU-only reduce + format.
+        val loaded = withContext(defaultDispatcher) {
+            var cumulative = 0.0
+            val oldestFirstSnapshots = perWalk.map { input ->
+                cumulative += input.distanceM
+                WalkSnapshot(
+                    id = input.walk.id,
+                    uuid = input.walk.uuid,
+                    startMs = input.walk.startTimestamp,
+                    distanceM = input.distanceM,
+                    durationSec = input.activeDurSec.toDouble(),
+                    averagePaceSecPerKm = if (input.distanceM > 1.0) {
+                        input.activeDurSec.toDouble() / (input.distanceM / 1000.0)
+                    } else {
+                        0.0
+                    },
+                    cumulativeDistanceM = cumulative,
+                    talkDurationSec = input.talkSec,
+                    meditateDurationSec = input.meditateSec,
+                    favicon = input.walk.favicon,
+                    isShared = shareCache[input.walk.uuid]?.isExpiredAt(nowMs) == false,
+                    weatherCondition = input.walk.weatherCondition,
+                )
+            }
+            val newestFirst = oldestFirstSnapshots.reversed()
+            val summary = JourneySummary(
+                totalDistanceM = cumulative,
+                totalTalkSec = newestFirst.sumOf { it.talkDurationSec },
+                totalMeditateSec = newestFirst.sumOf { it.meditateDurationSec },
+                talkerCount = newestFirst.count { it.hasTalk },
+                meditatorCount = newestFirst.count { it.hasMeditate },
+                walkCount = newestFirst.size,
+                firstWalkStartMs = perWalk.firstOrNull()?.walk?.startTimestamp ?: 0L,
+            )
+            JournalUiState.Loaded(newestFirst, summary, celestialAwarenessEnabled)
+        }
+
+        scheduleSealRender(walks, units, hemisphere)
+        return loaded
     }
 
-    private companion object {
-        const val SUBSCRIBER_GRACE_MS = 5_000L
+    fun setExpandedSnapshotId(id: Long?) {
+        _expandedSnapshotId.value = id
+        celestialJob?.cancel()
+        if (id == null) {
+            _expandedCelestialSnapshot.value = null
+            return
+        }
+        if (!practicePreferences.celestialAwarenessEnabled.value) return
+        val snap = (journalState.value as? JournalUiState.Loaded)
+            ?.snapshots?.firstOrNull { it.id == id } ?: return
+        celestialJob = viewModelScope.launch(defaultDispatcher) {
+            try {
+                val zodiac = practicePreferences.zodiacSystem.value
+                val cs = CelestialSnapshotCalc.snapshot(
+                    atEpochMillis = snap.startMs,
+                    zoneId = ZoneId.systemDefault(),
+                    system = zodiac,
+                )
+                _expandedCelestialSnapshot.value = cs
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                _expandedCelestialSnapshot.value = null
+            }
+        }
+    }
+
+    private fun scheduleSealRender(
+        walks: List<Walk>,
+        units: UnitSystem,
+        hemisphere: Hemisphere,
+    ) {
+        val newest = walks.maxByOrNull { it.endTimestamp ?: it.startTimestamp } ?: run {
+            _latestSealSpec.value = null
+            _latestSealBitmap.value = null
+            return
+        }
+        val distance = newest.distanceMeters ?: 0.0
+        val flavor = SeasonalInkFlavor.forMonth(newest.startTimestamp)
+        // Theme-free base color for the seal — VMs cannot read @Composable
+        // tokens. Use light-mode tokens; downstream consumers (Stage 14-D
+        // FAB) overlay the seal on top of theme-tinted parchment so the
+        // exact base shade is decorative, not load-bearing for contrast.
+        val baseColors: PilgrimColors = pilgrimLightColors()
+        val baseColor = when (flavor) {
+            SeasonalInkFlavor.Ink -> baseColors.ink
+            SeasonalInkFlavor.Moss -> baseColors.moss
+            SeasonalInkFlavor.Rust -> baseColors.rust
+            SeasonalInkFlavor.Dawn -> baseColors.dawn
+        }
+        val ink = SeasonalColorEngine.applySeasonalShift(
+            base = baseColor,
+            intensity = SeasonalColorEngine.Intensity.Full,
+            date = LocalDate.now(ZoneId.systemDefault()),
+            hemisphere = hemisphere,
+        )
+        val label = WalkFormat.distanceLabel(distance, units)
+        val spec = newest.toSealSpec(distance, ink, label.value, label.unit)
+        _latestSealSpec.value = spec
+
+        val sizePx = (44 * context.resources.displayMetrics.density).toInt()
+        val key = spec to sizePx
+        sealCache[key]?.let {
+            _latestSealBitmap.value = it
+            return
+        }
+        sealRenderJob?.cancel()
+        sealRenderJob = viewModelScope.launch(defaultDispatcher) {
+            try {
+                val bmp = EtegamiSealBitmapRenderer.renderToBitmap(spec, ink, sizePx, context)
+                val img = bmp.asImageBitmap()
+                if (sealCache.size > 4) sealCache.remove(sealCache.keys.first())
+                sealCache[key] = img
+                _latestSealBitmap.value = img
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                _latestSealBitmap.value = null
+            }
+        }
     }
 }
