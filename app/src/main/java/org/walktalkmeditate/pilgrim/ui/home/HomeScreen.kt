@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +34,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.collectLatest
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
@@ -67,38 +70,70 @@ fun HomeScreen(
 ) {
     val journalState by homeViewModel.journalState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val dispatcher = remember(context) { JournalHapticDispatcher(context) }
+    val soundsEnabled = LocalSoundsEnabled.current
+    // Closure-captured rememberUpdatedState so the dispatcher's
+    // `soundsEnabledProvider` always sees the current Compose value
+    // without re-instantiating the dispatcher on every flip.
+    val soundsEnabledState = rememberUpdatedState(soundsEnabled)
+    val dispatcher = remember(context) {
+        JournalHapticDispatcher(
+            context = context,
+            soundsEnabledProvider = { soundsEnabledState.value },
+        )
+    }
     val density = LocalDensity.current
     val verticalSpacingPx = with(density) { JOURNAL_ROW_HEIGHT.toPx() }
     val topInsetPx = with(density) { JOURNAL_TOP_INSET_DP.toPx() }
+    // iOS thresholds are in points; Android equivalent is dp. Convert
+    // here so haptic windows are physically consistent across densities
+    // (raw `20f` would shrink to 5dp on xxxhdpi screens and miss dots).
+    val dotThresholdPx = with(density) { 20.dp.toPx() }
+    val milestoneThresholdPx = with(density) { 25.dp.toPx() }
+    val largeDotCutoffPx = with(density) { 15.dp.toPx() }
 
     val loaded = journalState as? JournalUiState.Loaded
     val snapshots = loaded?.snapshots ?: emptyList()
     val sizesPx = remember(snapshots) {
         snapshots.map { with(density) { WalkDotMath.dotSize(it.durationSec).dp.toPx() } }
     }
-    val dotYsPx = remember(snapshots) {
-        snapshots.indices.map { topInsetPx + verticalSpacingPx * it }
+    // Dot Y in canvas-space matches the formula used by
+    // `CalligraphyPath.dotPositions` so when Stage 14-D layers the
+    // calligraphy canvas behind the LazyColumn, haptic-fire positions,
+    // dot draw positions, and lunar/milestone-marker positions all
+    // share one origin: `topInset + spacing * i + spacing / 2`. The
+    // LazyColumn applies `contentPadding(top = topInset)` below so
+    // item-0's visual top sits at y = topInset.
+    val dotYsPx = remember(snapshots, topInsetPx, verticalSpacingPx) {
+        snapshots.indices.map {
+            topInsetPx + verticalSpacingPx * it + verticalSpacingPx / 2f
+        }
     }
-    val hapticState = remember(snapshots) {
+    val hapticState = remember(snapshots, dotThresholdPx, milestoneThresholdPx, largeDotCutoffPx) {
         ScrollHapticState(
             dotPositionsPx = dotYsPx,
             dotSizesPx = sizesPx,
             milestonePositionsPx = emptyList(),
+            largeDotCutoffPx = largeDotCutoffPx,
+            dotThresholdPx = dotThresholdPx,
+            milestoneThresholdPx = milestoneThresholdPx,
         )
     }
 
     val listState = rememberLazyListState()
-    LaunchedEffect(listState, hapticState) {
+    LaunchedEffect(listState, hapticState, topInsetPx) {
         snapshotFlow {
             listState.firstVisibleItemIndex * verticalSpacingPx +
                 listState.firstVisibleItemScrollOffset
         }.collectLatest { topPx ->
-            val viewportHeightPx = (
+            // Convert into canvas-space (same coordinate frame as
+            // `dotYsPx`): item-0-top sits at `topInsetPx` because of
+            // `contentPadding(top = topInsetPx)`. Visible viewport
+            // height is the gap between the two paddings.
+            val visibleHeightPx = (
                 listState.layoutInfo.viewportEndOffset -
                     listState.layoutInfo.viewportStartOffset
                 ).toFloat()
-            val centerPx = topPx + viewportHeightPx / 2f
+            val centerPx = topInsetPx + topPx + visibleHeightPx / 2f
             val event = hapticState.handleViewportCenterPx(centerPx)
             dispatcher.dispatch(event)
         }
@@ -133,7 +168,11 @@ fun HomeScreen(
                 }
             }
             is JournalUiState.Loaded -> {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = JOURNAL_TOP_INSET_DP),
+                ) {
                     itemsIndexed(s.snapshots, key = { _, snap -> snap.id }) { index, snap ->
                         Box(
                             modifier = Modifier
