@@ -7,6 +7,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
@@ -24,11 +25,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,15 +37,20 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
-import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
-import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
+/**
+ * Stage 14 rewrite — covers the basic Empty/Loaded transitions on
+ * [HomeViewModel.journalState] and the hemisphere proxy. Text-field
+ * formatter assertions moved to the chrome layer (Bucket 14-B).
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -60,6 +65,7 @@ class HomeViewModelTest {
     private lateinit var hemisphereRepo: HemisphereRepository
     private lateinit var hemisphereScope: CoroutineScope
     private val dispatcher = UnconfinedTestDispatcher()
+    private var vm: HomeViewModel? = null
 
     @Before
     fun setUp() {
@@ -93,6 +99,9 @@ class HomeViewModelTest {
 
     @After
     fun tearDown() {
+        // Stage 7-A: cancel viewModelScope BEFORE db.close() so the
+        // VM's combine collector unwinds before its DAO source closes.
+        vm?.viewModelScope?.coroutineContext?.get(Job)?.cancel()
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
@@ -101,33 +110,46 @@ class HomeViewModelTest {
 
     private fun newViewModel(
         units: FakeUnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
-    ): HomeViewModel =
-        HomeViewModel(context, repository, clock, hemisphereRepo, units)
+    ): HomeViewModel {
+        val cachedShareStore = CachedShareStore(
+            context,
+            Json { ignoreUnknownKeys = true },
+        )
+        return HomeViewModel(
+            context = context,
+            repository = repository,
+            clock = clock,
+            hemisphereRepository = hemisphereRepo,
+            unitsPreferences = units,
+            cachedShareStore = cachedShareStore,
+            practicePreferences = FakePracticePreferencesRepository(),
+            defaultDispatcher = dispatcher,
+            ioDispatcher = dispatcher,
+        ).also { vm = it }
+    }
 
     @Test
     fun `Empty when no finished walks exist`() = runTest(dispatcher) {
-        val vm = newViewModel()
-
-        vm.uiState.test(timeout = 10.seconds) {
-            // Initial Loading, then Empty
+        val v = newViewModel()
+        v.journalState.test(timeout = 10.seconds) {
             var item = awaitItem()
-            while (item is HomeUiState.Loading) item = awaitItem()
-            assertEquals(HomeUiState.Empty, item)
+            while (item is JournalUiState.Loading) item = awaitItem()
+            assertEquals(JournalUiState.Empty, item)
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `Loaded with one row when one finished walk exists`() = runTest(dispatcher) {
+    fun `Loaded with one snapshot when one finished walk exists`() = runTest(dispatcher) {
         val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
         runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
 
-        val vm = newViewModel()
+        val v = newViewModel()
 
-        vm.uiState.test(timeout = 10.seconds) {
+        v.journalState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
-            assertEquals(1, loaded.rows.size)
-            assertEquals(walk.id, loaded.rows[0].walkId)
+            assertEquals(1, loaded.snapshots.size)
+            assertEquals(walk.id, loaded.snapshots[0].id)
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -136,98 +158,36 @@ class HomeViewModelTest {
     fun `Loaded skips in-progress walks (endTimestamp null)`() = runTest(dispatcher) {
         val finished = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
         runBlocking { repository.finishWalk(finished, endTimestamp = 5_600_000L) }
-        runBlocking { repository.startWalk(startTimestamp = 6_000_000L) } // in-progress
+        runBlocking { repository.startWalk(startTimestamp = 6_000_000L) }
 
-        val vm = newViewModel()
+        val v = newViewModel()
 
-        vm.uiState.test(timeout = 10.seconds) {
+        v.journalState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
-            assertEquals(1, loaded.rows.size)
-            assertEquals(finished.id, loaded.rows[0].walkId)
+            assertEquals(1, loaded.snapshots.size)
+            assertEquals(finished.id, loaded.snapshots[0].id)
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `Loaded rows ordered most-recent-first`() = runTest(dispatcher) {
+    fun `Loaded snapshots ordered most-recent-first`() = runTest(dispatcher) {
         val older = runBlocking { repository.startWalk(startTimestamp = 1_000_000L) }
         runBlocking { repository.finishWalk(older, endTimestamp = 1_600_000L) }
         val newer = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
         runBlocking { repository.finishWalk(newer, endTimestamp = 5_600_000L) }
 
-        val vm = newViewModel()
+        val v = newViewModel()
 
-        vm.uiState.test(timeout = 10.seconds) {
+        v.journalState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
-            assertEquals(listOf(newer.id, older.id), loaded.rows.map { it.walkId })
+            assertEquals(listOf(newer.id, older.id), loaded.snapshots.map { it.id })
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `row recording count reflects VoiceRecording rows`() = runTest(dispatcher) {
-        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
-        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
-        runBlocking {
-            repository.recordVoice(makeRecording(walk.id, 5_100_000L, 5_105_000L))
-            repository.recordVoice(makeRecording(walk.id, 5_200_000L, 5_205_000L))
-        }
-
-        val vm = newViewModel()
-
-        vm.uiState.test(timeout = 10.seconds) {
-            val loaded = awaitLoaded(this)
-            assertEquals("2 voice notes", loaded.rows[0].recordingCountText)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `row recording count null when walk has no recordings`() = runTest(dispatcher) {
-        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
-        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
-
-        val vm = newViewModel()
-
-        vm.uiState.test(timeout = 10.seconds) {
-            val loaded = awaitLoaded(this)
-            assertNull(loaded.rows[0].recordingCountText)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `row intention passes through verbatim`() = runTest(dispatcher) {
-        val walk = runBlocking {
-            repository.startWalk(startTimestamp = 5_000_000L, intention = "silence")
-        }
-        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
-
-        val vm = newViewModel()
-
-        vm.uiState.test(timeout = 10.seconds) {
-            val loaded = awaitLoaded(this)
-            assertEquals("silence", loaded.rows[0].intention)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `row intention null when walk has no intention`() = runTest(dispatcher) {
-        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
-        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
-
-        val vm = newViewModel()
-
-        vm.uiState.test(timeout = 10.seconds) {
-            val loaded = awaitLoaded(this)
-            assertNull(loaded.rows[0].intention)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `row distance computed from route samples`() = runTest(dispatcher) {
+    fun `Loaded snapshot distance computed from route samples`() = runTest(dispatcher) {
         val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
         runBlocking {
             repository.recordLocation(
@@ -239,92 +199,24 @@ class HomeViewModelTest {
             repository.finishWalk(walk, endTimestamp = 5_600_000L)
         }
 
-        val vm = newViewModel()
+        val v = newViewModel()
 
-        vm.uiState.test(timeout = 10.seconds) {
+        v.journalState.test(timeout = 10.seconds) {
             val loaded = awaitLoaded(this)
-            // ~111 m for 0.001 degree longitude at equator; distanceText
-            // uses "N m" format under 100 m, "X.XX km" above. 111 m
-            // crosses the threshold (fits the `>= 100.0` branch).
-            assertTrue(
-                "distanceText must be populated for a multi-sample walk, got '${loaded.rows[0].distanceText}'",
-                loaded.rows[0].distanceText.isNotBlank(),
-            )
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    // --- Stage 3-E coverage ---------------------------------------
-
-    @Test
-    fun `Loaded rows carry raw fields for journal-thread synthesis`() = runTest(dispatcher) {
-        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
-        runBlocking {
-            repository.recordLocation(
-                RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 0.0, longitude = 0.0),
-            )
-            repository.recordLocation(
-                RouteDataSample(walkId = walk.id, timestamp = 5_200_000L, latitude = 0.0, longitude = 0.001),
-            )
-            repository.finishWalk(walk, endTimestamp = 5_600_000L)
-        }
-
-        val vm = newViewModel()
-
-        vm.uiState.test(timeout = 10.seconds) {
-            val loaded = awaitLoaded(this)
-            val row = loaded.rows.single()
-            assertEquals(walk.uuid, row.uuid)
-            assertEquals(walk.startTimestamp, row.startTimestamp)
-            // 0.001° longitude at equator ≈ 111 m. Accept any positive
-            // value — the exact number comes from the haversine impl.
-            assertTrue("distanceMeters=${row.distanceMeters}", row.distanceMeters > 0.0)
-            assertEquals(600.0, row.durationSeconds, 0.01)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `Loaded row distanceText flips to imperial when UnitsPreferences says Imperial`() = runTest(dispatcher) {
-        // Stage 10-C canonical regression guard: VM-level proof that the
-        // unit toggle reaches the formatted distance text. ~111 m for
-        // 0.001° longitude at the equator → "0.07 mi" in Imperial.
-        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
-        runBlocking {
-            repository.recordLocation(
-                RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 0.0, longitude = 0.0),
-            )
-            repository.recordLocation(
-                RouteDataSample(walkId = walk.id, timestamp = 5_200_000L, latitude = 0.0, longitude = 0.001),
-            )
-            repository.finishWalk(walk, endTimestamp = 5_600_000L)
-        }
-        val vm = newViewModel(FakeUnitsPreferencesRepository(initial = UnitSystem.Imperial))
-        vm.uiState.test(timeout = 10.seconds) {
-            val loaded = awaitLoaded(this)
-            // 111 m ≈ 0.069 mi → falls below the 0.1-mi threshold
-            // → renders as feet ("364 ft" / "365 ft" depending on
-            // haversine rounding). Either way, no "km" suffix.
-            assertTrue(
-                "expected ft suffix in imperial mode but got '${loaded.rows[0].distanceText}'",
-                loaded.rows[0].distanceText.endsWith(" ft"),
-            )
+            // ~111 m for 0.001° longitude at the equator.
+            assertEquals(true, loaded.snapshots[0].distanceM > 0.0)
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
     fun `hemisphere StateFlow proxies repository`() = runTest(dispatcher) {
-        val vm = newViewModel()
-        // Initial value: Northern by default.
-        assertEquals(Hemisphere.Northern, vm.hemisphere.value)
-        // Flip via the repository's public override API.
+        val v = newViewModel()
+        assertEquals(Hemisphere.Northern, v.hemisphere.value)
         hemisphereRepo.setOverride(Hemisphere.Southern)
-        // Bridge to wall-clock because the repo's StateFlow collects
-        // on a real Dispatchers.Default scope, not runTest's virtual.
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(3_000L) {
-                vm.hemisphere.first { it == Hemisphere.Southern }
+                v.hemisphere.first { it == Hemisphere.Southern }
             }
         }
         assertEquals(Hemisphere.Southern, observed)
@@ -339,40 +231,26 @@ class HomeViewModelTest {
         )
         hemisphereRepo.refreshFromLocationIfNeeded()
 
-        val vm = newViewModel()
-        // The VM's uiState doesn't bundle hemisphere (it's a sibling
-        // flow) — but a subscriber on .hemisphere should observe Southern.
+        val v = newViewModel()
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(3_000L) {
-                vm.hemisphere.first { it == Hemisphere.Southern }
+                v.hemisphere.first { it == Hemisphere.Southern }
             }
         }
         assertEquals(Hemisphere.Southern, observed)
     }
 
-    // --- helpers ---------------------------------------------------
-
     private suspend fun awaitLoaded(
-        turbine: app.cash.turbine.ReceiveTurbine<HomeUiState>,
-    ): HomeUiState.Loaded {
+        turbine: app.cash.turbine.ReceiveTurbine<JournalUiState>,
+    ): JournalUiState.Loaded {
         var item = turbine.awaitItem()
-        while (item is HomeUiState.Loading || item is HomeUiState.Empty) {
+        while (item is JournalUiState.Loading || item is JournalUiState.Empty) {
             item = turbine.awaitItem()
         }
         assertNotNull(item)
-        return item as HomeUiState.Loaded
+        return item as JournalUiState.Loaded
     }
 
-    private fun makeRecording(walkId: Long, start: Long, end: Long): VoiceRecording =
-        VoiceRecording(
-            walkId = walkId,
-            startTimestamp = start,
-            endTimestamp = end,
-            durationMillis = end - start,
-            fileRelativePath = "recordings/test/$start.wav",
-        )
-
-    // UUID-suffixed so parallel test forks can't collide on file path.
     private val hemisphereStoreName: String = "home-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 }
 

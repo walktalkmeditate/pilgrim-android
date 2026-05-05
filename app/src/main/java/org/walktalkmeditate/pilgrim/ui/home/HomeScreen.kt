@@ -80,7 +80,33 @@ fun HomeScreen(
     // + the FGS notification's body-tap deep-link cover the
     // forgotten-walk recovery cases.
 
-    val uiState by homeViewModel.uiState.collectAsStateWithLifecycle()
+    // Stage 14-A temporary adapter: until Task 9 (LazyColumn migration)
+    // and Task 18 (JournalScreen swap) land, project the new
+    // [JournalUiState] back onto the legacy [HomeUiState] / [HomeWalkRow]
+    // shape so the existing [JournalThread] composable keeps building.
+    // Text-field stubs are intentional — Bucket 14-B re-introduces full
+    // chrome via [JournalScreen]; Task 18 deletes this adapter.
+    val journalState by homeViewModel.journalState.collectAsStateWithLifecycle()
+    val uiState: HomeUiState = when (val s = journalState) {
+        JournalUiState.Loading -> HomeUiState.Loading
+        JournalUiState.Empty -> HomeUiState.Empty
+        is JournalUiState.Loaded -> HomeUiState.Loaded(
+            rows = s.snapshots.map { snap ->
+                HomeWalkRow(
+                    walkId = snap.id,
+                    uuid = snap.uuid,
+                    startTimestamp = snap.startMs,
+                    distanceMeters = snap.distanceM,
+                    durationSeconds = snap.durationSec,
+                    relativeDate = "",
+                    durationText = "",
+                    distanceText = "",
+                    recordingCountText = null,
+                    intention = null,
+                )
+            },
+        )
+    }
     val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize()) {
