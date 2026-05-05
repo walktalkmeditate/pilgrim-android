@@ -21,6 +21,16 @@ import javax.inject.Singleton
  *
  * 50 ms min-interval guard defends against scroll-fling / multi-finger
  * haptic flooding (Open Question 3).
+ *
+ * Stage 14-A: HomeScreen instantiates this directly via the secondary
+ * `(context, soundsEnabledProvider)` constructor (wired to
+ * `LocalSoundsEnabled.current`) rather than via Hilt — the
+ * sounds-enabled signal is composition-time so a Hilt-supplied
+ * `@Singleton` couldn't react to it without an indirection. The
+ * `@Singleton` annotation remains for any future call sites that
+ * would prefer the no-arg `@Inject` constructor (master toggle gating
+ * defaults to `true` on that path); HomeScreen and friends should NOT
+ * mix the two constructors in the same composition.
  */
 @Singleton
 class JournalHapticDispatcher internal constructor(
