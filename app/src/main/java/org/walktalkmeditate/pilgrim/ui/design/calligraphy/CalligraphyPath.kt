@@ -144,3 +144,42 @@ private fun DrawScope.drawInkRibbon(
 ) {
     drawPath(path = path, color = ink.copy(alpha = opacity))
 }
+
+/**
+ * Per-row dot center coordinate emitted alongside the existing ribbon
+ * draw. Stage 14 promotes the renderer's internal dot-Y math to a pure
+ * top-level helper so the Journal screen's scroll-haptic state machine
+ * + lunar / milestone / date-divider overlays can read positions without
+ * redrawing the path.
+ */
+data class DotPosition(val centerXPx: Float, val yPx: Float)
+
+/**
+ * Public helper exposing the same `(x, y)` formula the renderer uses
+ * internally. Pure function — no Canvas dependency, no Compose state.
+ *
+ * - x: `xOffsetPx(spec, centerXPx, maxMeanderPx)` — verbatim with the
+ *   in-renderer call, so the dots a downstream consumer expects to
+ *   align with line up byte-for-byte with what the path actually drew.
+ * - y: `topInsetPx + verticalSpacingPx * index + verticalSpacingPx / 2f`
+ *   — the renderer's `i * verticalSpacingPx + verticalSpacingPx / 2f`
+ *   centering, plus `topInsetPx`.
+ *
+ * Stage 3-C kept this math private; Stage 14 makes it additive without
+ * touching the existing draw lambda.
+ */
+fun dotPositions(
+    strokes: List<CalligraphyStrokeSpec>,
+    widthPx: Float,
+    verticalSpacingPx: Float,
+    topInsetPx: Float,
+    maxMeanderPx: Float,
+): List<DotPosition> {
+    val centerX = widthPx / 2f
+    return strokes.mapIndexed { index, spec ->
+        DotPosition(
+            centerXPx = xOffsetPx(spec, centerX, maxMeanderPx),
+            yPx = topInsetPx + verticalSpacingPx * index + verticalSpacingPx / 2f,
+        )
+    }
+}
