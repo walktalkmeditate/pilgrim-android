@@ -19,7 +19,7 @@ import androidx.compose.ui.platform.LocalContext
  * elsewhere, which matches Android conventions.
  */
 @Composable
-internal fun rememberReducedMotion(): Boolean {
+fun rememberReducedMotion(): Boolean {
     val context = LocalContext.current
     return remember {
         try {
