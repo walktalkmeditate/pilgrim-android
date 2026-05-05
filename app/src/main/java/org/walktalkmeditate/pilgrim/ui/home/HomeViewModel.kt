@@ -15,6 +15,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -142,19 +145,34 @@ class HomeViewModel internal constructor(
             val talkSec: Long,
             val meditateSec: Long,
         )
-        val perWalk = walks.sortedBy { it.startTimestamp }.map { walk ->
-            val samples = repository.locationSamplesFor(walk.id).map {
-                LocationPoint(
-                    timestamp = it.timestamp,
-                    latitude = it.latitude,
-                    longitude = it.longitude,
-                )
-            }
-            val events = repository.walkEventsFor(walk.id)
-            val (talkSec, meditateSec) = repository.activitySumsFor(walk.id, walk)
-            val distanceM = walk.distanceMeters ?: walkDistanceMeters(samples)
-            val activeDur = WalkMetricsMath.computeActiveDurationSeconds(walk, events)
-            WalkInputs(walk, distanceM, activeDur, talkSec, meditateSec)
+        // Parallelize per-walk DAO reads — kaijutsu PR #86 review caught
+        // sequential N reads stuttering at 100+ walks. Each walk's
+        // locationSamplesFor + walkEventsFor + activitySumsFor are
+        // independent, so async them via coroutineScope { }; same
+        // ioDispatcher (parent context) but I/O parallelism wins on
+        // multi-walk emissions. Stage 13-XZ PromptsCoordinator.buildContext
+        // pattern.
+        val perWalk = coroutineScope {
+            walks.sortedBy { it.startTimestamp }.map { walk ->
+                async {
+                    val samples = if (walk.distanceMeters == null) {
+                        repository.locationSamplesFor(walk.id).map {
+                            LocationPoint(
+                                timestamp = it.timestamp,
+                                latitude = it.latitude,
+                                longitude = it.longitude,
+                            )
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    val events = repository.walkEventsFor(walk.id)
+                    val (talkSec, meditateSec) = repository.activitySumsFor(walk.id, walk)
+                    val distanceM = walk.distanceMeters ?: walkDistanceMeters(samples)
+                    val activeDur = WalkMetricsMath.computeActiveDurationSeconds(walk, events)
+                    WalkInputs(walk, distanceM, activeDur, talkSec, meditateSec)
+                }
+            }.awaitAll()
         }
 
         // Default: CPU-only reduce + format.
