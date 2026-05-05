@@ -41,6 +41,39 @@ class CachedShareStore @Inject constructor(
             .map { prefs -> prefs[keyFor(walkUuid)]?.let(::decode) }
             .distinctUntilChanged()
 
+    /**
+     * Stage 14: emits the full per-walk share-cache map. Keys are
+     * reconstructed to canonical 8-4-4-4-12 UUID form so callers can
+     * look up by `Walk.uuid` directly without re-stripping. Used as a
+     * single combine source in `HomeViewModel` to avoid an N-walk
+     * fan-out of `observe(walkUuid)` collectors.
+     */
+    fun observeAll(): Flow<Map<String, CachedShare>> =
+        context.cachedShareDataStore.data
+            .map { prefs ->
+                prefs.asMap().asSequence()
+                    .filter { (key, _) -> key.name.startsWith("share_cache_") }
+                    .mapNotNull { (key, value) ->
+                        val blob = value as? String ?: return@mapNotNull null
+                        val cached = decode(blob) ?: return@mapNotNull null
+                        val uuid = reconstructUuid(key.name.removePrefix("share_cache_"))
+                        uuid to cached
+                    }
+                    .toMap()
+            }
+            .distinctUntilChanged()
+
+    private fun reconstructUuid(noHyphens: String): String {
+        require(noHyphens.length == 32) {
+            "Expected 32-char UUID-no-hyphens, got ${noHyphens.length}"
+        }
+        return "${noHyphens.substring(0, 8)}-" +
+            "${noHyphens.substring(8, 12)}-" +
+            "${noHyphens.substring(12, 16)}-" +
+            "${noHyphens.substring(16, 20)}-" +
+            noHyphens.substring(20, 32)
+    }
+
     suspend fun put(walkUuid: String, share: CachedShare) {
         val blob = json.encodeToString(CachedSharePrefs.serializer(), share.toPrefs())
         context.cachedShareDataStore.edit { prefs ->
