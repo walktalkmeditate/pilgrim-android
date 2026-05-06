@@ -661,4 +661,19 @@
     <!-- Stage 14-BCD turning-day banner -->
     <string name="turning_equinox_banner">Today, day equals night.</string>
     <string name="turning_solstice_banner">Today the sun stands still.</string>
+
+    <!-- Stage 14-BCD milestone marker -->
+    <plurals name="journal_milestone_km">
+        <item quantity="one">%d km</item>
+        <item quantity="other">%d km</item>
+    </plurals>
+    <plurals name="journal_milestone_mi">
+        <item quantity="one">%d mi</item>
+        <item quantity="other">%d mi</item>
+    </plurals>
+    <string name="journal_milestone_a11y">Milestone: %1$s</string>
+
+    <!-- Stage 14-BCD lunar a11y -->
+    <string name="journal_lunar_full_a11y">Full moon</string>
+    <string name="journal_lunar_new_a11y">New moon</string>
 </resources>
