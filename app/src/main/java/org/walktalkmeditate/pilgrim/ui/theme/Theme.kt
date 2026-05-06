@@ -101,11 +101,50 @@ fun PilgrimTheme(
         LocalPilgrimColors provides colors,
         LocalPilgrimTypography provides type,
         LocalReduceMotion provides reducedMotion,
+        // User-directed: Pilgrim has no Material tap ripples. Two
+        // pieces wire this up:
+        //  - LocalRippleConfiguration provides null → M3 components
+        //    (Card / Button / IconButton / NavigationBarItem) skip
+        //    their built-in ripples.
+        //  - LocalIndication provides NoIndication → plain
+        //    `Modifier.clickable { ... }` sites that don't pass an
+        //    explicit `indication = null` also stay silent (e.g.
+        //    WalkDot, scenery taps, settings rows that haven't been
+        //    individually patched).
+        // Visual feedback comes from each surface's own state-driven
+        // animation (favicon's color tween, dot's existing radial
+        // gradient + opacity, etc.).
+        androidx.compose.material3.LocalRippleConfiguration provides null,
+        androidx.compose.foundation.LocalIndication provides NoIndication,
     ) {
         MaterialTheme(
             colorScheme = m3,
             typography = m3Typography,
             content = content,
         )
+    }
+}
+
+/**
+ * No-op [androidx.compose.foundation.IndicationNodeFactory] — drops the
+ * rectangular tap ripple that ships by default with `Modifier.clickable`.
+ * Provided via `LocalIndication` at the Pilgrim theme root so every
+ * clickable inherits transparency on tap. Per-surface state animations
+ * remain the visual feedback channel.
+ */
+private object NoIndication : androidx.compose.foundation.IndicationNodeFactory {
+    override fun create(
+        interactionSource: androidx.compose.foundation.interaction.InteractionSource,
+    ): androidx.compose.ui.node.DelegatableNode = NoIndicationNode()
+
+    override fun equals(other: Any?): Boolean = other === this
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
+
+private class NoIndicationNode :
+    androidx.compose.ui.Modifier.Node(),
+    androidx.compose.ui.node.DrawModifierNode {
+    override fun androidx.compose.ui.graphics.drawscope.ContentDrawScope.draw() {
+        drawContent()
     }
 }
