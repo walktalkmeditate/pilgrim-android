@@ -63,6 +63,9 @@ import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toBaseColor
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
 import org.walktalkmeditate.pilgrim.ui.home.header.JourneySummaryHeader
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
+import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
 import org.walktalkmeditate.pilgrim.ui.home.scroll.JournalHapticDispatcher
 import org.walktalkmeditate.pilgrim.ui.home.scroll.ScrollHapticState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -370,6 +373,44 @@ fun HomeScreen(
                                             widthPx - monthMarginPx
                                         }
 
+                                        // Animated scenery — drawn
+                                        // behind the dot. iOS
+                                        // InkScrollView.swift:549-589.
+                                        val scenery = remember(snap.uuid, snap.startMs) {
+                                            SceneryGenerator.pick(snap)
+                                        }
+                                        if (scenery != null) {
+                                            val sceneryBaseSizeDp = 32f
+                                            val sceneryVariation = remember(snap.uuid) {
+                                                SceneryGenerator.sizeVariation01(snap)
+                                            }
+                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 24f
+                                            val scenerySizePx = with(density) { scenerySizeDp.dp.toPx() }
+                                            // scenery box is sized 2× scenerySize for animation room
+                                            val sceneryBoxPx = scenerySizePx * 2f
+                                            val xSign = if (scenery.side == ScenerySide.Left) -1f else 1f
+                                            val sceneryCenterX = xPx + xSign * (40f.dp.let { with(density) { it.toPx() } } + scenerySizePx / 2f) +
+                                                with(density) { scenery.offset.dp.toPx() }
+                                            val sceneryCenterY = yPx - with(density) { 4.dp.toPx() }
+                                            Box(
+                                                modifier = Modifier
+                                                    .offset {
+                                                        IntOffset(
+                                                            (sceneryCenterX - sceneryBoxPx / 2f).toInt(),
+                                                            (sceneryCenterY - sceneryBoxPx / 2f).toInt(),
+                                                        )
+                                                    }
+                                                    .size(scenerySizeDp.dp * 2f)
+                                                    .semantics { contentDescription = "" },
+                                            ) {
+                                                SceneryItem(
+                                                    placement = scenery,
+                                                    snapshot = snap,
+                                                    sizeDp = scenerySizeDp.dp,
+                                                    hemisphere = hemisphere,
+                                                )
+                                            }
+                                        }
                                         // Dot
                                         WalkDot(
                                             snapshot = snap,
