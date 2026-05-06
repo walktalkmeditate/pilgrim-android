@@ -17,12 +17,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -81,6 +85,7 @@ private val JOURNAL_MAX_MEANDER = 100.dp
  * navigating to the summary directly). Kept as parameters so the
  * NavHost call site doesn't need to change mid-stage.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
@@ -201,6 +206,26 @@ fun HomeScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // iOS HomeView.swift:21-26 — `Pilgrim Log` heading typography,
+            // ink color, principal placement (centered in inline mode).
+            // Lives outside the scrolling content so it doesn't slide
+            // off as the user scrolls. Bucket 14-B will move this to
+            // a dedicated `JournalTopBar.kt` per spec; pulled forward
+            // here since 14-A device QA flagged the missing header.
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = stringResource(R.string.home_title),
+                        style = pilgrimType.heading,
+                        color = pilgrimColors.ink,
+                    )
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = pilgrimColors.parchment,
+                ),
+            )
+            Box(modifier = Modifier.fillMaxSize()) {
         when (val s = journalState) {
             JournalUiState.Loading -> {
                 Box(
@@ -302,6 +327,8 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+        }
         }
 
         // Goshuin button. No FAB chrome — just the latest walk's seal
