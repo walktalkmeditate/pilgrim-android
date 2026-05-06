@@ -677,6 +677,9 @@
     <string name="journal_lunar_full_a11y">Full moon</string>
     <string name="journal_lunar_new_a11y">New moon</string>
 
+    <!-- Stage 14-BCD empty-state (Task 8) -->
+    <string name="home_empty_begin">Begin</string>
+
     <!-- Stage 14-BCD ExpandCardSheet (Task 1) -->
     <string name="journal_expand_label_distance">distance</string>
     <string name="journal_expand_label_duration">duration</string>
