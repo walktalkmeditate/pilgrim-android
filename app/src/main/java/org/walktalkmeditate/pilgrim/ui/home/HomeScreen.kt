@@ -64,6 +64,7 @@ import org.walktalkmeditate.pilgrim.ui.design.calligraphy.dotPositions
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toBaseColor
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
+import org.walktalkmeditate.pilgrim.ui.home.dot.walkDotBaseColor
 import org.walktalkmeditate.pilgrim.ui.home.header.JourneySummaryHeader
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
@@ -155,15 +156,18 @@ fun HomeScreen(
             SeasonalInkFlavor.Dawn to dawnBase,
         )
     }
-    val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, baseColors) {
+    val themeColors = pilgrimColors
+    val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, themeColors) {
         snapshots.map { snap ->
             val walkDate = Instant.ofEpochMilli(snap.startMs)
                 .atZone(ZoneId.systemDefault())
                 .toLocalDate()
-            val flavor = SeasonalInkFlavor.forMonth(snap.startMs)
-            val base = baseColors.getValue(flavor)
+            // Walk color rule: moss by default, turning color on
+            // equinox/solstice. Then apply seasonal HSB shift at
+            // moderate intensity for the thread (Stage 3-D).
+            val baseColor = walkDotBaseColor(snap.startMs, themeColors)
             val tint = SeasonalColorEngine.applySeasonalShift(
-                base = base,
+                base = baseColor,
                 intensity = SeasonalColorEngine.Intensity.Moderate,
                 date = walkDate,
                 hemisphere = hemisphere,
