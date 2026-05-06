@@ -25,6 +25,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,23 +50,33 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
-import java.time.YearMonth
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.flow.collectLatest
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPath
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyStrokeSpec
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.DotPosition
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.SeasonalInkFlavor
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.dotPositions
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toBaseColor
+import org.walktalkmeditate.pilgrim.ui.home.animation.rememberJournalFadeIn
+import org.walktalkmeditate.pilgrim.ui.home.banner.TurningDayBanner
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
 import org.walktalkmeditate.pilgrim.ui.home.dot.walkDotBaseColor
+import org.walktalkmeditate.pilgrim.ui.home.empty.EmptyJournalState
+import org.walktalkmeditate.pilgrim.ui.home.expand.ExpandCardSheet
 import org.walktalkmeditate.pilgrim.ui.home.header.JourneySummaryHeader
+import org.walktalkmeditate.pilgrim.ui.home.markers.LunarMarkerDot
+import org.walktalkmeditate.pilgrim.ui.home.markers.MilestoneMarker
+import org.walktalkmeditate.pilgrim.ui.home.markers.computeDateDividers
+import org.walktalkmeditate.pilgrim.ui.home.markers.computeLunarMarkers
+import org.walktalkmeditate.pilgrim.ui.home.markers.computeMilestonePositions
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
 import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
@@ -106,6 +117,7 @@ private val MONTH_LABEL_MARGIN_DP = 36.dp
  * will revisit virtualization. Typical user has < 100 walks, so the
  * eager-render cost is acceptable.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
@@ -157,6 +169,11 @@ fun HomeScreen(
         )
     }
     val themeColors = pilgrimColors
+    val reduceMotion = LocalReduceMotion.current
+    val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
+    val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
+    val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()
+    val currentTurning = turningMarkerForToday()
     val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, themeColors) {
         snapshots.map { snap ->
             val walkDate = Instant.ofEpochMilli(snap.startMs)
@@ -244,18 +261,11 @@ fun HomeScreen(
                         }
                     }
                     JournalUiState.Empty -> {
-                        Box(
+                        EmptyJournalState(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(PilgrimSpacing.big),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.home_empty_message),
-                                style = pilgrimType.body,
-                                color = pilgrimColors.fog,
-                            )
-                        }
+                        )
                     }
                     is JournalUiState.Loaded -> {
                         Column(
@@ -263,6 +273,12 @@ fun HomeScreen(
                                 .fillMaxSize()
                                 .verticalScroll(scrollState),
                         ) {
+                            // Stage 14-BCD task 2: turning-day banner. Zero
+                            // height when today is not an equinox/solstice.
+                            TurningDayBanner(
+                                marker = currentTurning,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                             // Scrolls past as user scrolls down.
                             val nowMs = remember(s.summary) { System.currentTimeMillis() }
                             JourneySummaryHeader(
@@ -278,14 +294,51 @@ fun HomeScreen(
                                 val widthPx = with(density) { maxWidth.toPx() }
                                 val canvasHeight = JOURNAL_TOP_INSET_DP +
                                     JOURNAL_ROW_HEIGHT * s.snapshots.size
-                                val meanderXs = remember(strokes, widthPx) {
-                                    dotPositions(
-                                        strokes = strokes,
-                                        widthPx = widthPx,
-                                        verticalSpacingPx = verticalSpacingPx,
-                                        topInsetPx = topInsetPx,
-                                        maxMeanderPx = maxMeanderPx,
-                                    ).map { it.centerXPx }
+                                // Stage 14-BCD task 9: compute dot
+                                // positions once for the canvas, then
+                                // share them with overlay calculators.
+                                val dotPositionsList: List<DotPosition> =
+                                    remember(strokes, widthPx) {
+                                        dotPositions(
+                                            strokes = strokes,
+                                            widthPx = widthPx,
+                                            verticalSpacingPx = verticalSpacingPx,
+                                            topInsetPx = topInsetPx,
+                                            maxMeanderPx = maxMeanderPx,
+                                        )
+                                    }
+                                val meanderXs = remember(dotPositionsList) {
+                                    dotPositionsList.map { it.centerXPx }
+                                }
+                                val lunarMarkers =
+                                    remember(s.snapshots, dotPositionsList, widthPx) {
+                                        computeLunarMarkers(
+                                            s.snapshots,
+                                            dotPositionsList,
+                                            widthPx,
+                                        )
+                                    }
+                                val milestoneMarkers =
+                                    remember(s.snapshots, dotPositionsList) {
+                                        computeMilestonePositions(
+                                            s.snapshots,
+                                            dotPositionsList,
+                                        )
+                                    }
+                                val dateDividers = remember(
+                                    s.snapshots,
+                                    dotPositionsList,
+                                    widthPx,
+                                    monthMarginPx,
+                                ) {
+                                    computeDateDividers(
+                                        snapshots = s.snapshots,
+                                        dotPositions = dotPositionsList,
+                                        viewportWidthPx = widthPx,
+                                        monthMarginPx = monthMarginPx,
+                                        locale = Locale.getDefault(),
+                                        zone = ZoneId.systemDefault(),
+                                    )
                                 }
                                 // iOS InkScrollView.swift:75 applies
                                 // `.blur(radius: 0.6)` for a soft-ink
@@ -297,28 +350,37 @@ fun HomeScreen(
                                         Modifier
                                     }
 
+                                val rustColor = pilgrimColors.rust
+                                val dawnColor = pilgrimColors.dawn
+                                val fallbackInk = pilgrimColors.ink
+                                val fogColor = pilgrimColors.fog
+                                val microStyle = pilgrimType.micro
+                                val captionStyle = pilgrimType.caption
+
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(canvasHeight),
                                 ) {
+                                    // Stage 14-BCD task 7: cascading
+                                    // fade-in. Lambda-form graphicsLayer
+                                    // (NOT Modifier.alpha) per Stage 5-A.
+                                    // Per-frame alpha must be captured
+                                    // into a Composable-scope local since
+                                    // dotAlpha/segmentAlpha are themselves
+                                    // @Composable (they call
+                                    // animateFloatAsState).
+                                    val segmentAlpha0 = fadeInState.segmentAlpha(0)
                                     CalligraphyPath(
                                         strokes = strokes,
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .graphicsLayer { alpha = segmentAlpha0 }
                                             .then(calligraphyBlur),
                                         verticalSpacing = JOURNAL_ROW_HEIGHT,
                                         topInset = JOURNAL_TOP_INSET_DP,
                                         maxMeander = JOURNAL_MAX_MEANDER,
                                     )
-                                    // Walk dots, distance labels, and
-                                    // month markers overlaid at canvas
-                                    // coordinates matching the path.
-                                    val zoneId = remember { ZoneId.systemDefault() }
-                                    val monthFormatter = remember {
-                                        DateTimeFormatter.ofPattern("MMM", Locale.getDefault())
-                                            .withZone(zoneId)
-                                    }
                                     s.snapshots.forEachIndexed { index, snap ->
                                         val dotSizeDp = WalkDotMath.dotSize(snap.durationSec)
                                         val dotSizePx = sizesPx.getOrNull(index) ?: 0f
@@ -334,10 +396,9 @@ fun HomeScreen(
                                             index,
                                             s.snapshots.size,
                                         )
+                                        val perDotAlpha = fadeInState.dotAlpha(index)
+                                        val perSceneryAlpha = fadeInState.sceneryAlpha(index)
                                         val isDotRightOfCenter = xPx > widthPx / 2f
-                                        // Distance label positioned ±32 dp
-                                        // from dot center, +14 dp Y.
-                                        // iOS InkScrollView.swift:627-637.
                                         val labelXPx = if (isDotRightOfCenter) {
                                             xPx - labelOffsetPx
                                         } else {
@@ -349,55 +410,18 @@ fun HomeScreen(
                                             "${l.value}${l.unit}"
                                         }
 
-                                        // Month marker at first walk
-                                        // of each new (year, month).
-                                        // iOS InkScrollView.swift:677-700.
-                                        val showMonth = remember(snap.startMs, index, s.snapshots) {
-                                            val current = YearMonth.from(
-                                                Instant.ofEpochMilli(snap.startMs)
-                                                    .atZone(zoneId),
-                                            )
-                                            if (index == 0) {
-                                                true
-                                            } else {
-                                                val prev = YearMonth.from(
-                                                    Instant.ofEpochMilli(
-                                                        s.snapshots[index - 1].startMs,
-                                                    ).atZone(zoneId),
-                                                )
-                                                current != prev
-                                            }
-                                        }
-                                        val monthText = remember(snap.startMs) {
-                                            monthFormatter.format(
-                                                Instant.ofEpochMilli(snap.startMs),
-                                            )
-                                        }
-                                        val monthXPx = if (isDotRightOfCenter) {
-                                            monthMarginPx
-                                        } else {
-                                            widthPx - monthMarginPx
-                                        }
-
                                         // Animated scenery — drawn
-                                        // behind the dot. iOS
-                                        // InkScrollView.swift:549-589.
+                                        // behind the dot.
                                         val scenery = remember(snap.uuid, snap.startMs) {
                                             SceneryGenerator.pick(snap)
                                         }
                                         if (scenery != null) {
-                                            // Tighter range than iOS (32-56) per
-                                            // device QA — scenery felt large on
-                                            // Android xxxhdpi. 20-36 dp reads as
-                                            // small accent matching iOS visual
-                                            // weight.
                                             val sceneryBaseSizeDp = 20f
                                             val sceneryVariation = remember(snap.uuid) {
                                                 SceneryGenerator.sizeVariation01(snap)
                                             }
                                             val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 16f
                                             val scenerySizePx = with(density) { scenerySizeDp.dp.toPx() }
-                                            // scenery box is sized 2× scenerySize for animation room
                                             val sceneryBoxPx = scenerySizePx * 2f
                                             val xSign = if (scenery.side == ScenerySide.Left) -1f else 1f
                                             val sceneryCenterX = xPx + xSign * (40f.dp.let { with(density) { it.toPx() } } + scenerySizePx / 2f) +
@@ -412,6 +436,7 @@ fun HomeScreen(
                                                         )
                                                     }
                                                     .size(scenerySizeDp.dp * 2f)
+                                                    .graphicsLayer { alpha = perSceneryAlpha }
                                                     .semantics { contentDescription = "" },
                                             ) {
                                                 SceneryItem(
@@ -422,39 +447,33 @@ fun HomeScreen(
                                                 )
                                             }
                                         }
-                                        // Dot — color is the walk's
-                                        // seasonal-tinted ink (same as
-                                        // the calligraphy stroke).
-                                        // talkColor/meditateColor for
-                                        // activity arcs match iOS rust
-                                        // + dawn semantics.
                                         val dotColor = strokes.getOrNull(index)?.ink
-                                            ?: pilgrimColors.ink
+                                            ?: fallbackInk
                                         WalkDot(
                                             snapshot = snap,
                                             sizeDp = dotSizeDp,
                                             color = dotColor,
-                                            talkColor = pilgrimColors.rust,
-                                            meditateColor = pilgrimColors.dawn,
+                                            talkColor = rustColor,
+                                            meditateColor = dawnColor,
                                             opacity = opacity,
                                             isNewest = index == 0,
                                             contentDescription = "walk dot $index",
-                                            onTap = { onEnterWalkSummary(snap.id) },
-                                            modifier = Modifier.offset {
-                                                IntOffset(
-                                                    (xPx - dotSizePx * 1.75f).toInt(),
-                                                    (yPx - dotSizePx * 1.75f).toInt(),
-                                                )
+                                            onTap = {
+                                                homeViewModel.setExpandedSnapshotId(snap.id)
                                             },
+                                            modifier = Modifier
+                                                .offset {
+                                                    IntOffset(
+                                                        (xPx - dotSizePx * 1.75f).toInt(),
+                                                        (yPx - dotSizePx * 1.75f).toInt(),
+                                                    )
+                                                }
+                                                .graphicsLayer { alpha = perDotAlpha },
                                         )
-                                        // Distance label inline near
-                                        // dot.
                                         Text(
                                             text = distanceText,
-                                            style = pilgrimType.micro,
-                                            color = pilgrimColors.fog.copy(
-                                                alpha = 0.5f * labelAlpha,
-                                            ),
+                                            style = microStyle,
+                                            color = fogColor.copy(alpha = 0.5f * labelAlpha),
                                             modifier = Modifier
                                                 .offset {
                                                     IntOffset(
@@ -462,29 +481,69 @@ fun HomeScreen(
                                                         labelYPx.toInt(),
                                                     )
                                                 }
+                                                .graphicsLayer { alpha = perDotAlpha }
                                                 .semantics {
                                                     contentDescription = ""
                                                 },
                                         )
-                                        // Month marker (only first
-                                        // walk of new month).
-                                        if (showMonth) {
-                                            Text(
-                                                text = monthText,
-                                                style = pilgrimType.caption,
-                                                color = pilgrimColors.fog.copy(alpha = 0.5f),
-                                                modifier = Modifier
-                                                    .offset {
-                                                        IntOffset(
-                                                            monthXPx.toInt(),
-                                                            yPx.toInt(),
-                                                        )
-                                                    }
-                                                    .semantics {
-                                                        contentDescription = ""
-                                                    },
+                                    }
+
+                                    // Stage 14-BCD task 5: extracted
+                                    // date dividers. Replaces the
+                                    // inline showMonth + monthText block.
+                                    dateDividers.forEach { divider ->
+                                        val dividerAlpha = fadeInState.dotAlpha(divider.idTag)
+                                        Text(
+                                            text = divider.text,
+                                            style = captionStyle,
+                                            color = fogColor.copy(alpha = 0.5f),
+                                            modifier = Modifier
+                                                .offset {
+                                                    IntOffset(
+                                                        divider.xPx.toInt(),
+                                                        divider.yPx.toInt(),
+                                                    )
+                                                }
+                                                .graphicsLayer { alpha = dividerAlpha }
+                                                .semantics {
+                                                    contentDescription = ""
+                                                },
+                                        )
+                                    }
+
+                                    // Stage 14-BCD task 3: lunar markers.
+                                    lunarMarkers.forEachIndexed { idx, marker ->
+                                        val lunarAlpha = fadeInState.dotAlpha(idx)
+                                        Box(
+                                            modifier = Modifier
+                                                .offset {
+                                                    IntOffset(
+                                                        (marker.xPx - 5f).toInt(),
+                                                        (marker.yPx - 5f).toInt(),
+                                                    )
+                                                }
+                                                .size(10.dp)
+                                                .graphicsLayer { alpha = lunarAlpha },
+                                        ) {
+                                            LunarMarkerDot(
+                                                isFullMoon = marker.illumination > 0.5,
                                             )
                                         }
+                                    }
+
+                                    // Stage 14-BCD task 4: milestone bars.
+                                    milestoneMarkers.forEachIndexed { idx, m ->
+                                        val milestoneAlpha = fadeInState.dotAlpha(idx)
+                                        MilestoneMarker(
+                                            distanceM = m.distanceM,
+                                            units = units,
+                                            modifier = Modifier
+                                                .offset {
+                                                    IntOffset(0, m.yPx.toInt())
+                                                }
+                                                .fillMaxWidth()
+                                                .graphicsLayer { alpha = milestoneAlpha },
+                                        )
                                     }
                                 }
                             }
@@ -492,6 +551,35 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+
+        // Stage 14-BCD task 9: ExpandCardSheet observation. Outside the
+        // scroll Column so the modal sheet floats over the entire screen.
+        // Stale-id guard handles a walk being deleted while the sheet
+        // is open.
+        LaunchedEffect(snapshots, expandedId) {
+            val id = expandedId
+            if (id != null && snapshots.none { it.id == id }) {
+                homeViewModel.setExpandedSnapshotId(null)
+            }
+        }
+        val expandedSnap = expandedId?.let { id ->
+            snapshots.firstOrNull { it.id == id }
+        }
+        if (expandedSnap != null) {
+            val seasonColor = walkDotBaseColor(expandedSnap.startMs, themeColors)
+            ExpandCardSheet(
+                snapshot = expandedSnap,
+                celestial = expandedCelestial,
+                seasonColor = seasonColor,
+                units = units,
+                isShared = expandedSnap.isShared,
+                onViewDetails = { id ->
+                    homeViewModel.setExpandedSnapshotId(null)
+                    onEnterWalkSummary(id)
+                },
+                onDismissRequest = { homeViewModel.setExpandedSnapshotId(null) },
+            )
         }
 
         // Goshuin FAB. Matches iOS GoshuinFAB.swift exactly:
