@@ -1,0 +1,13 @@
+name: dispatch-parallel
+version: 0.2.0
+license: MIT
+layout: flat
+description: "Fan out N independent tasks to parallel subagents, collect, synthesize. Primitive for skills that need parallelism (multi-lens review, multi-file edits, multi-source data gathering)."
+homepage: https://kaijutsu.dev/skills/dispatch-parallel
+repository: https://github.com/momentmaker/kaijutsu
+tags: [primitive, parallelism, subagents]
+agents: [claude, codex, gemini]
+permissions:
+  bash: false
+  network: false
+  fs-write: false

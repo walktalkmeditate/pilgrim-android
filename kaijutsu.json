@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "agents": [
+    "claude",
+    "gemini",
+    "deepseek"
+  ],
+  "dependencies": {
+    "pr-review": "^0.2.2"
+  },
+  "registry": {
+    "default": "https://github.com/momentmaker/kaijutsu"
+  }
+}

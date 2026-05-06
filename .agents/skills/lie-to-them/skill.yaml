@@ -1,0 +1,13 @@
+name: lie-to-them
+version: 0.2.0
+license: MIT
+layout: flat
+description: "Prompt primitive — assert N issues exist to force exhaustive enumeration. Includes a transparency footer recommendation: every output that used lie-to-them should disclose the claimed-N and actual-found counts."
+homepage: https://kaijutsu.dev/skills/lie-to-them
+repository: https://github.com/momentmaker/kaijutsu
+tags: [primitive, prompt-engineering, review]
+agents: [claude, codex, gemini]
+permissions:
+  bash: false
+  network: false
+  fs-write: false

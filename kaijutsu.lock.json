@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "agents": [
+    "claude",
+    "gemini",
+    "deepseek"
+  ],
+  "skills": {
+    "blunder-hunt": {
+      "version": "0.2.2",
+      "source": "momentmaker/kaijutsu",
+      "ref": "0cf49241d1dcebed5b592c4ff2e2026c4f4600f9",
+      "path": "skills/core/blunder-hunt",
+      "integrity": "sha256-yt4Uhcz93u8HJmvPlhdhZ8+D5MPvqU/RbyUqhkhV7/s=",
+      "installedAs": "dep:pr-review"
+    },
+    "dispatch-parallel": {
+      "version": "0.2.2",
+      "source": "momentmaker/kaijutsu",
+      "ref": "0cf49241d1dcebed5b592c4ff2e2026c4f4600f9",
+      "path": "skills/core/dispatch-parallel",
+      "integrity": "sha256-yt4Uhcz93u8HJmvPlhdhZ8+D5MPvqU/RbyUqhkhV7/s=",
+      "installedAs": "dep:blunder-hunt"
+    },
+    "lie-to-them": {
+      "version": "0.2.2",
+      "source": "momentmaker/kaijutsu",
+      "ref": "0cf49241d1dcebed5b592c4ff2e2026c4f4600f9",
+      "path": "skills/core/lie-to-them",
+      "integrity": "sha256-yt4Uhcz93u8HJmvPlhdhZ8+D5MPvqU/RbyUqhkhV7/s=",
+      "installedAs": "dep:pr-review"
+    },
+    "multi-model-synth": {
+      "version": "0.2.2",
+      "source": "momentmaker/kaijutsu",
+      "ref": "0cf49241d1dcebed5b592c4ff2e2026c4f4600f9",
+      "path": "skills/core/multi-model-synth",
+      "integrity": "sha256-yt4Uhcz93u8HJmvPlhdhZ8+D5MPvqU/RbyUqhkhV7/s=",
+      "installedAs": "dep:pr-review"
+    },
+    "pr-review": {
+      "version": "0.2.2",
+      "source": "momentmaker/kaijutsu",
+      "ref": "0cf49241d1dcebed5b592c4ff2e2026c4f4600f9",
+      "path": "skills/core/pr-review",
+      "integrity": "sha256-yt4Uhcz93u8HJmvPlhdhZ8+D5MPvqU/RbyUqhkhV7/s=",
+      "installedAs": "direct"
+    }
+  }
+}

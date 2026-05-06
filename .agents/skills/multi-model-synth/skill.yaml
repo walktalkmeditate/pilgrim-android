@@ -1,0 +1,16 @@
+name: multi-model-synth
+version: 0.2.0
+license: MIT
+layout: flat
+description: "Fan out the same task to multiple models (Claude, Codex, Gemini), compare responses, synthesize a 'best of all worlds' answer that artfully blends each model's strengths."
+homepage: https://kaijutsu.dev/skills/multi-model-synth
+repository: https://github.com/momentmaker/kaijutsu
+tags: [primitive, multi-model, synthesis, planning]
+agents: [claude, codex, gemini]
+deps:
+  skills:
+    - dispatch-parallel@^0.2
+permissions:
+  bash: false
+  network: true
+  fs-write: false
