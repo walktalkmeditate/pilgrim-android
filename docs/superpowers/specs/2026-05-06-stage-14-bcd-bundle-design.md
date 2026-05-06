@@ -154,7 +154,13 @@ mappings:
 
 ### Sub-stage groupings
 
-- **Bucket 14-B chrome — Task 7** (1 task): ExpandCardSheet + the two
+Tasks numbered 1-9 globally. The original Stage 14 spec used a separate
+"Bucket task N" label per bucket (Task 7 in Bucket 14-B vs Task 7 in
+Bucket 14-D were different things). This bundle renumbers to a single
+sequence so "Task N" is unambiguous across Sub-stage groupings,
+Files-to-create, Implementation order, and Tests sections.
+
+- **Bucket 14-B chrome — Task 1** (1 task): ExpandCardSheet + the two
   embedded primitives MiniActivityBar and ActivityPills. Tap rewiring +
   Walk Summary nav handoff.
 - **Bucket 14-C overlays — Tasks 2-6** (5 tasks): TurningDayBanner +
@@ -166,7 +172,7 @@ mappings:
 
 ## Files to create
 
-### Bucket 14-B chrome — Task 7 ExpandCardSheet
+### Bucket 14-B chrome — Task 1 ExpandCardSheet
 
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/expand/ExpandCardSheet.kt`
   — `@Composable ExpandCardSheet(snapshot: WalkSnapshot, celestial: CelestialSnapshot?,
@@ -363,6 +369,15 @@ mappings:
   `adjusted = if (dateA < dateB) fraction else 1.0 - fraction`,
   return `Triple(dotPositions[i], dotPositions[i+1], adjusted)`.
 
+  **Edge case — identical `startMs`:** when `dateA == dateB`,
+  `totalInterval = 0` triggers the `else 0.5` branch. The marker lands
+  at the midpoint between the two dot positions, which are themselves
+  visually adjacent (same vertical-spacing stride; meander-x may
+  differ by FNV hash). Acceptable visual outcome — the lunar marker
+  reads as nestled between the simultaneous walks rather than picking
+  one. Verbatim iOS behavior; documented for the test fixture rather
+  than guarded against.
+
 - `app/src/main/java/org/walktalkmeditate/pilgrim/ui/home/markers/LunarMarkerDot.kt`
   — `@Composable LunarMarkerDot(isFullMoon: Boolean, modifier = Modifier)`.
   10×10 dp Box. Color (verbatim iOS RGBs):
@@ -557,10 +572,11 @@ mappings:
   - `Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center)` containing
   - `Column(spacing = PilgrimSpacing.small, horizontalAlignment = CenterHorizontally)`:
     - A single tapered `CalligraphyPath` stroke at empty-state mode — call
-      `CalligraphyPath(strokes = emptyList(), modifier = Modifier.size(width
-      = fillMaxWidth, height = 120.dp), emptyMode = true)` (see
-      Files-to-modify for the additive `emptyMode = false` parameter on
-      `CalligraphyPath`). The empty-state path is a 120-dp-tall single
+      `CalligraphyPath(strokes = emptyList(), modifier = Modifier.fillMaxWidth().height(120.dp), emptyMode = true)`
+      (see Files-to-modify for the additive `emptyMode = false`
+      parameter on `CalligraphyPath`). `Modifier.size(...)` takes a `Dp`
+      not a width fn; `fillMaxWidth().height(N.dp)` is the correct
+      Compose chain. The empty-state path is a 120-dp-tall single
       stroke with half-width 1 dp top, tapering to 0.2 dp bottom and back
       to 1 dp (verbatim iOS `InkScrollView.swift:714`).
     - `Box(Modifier.size(14.dp).clip(CircleShape).background(pilgrimColors.stone))`
