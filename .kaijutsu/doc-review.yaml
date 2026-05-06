@@ -1,0 +1,4 @@
+# Multi-model consent for jutsu swarm doc-review.
+# claude (Anthropic) + gemini (Google) — deepseek HTTP driver
+# requires DEEPSEEK_API_KEY env; auto-skipped when missing.
+allow-multi-model: true
