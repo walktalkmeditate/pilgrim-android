@@ -1,0 +1,19 @@
+name: pr-review
+version: 0.3.0
+license: MIT
+layout: flat
+description: "Adversarial PR review. Run by a different agent than the committer; assume bugs exist; surface them as inline PR comments via gh. Optional multi-model fan-out for high-stakes diffs."
+homepage: https://kaijutsu.dev/skills/pr-review
+repository: https://github.com/momentmaker/kaijutsu
+tags: [code-review, pull-request, github, adversarial]
+agents: [claude, codex, gemini]
+deps:
+  skills:
+    - blunder-hunt@^0.2
+    - lie-to-them@^0.2
+    - dispatch-parallel@^0.2
+    - multi-model-synth@^0.2
+permissions:
+  bash: true
+  network: true
+  fs-write: false
