@@ -380,11 +380,16 @@ fun HomeScreen(
                                             SceneryGenerator.pick(snap)
                                         }
                                         if (scenery != null) {
-                                            val sceneryBaseSizeDp = 32f
+                                            // Tighter range than iOS (32-56) per
+                                            // device QA — scenery felt large on
+                                            // Android xxxhdpi. 20-36 dp reads as
+                                            // small accent matching iOS visual
+                                            // weight.
+                                            val sceneryBaseSizeDp = 20f
                                             val sceneryVariation = remember(snap.uuid) {
                                                 SceneryGenerator.sizeVariation01(snap)
                                             }
-                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 24f
+                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 16f
                                             val scenerySizePx = with(density) { scenerySizeDp.dp.toPx() }
                                             // scenery box is sized 2× scenerySize for animation room
                                             val sceneryBoxPx = scenerySizePx * 2f
@@ -493,10 +498,15 @@ fun HomeScreen(
         ) {
             val seal = latestSealBitmap
             if (seal != null) {
+                // iOS GoshuinFAB renders the seal thumbnail at 44dp
+                // clipped to a circle, sitting inside a 56dp container.
+                // Drop to 44dp so the seal reads as a small accent
+                // rather than a full-vibrant bitmap dominating the
+                // bottom-right.
                 Image(
                     painter = BitmapPainter(seal),
                     contentDescription = null,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(44.dp).clip(CircleShape),
                 )
             } else {
                 Icon(
