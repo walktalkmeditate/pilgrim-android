@@ -5,7 +5,6 @@ import androidx.annotation.StringRes
 import java.time.Clock
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.ZonedDateTime
 import org.walktalkmeditate.pilgrim.R
 
 /** True for the four cardinal turnings (equinox/solstice). False for cross-quarter. */
@@ -51,7 +50,6 @@ fun turningMarkerForToday(
     clock: Clock = Clock.systemDefaultZone(),
     zone: ZoneId = ZoneId.systemDefault(),
 ): SeasonalMarker? {
-    val nowMs = ZonedDateTime.of(LocalDate.now(clock).atStartOfDay(), zone)
-        .toInstant().toEpochMilli()
+    val nowMs = LocalDate.now(clock).atStartOfDay(zone).toInstant().toEpochMilli()
     return turningMarkerForEpochMillis(nowMs)
 }
