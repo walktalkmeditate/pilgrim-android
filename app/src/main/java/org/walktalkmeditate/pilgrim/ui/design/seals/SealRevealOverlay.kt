@@ -216,7 +216,11 @@ private const val MILESTONE_HOLD_BONUS_MS = 500L
 private const val SPRING_DAMPING = 0.6f
 private const val SPRING_STIFFNESS = 500f
 
-private const val OVERLAY_BACKGROUND_ALPHA = 0.95f
+// User feedback (Stage 14-A device QA): the dim parchment backdrop
+// reads as a "rectangle" on top of the journal/summary. Drop to fully
+// transparent so the seal floats over the actual content. Tap-to-
+// dismiss still works via the fillMaxSize + clickable below.
+private const val OVERLAY_BACKGROUND_ALPHA = 0f
 private const val SHADOW_ALPHA_REVEALED = 0.25f
 private const val SHADOW_ELEVATION_DP = 12
 private const val DEFAULT_SEAL_SIZE_DP = 220

@@ -156,6 +156,17 @@ class WalkSummaryViewModelTest {
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             practicePreferences = practicePreferences,
             promptsCoordinator = newStubPromptsCoordinator(),
+            sealRevealStore = org.walktalkmeditate.pilgrim.data.seal.SealRevealStore(
+                dataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            context.cacheDir,
+                            "vmtest-seal-reveal-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+            ),
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )

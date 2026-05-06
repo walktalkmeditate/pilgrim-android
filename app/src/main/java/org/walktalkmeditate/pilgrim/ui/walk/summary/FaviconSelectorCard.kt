@@ -5,6 +5,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -99,13 +101,24 @@ private fun FaviconButton(
         label = "favicon-label",
     )
     val selectedLabel = stringResource(R.string.summary_favicon_state_selected)
+    // User feedback (Stage 14-A device QA): the default Material ripple
+    // on the outer Column flashed a parchment rectangle on each tap.
+    // Suppress indication = null so the tap is purely state-driven (the
+    // animateColorAsState transitions on the inner circle ARE the
+    // visual feedback). Pass a stable `MutableInteractionSource` to
+    // satisfy the no-indication overload.
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 if (isSelected) stateDescription = selectedLabel
             }
-            .clickable(onClick = onTap),
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onTap,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
     ) {
