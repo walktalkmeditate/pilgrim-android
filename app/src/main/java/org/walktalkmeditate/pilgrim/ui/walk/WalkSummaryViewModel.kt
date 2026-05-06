@@ -74,6 +74,7 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec
+import org.walktalkmeditate.pilgrim.data.seal.SealRevealStore
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiCacheSweeper
@@ -247,6 +248,7 @@ class WalkSummaryViewModel @Inject constructor(
     unitsPreferences: UnitsPreferencesRepository,
     private val practicePreferences: PracticePreferencesRepository,
     private val promptsCoordinator: PromptsCoordinator,
+    private val sealRevealStore: SealRevealStore,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -363,6 +365,18 @@ class WalkSummaryViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Per-walk-once seal-reveal gate. Declared BEFORE [state] because
+     * `Eagerly` collection runs synchronously inside the constructor —
+     * `state`'s `flow { emit(buildState()) }` body fires DURING field-
+     * init in declaration order, so [_showSealReveal] must be live by
+     * then. Initial value `false`; [buildState] flips it `true` when
+     * the walk uuid is NOT in [SealRevealStore]. User-requested
+     * divergence from iOS (which replays).
+     */
+    private val _showSealReveal = MutableStateFlow(false)
+    val showSealReveal: StateFlow<Boolean> = _showSealReveal.asStateFlow()
+
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
     }.stateIn(
@@ -370,6 +384,20 @@ class WalkSummaryViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = WalkSummaryUiState.Loading,
     )
+
+    fun markSealRevealed() {
+        _showSealReveal.value = false
+        val uuid = (state.value as? WalkSummaryUiState.Loaded)?.summary?.walk?.uuid ?: return
+        persistenceScope.launch {
+            try {
+                sealRevealStore.markRevealed(uuid)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "markRevealed failed for uuid=$uuid", t)
+            }
+        }
+    }
 
     /**
      * Live-gated light reading: combines the loaded summary's stored
@@ -1062,6 +1090,10 @@ class WalkSummaryViewModel @Inject constructor(
         // the state flow would propagate the exception. Treat unfinished
         // walks as Not Found instead.
         if (walk.endTimestamp == null) return WalkSummaryUiState.NotFound
+        // Per-walk-once seal-reveal gate: skip the reveal if this
+        // walk's uuid is already in the SealRevealStore. User-requested
+        // divergence from iOS (which replays on every entry).
+        _showSealReveal.value = !sealRevealStore.isRevealed(walk.uuid)
         // Stage 13-E: seed the favicon StateFlow from the persisted
         // column so the selector reflects prior user choice on load.
         _selectedFavicon.value = WalkFavicon.fromRawValue(walk.favicon)

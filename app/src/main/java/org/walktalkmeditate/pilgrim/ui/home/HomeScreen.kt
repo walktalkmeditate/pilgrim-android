@@ -2,10 +2,12 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,13 +31,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.flow.collectLatest
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyPath
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.CalligraphyStrokeSpec
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.SeasonalInkFlavor
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.dotPositions
+import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toBaseColor
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
 import org.walktalkmeditate.pilgrim.ui.home.scroll.JournalHapticDispatcher
@@ -43,9 +53,11 @@ import org.walktalkmeditate.pilgrim.ui.home.scroll.ScrollHapticState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 
 private val JOURNAL_ROW_HEIGHT = 90.dp
 private val JOURNAL_TOP_INSET_DP = 40.dp
+private val JOURNAL_MAX_MEANDER = 100.dp
 
 /**
  * Stage 14-A LazyColumn migration: each row is a [WalkDot]; chrome
@@ -60,7 +72,6 @@ private val JOURNAL_TOP_INSET_DP = 40.dp
  * navigating to the summary directly). Kept as parameters so the
  * NavHost call site doesn't need to change mid-stage.
  */
-@Suppress("UNUSED_PARAMETER")
 @Composable
 fun HomeScreen(
     permissionsViewModel: PermissionsViewModel,
@@ -69,6 +80,7 @@ fun HomeScreen(
     homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
     val journalState by homeViewModel.journalState.collectAsStateWithLifecycle()
+    val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val soundsEnabled = LocalSoundsEnabled.current
     // Closure-captured rememberUpdatedState so the dispatcher's
@@ -91,10 +103,49 @@ fun HomeScreen(
     val milestoneThresholdPx = with(density) { 25.dp.toPx() }
     val largeDotCutoffPx = with(density) { 15.dp.toPx() }
 
+    val maxMeanderPx = with(density) { JOURNAL_MAX_MEANDER.toPx() }
     val loaded = journalState as? JournalUiState.Loaded
     val snapshots = loaded?.snapshots ?: emptyList()
     val sizesPx = remember(snapshots) {
         snapshots.map { with(density) { WalkDotMath.dotSize(it.durationSec).dp.toPx() } }
+    }
+    // Build calligraphy strokes from snapshots (newest-first ordering
+    // matches CalligraphyPath's `index 0 = newest` convention — see
+    // segmentOpacity/taperFactor docs). Seasonal HSB shift applied
+    // per-stroke via the SeasonalColorEngine. Stage 3-E pattern.
+    val inkBase = SeasonalInkFlavor.Ink.toBaseColor()
+    val mossBase = SeasonalInkFlavor.Moss.toBaseColor()
+    val rustBase = SeasonalInkFlavor.Rust.toBaseColor()
+    val dawnBase = SeasonalInkFlavor.Dawn.toBaseColor()
+    val baseColors = remember(inkBase, mossBase, rustBase, dawnBase) {
+        mapOf(
+            SeasonalInkFlavor.Ink to inkBase,
+            SeasonalInkFlavor.Moss to mossBase,
+            SeasonalInkFlavor.Rust to rustBase,
+            SeasonalInkFlavor.Dawn to dawnBase,
+        )
+    }
+    val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, baseColors) {
+        snapshots.map { snap ->
+            val walkDate = Instant.ofEpochMilli(snap.startMs)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+            val flavor = SeasonalInkFlavor.forMonth(snap.startMs)
+            val base = baseColors.getValue(flavor)
+            val tint = SeasonalColorEngine.applySeasonalShift(
+                base = base,
+                intensity = SeasonalColorEngine.Intensity.Moderate,
+                date = walkDate,
+                hemisphere = hemisphere,
+            )
+            CalligraphyStrokeSpec(
+                uuid = snap.uuid,
+                startMillis = snap.startMs,
+                distanceMeters = snap.distanceM,
+                averagePaceSecPerKm = snap.averagePaceSecPerKm,
+                ink = tint,
+            )
+        }
     }
     // Dot Y in canvas-space matches the formula used by
     // `CalligraphyPath.dotPositions` so when Stage 14-D layers the
@@ -168,27 +219,60 @@ fun HomeScreen(
                 }
             }
             is JournalUiState.Loaded -> {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = JOURNAL_TOP_INSET_DP),
-                ) {
-                    itemsIndexed(s.snapshots, key = { _, snap -> snap.id }) { index, snap ->
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(JOURNAL_ROW_HEIGHT),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            WalkDot(
-                                snapshot = snap,
-                                sizeDp = WalkDotMath.dotSize(snap.durationSec),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                opacity = WalkDotMath.dotOpacity(index, s.snapshots.size),
-                                isNewest = index == 0,
-                                contentDescription = "walk dot $index",
-                                onTap = { homeViewModel.setExpandedSnapshotId(snap.id) },
-                            )
+                // Box-layered: calligraphy canvas behind, LazyColumn on
+                // top with meander-offset WalkDots. Stage 3-E pattern,
+                // upgraded with per-row LazyColumn anchors. Bucket 14-D
+                // will move this assembly into JournalScreen + add
+                // overlays (lunar, milestone, date dividers, scenery,
+                // turning banner).
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val widthPx = with(density) { maxWidth.toPx() }
+                    val meanderXs = remember(strokes, widthPx) {
+                        dotPositions(
+                            strokes = strokes,
+                            widthPx = widthPx,
+                            verticalSpacingPx = verticalSpacingPx,
+                            topInsetPx = topInsetPx,
+                            maxMeanderPx = maxMeanderPx,
+                        ).map { it.centerXPx }
+                    }
+                    CalligraphyPath(
+                        strokes = strokes,
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalSpacing = JOURNAL_ROW_HEIGHT,
+                        topInset = JOURNAL_TOP_INSET_DP,
+                        maxMeander = JOURNAL_MAX_MEANDER,
+                    )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = JOURNAL_TOP_INSET_DP),
+                    ) {
+                        itemsIndexed(s.snapshots, key = { _, snap -> snap.id }) { index, snap ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(JOURNAL_ROW_HEIGHT),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                val sizePx = sizesPx.getOrNull(index) ?: 0f
+                                val xPx = meanderXs.getOrNull(index) ?: (widthPx / 2f)
+                                val offsetXPx = (xPx - sizePx / 2f).toInt()
+                                WalkDot(
+                                    snapshot = snap,
+                                    sizeDp = WalkDotMath.dotSize(snap.durationSec),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    opacity = WalkDotMath.dotOpacity(index, s.snapshots.size),
+                                    isNewest = index == 0,
+                                    contentDescription = "walk dot $index",
+                                    // Stage 14-A interim: tap navigates
+                                    // straight to WalkSummary (Stage 3-E
+                                    // behavior). Bucket 14-B replaces this
+                                    // with the expand-card sheet.
+                                    onTap = { onEnterWalkSummary(snap.id) },
+                                    modifier = Modifier.offset { IntOffset(offsetXPx, 0) },
+                                )
+                            }
                         }
                     }
                 }

@@ -222,13 +222,12 @@ fun WalkSummaryScreen(
         }
     }
 
-    // Stage 4-B: the reveal plays on this entry to WalkSummaryScreen.
-    // After the overlay calls onDismiss (auto-dismiss at 2.5s or
-    // tap-to-dismiss early), flip the flag so it doesn't replay on
-    // unrelated recompositions (scroll, recordings flow update, etc.).
-    // Accepts reveal-replay on back-nav + re-entry — iOS has the same
-    // behavior and a proper single-play guard needs a Room migration.
-    var showReveal by remember { mutableStateOf(true) }
+    // Stage 4-B reveal gate. Per-walk-once via SealRevealStore (user-
+    // requested divergence from iOS): VM seeds `showSealReveal` from
+    // the persisted set on `buildState`; onDismiss calls
+    // `viewModel.markSealRevealed()` which writes the uuid to the
+    // store + flips the flow false.
+    val showReveal by viewModel.showSealReveal.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Summary content renders first (z-order: behind the overlay).
@@ -634,7 +633,7 @@ fun WalkSummaryScreen(
             }
             SealRevealOverlay(
                 spec = specForReveal,
-                onDismiss = { showReveal = false },
+                onDismiss = viewModel::markSealRevealed,
                 isMilestone = loaded.summary.milestone != null,
             )
         }
