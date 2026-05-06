@@ -8,7 +8,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -40,15 +39,12 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
-import org.walktalkmeditate.pilgrim.ui.design.calligraphy.SeasonalInkFlavor
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
-import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
@@ -261,24 +257,14 @@ class HomeViewModel internal constructor(
             return
         }
         val distance = newest.distanceMeters ?: 0.0
-        val flavor = SeasonalInkFlavor.forMonth(newest.startTimestamp)
-        // Theme-free base color for the seal — VMs cannot read @Composable
-        // tokens. Use light-mode tokens; downstream consumers (Stage 14-D
-        // FAB) overlay the seal on top of theme-tinted parchment so the
-        // exact base shade is decorative, not load-bearing for contrast.
-        val baseColors: PilgrimColors = pilgrimLightColors()
-        val baseColor = when (flavor) {
-            SeasonalInkFlavor.Ink -> baseColors.ink
-            SeasonalInkFlavor.Moss -> baseColors.moss
-            SeasonalInkFlavor.Rust -> baseColors.rust
-            SeasonalInkFlavor.Dawn -> baseColors.dawn
-        }
-        val ink = SeasonalColorEngine.applySeasonalShift(
-            base = baseColor,
-            intensity = SeasonalColorEngine.Intensity.Full,
-            date = LocalDate.now(ZoneId.systemDefault()),
-            hemisphere = hemisphere,
-        )
+        // iOS GoshuinFAB renders the thumbnail with `Color.stone` —
+        // muted gold ink that reads well on both light parchment and
+        // dark parchmentTertiary backgrounds (matches user-shared
+        // dark-mode screenshot showing gold linework, not seasonal-
+        // tinted moss/rust). VMs cannot read @Composable tokens; use
+        // the light-mode palette stone which is gold/tan, the same
+        // visual weight iOS hits.
+        val ink = pilgrimLightColors().stone
         val label = WalkFormat.distanceLabel(distance, units)
         val spec = newest.toSealSpec(distance, ink, label.value, label.unit)
         _latestSealSpec.value = spec
