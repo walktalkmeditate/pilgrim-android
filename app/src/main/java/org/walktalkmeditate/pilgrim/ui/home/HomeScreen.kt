@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,9 +26,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -81,6 +85,7 @@ fun HomeScreen(
 ) {
     val journalState by homeViewModel.journalState.collectAsStateWithLifecycle()
     val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
+    val latestSealBitmap by homeViewModel.latestSealBitmap.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val soundsEnabled = LocalSoundsEnabled.current
     // Closure-captured rememberUpdatedState so the dispatcher's
@@ -236,9 +241,24 @@ fun HomeScreen(
                             maxMeanderPx = maxMeanderPx,
                         ).map { it.centerXPx }
                     }
+                    // Calligraphy canvas is fixed-size in BoxWithConstraints
+                    // (not part of LazyColumn), so it would stay static while
+                    // dots scroll. Translate it inversely with the LazyColumn
+                    // scroll so line + dots stay locked together. Reads
+                    // firstVisibleItemIndex + scrollOffset via derivedStateOf
+                    // — Compose only re-runs the lambda body when the inputs
+                    // change, no per-frame allocation in graphicsLayer.
+                    val pathTranslationY by remember(listState, verticalSpacingPx) {
+                        derivedStateOf {
+                            -(listState.firstVisibleItemIndex * verticalSpacingPx +
+                                listState.firstVisibleItemScrollOffset.toFloat())
+                        }
+                    }
                     CalligraphyPath(
                         strokes = strokes,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { translationY = pathTranslationY },
                         verticalSpacing = JOURNAL_ROW_HEIGHT,
                         topInset = JOURNAL_TOP_INSET_DP,
                         maxMeander = JOURNAL_MAX_MEANDER,
@@ -279,7 +299,10 @@ fun HomeScreen(
             }
         }
 
-        // Goshuin compass FAB. Lives on Journal screen only (per spec).
+        // Goshuin FAB. Renders the latest walk's seal thumbnail
+        // (rendered off-Main via EtegamiSealBitmapRenderer in the VM).
+        // Falls back to compass icon on cold-start until the bitmap
+        // settles.
         FloatingActionButton(
             onClick = onEnterGoshuin,
             modifier = Modifier
@@ -288,10 +311,19 @@ fun HomeScreen(
             containerColor = pilgrimColors.parchmentSecondary,
             contentColor = pilgrimColors.stone,
         ) {
-            Icon(
-                imageVector = Icons.Outlined.Explore,
-                contentDescription = stringResource(R.string.home_action_view_goshuin),
-            )
+            val seal = latestSealBitmap
+            if (seal != null) {
+                Image(
+                    painter = BitmapPainter(seal),
+                    contentDescription = stringResource(R.string.home_action_view_goshuin),
+                    modifier = Modifier.size(40.dp),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Outlined.Explore,
+                    contentDescription = stringResource(R.string.home_action_view_goshuin),
+                )
+            }
         }
     }
 }

@@ -172,8 +172,14 @@ fun <T> SettingPicker(
             color = pilgrimColors.ink,
         )
         Spacer(Modifier.weight(1f))
+        // User feedback: zodiac/units/appearance segmented labels were
+        // overflowing because M3 SegmentedButton's default `bodyLarge`
+        // (~14sp) inflates Pilgrim's serif font past the 180dp row cap.
+        // Drop label style to pilgrimType.caption + bump the row max
+        // to 220dp so "Tropical / Sidereal", "Metric / Imperial", and
+        // "Light / Dark / System" all fit single-line.
         SingleChoiceSegmentedButtonRow(
-            modifier = Modifier.widthIn(max = 180.dp),
+            modifier = Modifier.widthIn(max = 220.dp),
         ) {
             options.forEachIndexed { index, option ->
                 val isSelected = option.second == selected
@@ -198,6 +204,7 @@ fun <T> SettingPicker(
                     label = {
                         Text(
                             text = option.first,
+                            style = pilgrimType.caption,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
