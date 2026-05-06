@@ -1,0 +1,18 @@
+# <repo>/.kaijutsu/agents.yaml — pilgrim-android swarm config.
+#
+# Inherits provider definitions from ~/.kaijutsu/agents.yaml. This file
+# restricts WHICH providers `jutsu swarm` dispatches to for this repo,
+# and applies any per-project overrides.
+#
+# Schema: https://github.com/momentmaker/kaijutsu/blob/main/docs/multi-agent.md
+
+version: 1
+
+# Active swarm participants. Codex omitted — pilgrim parity work
+# benefits more from claude (auth + Compose state lens) + gemini
+# (deps + supply-chain lens) + deepseek (cheap OpenAI-compat third
+# voice with reasoning depth on iOS-port algorithm checks).
+enabled:
+  - claude
+  - gemini
+  - deepseek
