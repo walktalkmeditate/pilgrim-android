@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -203,15 +202,16 @@ fun HomeScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Sticky title — placement matches SettingsScreen exactly:
-            // 16dp scaffold-content top + 8dp text top + 16dp text
-            // bottom. iOS HomeView.swift:21-26 "Pilgrim Log" centered.
+            // 16dp content top + 8dp text top + 16dp text bottom. NO
+            // statusBarsPadding — PilgrimNavHost's outer Scaffold
+            // already insets safe-drawing area, applying it again
+            // pushes the title below where Settings sits.
             Text(
                 text = stringResource(R.string.home_title),
                 style = pilgrimType.heading,
                 color = pilgrimColors.ink,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
                     .padding(top = JOURNAL_TITLE_OUTER_TOP)
                     .padding(
                         top = JOURNAL_TITLE_INNER_TOP,
