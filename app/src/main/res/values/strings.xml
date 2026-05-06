@@ -676,4 +676,14 @@
     <!-- Stage 14-BCD lunar a11y -->
     <string name="journal_lunar_full_a11y">Full moon</string>
     <string name="journal_lunar_new_a11y">New moon</string>
+
+    <!-- Stage 14-BCD ExpandCardSheet (Task 1) -->
+    <string name="journal_expand_label_distance">distance</string>
+    <string name="journal_expand_label_duration">duration</string>
+    <string name="journal_expand_label_pace">pace</string>
+    <string name="journal_expand_pill_walk">walk</string>
+    <string name="journal_expand_pill_talk">talk</string>
+    <string name="journal_expand_pill_meditate">meditate</string>
+    <string name="journal_expand_view_details">View details</string>
+    <string name="journal_expand_dismiss_a11y">Close walk details</string>
 </resources>
