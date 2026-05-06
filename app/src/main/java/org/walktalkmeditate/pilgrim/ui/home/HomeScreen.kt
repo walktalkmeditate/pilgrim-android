@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.ui.home
 
 import android.os.Build
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -479,15 +481,26 @@ fun HomeScreen(
             }
         }
 
-        // Goshuin button. Chromeless seal floating bottom-right.
+        // Goshuin FAB. Matches iOS GoshuinFAB.swift exactly:
+        // 64dp parchmentTertiary disc + stone-stroke ring + 52dp seal
+        // thumbnail clipped to circle inside. The disc background +
+        // stroke are what give the seal its visible "presence" — the
+        // seal interior is transparent so without the disc it floats
+        // unmoored against parchment.
         val goshuinFabInteraction = remember { MutableInteractionSource() }
         val goshuinLabel = stringResource(R.string.home_action_view_goshuin)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(PilgrimSpacing.big)
-                .size(56.dp)
+                .size(64.dp)
                 .clip(CircleShape)
+                .background(pilgrimColors.parchmentTertiary)
+                .border(
+                    width = 1.dp,
+                    color = pilgrimColors.stone.copy(alpha = 0.3f),
+                    shape = CircleShape,
+                )
                 .clickable(
                     interactionSource = goshuinFabInteraction,
                     indication = null,
@@ -498,15 +511,10 @@ fun HomeScreen(
         ) {
             val seal = latestSealBitmap
             if (seal != null) {
-                // iOS GoshuinFAB renders the seal thumbnail at 44dp
-                // clipped to a circle, sitting inside a 56dp container.
-                // Drop to 44dp so the seal reads as a small accent
-                // rather than a full-vibrant bitmap dominating the
-                // bottom-right.
                 Image(
                     painter = BitmapPainter(seal),
                     contentDescription = null,
-                    modifier = Modifier.size(44.dp).clip(CircleShape),
+                    modifier = Modifier.size(52.dp).clip(CircleShape),
                 )
             } else {
                 Icon(
