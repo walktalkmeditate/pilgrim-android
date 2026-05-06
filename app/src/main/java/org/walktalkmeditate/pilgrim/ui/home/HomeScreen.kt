@@ -2,6 +2,8 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,13 +16,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -299,29 +304,39 @@ fun HomeScreen(
             }
         }
 
-        // Goshuin FAB. Renders the latest walk's seal thumbnail
-        // (rendered off-Main via EtegamiSealBitmapRenderer in the VM).
-        // Falls back to compass icon on cold-start until the bitmap
-        // settles.
-        FloatingActionButton(
-            onClick = onEnterGoshuin,
+        // Goshuin button. No FAB chrome — just the latest walk's seal
+        // thumbnail floating bottom-right (matches iOS GoshuinFAB
+        // intent). Cold-start before the bitmap settles falls back to
+        // the compass glyph on bare parchment, also chromeless.
+        val goshuinFabInteraction = remember { MutableInteractionSource() }
+        val goshuinLabel = stringResource(R.string.home_action_view_goshuin)
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(PilgrimSpacing.big),
-            containerColor = pilgrimColors.parchmentSecondary,
-            contentColor = pilgrimColors.stone,
+                .padding(PilgrimSpacing.big)
+                .size(56.dp)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = goshuinFabInteraction,
+                    indication = null,
+                    onClick = onEnterGoshuin,
+                )
+                .semantics { contentDescription = goshuinLabel },
+            contentAlignment = Alignment.Center,
         ) {
             val seal = latestSealBitmap
             if (seal != null) {
                 Image(
                     painter = BitmapPainter(seal),
-                    contentDescription = stringResource(R.string.home_action_view_goshuin),
-                    modifier = Modifier.size(40.dp),
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
                 )
             } else {
                 Icon(
                     imageVector = Icons.Outlined.Explore,
-                    contentDescription = stringResource(R.string.home_action_view_goshuin),
+                    contentDescription = null,
+                    tint = pilgrimColors.stone,
+                    modifier = Modifier.size(28.dp),
                 )
             }
         }
