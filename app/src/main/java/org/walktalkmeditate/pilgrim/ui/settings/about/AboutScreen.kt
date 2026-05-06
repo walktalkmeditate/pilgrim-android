@@ -447,17 +447,30 @@ private fun MottoSection() {
 
 @Composable
 private fun SeasonalVignetteSection() {
+    // Replace the static SeasonalTree mushroom with the animated
+    // TreeScenery from the journal scenery pack — matches iOS About
+    // page's bottom tree decoration.
+    val nowMs = remember { System.currentTimeMillis() }
+    val today = remember { LocalDate.now() }
+    val tintColor = SeasonalColorEngine.applySeasonalShift(
+        base = pilgrimColors.moss,
+        intensity = SeasonalColorEngine.Intensity.Full,
+        date = today,
+        hemisphere = org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
-        SeasonalTree(
-            color = pilgrimColors.stone.copy(alpha = 0.5f),
-            modifier = Modifier.wrapContentWidth(),
-            size = 40.dp,
-        )
+        Box(modifier = Modifier.size(72.dp)) {
+            TreeScenery(
+                sizeDp = 72.dp,
+                tintColor = tintColor,
+                walkDateMs = nowMs,
+            )
+        }
     }
 }
 
