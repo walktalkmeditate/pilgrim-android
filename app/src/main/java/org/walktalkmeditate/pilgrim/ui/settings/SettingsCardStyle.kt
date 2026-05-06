@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -172,14 +174,16 @@ fun <T> SettingPicker(
             color = pilgrimColors.ink,
         )
         Spacer(Modifier.weight(1f))
-        // User feedback: zodiac/units/appearance segmented labels were
-        // overflowing because M3 SegmentedButton's default `bodyLarge`
-        // (~14sp) inflates Pilgrim's serif font past the 180dp row cap.
-        // Drop label style to pilgrimType.caption + bump the row max
-        // to 220dp so "Tropical / Sidereal", "Metric / Imperial", and
-        // "Light / Dark / System" all fit single-line.
+        // User feedback: zodiac/units/appearance segmented buttons were
+        // both text-overflowing AND visually too large. Drop label to
+        // pilgrimType.caption + tighten button height to 32 dp + cap
+        // row width at 220 dp so "Tropical / Sidereal", "Metric /
+        // Imperial", "Light / Dark / System" fit single-line at a
+        // compact tab-bar feel rather than full Material 3 toolbar.
         SingleChoiceSegmentedButtonRow(
-            modifier = Modifier.widthIn(max = 220.dp),
+            modifier = Modifier
+                .widthIn(max = 220.dp)
+                .height(32.dp),
         ) {
             options.forEachIndexed { index, option ->
                 val isSelected = option.second == selected
@@ -201,6 +205,8 @@ fun <T> SettingPicker(
                         activeBorderColor = pilgrimColors.stone,
                         inactiveBorderColor = pilgrimColors.fog.copy(alpha = 0.3f),
                     ),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    icon = {},
                     label = {
                         Text(
                             text = option.first,
