@@ -35,6 +35,8 @@ class WalkDotComposableTest {
                 ),
                 sizeDp = 12f,
                 color = Color.Black,
+                talkColor = Color.Red,
+                meditateColor = Color.Blue,
                 opacity = 1f,
                 isNewest = true,
                 contentDescription = "test-dot",
