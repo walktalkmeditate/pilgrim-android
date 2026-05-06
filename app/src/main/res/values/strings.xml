@@ -63,6 +63,28 @@
     <string name="home_relative_hour_ago">1 hour ago</string>
     <string name="home_relative_hours_ago">%1$d hours ago</string>
 
+    <!-- Stage 14-B: JourneySummaryHeader (iOS InkScrollView.swift:134-200). -->
+    <string name="home_journey_distance">%1$s walked</string>
+    <string name="home_journey_talked">%1$s talked</string>
+    <string name="home_journey_meditated">%1$s meditated</string>
+    <string name="home_journey_subtitle_walks">%1$s · %2$s</string>
+    <plurals name="home_journey_walks_count">
+        <item quantity="one">1 walk</item>
+        <item quantity="other">%1$d walks</item>
+    </plurals>
+    <plurals name="home_journey_months">
+        <item quantity="one">1 month</item>
+        <item quantity="other">%1$d months</item>
+    </plurals>
+    <plurals name="home_journey_walks_with_talk">
+        <item quantity="one">1 walk with talk</item>
+        <item quantity="other">%1$d walks with talk</item>
+    </plurals>
+    <plurals name="home_journey_walks_with_meditate">
+        <item quantity="one">1 walk with meditation</item>
+        <item quantity="other">%1$d walks with meditation</item>
+    </plurals>
+
     <string name="walk_stat_distance">Distance</string>
     <string name="walk_stat_pace">Pace</string>
     <string name="walk_stat_duration">Duration</string>

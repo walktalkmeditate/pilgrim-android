@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.home
 
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -39,6 +40,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalContext
@@ -61,12 +64,14 @@ import org.walktalkmeditate.pilgrim.ui.design.calligraphy.dotPositions
 import org.walktalkmeditate.pilgrim.ui.design.calligraphy.toBaseColor
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
+import org.walktalkmeditate.pilgrim.ui.home.header.JourneySummaryHeader
 import org.walktalkmeditate.pilgrim.ui.home.scroll.JournalHapticDispatcher
 import org.walktalkmeditate.pilgrim.ui.home.scroll.ScrollHapticState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 private val JOURNAL_ROW_HEIGHT = 90.dp
 private val JOURNAL_TOP_INSET_DP = 40.dp
@@ -95,6 +100,7 @@ fun HomeScreen(
 ) {
     val journalState by homeViewModel.journalState.collectAsStateWithLifecycle()
     val hemisphere by homeViewModel.hemisphere.collectAsStateWithLifecycle()
+    val units by homeViewModel.distanceUnits.collectAsStateWithLifecycle()
     val latestSealBitmap by homeViewModel.latestSealBitmap.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val soundsEnabled = LocalSoundsEnabled.current
@@ -254,6 +260,19 @@ fun HomeScreen(
                 }
             }
             is JournalUiState.Loaded -> {
+                // Bucket 14-B: 2-line journey header above the calligraphy
+                // body (iOS InkScrollView.swift:134-183). Tap cycles
+                // WALKS / TALKS / MEDITATIONS. `nowMs` is keyed on the
+                // summary so months recomputes per state-emission, not
+                // per recompose.
+                Column(modifier = Modifier.fillMaxSize()) {
+                    val summary = s.summary
+                    val nowMs = remember(summary) { System.currentTimeMillis() }
+                    JourneySummaryHeader(
+                        summary = summary,
+                        units = units,
+                        nowMs = nowMs,
+                    )
                 // Box-layered: calligraphy canvas behind, LazyColumn on
                 // top with meander-offset WalkDots. Stage 3-E pattern,
                 // upgraded with per-row LazyColumn anchors. Bucket 14-D
@@ -284,11 +303,23 @@ fun HomeScreen(
                                 listState.firstVisibleItemScrollOffset.toFloat())
                         }
                     }
+                    // iOS InkScrollView.swift:75 applies `.blur(radius: 0.6)`
+                    // to the calligraphy thread for a soft-ink feel.
+                    // `Modifier.blur` is API 31+ only — pre-31 falls back
+                    // to crisp lines (the dots and strokes still read
+                    // clearly). `BlurredEdgeTreatment.Unbounded` so the
+                    // soft halo isn't clipped at the canvas bounds.
+                    val calligraphyBlur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        Modifier.blur(0.6.dp, BlurredEdgeTreatment.Unbounded)
+                    } else {
+                        Modifier
+                    }
                     CalligraphyPath(
                         strokes = strokes,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .graphicsLayer { translationY = pathTranslationY },
+                            .graphicsLayer { translationY = pathTranslationY }
+                            .then(calligraphyBlur),
                         verticalSpacing = JOURNAL_ROW_HEIGHT,
                         topInset = JOURNAL_TOP_INSET_DP,
                         maxMeander = JOURNAL_MAX_MEANDER,
@@ -322,10 +353,46 @@ fun HomeScreen(
                                     onTap = { onEnterWalkSummary(snap.id) },
                                     modifier = Modifier.offset { IntOffset(offsetXPx, 0) },
                                 )
+
+                                // Per-dot distance label opposite the dot
+                                // (iOS InkScrollView.swift:627-637). When the
+                                // dot meanders left of center, label sits
+                                // right at width − 36dp; right of center,
+                                // label sits at 36dp. Caption typography in
+                                // fog at `dotOpacity * 0.7`. Decorative —
+                                // hidden from a11y so TalkBack reads only
+                                // the dot's content description.
+                                val labelDistanceMargin = 36.dp
+                                val labelDistanceMarginPx =
+                                    with(density) { labelDistanceMargin.toPx() }
+                                val isDotRightOfCenter = xPx > widthPx / 2f
+                                val labelXPx = if (isDotRightOfCenter) {
+                                    labelDistanceMarginPx
+                                } else {
+                                    widthPx - labelDistanceMarginPx
+                                }
+                                val labelOffsetXPx = labelXPx.toInt()
+                                val labelText = remember(snap.distanceM, units) {
+                                    val l = WalkFormat.distanceLabel(snap.distanceM, units)
+                                    "${l.value}${l.unit}"
+                                }
+                                val labelAlpha = WalkDotMath.labelOpacity(
+                                    index,
+                                    s.snapshots.size,
+                                )
+                                Text(
+                                    text = labelText,
+                                    style = pilgrimType.caption,
+                                    color = pilgrimColors.fog.copy(alpha = labelAlpha),
+                                    modifier = Modifier
+                                        .offset { IntOffset(labelOffsetXPx, 0) }
+                                        .semantics { contentDescription = "" },
+                                )
                             }
                         }
                     }
                 }
+                } // end Bucket 14-B Column wrapping (header + scroll body)
             }
         }
         }
