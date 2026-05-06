@@ -173,7 +173,7 @@ fun HomeScreen(
     val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
     val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
     val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()
-    val currentTurning = remember { turningMarkerForToday() }
+    val currentTurning = turningMarkerForToday()
     val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, themeColors) {
         snapshots.map { snap ->
             val walkDate = Instant.ofEpochMilli(snap.startMs)
