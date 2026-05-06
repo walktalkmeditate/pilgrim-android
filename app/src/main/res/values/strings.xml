@@ -47,7 +47,7 @@
     <string name="battery_exemption_action">Ask my phone</string>
     <string name="battery_exemption_later">Later</string>
 
-    <string name="home_title">Walks</string>
+    <string name="home_title">Pilgrim Log</string>
     <string name="home_empty_message">No walks yet. Ready when you are.</string>
     <string name="home_action_start_walk">Start a walk</string>
     <string name="home_action_resume_walk">Resume your walk</string>
