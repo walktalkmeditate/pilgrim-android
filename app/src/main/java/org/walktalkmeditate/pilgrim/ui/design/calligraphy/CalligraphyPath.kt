@@ -32,7 +32,50 @@ fun CalligraphyPath(
     maxMeander: Dp = 100.dp,
     baseWidth: Dp = 1.5.dp,
     maxWidth: Dp = 4.5.dp,
+    emptyMode: Boolean = false,
 ) {
+    // Empty-state branch — verbatim port of iOS InkScrollView.swift:714.
+    // 120 dp tall: half-width 1 dp top → 0.2 dp midpoint → 1 dp bottom.
+    // Tapered single calligraphy stroke shown when no walks exist.
+    if (emptyMode) {
+        Canvas(modifier = modifier.fillMaxWidth().height(120.dp)) {
+            val centerX = size.width / 2f
+            val topY = 0f
+            val midY = size.height / 2f
+            val bottomY = size.height
+            val topHalf = 1f * density
+            val midHalf = 0.2f * density
+            val bottomHalf = 1f * density
+            val strokeColor = Color(0xFF8B7355)  // stone
+            val tail = Path().apply {
+                moveTo(centerX - topHalf, topY)
+                cubicTo(
+                    centerX - topHalf, midY * 0.6f,
+                    centerX - midHalf, midY * 0.9f,
+                    centerX - midHalf, midY,
+                )
+                cubicTo(
+                    centerX - midHalf, midY * 1.1f,
+                    centerX - bottomHalf, midY * 1.5f,
+                    centerX - bottomHalf, bottomY,
+                )
+                lineTo(centerX + bottomHalf, bottomY)
+                cubicTo(
+                    centerX + bottomHalf, midY * 1.5f,
+                    centerX + midHalf, midY * 1.1f,
+                    centerX + midHalf, midY,
+                )
+                cubicTo(
+                    centerX + midHalf, midY * 0.9f,
+                    centerX + topHalf, midY * 0.6f,
+                    centerX + topHalf, topY,
+                )
+                close()
+            }
+            drawPath(path = tail, color = strokeColor.copy(alpha = 0.5f))
+        }
+        return
+    }
     // Fewer than 2 strokes = no segments to connect = nothing to draw.
     // Collapse to 0.dp so a fresh-install device with 0 or 1 finished
     // walks doesn't reserve blank parchment below the header. Stage

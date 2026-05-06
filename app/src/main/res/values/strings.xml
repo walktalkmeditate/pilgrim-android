@@ -657,4 +657,36 @@
         <item quantity="one">%d of 3 custom styles</item>
         <item quantity="other">%d of 3 custom styles</item>
     </plurals>
+
+    <!-- Stage 14-BCD turning-day banner -->
+    <string name="turning_equinox_banner">Today, day equals night.</string>
+    <string name="turning_solstice_banner">Today the sun stands still.</string>
+
+    <!-- Stage 14-BCD milestone marker -->
+    <plurals name="journal_milestone_km">
+        <item quantity="one">%d km</item>
+        <item quantity="other">%d km</item>
+    </plurals>
+    <plurals name="journal_milestone_mi">
+        <item quantity="one">%d mi</item>
+        <item quantity="other">%d mi</item>
+    </plurals>
+    <string name="journal_milestone_a11y">Milestone: %1$s</string>
+
+    <!-- Stage 14-BCD lunar a11y -->
+    <string name="journal_lunar_full_a11y">Full moon</string>
+    <string name="journal_lunar_new_a11y">New moon</string>
+
+    <!-- Stage 14-BCD empty-state (Task 8) -->
+    <string name="home_empty_begin">Begin</string>
+
+    <!-- Stage 14-BCD ExpandCardSheet (Task 1) -->
+    <string name="journal_expand_label_distance">distance</string>
+    <string name="journal_expand_label_duration">duration</string>
+    <string name="journal_expand_label_pace">pace</string>
+    <string name="journal_expand_pill_walk">walk</string>
+    <string name="journal_expand_pill_talk">talk</string>
+    <string name="journal_expand_pill_meditate">meditate</string>
+    <string name="journal_expand_view_details">View details</string>
+    <string name="journal_expand_dismiss_a11y">Close walk details</string>
 </resources>
