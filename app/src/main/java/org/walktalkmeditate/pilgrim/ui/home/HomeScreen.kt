@@ -75,8 +75,11 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 private val JOURNAL_ROW_HEIGHT = 90.dp
 private val JOURNAL_TOP_INSET_DP = 40.dp
 private val JOURNAL_MAX_MEANDER = 100.dp
-private val JOURNAL_TITLE_TOP_PADDING = 8.dp
-private val JOURNAL_TITLE_BOTTOM_PADDING = 8.dp
+// Match SettingsScreen title chrome: 16dp scaffold-content top inset
+// + 8dp text top padding + 16dp text bottom padding.
+private val JOURNAL_TITLE_OUTER_TOP = 16.dp
+private val JOURNAL_TITLE_INNER_TOP = 8.dp
+private val JOURNAL_TITLE_INNER_BOTTOM = 16.dp
 private val DISTANCE_LABEL_OFFSET_DP = 32.dp
 private val DISTANCE_LABEL_Y_OFFSET_DP = 14.dp
 private val MONTH_LABEL_MARGIN_DP = 36.dp
@@ -199,30 +202,23 @@ fun HomeScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Sticky title at the very top — small margin only. iOS
-            // HomeView.swift:21-26 puts "Pilgrim Log" in the principal
-            // toolbar slot; Android's CenterAlignedTopAppBar adds a
-            // ~64 dp container that read as too tall on device. Strip
-            // to a plain centered Text with status-bar inset + 8 dp
-            // pad top/bottom. Sticky because it lives outside the
-            // verticalScroll Column below.
-            Box(
+            // Sticky title — placement matches SettingsScreen exactly:
+            // 16dp scaffold-content top + 8dp text top + 16dp text
+            // bottom. iOS HomeView.swift:21-26 "Pilgrim Log" centered.
+            Text(
+                text = stringResource(R.string.home_title),
+                style = pilgrimType.heading,
+                color = pilgrimColors.ink,
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
+                    .padding(top = JOURNAL_TITLE_OUTER_TOP)
                     .padding(
-                        top = JOURNAL_TITLE_TOP_PADDING,
-                        bottom = JOURNAL_TITLE_BOTTOM_PADDING,
+                        top = JOURNAL_TITLE_INNER_TOP,
+                        bottom = JOURNAL_TITLE_INNER_BOTTOM,
                     ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = stringResource(R.string.home_title),
-                    style = pilgrimType.heading,
-                    color = pilgrimColors.ink,
-                    textAlign = TextAlign.Center,
-                )
-            }
+                textAlign = TextAlign.Center,
+            )
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when (val s = journalState) {
