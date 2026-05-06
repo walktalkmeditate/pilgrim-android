@@ -15,7 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -41,7 +41,6 @@ fun MilestoneMarker(
     units: UnitSystem,
     modifier: Modifier = Modifier,
 ) {
-    val ctx = LocalContext.current
     val displayText = remember(distanceM, units) {
         if (units == UnitSystem.Imperial) {
             String.format(Locale.US, "%d mi", (distanceM / 1609.344).toInt())
@@ -49,7 +48,7 @@ fun MilestoneMarker(
             String.format(Locale.US, "%d km", (distanceM / 1000.0).toInt())
         }
     }
-    val a11yLabel = ctx.getString(R.string.journal_milestone_a11y, displayText)
+    val a11yLabel = stringResource(R.string.journal_milestone_a11y, displayText)
     val hairlineColor = pilgrimColors.fog.copy(alpha = 0.15f)
     val toriiColor = pilgrimColors.stone.copy(alpha = 0.25f)
     val labelColor = pilgrimColors.fog.copy(alpha = 0.4f)
