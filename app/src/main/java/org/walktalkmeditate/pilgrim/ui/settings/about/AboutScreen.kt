@@ -156,12 +156,12 @@ private fun HeroSection() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Animated tree decoration — TreeScenery from Journal scenery
-        // pack. Reduce-Motion aware via the shared sceneryTimeSeconds()
-        // driver inside TreeScenery itself.
-        Box(modifier = Modifier.size(120.dp)) {
+        // Animated tree — sized to journal scenery range (20-36 dp).
+        // Reduce-Motion aware via the shared sceneryTimeSeconds()
+        // driver inside TreeScenery.
+        Box(modifier = Modifier.size(36.dp)) {
             TreeScenery(
-                sizeDp = 120.dp,
+                sizeDp = 36.dp,
                 tintColor = tintColor,
                 walkDateMs = nowMs,
             )
@@ -464,9 +464,12 @@ private fun SeasonalVignetteSection() {
             .padding(bottom = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Box(modifier = Modifier.size(72.dp)) {
+        // Match journal scenery size range (20-36 dp). 32 dp reads as
+        // a small accent decoration consistent with the journal dots
+        // — too large reads as a hero element.
+        Box(modifier = Modifier.size(32.dp)) {
             TreeScenery(
-                sizeDp = 72.dp,
+                sizeDp = 32.dp,
                 tintColor = tintColor,
                 walkDateMs = nowMs,
             )
