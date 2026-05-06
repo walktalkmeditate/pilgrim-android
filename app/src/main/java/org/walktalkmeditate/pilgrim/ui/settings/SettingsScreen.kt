@@ -95,25 +95,30 @@ fun SettingsScreen(
         contentWindowInsets = WindowInsets(0),
         containerColor = pilgrimColors.parchment,
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            state = listState,
-            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
-                Text(
-                    text = stringResource(R.string.settings_title),
-                    style = pilgrimType.heading,
-                    color = pilgrimColors.ink,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 16.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
+            // Sticky "Settings" title — outside the LazyColumn so it
+            // doesn't scroll past. User feedback: the title was sliding
+            // away on scroll; matches Journal's sticky-title placement.
+            Text(
+                text = stringResource(R.string.settings_title),
+                style = pilgrimType.heading,
+                color = pilgrimColors.ink,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp)
+                    .padding(top = 8.dp, bottom = 16.dp),
+                textAlign = TextAlign.Center,
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
             item {
                 PracticeSummaryHeader(
                     walkCount = practiceSummary.walkCount,
@@ -206,6 +211,7 @@ fun SettingsScreen(
                         modifier = Modifier.size(16.dp),
                     )
                 }
+            }
             }
         }
     }
