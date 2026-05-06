@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as GeomSize
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.Dp
@@ -47,11 +48,24 @@ internal fun LanternScenery(
         val flicker3 = (sin(timeSec * 7.1) * 0.05).toFloat()
         val glow = (0.35f + flicker1 + flicker2 + flicker3).coerceIn(0f, 1f)
 
-        // Warm radial glow behind the lantern (1.6× size, blurred via low alpha).
+        // Warm radial glow behind the lantern. Radial gradient fades
+        // from center to transparent so it reads as light, not a
+        // visible circle. User feedback: solid drawCircle showed as
+        // a translucent disk; gradient gives the lighting feel.
+        val glowCenter = Offset(cx, cy - s * 0.1f)
+        val glowRadius = s * 1.0f
         drawCircle(
-            color = glowColor.copy(alpha = (glow * 0.3f).coerceIn(0f, 1f)),
-            radius = s * 0.8f,
-            center = Offset(cx, cy - s * 0.1f),
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    glowColor.copy(alpha = (glow * 0.55f).coerceIn(0f, 1f)),
+                    glowColor.copy(alpha = (glow * 0.2f).coerceIn(0f, 1f)),
+                    Color.Transparent,
+                ),
+                center = glowCenter,
+                radius = glowRadius,
+            ),
+            radius = glowRadius,
+            center = glowCenter,
         )
 
         // Outer ghost layer — slight offset, low alpha (matches iOS blur(1.2)).
