@@ -43,6 +43,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,10 +68,15 @@ import java.util.Locale
 import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.ui.home.scenery.TreeScenery
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.util.CustomTabs
 import org.walktalkmeditate.pilgrim.ui.util.PlayStore
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -135,6 +141,14 @@ fun AboutScreen(
 
 @Composable
 private fun HeroSection() {
+    val nowMs = remember { System.currentTimeMillis() }
+    val today = remember { LocalDate.now() }
+    val tintColor = SeasonalColorEngine.applySeasonalShift(
+        base = pilgrimColors.moss,
+        intensity = SeasonalColorEngine.Intensity.Full,
+        date = today,
+        hemisphere = org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -142,6 +156,16 @@ private fun HeroSection() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // Animated tree decoration — TreeScenery from Journal scenery
+        // pack. Reduce-Motion aware via the shared sceneryTimeSeconds()
+        // driver inside TreeScenery itself.
+        Box(modifier = Modifier.size(120.dp)) {
+            TreeScenery(
+                sizeDp = 120.dp,
+                tintColor = tintColor,
+                walkDateMs = nowMs,
+            )
+        }
         PilgrimLogo(size = 80.dp, breathing = true)
         Text(
             text = stringResource(R.string.about_hero_title),
