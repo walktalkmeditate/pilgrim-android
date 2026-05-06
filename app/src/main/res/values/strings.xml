@@ -657,4 +657,8 @@
         <item quantity="one">%d of 3 custom styles</item>
         <item quantity="other">%d of 3 custom styles</item>
     </plurals>
+
+    <!-- Stage 14-BCD turning-day banner -->
+    <string name="turning_equinox_banner">Today, day equals night.</string>
+    <string name="turning_solstice_banner">Today the sun stands still.</string>
 </resources>
