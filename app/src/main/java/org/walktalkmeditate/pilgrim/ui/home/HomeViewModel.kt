@@ -248,7 +248,14 @@ class HomeViewModel internal constructor(
         units: UnitSystem,
         hemisphere: Hemisphere,
     ) {
-        val newest = walks.maxByOrNull { it.endTimestamp ?: it.startTimestamp } ?: run {
+        // Filter to FINISHED walks before pickup — Walk.toSealSpec
+        // requires non-null endTimestamp. An in-progress walk at the
+        // top of `walks` would throw, the catch silently swallows,
+        // and the FAB stays on the compass fallback. iOS GoshuinFAB
+        // also reads `viewModel.walks.first` which is finished-only.
+        val newest = walks
+            .filter { it.endTimestamp != null }
+            .maxByOrNull { it.endTimestamp ?: it.startTimestamp } ?: run {
             _latestSealSpec.value = null
             _latestSealBitmap.value = null
             return
@@ -292,7 +299,8 @@ class HomeViewModel internal constructor(
                 _latestSealBitmap.value = img
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                android.util.Log.w("HomeViewModel", "seal bitmap render failed", t)
                 _latestSealBitmap.value = null
             }
         }
