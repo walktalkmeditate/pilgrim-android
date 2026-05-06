@@ -418,11 +418,20 @@ fun HomeScreen(
                                                 )
                                             }
                                         }
-                                        // Dot
+                                        // Dot — color is the walk's
+                                        // seasonal-tinted ink (same as
+                                        // the calligraphy stroke).
+                                        // talkColor/meditateColor for
+                                        // activity arcs match iOS rust
+                                        // + dawn semantics.
+                                        val dotColor = strokes.getOrNull(index)?.ink
+                                            ?: pilgrimColors.ink
                                         WalkDot(
                                             snapshot = snap,
                                             sizeDp = dotSizeDp,
-                                            color = MaterialTheme.colorScheme.onSurface,
+                                            color = dotColor,
+                                            talkColor = pilgrimColors.rust,
+                                            meditateColor = pilgrimColors.dawn,
                                             opacity = opacity,
                                             isNewest = index == 0,
                                             contentDescription = "walk dot $index",
