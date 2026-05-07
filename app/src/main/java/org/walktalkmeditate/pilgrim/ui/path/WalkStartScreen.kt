@@ -261,6 +261,18 @@ private fun ModeSelector(
 ) {
     val haptic = LocalHapticFeedback.current
     val soundsEnabled = LocalSoundsEnabled.current
+    // Fire haptic only AFTER the footprint swap composes — iOS pattern
+    // where `.sensoryFeedback` triggers on @Published change. The
+    // `firstFrame` latch suppresses the synthetic emission on first
+    // composition (cold-launch shouldn't buzz).
+    var firstFrame by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(selectedMode) {
+        if (firstFrame) {
+            firstFrame = false
+            return@LaunchedEffect
+        }
+        if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -272,7 +284,6 @@ private fun ModeSelector(
                     selected = mode == selectedMode,
                     onClick = {
                         if (mode != selectedMode) {
-                            if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onSelect(mode)
                         }
                     },
@@ -319,6 +330,11 @@ private fun ModeButton(
         ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        PathFootprints(
+            mode = mode,
+            isActive = selected,
+        )
+        Spacer(Modifier.height(PilgrimSpacing.small))
         Text(
             text = stringResource(modeLabelFor(mode)),
             style = pilgrimType.button,

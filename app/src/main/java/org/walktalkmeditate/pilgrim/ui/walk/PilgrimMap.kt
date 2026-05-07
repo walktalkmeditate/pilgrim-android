@@ -3,7 +3,6 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,6 +17,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -82,7 +82,7 @@ internal fun PilgrimMap(
     walkAnnotationColors: WalkAnnotationColors? = null,
     zoomTargetBounds: MapCameraBounds? = null,
 ) {
-    val darkMode = isSystemInDarkTheme()
+    val darkMode = LocalPilgrimDarkTheme.current
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
     // Pilgrim stone palette, light-mode + dark-mode — see ui/theme/Color.kt.
     val lineColor = if (darkMode) 0xFFB8976E.toInt() else 0xFF8B7355.toInt()
