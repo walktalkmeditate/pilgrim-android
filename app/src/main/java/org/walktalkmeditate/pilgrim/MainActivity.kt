@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -44,7 +45,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Pin status + nav bar scrim to parchment (light) and dark
+        // parchment (dark) so the system bars match the canvas — no
+        // white band behind the floating bottom pill in light mode.
+        val parchmentLight = 0xFFF5F0E8.toInt()
+        val parchmentDark = 0xFF1C1914.toInt()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(parchmentLight, parchmentDark),
+            navigationBarStyle = SystemBarStyle.auto(parchmentLight, parchmentDark),
+        )
         // Stage 9-A: parse widget intent extras at first launch.
         pendingDeepLink.value = DeepLinkTarget.parse(intent)
         // iOS-parity recovery: catches the warm-launch-after-swipe case

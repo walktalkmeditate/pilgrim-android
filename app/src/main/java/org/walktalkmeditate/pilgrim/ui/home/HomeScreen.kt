@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -37,6 +38,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.zIndex
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalContext
@@ -96,6 +104,13 @@ private val JOURNAL_MAX_MEANDER = 100.dp
 private val JOURNAL_TITLE_OUTER_TOP = 16.dp
 private val JOURNAL_TITLE_INNER_TOP = 8.dp
 private val JOURNAL_TITLE_INNER_BOTTOM = 16.dp
+// Heading text 17sp Cormorant ≈ 22dp visible glyph — outer top
+// 16 + inner top 8 = 24dp above glyph; inner bottom 16dp below.
+// Visible title glyph stops around 16+8+22 = ~46dp from screen top,
+// so reserve 48dp for the leading Spacer (just past the glyph
+// baseline). Anything more and content sits visibly under-padded
+// relative to iOS.
+private val JOURNAL_TITLE_TOTAL_HEIGHT = 48.dp
 private val DISTANCE_LABEL_OFFSET_DP = 32.dp
 private val DISTANCE_LABEL_Y_OFFSET_DP = 14.dp
 private val MONTH_LABEL_MARGIN_DP = 36.dp
@@ -225,28 +240,14 @@ fun HomeScreen(
         }
     }
 
+    val titleHeightDp = JOURNAL_TITLE_TOTAL_HEIGHT
+    val hazeState = remember { HazeState() }
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Sticky title — placement matches SettingsScreen exactly:
-            // 16dp content top + 8dp text top + 16dp text bottom. NO
-            // statusBarsPadding — PilgrimNavHost's outer Scaffold
-            // already insets safe-drawing area, applying it again
-            // pushes the title below where Settings sits.
-            Text(
-                text = stringResource(R.string.home_title),
-                style = pilgrimType.heading,
-                color = pilgrimColors.ink,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = JOURNAL_TITLE_OUTER_TOP)
-                    .padding(
-                        top = JOURNAL_TITLE_INNER_TOP,
-                        bottom = JOURNAL_TITLE_INNER_BOTTOM,
-                    ),
-                textAlign = TextAlign.Center,
-            )
-
-            Box(modifier = Modifier.fillMaxSize()) {
+        // Scroll content lives at the back of the stack. hazeSource
+        // is applied per-scroll-container (the Loaded Column) so the
+        // title overlay's hazeEffect captures the actual scrolling
+        // layer. Empty/Loading branches don't scroll and don't need it.
+        Box(modifier = Modifier.fillMaxSize()) {
                 when (val s = journalState) {
                     JournalUiState.Loading -> {
                         Box(
@@ -271,8 +272,16 @@ fun HomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .verticalScroll(scrollState),
+                                .hazeSource(hazeState)
+                                .verticalScroll(scrollState)
+                                .padding(bottom = 120.dp),
                         ) {
+                            // Reserve vertical space equal to the floating
+                            // title's measured height so the first scroll
+                            // entry sits just below the header at rest;
+                            // scrolling reveals content sliding under the
+                            // semi-transparent title.
+                            Spacer(Modifier.height(titleHeightDp))
                             // Stage 14-BCD task 2: turning-day banner. Zero
                             // height when today is not an equinox/solstice.
                             TurningDayBanner(
@@ -551,7 +560,44 @@ fun HomeScreen(
                     }
                 }
             }
-        }
+
+        // iOS-parity sticky title — Box-shaped backdrop blur extends
+        // 24dp past the title bottom so the progressive gradient has
+        // room to fade fully to zero. Tint is forced transparent so
+        // there's no residual color at the gradient tail; combined
+        // with intensity=0 the bottom of the strip is truly invisible
+        // and there's no hard edge line. Title text overlays via
+        // zIndex so it sits cleanly inside the upper blur region.
+        val parchmentColor = pilgrimColors.parchment
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(JOURNAL_TITLE_TOTAL_HEIGHT + 12.dp)
+                .zIndex(1f)
+                .hazeEffect(state = hazeState) {
+                    progressive = HazeProgressive.verticalGradient(
+                        startIntensity = 1f,
+                        endIntensity = 0f,
+                    )
+                    backgroundColor = parchmentColor
+                    tints = listOf(HazeTint(Color.Transparent))
+                    noiseFactor = 0f
+                },
+        )
+        Text(
+            text = stringResource(R.string.home_title),
+            style = pilgrimType.heading,
+            color = pilgrimColors.ink,
+            modifier = Modifier
+                .fillMaxWidth()
+                .zIndex(2f)
+                .padding(top = JOURNAL_TITLE_OUTER_TOP)
+                .padding(
+                    top = JOURNAL_TITLE_INNER_TOP,
+                    bottom = JOURNAL_TITLE_INNER_BOTTOM,
+                ),
+            textAlign = TextAlign.Center,
+        )
 
         // Stage 14-BCD task 9: ExpandCardSheet observation. Outside the
         // scroll Column so the modal sheet floats over the entire screen.
@@ -593,8 +639,8 @@ fun HomeScreen(
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(PilgrimSpacing.big)
-                .size(64.dp)
+                .padding(end = 12.dp, bottom = 96.dp, top = PilgrimSpacing.big, start = PilgrimSpacing.big)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(pilgrimColors.parchmentTertiary)
                 .border(
@@ -615,14 +661,14 @@ fun HomeScreen(
                 Image(
                     painter = BitmapPainter(seal),
                     contentDescription = null,
-                    modifier = Modifier.size(52.dp).clip(CircleShape),
+                    modifier = Modifier.size(38.dp).clip(CircleShape),
                 )
             } else {
                 Icon(
                     imageVector = Icons.Outlined.Explore,
                     contentDescription = null,
                     tint = pilgrimColors.stone,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }
