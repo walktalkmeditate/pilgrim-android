@@ -104,11 +104,10 @@ fun SettingsScreen(
         contentWindowInsets = WindowInsets(0),
         containerColor = pilgrimColors.parchment,
     ) { padding ->
-        // Title block: 16+8+heading line(17sp ≈ 24dp)+16 = 64dp.
-        // Hardcoded so the first frame already reserves the right
-        // contentPadding(top) and the user never sees content peek
-        // under the title.
-        val titleHeightDp = 64.dp
+        // Reserve just past the glyph baseline (16+8+22 ≈ 48dp) — same
+        // tuned constant as HomeScreen so the first card sits flush
+        // below the title without iOS-mismatch over-padding.
+        val titleHeightDp = 48.dp
         val hazeState = remember { HazeState() }
         Box(
             modifier = Modifier
@@ -120,7 +119,7 @@ fun SettingsScreen(
                     .fillMaxSize()
                     .hazeSource(hazeState),
                 state = listState,
-                contentPadding = PaddingValues(top = titleHeightDp, bottom = 24.dp),
+                contentPadding = PaddingValues(top = titleHeightDp, bottom = 120.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
             item {

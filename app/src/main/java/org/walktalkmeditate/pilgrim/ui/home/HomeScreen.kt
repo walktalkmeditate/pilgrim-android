@@ -104,10 +104,13 @@ private val JOURNAL_MAX_MEANDER = 100.dp
 private val JOURNAL_TITLE_OUTER_TOP = 16.dp
 private val JOURNAL_TITLE_INNER_TOP = 8.dp
 private val JOURNAL_TITLE_INNER_BOTTOM = 16.dp
-// Heading text 17sp + Cormorant ascent/descent ≈ 24dp — total
-// title block = 16+8+24+16 = 64dp. Used as the leading Spacer
-// height so content rests precisely below the floating title.
-private val JOURNAL_TITLE_TOTAL_HEIGHT = 64.dp
+// Heading text 17sp Cormorant ≈ 22dp visible glyph — outer top
+// 16 + inner top 8 = 24dp above glyph; inner bottom 16dp below.
+// Visible title glyph stops around 16+8+22 = ~46dp from screen top,
+// so reserve 48dp for the leading Spacer (just past the glyph
+// baseline). Anything more and content sits visibly under-padded
+// relative to iOS.
+private val JOURNAL_TITLE_TOTAL_HEIGHT = 48.dp
 private val DISTANCE_LABEL_OFFSET_DP = 32.dp
 private val DISTANCE_LABEL_Y_OFFSET_DP = 14.dp
 private val MONTH_LABEL_MARGIN_DP = 36.dp
@@ -270,7 +273,8 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .hazeSource(hazeState)
-                                .verticalScroll(scrollState),
+                                .verticalScroll(scrollState)
+                                .padding(bottom = 120.dp),
                         ) {
                             // Reserve vertical space equal to the floating
                             // title's measured height so the first scroll
@@ -635,8 +639,8 @@ fun HomeScreen(
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(PilgrimSpacing.big)
-                .size(64.dp)
+                .padding(end = 12.dp, bottom = 96.dp, top = PilgrimSpacing.big, start = PilgrimSpacing.big)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(pilgrimColors.parchmentTertiary)
                 .border(
@@ -657,14 +661,14 @@ fun HomeScreen(
                 Image(
                     painter = BitmapPainter(seal),
                     contentDescription = null,
-                    modifier = Modifier.size(52.dp).clip(CircleShape),
+                    modifier = Modifier.size(38.dp).clip(CircleShape),
                 )
             } else {
                 Icon(
                     imageVector = Icons.Outlined.Explore,
                     contentDescription = null,
                     tint = pilgrimColors.stone,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }

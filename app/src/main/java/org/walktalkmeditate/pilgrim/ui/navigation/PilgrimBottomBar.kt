@@ -5,6 +5,10 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.graphics.Color
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,11 +54,22 @@ fun PilgrimBottomBar(
     currentRoute: String?,
     onSelectTab: (String) -> Unit,
 ) {
+    val hazeState = LocalAppHazeState.current
+    val parchmentColor = pilgrimColors.parchment
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .hazeEffect(state = hazeState) {
+                progressive = HazeProgressive.verticalGradient(
+                    startIntensity = 0f,
+                    endIntensity = 1f,
+                )
+                backgroundColor = parchmentColor
+                tints = listOf(HazeTint(Color.Transparent))
+                noiseFactor = 0f
+            }
             .navigationBarsPadding()
-            .padding(horizontal = 48.dp, vertical = 8.dp),
+            .padding(horizontal = 64.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
@@ -121,7 +136,7 @@ private fun RowScope.PillTabItem(
                 interactionSource = interactionSource,
                 indication = null,
             )
-            .padding(vertical = 12.dp),
+            .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -129,7 +144,7 @@ private fun RowScope.PillTabItem(
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.height(1.dp))
         Text(

@@ -162,7 +162,10 @@ fun WalkStartScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(PilgrimSpacing.big),
+                .padding(PilgrimSpacing.big)
+                // Reserve space for the floating pill bar at the bottom
+                // so the Wander button isn't covered by the overlay.
+                .padding(bottom = 80.dp),
         ) {
             // Centered content. We use Modifier.weight(1f) to take all
             // remaining vertical space, then Arrangement.Center inside
