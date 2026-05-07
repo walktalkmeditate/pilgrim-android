@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -29,14 +30,18 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalContext
@@ -225,28 +230,14 @@ fun HomeScreen(
         }
     }
 
+    var titleHeightPx by remember { mutableStateOf(0) }
+    val titleHeightDp = with(density) { titleHeightPx.toDp() }
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Sticky title — placement matches SettingsScreen exactly:
-            // 16dp content top + 8dp text top + 16dp text bottom. NO
-            // statusBarsPadding — PilgrimNavHost's outer Scaffold
-            // already insets safe-drawing area, applying it again
-            // pushes the title below where Settings sits.
-            Text(
-                text = stringResource(R.string.home_title),
-                style = pilgrimType.heading,
-                color = pilgrimColors.ink,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = JOURNAL_TITLE_OUTER_TOP)
-                    .padding(
-                        top = JOURNAL_TITLE_INNER_TOP,
-                        bottom = JOURNAL_TITLE_INNER_BOTTOM,
-                    ),
-                textAlign = TextAlign.Center,
-            )
-
-            Box(modifier = Modifier.fillMaxSize()) {
+        // Scroll content lives at the back of the stack. Title floats
+        // on top via zIndex with a semi-transparent parchment fill so
+        // content peeks behind during scroll — iOS-style sticky header
+        // (transparent background, content slides under).
+        Box(modifier = Modifier.fillMaxSize()) {
                 when (val s = journalState) {
                     JournalUiState.Loading -> {
                         Box(
@@ -273,6 +264,12 @@ fun HomeScreen(
                                 .fillMaxSize()
                                 .verticalScroll(scrollState),
                         ) {
+                            // Reserve vertical space equal to the floating
+                            // title's measured height so the first scroll
+                            // entry sits just below the header at rest;
+                            // scrolling reveals content sliding under the
+                            // semi-transparent title.
+                            Spacer(Modifier.height(titleHeightDp))
                             // Stage 14-BCD task 2: turning-day banner. Zero
                             // height when today is not an equinox/solstice.
                             TurningDayBanner(
@@ -551,7 +548,27 @@ fun HomeScreen(
                     }
                 }
             }
-        }
+
+        // iOS-parity sticky title overlay — sits above the scroll content
+        // via zIndex; semi-transparent parchment fill so scrolling content
+        // peeks through. Measured height feeds the leading Spacer above so
+        // first scroll entry visually sits below the header at rest.
+        Text(
+            text = stringResource(R.string.home_title),
+            style = pilgrimType.heading,
+            color = pilgrimColors.ink,
+            modifier = Modifier
+                .fillMaxWidth()
+                .zIndex(1f)
+                .background(pilgrimColors.parchment.copy(alpha = 0.85f))
+                .padding(top = JOURNAL_TITLE_OUTER_TOP)
+                .padding(
+                    top = JOURNAL_TITLE_INNER_TOP,
+                    bottom = JOURNAL_TITLE_INNER_BOTTOM,
+                )
+                .onSizeChanged { titleHeightPx = it.height },
+            textAlign = TextAlign.Center,
+        )
 
         // Stage 14-BCD task 9: ExpandCardSheet observation. Outside the
         // scroll Column so the modal sheet floats over the entire screen.

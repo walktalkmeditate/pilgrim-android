@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,9 +30,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.BuildConfig
@@ -95,28 +100,18 @@ fun SettingsScreen(
         contentWindowInsets = WindowInsets(0),
         containerColor = pilgrimColors.parchment,
     ) { padding ->
-        Column(
+        val density = LocalDensity.current
+        var titleHeightPx by rememberSaveable { mutableStateOf(0) }
+        val titleHeightDp = with(density) { titleHeightPx.toDp() }
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // Sticky "Settings" title — outside the LazyColumn so it
-            // doesn't scroll past. User feedback: the title was sliding
-            // away on scroll; matches Journal's sticky-title placement.
-            Text(
-                text = stringResource(R.string.settings_title),
-                style = pilgrimType.heading,
-                color = pilgrimColors.ink,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
-                    .padding(top = 8.dp, bottom = 16.dp),
-                textAlign = TextAlign.Center,
-            )
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(bottom = 24.dp),
+                contentPadding = PaddingValues(top = titleHeightDp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
             item {
@@ -213,6 +208,25 @@ fun SettingsScreen(
                 }
             }
             }
+
+            // iOS-parity sticky title — overlays the LazyColumn via
+            // zIndex with a semi-transparent parchment fill so list
+            // content peeks behind during scroll. Measured height feeds
+            // contentPadding(top) above so the first card sits below
+            // the header at rest.
+            Text(
+                text = stringResource(R.string.settings_title),
+                style = pilgrimType.heading,
+                color = pilgrimColors.ink,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .zIndex(1f)
+                    .background(pilgrimColors.parchment.copy(alpha = 0.85f))
+                    .padding(top = 16.dp)
+                    .padding(top = 8.dp, bottom = 16.dp)
+                    .onSizeChanged { titleHeightPx = it.height },
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
