@@ -106,6 +106,15 @@ fun pilgrimDarkColors() = PilgrimColors(
 
 val LocalPilgrimColors = staticCompositionLocalOf { pilgrimLightColors() }
 
+/**
+ * Tracks PilgrimTheme's resolved dark/light flag, which combines system
+ * dark mode with the user's AppearanceMode preference (System/Light/Dark).
+ * Read this instead of `isSystemInDarkTheme()` directly when picking
+ * theme-coupled assets (e.g. Mapbox style URI) — otherwise the asset
+ * disagrees with the rest of the UI when AppearanceMode overrides system.
+ */
+val LocalPilgrimDarkTheme = staticCompositionLocalOf { false }
+
 val pilgrimColors: PilgrimColors
     @Composable
     @ReadOnlyComposable

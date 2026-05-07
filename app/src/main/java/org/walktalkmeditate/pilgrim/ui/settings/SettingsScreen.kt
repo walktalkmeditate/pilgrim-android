@@ -3,13 +3,14 @@ package org.walktalkmeditate.pilgrim.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,13 +25,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.BuildConfig
@@ -95,28 +104,22 @@ fun SettingsScreen(
         contentWindowInsets = WindowInsets(0),
         containerColor = pilgrimColors.parchment,
     ) { padding ->
-        Column(
+        // Reserve just past the glyph baseline (16+8+22 ≈ 48dp) — same
+        // tuned constant as HomeScreen so the first card sits flush
+        // below the title without iOS-mismatch over-padding.
+        val titleHeightDp = 48.dp
+        val hazeState = remember { HazeState() }
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // Sticky "Settings" title — outside the LazyColumn so it
-            // doesn't scroll past. User feedback: the title was sliding
-            // away on scroll; matches Journal's sticky-title placement.
-            Text(
-                text = stringResource(R.string.settings_title),
-                style = pilgrimType.heading,
-                color = pilgrimColors.ink,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
-                    .padding(top = 8.dp, bottom = 16.dp),
-                textAlign = TextAlign.Center,
-            )
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(hazeState),
                 state = listState,
-                contentPadding = PaddingValues(bottom = 24.dp),
+                contentPadding = PaddingValues(top = titleHeightDp, bottom = 120.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
             item {
@@ -213,6 +216,37 @@ fun SettingsScreen(
                 }
             }
             }
+
+            // iOS-parity sticky title — Box-shaped backdrop blur extends
+            // 24dp past the title bottom; transparent tint + zero noise
+            // make the gradient tail fully invisible (no hard edge).
+            val parchmentColor = pilgrimColors.parchment
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(titleHeightDp + 12.dp)
+                    .zIndex(1f)
+                    .hazeEffect(state = hazeState) {
+                        progressive = HazeProgressive.verticalGradient(
+                            startIntensity = 1f,
+                            endIntensity = 0f,
+                        )
+                        backgroundColor = parchmentColor
+                        tints = listOf(HazeTint(Color.Transparent))
+                        noiseFactor = 0f
+                    },
+            )
+            Text(
+                text = stringResource(R.string.settings_title),
+                style = pilgrimType.heading,
+                color = pilgrimColors.ink,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .zIndex(2f)
+                    .padding(top = 16.dp)
+                    .padding(top = 8.dp, bottom = 16.dp),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }

@@ -7,10 +7,19 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,6 +53,14 @@ import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePickerScree
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
+
+/**
+ * App-wide HazeState for backdrop blur on the floating pill bar AND
+ * the sticky screen headers. Each screen's scrolling content marks
+ * itself as a hazeSource(LocalAppHazeState.current); the pill +
+ * headers consume it via hazeEffect.
+ */
+val LocalAppHazeState = compositionLocalOf { HazeState() }
 
 object Routes {
     const val PERMISSIONS = "permissions"
@@ -112,31 +129,25 @@ fun PilgrimNavHost(
     val currentRoute = currentEntry?.destination?.route
     val showBottomBar = currentRoute in TAB_ROUTES
 
+    val appHazeState = remember { HazeState() }
+    CompositionLocalProvider(LocalAppHazeState provides appHazeState) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            // Combine fade with vertical expand/shrink so the bar's
-            // measured height animates in lockstep with its alpha.
-            // Without expand/shrink, AnimatedVisibility flips height
-            // 0 → N instantly while the alpha fades over 150ms,
-            // causing screen content to snap up/down before the bar
-            // visibly appears/disappears.
-            AnimatedVisibility(
-                visible = showBottomBar,
-                enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
-                exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
-            ) {
-                PilgrimBottomBar(
-                    currentRoute = currentRoute,
-                    onSelectTab = { route -> navController.navigateToTab(route) },
-                )
-            }
-        },
+        containerColor = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.parchment,
     ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        // NavHost extends edge-to-edge — the floating pill overlays on
+        // top via Box.align(BottomCenter) so screen content (parchment
+        // canvas, journal calligraphy, scroll lists) renders behind the
+        // pill region, picking up the haze backdrop blur. Screens with
+        // primary actions near the bottom add their own bottom padding
+        // (Path's Wander button, etc.) to clear the pill footprint.
         NavHost(
             navController = navController,
             startDestination = Routes.PERMISSIONS,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(appHazeState),
         ) {
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
@@ -418,6 +429,24 @@ fun PilgrimNavHost(
             )
         }
         }
+
+        // Pill overlays the screen content at BottomCenter — content
+        // extends edge-to-edge behind the pill so the area around the
+        // pill is whatever the screen renders (parchment canvas, journal
+        // dots, calligraphy, etc.) — not a reserved opaque band.
+        AnimatedVisibility(
+            visible = showBottomBar,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
+            exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
+        ) {
+            PilgrimBottomBar(
+                currentRoute = currentRoute,
+                onSelectTab = { route -> navController.navigateToTab(route) },
+            )
+        }
+        }
+    }
     }
 
     val onboardingComplete by permissionsViewModel.onboardingComplete.collectAsState()

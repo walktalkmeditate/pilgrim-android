@@ -99,6 +99,7 @@ fun PilgrimTheme(
 
     CompositionLocalProvider(
         LocalPilgrimColors provides colors,
+        LocalPilgrimDarkTheme provides darkTheme,
         LocalPilgrimTypography provides type,
         LocalReduceMotion provides reducedMotion,
         // User-directed: Pilgrim has no Material tap ripples. Two

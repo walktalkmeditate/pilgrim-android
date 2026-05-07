@@ -213,6 +213,9 @@ dependencies {
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.androidx.glance.material3)
 
+    // iOS-parity backdrop blur for Pilgrim Log + Settings sticky titles.
+    implementation(libs.haze)
+
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.hilt.android)
