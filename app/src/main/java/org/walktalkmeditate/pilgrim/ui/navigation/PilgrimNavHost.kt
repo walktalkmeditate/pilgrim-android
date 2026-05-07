@@ -7,9 +7,11 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -114,29 +116,12 @@ fun PilgrimNavHost(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            // Combine fade with vertical expand/shrink so the bar's
-            // measured height animates in lockstep with its alpha.
-            // Without expand/shrink, AnimatedVisibility flips height
-            // 0 → N instantly while the alpha fades over 150ms,
-            // causing screen content to snap up/down before the bar
-            // visibly appears/disappears.
-            AnimatedVisibility(
-                visible = showBottomBar,
-                enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
-                exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
-            ) {
-                PilgrimBottomBar(
-                    currentRoute = currentRoute,
-                    onSelectTab = { route -> navController.navigateToTab(route) },
-                )
-            }
-        },
     ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
         NavHost(
             navController = navController,
             startDestination = Routes.PERMISSIONS,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier.fillMaxSize(),
         ) {
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
@@ -415,6 +400,23 @@ fun PilgrimNavHost(
                         popUpTo(Routes.GOSHUIN) { inclusive = false }
                     }
                 },
+            )
+        }
+        }
+
+        // Pill overlays the screen content at BottomCenter — content
+        // extends edge-to-edge behind the pill so the area around the
+        // pill is whatever the screen renders (parchment canvas, journal
+        // dots, calligraphy, etc.) — not a reserved opaque band.
+        AnimatedVisibility(
+            visible = showBottomBar,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
+            exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
+        ) {
+            PilgrimBottomBar(
+                currentRoute = currentRoute,
+                onSelectTab = { route -> navController.navigateToTab(route) },
             )
         }
         }

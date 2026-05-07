@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,16 +25,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.BuildConfig
@@ -100,16 +104,21 @@ fun SettingsScreen(
         contentWindowInsets = WindowInsets(0),
         containerColor = pilgrimColors.parchment,
     ) { padding ->
-        val density = LocalDensity.current
-        var titleHeightPx by rememberSaveable { mutableStateOf(0) }
-        val titleHeightDp = with(density) { titleHeightPx.toDp() }
+        // Title block: 16+8+heading line(17sp ≈ 24dp)+16 = 64dp.
+        // Hardcoded so the first frame already reserves the right
+        // contentPadding(top) and the user never sees content peek
+        // under the title.
+        val titleHeightDp = 64.dp
+        val hazeState = remember { HazeState() }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(hazeState),
                 state = listState,
                 contentPadding = PaddingValues(top = titleHeightDp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -209,22 +218,34 @@ fun SettingsScreen(
             }
             }
 
-            // iOS-parity sticky title — overlays the LazyColumn via
-            // zIndex with a semi-transparent parchment fill so list
-            // content peeks behind during scroll. Measured height feeds
-            // contentPadding(top) above so the first card sits below
-            // the header at rest.
+            // iOS-parity sticky title — Box-shaped backdrop blur extends
+            // 24dp past the title bottom; transparent tint + zero noise
+            // make the gradient tail fully invisible (no hard edge).
+            val parchmentColor = pilgrimColors.parchment
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(titleHeightDp + 12.dp)
+                    .zIndex(1f)
+                    .hazeEffect(state = hazeState) {
+                        progressive = HazeProgressive.verticalGradient(
+                            startIntensity = 1f,
+                            endIntensity = 0f,
+                        )
+                        backgroundColor = parchmentColor
+                        tints = listOf(HazeTint(Color.Transparent))
+                        noiseFactor = 0f
+                    },
+            )
             Text(
                 text = stringResource(R.string.settings_title),
                 style = pilgrimType.heading,
                 color = pilgrimColors.ink,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .zIndex(1f)
-                    .background(pilgrimColors.parchment.copy(alpha = 0.85f))
+                    .zIndex(2f)
                     .padding(top = 16.dp)
-                    .padding(top = 8.dp, bottom = 16.dp)
-                    .onSizeChanged { titleHeightPx = it.height },
+                    .padding(top = 8.dp, bottom = 16.dp),
                 textAlign = TextAlign.Center,
             )
         }

@@ -30,18 +30,21 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalContext
@@ -101,6 +104,10 @@ private val JOURNAL_MAX_MEANDER = 100.dp
 private val JOURNAL_TITLE_OUTER_TOP = 16.dp
 private val JOURNAL_TITLE_INNER_TOP = 8.dp
 private val JOURNAL_TITLE_INNER_BOTTOM = 16.dp
+// Heading text 17sp + Cormorant ascent/descent ≈ 24dp — total
+// title block = 16+8+24+16 = 64dp. Used as the leading Spacer
+// height so content rests precisely below the floating title.
+private val JOURNAL_TITLE_TOTAL_HEIGHT = 64.dp
 private val DISTANCE_LABEL_OFFSET_DP = 32.dp
 private val DISTANCE_LABEL_Y_OFFSET_DP = 14.dp
 private val MONTH_LABEL_MARGIN_DP = 36.dp
@@ -230,13 +237,13 @@ fun HomeScreen(
         }
     }
 
-    var titleHeightPx by remember { mutableStateOf(0) }
-    val titleHeightDp = with(density) { titleHeightPx.toDp() }
+    val titleHeightDp = JOURNAL_TITLE_TOTAL_HEIGHT
+    val hazeState = remember { HazeState() }
     Box(modifier = Modifier.fillMaxSize()) {
-        // Scroll content lives at the back of the stack. Title floats
-        // on top via zIndex with a semi-transparent parchment fill so
-        // content peeks behind during scroll — iOS-style sticky header
-        // (transparent background, content slides under).
+        // Scroll content lives at the back of the stack. hazeSource
+        // is applied per-scroll-container (the Loaded Column) so the
+        // title overlay's hazeEffect captures the actual scrolling
+        // layer. Empty/Loading branches don't scroll and don't need it.
         Box(modifier = Modifier.fillMaxSize()) {
                 when (val s = journalState) {
                     JournalUiState.Loading -> {
@@ -262,6 +269,7 @@ fun HomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
+                                .hazeSource(hazeState)
                                 .verticalScroll(scrollState),
                         ) {
                             // Reserve vertical space equal to the floating
@@ -549,24 +557,41 @@ fun HomeScreen(
                 }
             }
 
-        // iOS-parity sticky title overlay — sits above the scroll content
-        // via zIndex; semi-transparent parchment fill so scrolling content
-        // peeks through. Measured height feeds the leading Spacer above so
-        // first scroll entry visually sits below the header at rest.
+        // iOS-parity sticky title — Box-shaped backdrop blur extends
+        // 24dp past the title bottom so the progressive gradient has
+        // room to fade fully to zero. Tint is forced transparent so
+        // there's no residual color at the gradient tail; combined
+        // with intensity=0 the bottom of the strip is truly invisible
+        // and there's no hard edge line. Title text overlays via
+        // zIndex so it sits cleanly inside the upper blur region.
+        val parchmentColor = pilgrimColors.parchment
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(JOURNAL_TITLE_TOTAL_HEIGHT + 12.dp)
+                .zIndex(1f)
+                .hazeEffect(state = hazeState) {
+                    progressive = HazeProgressive.verticalGradient(
+                        startIntensity = 1f,
+                        endIntensity = 0f,
+                    )
+                    backgroundColor = parchmentColor
+                    tints = listOf(HazeTint(Color.Transparent))
+                    noiseFactor = 0f
+                },
+        )
         Text(
             text = stringResource(R.string.home_title),
             style = pilgrimType.heading,
             color = pilgrimColors.ink,
             modifier = Modifier
                 .fillMaxWidth()
-                .zIndex(1f)
-                .background(pilgrimColors.parchment.copy(alpha = 0.85f))
+                .zIndex(2f)
                 .padding(top = JOURNAL_TITLE_OUTER_TOP)
                 .padding(
                     top = JOURNAL_TITLE_INNER_TOP,
                     bottom = JOURNAL_TITLE_INNER_BOTTOM,
-                )
-                .onSizeChanged { titleHeightPx = it.height },
+                ),
             textAlign = TextAlign.Center,
         )
 

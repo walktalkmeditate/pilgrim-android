@@ -8,15 +8,14 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
@@ -55,18 +54,20 @@ fun PilgrimBottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 48.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
             shape = CircleShape,
-            color = pilgrimColors.parchmentSecondary,
+            color = pilgrimColors.parchment,
             shadowElevation = 4.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PillTabItem(
@@ -96,7 +97,7 @@ fun PilgrimBottomBar(
 }
 
 @Composable
-private fun PillTabItem(
+private fun RowScope.PillTabItem(
     route: String,
     currentRoute: String?,
     @StringRes label: Int,
@@ -106,10 +107,11 @@ private fun PillTabItem(
     val selected = currentRoute == route
     val interactionSource = remember { MutableInteractionSource() }
     val labelText = stringResource(label)
-    val tint = if (selected) pilgrimColors.stone else pilgrimColors.fog
-    val pillBg = if (selected) pilgrimColors.parchment else androidx.compose.ui.graphics.Color.Transparent
-    Row(
+    val tint = if (selected) pilgrimColors.stone else pilgrimColors.ink
+    val pillBg = if (selected) pilgrimColors.parchmentSecondary else androidx.compose.ui.graphics.Color.Transparent
+    Column(
         modifier = Modifier
+            .weight(1f)
             .clip(CircleShape)
             .background(pillBg)
             .selectable(
@@ -119,20 +121,20 @@ private fun PillTabItem(
                 interactionSource = interactionSource,
                 indication = null,
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+            .padding(vertical = 12.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(20.dp),
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.height(1.dp))
         Text(
             text = labelText,
-            style = pilgrimType.button,
+            style = pilgrimType.caption,
             color = tint,
         )
     }
