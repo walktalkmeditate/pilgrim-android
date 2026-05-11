@@ -347,6 +347,13 @@
     <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
     <string name="share_modal_chooser_title">Share walk</string>
 
+    <!-- Stage 3.2 (walk-summary bundle): WalkSharingButtons card -->
+    <string name="share_button_goshuin">Goshuin</string>
+    <string name="share_button_goshuin_subtitle">Share as image</string>
+    <string name="share_button_etegami">Etegami</string>
+    <string name="share_button_etegami_subtitle">Share as postcard</string>
+    <string name="share_button_walk_journey">Share walk journey</string>
+
     <!-- Stage 9-A: Glance widget strings. -->
     <string name="widget_display_name">Pilgrim</string>
     <string name="widget_description">A quiet mantra for your walk.</string>
