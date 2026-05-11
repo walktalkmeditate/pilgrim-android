@@ -45,9 +45,6 @@ internal const val SEGMENT_ZOOM_EASE_MS = 350L
 /** Below-map sections fade-in duration on Revealed. */
 internal const val REVEAL_FADE_MS = 600
 
-/** Distance count-up animation duration. */
-internal const val COUNT_UP_DURATION_MS = 2_000
-
 /**
  * Camera ease duration for the initial Hidden → Zoomed plant. iOS uses
  * `cameraDuration = 0.1` (`WalkSummaryView.swift:362`) — a quick pull-in,
