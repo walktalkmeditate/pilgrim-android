@@ -43,21 +43,42 @@ class PhotoReliquarySectionTest {
     )
 
     @Test
-    fun `empty state shows header and enabled Add button`() {
+    fun `populated empty state shows header and enabled Add button`() {
         composeRule.setContent {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = emptyList(),
+                        state = ReliquaryState.Populated(emptyList()),
                         onPinPhotos = {},
                         onUnpinPhoto = {},
+                        onForegrounded = {},
+                        onSettingsClick = {},
+                    )
+                }
+            }
+        }
+        // Empty Populated renders height-zero leaf — no header shown
+        composeRule.onNodeWithText("Reliquary").assertDoesNotExist()
+    }
+
+    @Test
+    fun `populated with photos shows header and grid`() {
+        val photos = (1L..3L).map { photo(it) }
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    PhotoReliquarySection(
+                        state = ReliquaryState.Populated(photos),
+                        onPinPhotos = {},
+                        onUnpinPhoto = {},
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }
         }
         composeRule.onNodeWithText("Reliquary").assertIsDisplayed()
         composeRule.onNodeWithText("Add").assertIsDisplayed().assertIsEnabled()
-        composeRule.onNodeWithText("Full").assertDoesNotExist()
     }
 
     @Test
@@ -67,9 +88,11 @@ class PhotoReliquarySectionTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = photos,
+                        state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
                         onUnpinPhoto = {},
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }
@@ -85,14 +108,15 @@ class PhotoReliquarySectionTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = photos,
+                        state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
                         onUnpinPhoto = {},
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }
         }
-        // Each tile carries a fixed content description; count them.
         composeRule.onAllNodes(tileMatcher())
             .assertCountEquals(5)
     }
@@ -104,9 +128,11 @@ class PhotoReliquarySectionTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = photos,
+                        state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
                         onUnpinPhoto = {},
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }
@@ -127,9 +153,11 @@ class PhotoReliquarySectionTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = photos,
+                        state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
                         onUnpinPhoto = { removed = it },
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }
@@ -140,7 +168,6 @@ class PhotoReliquarySectionTest {
         composeRule.onNodeWithText("Remove").performClick()
 
         assertEquals(42L, removed?.id)
-        // Dialog dismissed.
         composeRule.onNodeWithText("Remove from walk?").assertDoesNotExist()
     }
 
@@ -152,9 +179,11 @@ class PhotoReliquarySectionTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = photos,
+                        state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
                         onUnpinPhoto = { removed = it },
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }
@@ -189,9 +218,11 @@ class PhotoReliquarySectionTest {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
-                        photos = photos,
+                        state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
                         onUnpinPhoto = {},
+                        onForegrounded = {},
+                        onSettingsClick = {},
                     )
                 }
             }

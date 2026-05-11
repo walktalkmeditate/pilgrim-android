@@ -23,11 +23,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,7 +41,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
@@ -46,7 +53,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil3.compose.SubcomposeAsyncImage
+import kotlinx.coroutines.delay
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
@@ -54,35 +65,144 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
+internal const val TAG_RELIQUARY_TOGGLE_OFF = "reliquary-toggle-off"
+internal const val TAG_RELIQUARY_PERMISSION_PROMPT = "reliquary-permission-prompt"
+internal const val TAG_RELIQUARY_SETTINGS_BUTTON = "reliquary-settings-button"
+internal const val TAG_RELIQUARY_SKELETON = "reliquary-skeleton"
+internal const val TAG_RELIQUARY_CAROUSEL = "reliquary-carousel"
+
+private const val SKELETON_DEFER_MS = 300L
+private val SKELETON_HEIGHT = 88.dp
+
+internal fun isPhotosPermissionGranted(context: android.content.Context): Boolean {
+    val permission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        android.Manifest.permission.READ_MEDIA_IMAGES
+    } else {
+        android.Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+    return androidx.core.content.ContextCompat.checkSelfPermission(context, permission) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+}
+
 /**
- * Stage 7-A: Walk Summary's photo reliquary. A non-lazy 3-column grid
- * of pinned photos below a header row with an "Add" affordance.
+ * Stage 7-A / Task 2.3: Walk Summary's photo reliquary section.
+ * Dispatches on [ReliquaryState] per the D6 precedence spec:
+ *   ToggleOff > PermissionDenied > Loading > Populated(candidates)
  *
- * Uses the Android Photo Picker (`PickMultipleVisualMedia`) — no runtime
- * permission needed because the system picker IS the consent moment.
- * Long-press a tile → confirmation dialog → unpin. TalkBack users get
- * the same action via a `customActions` semantic on each tile (the
- * `pointerInput` gesture alone is invisible to the accessibility tree,
- * per Stage 6-B's lesson).
+ * A [DisposableEffect] wired to the host Lifecycle forwards `ON_START`
+ * to [onForegrounded] with the live permission result so the VM can
+ * keep [ReliquaryState] in sync across permission-settings round-trips.
  *
- * **TODO (Stage 10-C+):** When the post-walk photo auto-suggestion
- * lands (iOS gates this on `walkReliquaryEnabled`), the auto-launch
- * should read `PracticePreferencesRepository.walkReliquaryEnabled`
- * and skip the auto-suggestion when off. The pref already persists
- * via Stage 10-C; user-initiated picker (FAB tap) is unaffected.
+ * The existing grid logic is preserved inside [ReliquaryPopulated];
+ * Stage 3 will replace it with the PhotoCarousel.
  */
 @Composable
 fun PhotoReliquarySection(
+    state: ReliquaryState,
+    onPinPhotos: (List<Uri>) -> Unit,
+    onUnpinPhoto: (WalkPhoto) -> Unit,
+    onForegrounded: (permissionGranted: Boolean) -> Unit,
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                onForegrounded(isPhotosPermissionGranted(context))
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    when (state) {
+        is ReliquaryState.ToggleOff -> {
+            Box(modifier = modifier.testTag(TAG_RELIQUARY_TOGGLE_OFF))
+        }
+        is ReliquaryState.PermissionDenied -> {
+            ReliquaryPermissionPrompt(
+                onSettingsClick = onSettingsClick,
+                modifier = modifier,
+            )
+        }
+        is ReliquaryState.Loading -> {
+            ReliquaryDeferredSkeleton(modifier = modifier)
+        }
+        is ReliquaryState.Populated -> {
+            if (state.candidates.isEmpty()) {
+                Box(modifier = modifier)
+            } else {
+                ReliquaryPopulated(
+                    photos = state.candidates,
+                    onPinPhotos = onPinPhotos,
+                    onUnpinPhoto = onUnpinPhoto,
+                    modifier = modifier,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReliquaryPermissionPrompt(
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(TAG_RELIQUARY_PERMISSION_PROMPT),
+        verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+    ) {
+        Text(
+            text = stringResource(R.string.reliquary_permission_denied_title),
+            style = pilgrimType.heading,
+            color = pilgrimColors.ink,
+        )
+        Text(
+            text = stringResource(R.string.reliquary_permission_denied_body),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Button(
+            onClick = onSettingsClick,
+            modifier = Modifier.testTag(TAG_RELIQUARY_SETTINGS_BUTTON),
+        ) {
+            Text(stringResource(R.string.reliquary_permission_denied_action_settings))
+        }
+    }
+}
+
+@Composable
+private fun ReliquaryDeferredSkeleton(modifier: Modifier = Modifier) {
+    var show by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(SKELETON_DEFER_MS)
+        show = true
+    }
+    if (show) {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(SKELETON_HEIGHT)
+                .clip(RoundedCornerShape(PilgrimCornerRadius.small))
+                .background(pilgrimColors.parchmentSecondary)
+                .testTag(TAG_RELIQUARY_SKELETON),
+        )
+    }
+}
+
+@Composable
+private fun ReliquaryPopulated(
     photos: List<WalkPhoto>,
     onPinPhotos: (List<Uri>) -> Unit,
     onUnpinPhoto: (WalkPhoto) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val slots = (MAX_PINS_PER_WALK - photos.size).coerceAtLeast(0)
-    // Reserve state for the tile awaiting a remove-confirmation. Null
-    // means no dialog is showing. Reset to null on both confirm and
-    // dismiss paths so a tile whose pin was already removed by another
-    // surface (future: deep-link, widget) doesn't leave a dead dialog.
     var photoToRemove by remember { mutableStateOf<WalkPhoto?>(null) }
 
     // Stable contract references across recompositions.
@@ -112,7 +232,7 @@ fun PhotoReliquarySection(
     val haptics = LocalHapticFeedback.current
     val soundsEnabled = LocalSoundsEnabled.current
 
-    Column(modifier = modifier.fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxWidth().testTag(TAG_RELIQUARY_CAROUSEL)) {
         ReliquaryHeader(
             slotsAvailable = slots,
             onAddClick = {
