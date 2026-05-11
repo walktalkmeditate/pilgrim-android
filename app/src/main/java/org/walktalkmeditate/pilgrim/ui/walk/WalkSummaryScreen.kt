@@ -39,7 +39,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -202,6 +204,23 @@ fun WalkSummaryScreen(
         }
     }
     val animatedDistanceMeters = countUp.value
+
+    // iOS doesn't haptic here, but Pilgrim's Android haptic vocabulary
+    // (Stage 5-B temple bell) calls for a single firm tap at the
+    // ceremonial moment when the camera releases and the route is
+    // revealed. LongPress strength = one firm tap, not slot-machine.
+    // Latched per (loadedWalkId, revealPhase) so it fires once per
+    // walk visit on the Hidden/Zoomed → Revealed edge; phase machine
+    // is monotonic so no oscillation. Suppressed under reduce-motion
+    // and on empty-route walks (where the cinematic itself is skipped).
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(loadedWalkId, revealPhase) {
+        if (revealPhase != RevealPhase.Revealed) return@LaunchedEffect
+        if (reduceMotion) return@LaunchedEffect
+        val loaded = state as? WalkSummaryUiState.Loaded ?: return@LaunchedEffect
+        if (loaded.summary.routePoints.isEmpty()) return@LaunchedEffect
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.etegamiEvents.collect { ev ->

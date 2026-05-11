@@ -101,4 +101,63 @@ class WalkSummaryCountUpTest {
         assertEquals(31, emissions.size)
         assertTrue(emissions.all { it == 0f })
     }
+
+    /**
+     * Replica of the haptic guard logic. Production wires this into a
+     * LaunchedEffect; here we test the predicate in isolation.
+     */
+    private fun shouldFireRevealedHaptic(
+        revealPhase: RevealPhase,
+        reduceMotion: Boolean,
+        routePointsEmpty: Boolean,
+    ): Boolean = revealPhase == RevealPhase.Revealed &&
+        !reduceMotion &&
+        !routePointsEmpty
+
+    @Test
+    fun haptic_firesOnRevealed_whenRouteNonEmptyAndMotionEnabled() {
+        assertTrue(
+            shouldFireRevealedHaptic(
+                revealPhase = RevealPhase.Revealed,
+                reduceMotion = false,
+                routePointsEmpty = false,
+            ),
+        )
+    }
+
+    @Test
+    fun haptic_suppressed_onZoomedPhase() {
+        assertEquals(
+            false,
+            shouldFireRevealedHaptic(
+                revealPhase = RevealPhase.Zoomed,
+                reduceMotion = false,
+                routePointsEmpty = false,
+            ),
+        )
+    }
+
+    @Test
+    fun haptic_suppressed_underReduceMotion() {
+        assertEquals(
+            false,
+            shouldFireRevealedHaptic(
+                revealPhase = RevealPhase.Revealed,
+                reduceMotion = true,
+                routePointsEmpty = false,
+            ),
+        )
+    }
+
+    @Test
+    fun haptic_suppressed_onEmptyRoute() {
+        assertEquals(
+            false,
+            shouldFireRevealedHaptic(
+                revealPhase = RevealPhase.Revealed,
+                reduceMotion = false,
+                routePointsEmpty = true,
+            ),
+        )
+    }
 }
