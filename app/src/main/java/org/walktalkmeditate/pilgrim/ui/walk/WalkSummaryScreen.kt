@@ -114,6 +114,8 @@ fun WalkSummaryScreen(
     val playbackUiState by viewModel.playbackUiState.collectAsStateWithLifecycle()
     val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
+    val reliquaryState by viewModel.reliquaryState.collectAsStateWithLifecycle()
+    val isPinningInFlight by viewModel.isPinningInFlight.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
     val lightReadingDisplay by viewModel.lightReadingDisplay.collectAsStateWithLifecycle()
     val selectedFavicon by viewModel.selectedFavicon.collectAsStateWithLifecycle()
@@ -357,9 +359,26 @@ fun WalkSummaryScreen(
 
                         // 2. Photo Reliquary
                         PhotoReliquarySection(
-                            photos = pinnedPhotos,
+                            state = reliquaryState,
                             onPinPhotos = viewModel::pinPhotos,
                             onUnpinPhoto = viewModel::unpinPhoto,
+                            onForegrounded = viewModel::onForegrounded,
+                            isPinningInFlight = isPinningInFlight,
+                            onSettingsClick = {
+                                val intent = android.content.Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.fromParts("package", context.packageName, null),
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                try {
+                                    context.startActivity(intent)
+                                } catch (e: android.content.ActivityNotFoundException) {
+                                    android.util.Log.w(
+                                        "PhotoReliquary",
+                                        "Settings deep link unavailable",
+                                        e,
+                                    )
+                                }
+                            },
                         )
 
                         // 3. Intention card (guarded — only when set)

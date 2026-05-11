@@ -32,6 +32,16 @@ import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
  * disable ExoPlayer's internal focus management via
  * `setAudioAttributes(handleAudioFocus = false)` so the coordinator
  * remains the single focus owner across VoiceRecorder + playback.
+ *
+ * **iOS divergence (intentional).** iOS uses a per-view
+ * `AudioPlayerModel` instance scoped to each Walk Summary screen
+ * (`AudioPlayerModel.swift:1@db4196e`). Android uses `@Singleton`
+ * instead, surviving navigation-stack changes per the Stage 2-D
+ * pattern: a Singleton player + AudioFocusCoordinator pair lets the
+ * user back-nav from the Walk Summary mid-playback without losing
+ * their position, and lets the standalone Recordings List screen
+ * share the same playback infra. Lifetime of the underlying
+ * resources is bounded by [release].
  */
 @Singleton
 class ExoPlayerVoicePlaybackController @Inject constructor(

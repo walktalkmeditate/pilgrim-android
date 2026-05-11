@@ -18,11 +18,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.TranscriptionRunner
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionDisplay
+import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionPlaceholder
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -98,7 +99,20 @@ private fun VoiceRecordingRow(
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog,
                 )
-                TranscriptionDisplay(recording = recording)
+                val transcription = recording.transcription
+                when {
+                    transcription == null -> TranscriptionPlaceholder(
+                        text = stringResource(R.string.transcription_pending),
+                    )
+                    transcription == TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
+                        text = transcription,
+                    )
+                    else -> TranscriptionDisplay(
+                        text = transcription,
+                        onTap = null,
+                        showCopyAffordance = false,
+                    )
+                }
                 recording.wordsPerMinute?.let { wpm ->
                     Text(
                         text = stringResource(R.string.recording_wpm_caption, wpm.toInt()),
@@ -120,26 +134,3 @@ private fun VoiceRecordingRow(
     }
 }
 
-@Composable
-private fun TranscriptionDisplay(recording: VoiceRecording) {
-    val text = recording.transcription
-    when {
-        text == null -> Text(
-            text = stringResource(R.string.transcription_pending),
-            style = pilgrimType.body,
-            color = pilgrimColors.fog,
-            fontStyle = FontStyle.Italic,
-        )
-        text == TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> Text(
-            text = text,
-            style = pilgrimType.body,
-            color = pilgrimColors.fog,
-            fontStyle = FontStyle.Italic,
-        )
-        else -> Text(
-            text = text,
-            style = pilgrimType.body,
-            color = pilgrimColors.ink,
-        )
-    }
-}

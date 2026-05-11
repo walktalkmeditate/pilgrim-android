@@ -212,6 +212,16 @@
     <!-- Photos copy adapted for Android: "Apple Photos" -> "your photo gallery"; "iOS Settings -> Pilgrim" -> "Android Settings -> Apps -> Pilgrim -> Permissions". -->
     <string name="settings_walk_reliquary_description">Find photos you took along each walk and pin them to the route. Photos stay in your gallery — never copied or uploaded.</string>
     <string name="settings_walk_reliquary_photos_denied_note">Photo access was declined. To enable the reliquary, grant photo access in Android Settings → Apps → Pilgrim → Permissions.</string>
+    <!-- Task 2.3: Walk Summary permission-denied inline prompt (PhotoReliquarySection) -->
+    <string name="reliquary_permission_denied_title">Photos access needed</string>
+    <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk. You can grant access in Settings.</string>
+    <string name="reliquary_permission_denied_action_settings">Open settings</string>
+
+    <!-- Task 4.1: PhotoPreviewSheet actions -->
+    <string name="preview_sheet_open_failed">No gallery app found</string>
+    <string name="preview_sheet_open_in_gallery">Open in gallery</string>
+    <string name="preview_sheet_pin">Pin to walk</string>
+    <string name="preview_sheet_pinned">Pinned</string>
 
     <!-- Stage 10-D VoiceCard -->
     <string name="settings_voice_card_header_title">Voice</string>
@@ -233,6 +243,8 @@
     <string name="recordings_row_unavailable">File unavailable</string>
     <string name="recordings_action_done">Done</string>
     <string name="recordings_action_copy_transcription">Copy transcription</string>
+    <string name="recording_transcription_collapse">Show less</string>
+    <string name="recording_transcription_expand">Show more</string>
     <string name="recordings_transcription_editor_description">Transcription editor</string>
 
     <!-- Stage 10-D RecordingsListScreen — top-level + section + dialogs -->
