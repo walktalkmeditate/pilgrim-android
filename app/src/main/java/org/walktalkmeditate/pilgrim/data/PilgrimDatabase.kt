@@ -35,7 +35,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
         VoiceRecording::class,
         WalkPhoto::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -152,6 +152,23 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_temperature` REAL")
                 db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_humidity` REAL")
                 db.execSQL("ALTER TABLE `walks` ADD COLUMN `weather_wind_speed` REAL")
+            }
+        }
+
+        /**
+         * Adds iOS-parity `steps` column to the walks table. Stored as
+         * INTEGER (nullable). Populated at finishWalk by [StepCounter]
+         * from the diff of `Sensor.TYPE_STEP_COUNTER` cumulative readings
+         * between start + finish. Null when the sensor is unavailable,
+         * the ACTIVITY_RECOGNITION permission is denied, or the device
+         * rebooted mid-walk. Pure `ALTER TABLE ADD COLUMN` — O(1) on
+         * existing DBs of any size.
+         *
+         * iOS parity: `Walk.steps: Int?` (`Walk.swift:122@db4196e`).
+         */
+        val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `walks` ADD COLUMN `steps` INTEGER")
             }
         }
     }

@@ -472,6 +472,7 @@ fun WalkSummaryScreen(
                             WalkStatsRow(
                                 distanceMeters = animatedDistanceMeters.toDouble(),
                                 ascendMeters = s.summary.ascendMeters,
+                                steps = s.summary.walk.steps,
                                 units = distanceUnits,
                                 modifier = Modifier.alpha(
                                     rememberRevealAlpha(

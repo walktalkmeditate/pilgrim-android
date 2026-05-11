@@ -38,4 +38,17 @@ data class Walk(
     val weatherHumidity: Double? = null,
     @ColumnInfo(name = "weather_wind_speed")
     val weatherWindSpeed: Double? = null,
+    /**
+     * iOS parity Walk.steps (`Walk.swift:122@db4196e`). Cumulative step
+     * count for the walk, populated at finishWalk by [StepCounter] (diff
+     * of [android.hardware.Sensor.TYPE_STEP_COUNTER] cumulative reading
+     * between start + finish). Null when:
+     *   - sensor unavailable on device
+     *   - ACTIVITY_RECOGNITION permission denied
+     *   - device rebooted mid-walk (cumulative count reset → negative diff)
+     * Gate: WalkStatsRow renders the Steps mini-stat only when `steps > 0`
+     * (iOS parity `if let steps = walk.steps, steps > 0`).
+     */
+    @ColumnInfo(name = "steps")
+    val steps: Int? = null,
 )

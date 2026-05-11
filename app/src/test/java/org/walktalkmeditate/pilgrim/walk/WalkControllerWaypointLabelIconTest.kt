@@ -17,6 +17,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -45,7 +46,7 @@ class WalkControllerWaypointLabelIconTest {
         )
         controller = WalkController(repository = repository, clock = object : Clock {
             override fun now(): Long = 1_000L
-        })
+        }, stepCounter = fakeStepCounter())
     }
 
     @After fun tearDown() = db.close()

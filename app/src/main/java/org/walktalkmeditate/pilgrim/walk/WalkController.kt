@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 class WalkController @Inject constructor(
     private val repository: WalkRepository,
     private val clock: Clock,
+    private val stepCounter: org.walktalkmeditate.pilgrim.sensor.StepCounter,
 ) {
     private val _state = MutableStateFlow<WalkState>(WalkState.Idle)
     val state: StateFlow<WalkState> = _state.asStateFlow()
@@ -63,6 +64,7 @@ class WalkController @Inject constructor(
         // string can't land malformed text in Room.
         val sanitized = intention?.trim()?.take(MAX_INTENTION_CHARS)?.takeIf { it.isNotBlank() }
         val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized)
+        stepCounter.start()
         val (next, effect) = WalkReducer.reduce(
             current,
             WalkAction.Start(walkId = walk.id, at = startedAt),
@@ -414,9 +416,20 @@ class WalkController @Inject constructor(
                     "Finalize requested for walk ${effect.walkId}, but no row exists in " +
                         "the database. The in-memory state and persisted walk have diverged."
                 }
+                // iOS parity Walk.steps: capture step-counter diff at finish.
+                // Null when sensor unavailable, permission denied, or reboot
+                // mid-walk. Persisted regardless of value so a re-finalize
+                // (test path) overwrites any stale value.
+                val steps = stepCounter.stop()
+                repository.updateSteps(walkId = effect.walkId, steps = steps)
             }
 
-            is WalkEffect.PurgeWalk -> repository.deleteWalkById(effect.walkId)
+            is WalkEffect.PurgeWalk -> {
+                // Discard path: drop the sensor listener without persisting
+                // (the walk row is being deleted anyway).
+                stepCounter.stop()
+                repository.deleteWalkById(effect.walkId)
+            }
         }
     }
 
