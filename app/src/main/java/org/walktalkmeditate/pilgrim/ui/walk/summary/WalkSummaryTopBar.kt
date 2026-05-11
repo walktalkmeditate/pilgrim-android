@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -55,7 +57,7 @@ fun WalkSummaryTopBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(pilgrimColors.parchment)
+            .background(pilgrimColors.parchmentSecondary)
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(64.dp)
             .padding(horizontal = PilgrimSpacing.normal),
@@ -83,14 +85,25 @@ fun WalkSummaryTopBar(
                     .padding(horizontal = 72.dp),
             )
         }
-        TextButton(
+        // iOS WalkSummaryView.toolbar Done pill: subtle parchmentTertiary
+        // fill behind the "Done" label, rounded full-pill shape, stone
+        // tint matching iOS's accent role.
+        Button(
             onClick = onDone,
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = pilgrimColors.parchmentTertiary,
+                contentColor = pilgrimColors.stone,
+            ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                horizontal = PilgrimSpacing.normal,
+                vertical = PilgrimSpacing.small,
+            ),
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             Text(
                 text = stringResource(R.string.summary_action_done),
                 style = pilgrimType.button,
-                color = pilgrimColors.stone,
             )
         }
     }

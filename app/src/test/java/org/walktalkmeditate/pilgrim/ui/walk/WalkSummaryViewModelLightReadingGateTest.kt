@@ -12,7 +12,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -25,9 +24,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,7 +33,6 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
-import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
@@ -47,23 +43,18 @@ import org.walktalkmeditate.pilgrim.data.sharing.WalkSharingTracker
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
-import org.walktalkmeditate.pilgrim.ui.walk.reliquary.ReliquaryState
 
 /**
- * Task 2.2: VM-side [WalkSummaryViewModel.reliquaryState] flow +
- * permission snapshot + [WalkSummaryViewModel.onForegrounded].
+ * Task 2.2: VM-side [WalkSummaryViewModel.hasRevealedLightReading] flow +
+ * [WalkSummaryViewModel.markCurrentWalkShared].
  *
- * Path B (simplified): Android's architecture uses Room's hot Flow
- * exclusively for pinned photos — there is no MediaStore scan/fetch
- * trigger, so [ReliquaryState.Loading] never appears in production from
- * this VM. `isFetching` is hard-wired to `false` in the combine; these
- * tests verify the three reachable production states + the
- * `onForegrounded` permission-tracking contract.
+ * Tests that the flow correctly reflects WalkSharingTracker state and that
+ * markCurrentWalkShared() persists via the tracker, flipping the flow to true.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
-class WalkSummaryViewModelReliquaryStateTest {
+class WalkSummaryViewModelLightReadingGateTest {
 
     private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
@@ -76,15 +67,10 @@ class WalkSummaryViewModelReliquaryStateTest {
     private lateinit var hemisphereRepo: HemisphereRepository
     private lateinit var persistenceScope: CoroutineScope
     private lateinit var photoAnalysisScheduler: FakePhotoAnalysisScheduler
+    private lateinit var walkSharingTracker: WalkSharingTracker
     private val dispatcher = UnconfinedTestDispatcher()
-    private val hemisphereStoreName = "wsvm-reliquary-${java.util.UUID.randomUUID()}"
+    private val hemisphereStoreName = "wsvm-light-reading-gate-${java.util.UUID.randomUUID()}"
 
-    /**
-     * All VMs created in a test are tracked here so tearDown can cancel
-     * their viewModelScope BEFORE db.close() — prevents Room observers
-     * from firing onto a closed DB and poisoning later tests with
-     * UncaughtExceptionsBeforeTest on a misleading stack pointer.
-     */
     private val createdViewModels = mutableListOf<WalkSummaryViewModel>()
 
     @Before
@@ -118,6 +104,17 @@ class WalkSummaryViewModelReliquaryStateTest {
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, FakeLocationSource(), hemisphereScope)
         persistenceScope = CoroutineScope(SupervisorJob() + dispatcher)
         photoAnalysisScheduler = FakePhotoAnalysisScheduler()
+        walkSharingTracker = WalkSharingTracker(
+            dataStore = PreferenceDataStoreFactory.create(
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                produceFile = {
+                    java.io.File(
+                        context.cacheDir,
+                        "wsvm-light-reading-gate-${java.util.UUID.randomUUID()}.preferences_pb",
+                    )
+                },
+            ),
+        )
     }
 
     @After
@@ -161,22 +158,12 @@ class WalkSummaryViewModelReliquaryStateTest {
                     produceFile = {
                         java.io.File(
                             context.cacheDir,
-                            "reliquary-test-seal-${java.util.UUID.randomUUID()}.preferences_pb",
+                            "light-reading-gate-seal-${java.util.UUID.randomUUID()}.preferences_pb",
                         )
                     },
                 ),
             ),
-            walkSharingTracker = WalkSharingTracker(
-                dataStore = PreferenceDataStoreFactory.create(
-                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
-                    produceFile = {
-                        java.io.File(
-                            context.cacheDir,
-                            "reliquary-test-sharing-${java.util.UUID.randomUUID()}.preferences_pb",
-                        )
-                    },
-                ),
-            ),
+            walkSharingTracker = walkSharingTracker,
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
@@ -194,7 +181,7 @@ class WalkSummaryViewModelReliquaryStateTest {
                     produceFile = {
                         java.io.File(
                             ctx.cacheDir,
-                            "reliquary-test-styles-${java.util.UUID.randomUUID()}.preferences_pb",
+                            "light-reading-gate-styles-${java.util.UUID.randomUUID()}.preferences_pb",
                         )
                     },
                 ),
@@ -207,7 +194,7 @@ class WalkSummaryViewModelReliquaryStateTest {
                     produceFile = {
                         java.io.File(
                             ctx.cacheDir,
-                            "reliquary-test-photo-${java.util.UUID.randomUUID()}.preferences_pb",
+                            "light-reading-gate-photo-${java.util.UUID.randomUUID()}.preferences_pb",
                         )
                     },
                 ),
@@ -244,111 +231,40 @@ class WalkSummaryViewModelReliquaryStateTest {
         return walk.id
     }
 
-    // --- reliquaryState combine -------------------------------------------
+    // --- hasRevealedLightReading ------------------------------------------
 
     @Test
-    fun `reliquaryState emits ToggleOff when walkReliquaryEnabled is false`() = runTest(dispatcher) {
+    fun hasRevealedLightReading_isFalse_byDefault() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
-        val prefs = FakePracticePreferencesRepository(
-            initialCelestialAwarenessEnabled = true,
-            initialWalkReliquaryEnabled = false,
-        )
-        val (vm, _) = newViewModel(walkId, prefs)
-
-        vm.onForegrounded(permissionGranted = true)
-        advanceUntilIdle()
-
-        vm.reliquaryState.test(timeout = 5.seconds) {
-            val state = awaitItem()
-            assertEquals(ReliquaryState.ToggleOff, state)
+        val (vm, _) = newViewModel(walkId)
+        vm.hasRevealedLightReading.test {
+            assertEquals(false, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `reliquaryState emits PermissionDenied when toggle on but permission denied`() = runTest(dispatcher) {
+    fun hasRevealedLightReading_isTrue_whenUuidAlreadyShared() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
-        val prefs = FakePracticePreferencesRepository(
-            initialCelestialAwarenessEnabled = true,
-            initialWalkReliquaryEnabled = true,
-        )
-        val (vm, _) = newViewModel(walkId, prefs)
-
-        vm.onForegrounded(permissionGranted = false)
+        val walkUuid = db.walkDao().getById(walkId)!!.uuid
+        walkSharingTracker.markShared(walkUuid)
         advanceUntilIdle()
-
-        vm.reliquaryState.test(timeout = 5.seconds) {
-            val state = awaitItem()
-            assertEquals(ReliquaryState.PermissionDenied, state)
+        val (vm, _) = newViewModel(walkId)
+        vm.hasRevealedLightReading.test {
+            assertEquals(true, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `reliquaryState emits Populated when toggle on, permission granted, photos present`() = runTest(dispatcher) {
+    fun markCurrentWalkShared_flipsHasRevealedToTrue() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
-        val prefs = FakePracticePreferencesRepository(
-            initialCelestialAwarenessEnabled = true,
-            initialWalkReliquaryEnabled = true,
-        )
-        val (vm, _) = newViewModel(walkId, prefs)
-
-        repository.pinPhotos(
-            walkId = walkId,
-            refs = listOf(PhotoPinRef(uri = "content://media/external/images/media/1", takenAt = null)),
-            pinnedAt = 2_000L,
-        )
-        vm.onForegrounded(permissionGranted = true)
-        advanceUntilIdle()
-
-        vm.reliquaryState.test(timeout = 5.seconds) {
-            var latestState = awaitItem()
-            // Drain until we see Populated — the initial value is ToggleOff
-            // (from the stateIn initialValue) and may arrive before the
-            // combine fires with the updated inputs.
-            while (latestState !is ReliquaryState.Populated) latestState = awaitItem()
-            val finalState: ReliquaryState = latestState
-            @Suppress("KotlinConstantConditions")
-            assertTrue(
-                "expected Populated with non-empty candidates",
-                finalState is ReliquaryState.Populated && finalState.candidates.isNotEmpty(),
-            )
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    // --- onForegrounded permission tracking -------------------------------
-
-    @Test
-    fun `onForegrounded denied-to-granted transition updates permission snapshot`() = runTest(dispatcher) {
-        val walkId = freshFinishedWalkId()
-        val prefs = FakePracticePreferencesRepository(
-            initialCelestialAwarenessEnabled = true,
-            initialWalkReliquaryEnabled = true,
-        )
-        val (vm, _) = newViewModel(walkId, prefs)
-
-        vm.onForegrounded(permissionGranted = false)
-        advanceUntilIdle()
-
-        vm.reliquaryState.test(timeout = 5.seconds) {
-            val deniedState = awaitItem()
-            assertEquals(ReliquaryState.PermissionDenied, deniedState)
-
-            // Simulate the user granting permission and the screen resuming.
-            vm.onForegrounded(permissionGranted = true)
+        val (vm, _) = newViewModel(walkId)
+        vm.hasRevealedLightReading.test {
+            assertEquals(false, awaitItem())
+            vm.markCurrentWalkShared()
             advanceUntilIdle()
-
-            val grantedState = awaitItem()
-            // No photos pinned → Populated(empty), not PermissionDenied.
-            assertTrue(
-                "expected Populated after permission granted, got $grantedState",
-                grantedState is ReliquaryState.Populated,
-            )
-            assertFalse(
-                "Populated must not be PermissionDenied after grant",
-                grantedState is ReliquaryState.PermissionDenied,
-            )
+            assertEquals(true, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
