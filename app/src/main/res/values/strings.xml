@@ -353,6 +353,7 @@
     <string name="share_button_etegami">Etegami</string>
     <string name="share_button_etegami_subtitle">Share as postcard</string>
     <string name="share_button_walk_journey">Share walk journey</string>
+    <string name="share_no_chooser">No app available to share</string>
 
     <!-- Stage 9-A: Glance widget strings. -->
     <string name="widget_display_name">Pilgrim</string>
