@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -283,7 +284,11 @@ fun WalkSummaryScreen(
     // store + flips the flow false.
     val showReveal by viewModel.showSealReveal.collectAsStateWithLifecycle()
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(pilgrimColors.parchmentSecondary),
+    ) {
         // Summary content renders first (z-order: behind the overlay).
         Column(modifier = Modifier.fillMaxSize()) {
             // Stage 13-A: top bar lives OUTSIDE the scroll — iOS parity
@@ -871,22 +876,20 @@ private fun SummaryMap(
     walkAnnotationColors: WalkAnnotationColors,
     zoomTargetBounds: MapCameraBounds?,
 ) {
-    // Mapbox MapView renders into a SurfaceView — a separate hardware
-    // window layer that punches through Compose graphics layers, so the
-    // prior `compositingStrategy = Offscreen + DstIn` mask had no map
-    // pixels to operate on. Switch to a Canvas-overlay strategy: paint
-    // a parchmentSecondary radial-gradient frame ON TOP of the map. The
-    // gradient is transparent at center → opaque-parchmentSecondary at
-    // edges, producing the same visual as iOS's RadialGradient mask
-    // (corners fade to card-surface color, inscribed circle reveals map).
+    // Mapbox MapView renders into a SurfaceView by default — a separate
+    // hardware window that punches through Compose graphics layers and
+    // can't be masked via DstIn. The PilgrimMap caller below opts in to
+    // textureBackend = true so the map renders into the parent canvas;
+    // a Canvas overlay then paints a parchment radial-gradient frame ON
+    // TOP, producing the same iOS RadialGradient mask effect (transparent
+    // center → opaque-parchment corners). Card removed: corners fade to
+    // the SCREEN background color (pilgrimColors.parchment) so dark mode
+    // shows a real contrast between map and frame.
     val parchmentMask = pilgrimColors.parchmentSecondary
-    Card(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(320.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = pilgrimColors.parchmentSecondary,
-        ),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             if (points.isEmpty()) {
@@ -914,15 +917,17 @@ private fun SummaryMap(
                     textureBackend = true,
                 )
             }
-            // Radial-gradient frame overlay. 0.45 inner-opaque stop matches
-            // iOS's 80/180 startRadius/endRadius ratio (transparent core
-            // → opaque parchment at corners). Pointer events pass through
-            // — overlay is purely visual.
+            // Radial-gradient frame overlay. Inner 30% fully transparent
+            // (clear map view), 30% → 100% fades to opaque parchment so
+            // corners blend with the screen background — more pronounced
+            // than the iOS 80/180 (0.44) ratio because Android dark-mode
+            // colors are closer to the map style and need the extra
+            // contrast. Pointer events pass through.
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val brush = Brush.radialGradient(
                     colorStops = arrayOf(
                         0f to Color.Transparent,
-                        0.45f to Color.Transparent,
+                        0.30f to Color.Transparent,
                         1f to parchmentMask,
                     ),
                     center = Offset(size.width / 2f, size.height / 2f),

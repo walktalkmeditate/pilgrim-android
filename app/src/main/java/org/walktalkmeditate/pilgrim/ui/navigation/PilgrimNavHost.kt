@@ -394,12 +394,21 @@ fun PilgrimNavHost(
                     }
                 }
             }
-            androidx.compose.ui.window.Dialog(
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            val sheetState = androidx.compose.material3.rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
+            )
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            androidx.compose.material3.ModalBottomSheet(
                 onDismissRequest = onDone,
-                properties = androidx.compose.ui.window.DialogProperties(
-                    usePlatformDefaultWidth = false,
-                    decorFitsSystemWindows = false,
+                sheetState = sheetState,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                    topStart = 20.dp,
+                    topEnd = 20.dp,
                 ),
+                dragHandle = null,
+                containerColor = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.parchmentSecondary,
+                contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0) },
             ) {
                 WalkSummaryScreen(
                     onDone = onDone,
