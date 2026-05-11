@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
-import androidx.compose.animation.core.EaseIn
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
@@ -63,7 +63,7 @@ internal fun rememberRevealAlpha(
         animationSpec = if (reduceMotion) {
             tween(0)
         } else {
-            tween(durationMs, delayMillis = delayMs, easing = EaseIn)
+            tween(durationMs, delayMillis = delayMs, easing = FastOutSlowInEasing)
         },
         label = "reveal-alpha-$durationMs-$delayMs",
     )
