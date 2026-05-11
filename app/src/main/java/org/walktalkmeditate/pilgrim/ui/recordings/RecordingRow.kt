@@ -24,7 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicOff
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -41,11 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -154,9 +151,10 @@ fun RecordingRow(
                     onStop = onStopEditing,
                 )
             } else {
-                TranscriptionView(
+                TranscriptionDisplay(
                     text = transcription,
                     onTap = { onStartEditing(recording.id) },
+                    showCopyAffordance = true,
                 )
             }
         }
@@ -372,43 +370,6 @@ private fun UnavailableRow(
     }
 }
 
-@Composable
-private fun TranscriptionView(
-    text: String,
-    onTap: () -> Unit,
-) {
-    val colors = pilgrimColors
-    val type = pilgrimType
-    val clipboard = LocalClipboardManager.current
-    val copyDescription = stringResource(R.string.recordings_action_copy_transcription)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(colors.parchmentTertiary),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            text = text,
-            style = type.body,
-            color = colors.ink,
-            modifier = Modifier
-                .weight(1f)
-                .clickable { onTap() }
-                .padding(8.dp),
-        )
-        Icon(
-            imageVector = Icons.Outlined.ContentCopy,
-            contentDescription = copyDescription,
-            tint = colors.fog,
-            modifier = Modifier
-                .size(36.dp)
-                .clickable { clipboard.setText(AnnotatedString(text)) }
-                .padding(8.dp),
-        )
-    }
-}
 
 @Composable
 private fun TranscriptionEditor(
