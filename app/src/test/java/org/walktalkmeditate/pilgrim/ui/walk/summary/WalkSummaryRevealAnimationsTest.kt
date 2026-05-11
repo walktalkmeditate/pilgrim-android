@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
@@ -60,6 +61,26 @@ class WalkSummaryRevealAnimationsTest {
         // to 66ms (which yields 1980ms, +20ms drift in wrong direction).
         assertEquals(67L, COUNT_UP_INTERVAL_MS)
     }
+
+    @Test
+    fun revealPhaseSaver_roundTrips_allCases() {
+        for (phase in RevealPhase.entries) {
+            val saved = with(RevealPhaseSaver) {
+                allowingStateScope().save(phase)
+            }
+            assertNotNull(saved)
+            val restored = RevealPhaseSaver.restore(saved as Int)
+            assertEquals(phase, restored)
+        }
+    }
+
+    /**
+     * Minimal SaverScope stub for unit-testing a Saver in isolation —
+     * Compose's real SaverScope requires a runtime Composer; here we
+     * only need the `canBeSaved(Int)` contract, which is always true.
+     */
+    private fun allowingStateScope(): androidx.compose.runtime.saveable.SaverScope =
+        androidx.compose.runtime.saveable.SaverScope { true }
 
     @Test
     fun rememberRevealAlpha_usesFastOutSlowInEasing_byDefault() {

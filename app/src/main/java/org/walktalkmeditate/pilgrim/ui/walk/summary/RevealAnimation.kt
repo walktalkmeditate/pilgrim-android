@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import androidx.compose.animation.core.Easing
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -18,6 +19,18 @@ import androidx.compose.ui.graphics.Color
  *                 final over 2s with smooth-step easing.
  */
 internal enum class RevealPhase { Hidden, Zoomed, Revealed }
+
+/**
+ * Compose [Saver] for [RevealPhase] — uses ordinal so the value
+ * survives configuration changes (rotation, font-size, multi-window
+ * resize). Without this, `rememberSaveable` would fall back to
+ * default autoSaver (which doesn't handle enums) and the cinematic
+ * would replay every rotation, re-firing the count-up + haptic.
+ */
+internal val RevealPhaseSaver: Saver<RevealPhase, Int> = Saver(
+    save = { it.ordinal },
+    restore = { RevealPhase.entries[it] },
+)
 
 /**
  * iOS uses `progress * progress * (3 - 2*progress)` for the count-up

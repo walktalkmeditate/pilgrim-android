@@ -27,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +85,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_DEFAULT_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_HERO_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_QUOTE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhaseSaver
 import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
@@ -155,7 +157,10 @@ fun WalkSummaryScreen(
     // Re-keys on the loaded walkId so re-entering a different walk replays;
     // re-entering the SAME walk via back-nav also replays (matches iOS).
     val loadedWalkId = (state as? WalkSummaryUiState.Loaded)?.summary?.walk?.id
-    var revealPhase by remember(loadedWalkId) { mutableStateOf(RevealPhase.Hidden) }
+    var revealPhase by rememberSaveable(
+        loadedWalkId,
+        stateSaver = RevealPhaseSaver,
+    ) { mutableStateOf(RevealPhase.Hidden) }
     var zoomTargetBounds by remember(loadedWalkId) {
         mutableStateOf<MapCameraBounds?>(null)
     }
