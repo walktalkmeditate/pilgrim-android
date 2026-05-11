@@ -74,6 +74,15 @@ class WalkSummaryRevealAnimationsTest {
         }
     }
 
+    @Test
+    fun revealPhaseSaver_restore_returnsHidden_onUnknownOrdinal() {
+        // Defensive bounds-guard: future enum reorder or removal must
+        // not crash on app-update restore. Fall back to Hidden so the
+        // cinematic replays from scratch rather than throwing.
+        assertEquals(RevealPhase.Hidden, RevealPhaseSaver.restore(99))
+        assertEquals(RevealPhase.Hidden, RevealPhaseSaver.restore(-1))
+    }
+
     /**
      * Minimal SaverScope stub for unit-testing a Saver in isolation —
      * Compose's real SaverScope requires a runtime Composer; here we

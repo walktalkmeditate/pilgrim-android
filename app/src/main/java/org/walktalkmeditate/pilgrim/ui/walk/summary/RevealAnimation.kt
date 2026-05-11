@@ -26,10 +26,17 @@ internal enum class RevealPhase { Hidden, Zoomed, Revealed }
  * resize). Without this, `rememberSaveable` would fall back to
  * default autoSaver (which doesn't handle enums) and the cinematic
  * would replay every rotation, re-firing the count-up + haptic.
+ *
+ * Restore falls back to [RevealPhase.Hidden] on out-of-range ordinals
+ * — defensive against the app-update path where a saved-state bundle
+ * from an older release encodes an ordinal that no longer maps to a
+ * valid enum entry (enum reordering, removal, etc.). The cinematic
+ * replays from scratch in that case, which is acceptable on the rare
+ * cross-version restore.
  */
 internal val RevealPhaseSaver: Saver<RevealPhase, Int> = Saver(
     save = { it.ordinal },
-    restore = { RevealPhase.entries[it] },
+    restore = { ordinal -> RevealPhase.entries.getOrNull(ordinal) ?: RevealPhase.Hidden },
 )
 
 /**
