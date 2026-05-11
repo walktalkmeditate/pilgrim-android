@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.delay
@@ -82,6 +83,7 @@ fun PhotoReliquarySection(
     onForegrounded: (permissionGranted: Boolean) -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
+    isPinningInFlight: Boolean = false,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -116,6 +118,7 @@ fun PhotoReliquarySection(
                 ReliquaryPopulated(
                     photos = state.candidates,
                     onPinPhotos = onPinPhotos,
+                    isPinningInFlight = isPinningInFlight,
                     modifier = modifier,
                 )
             }
@@ -176,9 +179,11 @@ private fun ReliquaryDeferredSkeleton(modifier: Modifier = Modifier) {
 private fun ReliquaryPopulated(
     photos: List<WalkPhoto>,
     onPinPhotos: (List<Uri>) -> Unit,
+    isPinningInFlight: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val slots = (MAX_PINS_PER_WALK - photos.size).coerceAtLeast(0)
+    var previewPhoto by remember { mutableStateOf<WalkPhoto?>(null) }
 
     // Stable contract references across recompositions.
     // `rememberLauncherForActivityResult` keys its `DisposableEffect` on
@@ -221,15 +226,33 @@ private fun ReliquaryPopulated(
 
         if (photos.isNotEmpty()) {
             Spacer(Modifier.height(PilgrimSpacing.small))
-            // All photos in `candidates` are already pinned; every id is a
-            // pinned id by definition. Stage 4 will wire onThumbnailCommit
-            // to open PhotoPreviewSheet; for now it is a no-op.
             PhotoCarousel(
                 photos = photos,
                 pinnedIds = photos.mapTo(mutableSetOf()) { it.id },
-                onThumbnailCommit = {},
+                onThumbnailCommit = { photo -> previewPhoto = photo },
             )
         }
+    }
+
+    val previewState = previewPhoto
+    if (previewState != null) {
+        val context = LocalContext.current
+        val pinnedIds = photos.map { it.id }.toSet()
+        PhotoPreviewSheet(
+            photo = previewState,
+            isPinned = previewState.id in pinnedIds,
+            isPinningInFlight = isPinningInFlight,
+            onPin = { onPinPhotos(listOf(previewState.photoUri.toUri())) },
+            onOpenInGallery = {
+                val intent = buildOpenInGalleryIntent(previewState.photoUri)
+                try {
+                    context.startActivity(intent)
+                } catch (_: android.content.ActivityNotFoundException) {
+                    android.util.Log.w("PhotoReliquary", "no activity to handle gallery intent")
+                }
+            },
+            onDismiss = { previewPhoto = null },
+        )
     }
 }
 
