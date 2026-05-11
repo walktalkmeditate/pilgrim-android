@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 import android.app.Application
 import android.graphics.Bitmap
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,7 +23,7 @@ class SealShareBitmapWriterTest {
     }
 
     @Test
-    fun writeToCache_producesNonEmptyPngFile() {
+    fun writeToCache_producesNonEmptyPngFile() = runTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
         val file = SealShareBitmapWriter.writeToCache(bmp, "test-suffix", context)
@@ -33,7 +34,7 @@ class SealShareBitmapWriterTest {
     }
 
     @Test
-    fun writeToCache_isIdempotent_overwritesExisting() {
+    fun writeToCache_isIdempotent_overwritesExisting() = runTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
         val first = SealShareBitmapWriter.writeToCache(bmp, "stable", context)
