@@ -217,6 +217,12 @@
     <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk. You can grant access in Settings.</string>
     <string name="reliquary_permission_denied_action_settings">Open settings</string>
 
+    <!-- Task 4.1: PhotoPreviewSheet actions -->
+    <string name="preview_sheet_open_failed">No gallery app found</string>
+    <string name="preview_sheet_open_in_gallery">Open in gallery</string>
+    <string name="preview_sheet_pin">Pin to walk</string>
+    <string name="preview_sheet_pinned">Pinned</string>
+
     <!-- Stage 10-D VoiceCard -->
     <string name="settings_voice_card_header_title">Voice</string>
     <string name="settings_voice_card_header_subtitle">Speaking and listening</string>
