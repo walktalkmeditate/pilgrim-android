@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,13 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -872,53 +869,62 @@ private fun SummaryMap(
     walkAnnotationColors: WalkAnnotationColors,
     zoomTargetBounds: MapCameraBounds?,
 ) {
+    // Mapbox MapView renders into a SurfaceView — a separate hardware
+    // window layer that punches through Compose graphics layers, so the
+    // prior `compositingStrategy = Offscreen + DstIn` mask had no map
+    // pixels to operate on. Switch to a Canvas-overlay strategy: paint
+    // a parchmentSecondary radial-gradient frame ON TOP of the map. The
+    // gradient is transparent at center → opaque-parchmentSecondary at
+    // edges, producing the same visual as iOS's RadialGradient mask
+    // (corners fade to card-surface color, inscribed circle reveals map).
+    val parchmentMask = pilgrimColors.parchmentSecondary
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(320.dp)
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithCache {
-                // iOS RadialGradient mask: opaque center -> transparent edge.
-                // 0.45 stop matches iOS's 80/180 startRadius/endRadius ratio.
-                val brush = Brush.radialGradient(
-                    colorStops = arrayOf(
-                        0f to Color.White,
-                        0.45f to Color.White,
-                        1f to Color.Transparent,
-                    ),
-                    center = Offset(size.width / 2f, size.height / 2f),
-                    radius = size.minDimension / 2f,
-                )
-                onDrawWithContent {
-                    drawContent()
-                    drawRect(brush = brush, blendMode = BlendMode.DstIn)
-                }
-            },
+            .height(320.dp),
         colors = CardDefaults.cardColors(
             containerColor = pilgrimColors.parchmentSecondary,
         ),
     ) {
-        if (points.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = stringResource(R.string.walk_map_no_route),
-                    style = pilgrimType.caption,
-                    color = pilgrimColors.fog,
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (points.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = stringResource(R.string.walk_map_no_route),
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog,
+                    )
+                }
+            } else {
+                PilgrimMap(
+                    points = points,
+                    routeSegments = routeSegments,
+                    segmentColors = segmentColors,
+                    revealPhase = revealPhase,
+                    reduceMotion = reduceMotion,
+                    followLatest = false,
+                    modifier = Modifier.fillMaxSize(),
+                    walkAnnotations = walkAnnotations,
+                    walkAnnotationColors = walkAnnotationColors,
+                    zoomTargetBounds = zoomTargetBounds,
                 )
             }
-        } else {
-            PilgrimMap(
-                points = points,
-                routeSegments = routeSegments,
-                segmentColors = segmentColors,
-                revealPhase = revealPhase,
-                reduceMotion = reduceMotion,
-                followLatest = false,
-                modifier = Modifier.fillMaxSize(),
-                walkAnnotations = walkAnnotations,
-                walkAnnotationColors = walkAnnotationColors,
-                zoomTargetBounds = zoomTargetBounds,
-            )
+            // Radial-gradient frame overlay. 0.45 inner-opaque stop matches
+            // iOS's 80/180 startRadius/endRadius ratio (transparent core
+            // → opaque parchment at corners). Pointer events pass through
+            // — overlay is purely visual.
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val brush = Brush.radialGradient(
+                    colorStops = arrayOf(
+                        0f to Color.Transparent,
+                        0.45f to Color.Transparent,
+                        1f to parchmentMask,
+                    ),
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    radius = size.minDimension / 2f,
+                )
+                drawRect(brush = brush)
+            }
         }
     }
 }
