@@ -50,6 +50,7 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_ZOOM_PLANT_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SEGMENT_ZOOM_EASE_MS
@@ -176,12 +177,23 @@ internal fun PilgrimMap(
             RevealPhase.Hidden -> { /* no camera change */ }
             RevealPhase.Zoomed -> {
                 val first = points.firstOrNull() ?: return@LaunchedEffect
-                view.mapboxMap.setCamera(
-                    CameraOptions.Builder()
-                        .center(Point.fromLngLat(first.longitude, first.latitude))
-                        .zoom(REVEAL_ZOOM)
-                        .build(),
-                )
+                val target = CameraOptions.Builder()
+                    .center(Point.fromLngLat(first.longitude, first.latitude))
+                    .zoom(REVEAL_ZOOM)
+                    .build()
+                // iOS WalkSummaryView.swift:362 uses cameraDuration = 0.1
+                // for the Hidden → Zoomed plant — quick pull-in, not an
+                // instant snap. Reduce-motion path stays on setCamera
+                // (Mapbox SDK 11.11.0 last-write-wins; the Revealed
+                // branch below supersedes any in-flight 100ms ease).
+                if (reduceMotion) {
+                    view.mapboxMap.setCamera(target)
+                } else {
+                    view.mapboxMap.easeTo(
+                        target,
+                        MapAnimationOptions.Builder().duration(REVEAL_ZOOM_PLANT_MS).build(),
+                    )
+                }
             }
             RevealPhase.Revealed -> {
                 // Stage 13-D: when a timeline-bar segment is selected the
