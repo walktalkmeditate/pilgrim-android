@@ -661,6 +661,16 @@ fun WalkSummaryScreen(
                         val isGoshuinGenerating = rememberSaveable { mutableStateOf(false) }
                         val isEtegamiGenerating = rememberSaveable { mutableStateOf(false) }
                         val shareScope = rememberCoroutineScope()
+                        // Hoist share-related strings into Composable scope —
+                        // lint's LocalContextGetResourceValueCall flags
+                        // ctx.getString() inside lambdas even though the
+                        // lambda body runs outside the composition.
+                        val goshuinChooserTitle =
+                            stringResource(R.string.share_button_goshuin)
+                        val etegamiChooserTitle =
+                            stringResource(R.string.share_button_etegami)
+                        val shareNoChooserMessage =
+                            stringResource(R.string.share_no_chooser)
                         val baseInk = pilgrimColors.rust
                         val walkDate = remember(s.summary.walk.startTimestamp) {
                             java.time.Instant.ofEpochMilli(s.summary.walk.startTimestamp)
@@ -697,7 +707,7 @@ fun WalkSummaryScreen(
                                         )
                                         val intent = EtegamiShareIntentFactory.buildFromFile(
                                             context, file,
-                                            context.getString(R.string.share_button_goshuin),
+                                            goshuinChooserTitle,
                                         )
                                         try {
                                             context.startActivity(intent)
@@ -705,7 +715,7 @@ fun WalkSummaryScreen(
                                         } catch (_: android.content.ActivityNotFoundException) {
                                             shareScope.launch {
                                                 snackbarHostState.showSnackbar(
-                                                    context.getString(R.string.share_no_chooser),
+                                                    shareNoChooserMessage,
                                                 )
                                             }
                                         }
@@ -731,7 +741,7 @@ fun WalkSummaryScreen(
                                         val file = EtegamiPngWriter.writeToCache(bmp, filename, context)
                                         val intent = EtegamiShareIntentFactory.buildFromFile(
                                             context, file,
-                                            context.getString(R.string.share_button_etegami),
+                                            etegamiChooserTitle,
                                         )
                                         try {
                                             context.startActivity(intent)
@@ -739,7 +749,7 @@ fun WalkSummaryScreen(
                                         } catch (_: android.content.ActivityNotFoundException) {
                                             shareScope.launch {
                                                 snackbarHostState.showSnackbar(
-                                                    context.getString(R.string.share_no_chooser),
+                                                    shareNoChooserMessage,
                                                 )
                                             }
                                         }
