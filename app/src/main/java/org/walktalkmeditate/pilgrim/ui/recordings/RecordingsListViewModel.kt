@@ -28,6 +28,24 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 
 /**
+ * iOS `AudioPlayerModel.swift:11@db4196e` — `[1.0, 1.5, 2.0]` array + modulo
+ * cycle. firstIndex(of:) returns nil for non-array values; fallback to
+ * index 0 means an unknown speed resets to 1.0. This intentionally
+ * differs from the prior Android threshold logic which would map an
+ * "in-between" speed like 1.3 → 2.0 (semantically wrong).
+ */
+internal val SPEED_CYCLE = listOf(1.0f, 1.5f, 2.0f)
+
+internal fun nextPlaybackSpeed(current: Float): Float {
+    val index = SPEED_CYCLE.indexOf(current)
+    return if (index < 0) {
+        SPEED_CYCLE[0]
+    } else {
+        SPEED_CYCLE[(index + 1) % SPEED_CYCLE.size]
+    }
+}
+
+/**
  * UI state for the Recordings tab. The flow joins all voice recordings
  * with all walks, groups recordings under their walk (newest walk
  * first, then by recording start ascending within each walk),
@@ -280,19 +298,14 @@ class RecordingsListViewModel @Inject constructor(
     }
 
     /**
-     * Global speed cycle 1.0 -> 1.5 -> 2.0 -> 1.0. The thresholds use
-     * inequality midpoints so a speed coerced by the controller
-     * (e.g. an external rate change in a future feature) still lands
-     * on a sensible next step.
+     * Global speed cycle 1.0 → 1.5 → 2.0 → 1.0 via [nextPlaybackSpeed].
+     * iOS parity (`AudioPlayerModel.swift:11@db4196e`): `[1.0, 1.5, 2.0]`
+     * array + modulo. Unknown speeds reset to 1.0 (iOS firstIndex(of:)
+     * nil-fallback).
      */
     fun onSpeedCycle() {
         val current = playbackController.playbackSpeed.value
-        val next = when {
-            current < 1.25f -> 1.5f
-            current < 1.75f -> 2.0f
-            else -> 1.0f
-        }
-        playbackController.setPlaybackSpeed(next)
+        playbackController.setPlaybackSpeed(nextPlaybackSpeed(current))
     }
 
     fun onTranscriptionEdit(recordingId: Long, newText: String) {

@@ -88,6 +88,8 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.WalkMilestoneInput
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.MAX_PINS_PER_WALK
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.ReliquaryState
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.resolveReliquaryState
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutInputs
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutProse
 
@@ -540,6 +542,88 @@ class WalkSummaryViewModel @Inject constructor(
             initialValue = emptyList(),
         )
 
+    private val pinPhotosMutex = Mutex()
+    private val _isPinningInFlight = MutableStateFlow(false)
+    val isPinningInFlight: StateFlow<Boolean> = _isPinningInFlight.asStateFlow()
+
+    /**
+     * Tracks the last-known permission state delivered via [onForegrounded]
+     * so that repeated foreground callbacks with the same value are
+     * distinguished from the denied→granted transition that would trigger
+     * a fetch if a MediaStore scan path were added later.
+     *
+     * `false` default: forces a re-evaluation on the first foreground
+     * call, even if the user already granted permission before the
+     * first compose pass delivered a permission snapshot.
+     *
+     * `@Volatile` because [onForegrounded] is called from the Activity
+     * lifecycle (Main thread) while [reliquaryState]'s combine runs on
+     * whatever dispatcher viewModelScope uses — without `@Volatile` the
+     * write might not be visible across threads in time.
+     */
+    @Volatile
+    private var _previousPermissionGranted: Boolean = false
+
+    /**
+     * Spec D6: four-state resolver combining the toggle preference,
+     * current photo permission, and Room-observed pinned photos.
+     *
+     * Android's current architecture uses Room's hot Flow exclusively
+     * for pinned photos — there is no explicit MediaStore scan/fetch
+     * trigger, so [ReliquaryState.Loading] never appears in production
+     * from this VM. The resolver still accepts `isFetching` so a future
+     * MediaStore scan path can wire in without changing the sealed class.
+     * `isFetching` is therefore hard-wired to `false` in this combine.
+     *
+     * Uses [SharingStarted.WhileSubscribed] (matching [pinnedPhotos]) so
+     * unit tests that don't subscribe don't strand a never-completing
+     * collector in viewModelScope. The UI subscribes via
+     * `collectAsStateWithLifecycle`; production behavior is unchanged.
+     *
+     * The permission snapshot is delivered by [onForegrounded] —
+     * [WalkSummaryScreen] must call it on resume with the live
+     * `ContextCompat.checkSelfPermission` result.
+     */
+    private val _permissionGranted = MutableStateFlow(false)
+
+    val reliquaryState: StateFlow<ReliquaryState> =
+        combine(
+            practicePreferences.walkReliquaryEnabled,
+            _permissionGranted,
+            pinnedPhotos,
+        ) { toggleEnabled, permissionGranted, photos ->
+            resolveReliquaryState(
+                toggleEnabled = toggleEnabled,
+                permissionGranted = permissionGranted,
+                isFetching = false,
+                photos = photos,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = ReliquaryState.ToggleOff,
+        )
+
+    /**
+     * Called by [WalkSummaryScreen] on every Activity `onResume` with the
+     * live permission snapshot. Keeps [_permissionGranted] in sync so
+     * [reliquaryState] reflects the true runtime permission state.
+     *
+     * The denied→granted transition tracking ([_previousPermissionGranted])
+     * is a hook for a future MediaStore scan path: when a fetcher lands,
+     * this is the point where `startReliquaryFetch()` would be called.
+     * For now the method is a no-op beyond updating the two state fields.
+     */
+    fun onForegrounded(permissionGranted: Boolean) {
+        val previous = _previousPermissionGranted
+        _previousPermissionGranted = permissionGranted
+        _permissionGranted.value = permissionGranted
+        // Future hook: if (!previous && permissionGranted) startReliquaryFetch()
+        // Suppress unused-variable warning at the compiler level via an
+        // explicit read — the variable is load-bearing for the future path.
+        if (previous == permissionGranted) return
+    }
+
     /**
      * Best-effort cleanup for the displayed walk: handles orphan WAVs,
      * dangling rows, zombie rows from mid-capture kills, and late-
@@ -610,111 +694,123 @@ class WalkSummaryViewModel @Inject constructor(
      */
     fun pinPhotos(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        // Drop duplicate calls instead of queueing: if a second caller arrives
+        // while the first is still writing, the second returns immediately.
+        // The first caller holds the lock until its finally block, so
+        // isPinningInFlight remains true throughout — the UI button stays
+        // disabled and a third tap can't sneak through the flag-clear window.
+        if (!pinPhotosMutex.tryLock()) return
+        _isPinningInFlight.value = true
         persistenceScope.launch {
-            // Pre-clip optimistically against the current StateFlow
-            // snapshot so we only request a persistable grant on URIs
-            // likely to land. The repo's transactional clip is still
-            // authoritative — this pre-clip just keeps the per-app
-            // persistable-grant quota (~512 on current Android) from
-            // being chewed up by URIs the repo will drop.
-            //
-            // Also dedup by URI inside the batch: some OEM pickers
-            // (and SAF fallback) occasionally return the same URI
-            // twice when the user multi-selects from "recents". Our
-            // schema's unique index is on the auto-generated uuid,
-            // not (walk_id, photo_uri), so duplicates would land as
-            // distinct rows and waste cap slots.
-            val current = pinnedPhotos.value
-            val alreadyPinned = current.mapTo(mutableSetOf()) { it.photoUri }
-            val seenThisBatch = mutableSetOf<String>()
-            val remaining = (MAX_PINS_PER_WALK - current.size).coerceAtLeast(0)
-            val unique = uris.filter { candidate ->
-                val key = candidate.toString()
-                key !in alreadyPinned && seenThisBatch.add(key)
-            }
-            val optimistic = if (unique.size > remaining) {
-                unique.take(remaining)
-            } else {
-                unique
-            }
-            if (optimistic.isEmpty()) return@launch
-            val pinnedAt = System.currentTimeMillis()
-            val refs = optimistic.map { uri ->
-                // Hold a persistable read grant so the URI survives
-                // process death. Safe to swallow SecurityException
-                // here: some OEM pickers (or SAF-fallback on API
-                // 28-29 without Play Services) reject the call; the
-                // ephemeral grant still works for the current
-                // process, and the row will insert either way. We
-                // simply lose cross-boot durability on those devices
-                // — verify during device QA.
-                runCatching {
-                    context.contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                    )
-                }.onFailure {
-                    android.util.Log.w(
-                        TAG,
-                        "takePersistableUriPermission failed for $uri",
-                        it,
-                    )
+            try {
+                // Pre-clip optimistically against the current StateFlow
+                // snapshot so we only request a persistable grant on URIs
+                // likely to land. The repo's transactional clip is still
+                // authoritative — this pre-clip just keeps the per-app
+                // persistable-grant quota (~512 on current Android) from
+                // being chewed up by URIs the repo will drop.
+                //
+                // Also dedup by URI inside the batch: some OEM pickers
+                // (and SAF fallback) occasionally return the same URI
+                // twice when the user multi-selects from "recents". Our
+                // schema's unique index is on the auto-generated uuid,
+                // not (walk_id, photo_uri), so duplicates would land as
+                // distinct rows and waste cap slots.
+                val current = pinnedPhotos.value
+                val alreadyPinned = current.mapTo(mutableSetOf()) { it.photoUri }
+                val seenThisBatch = mutableSetOf<String>()
+                val remaining = (MAX_PINS_PER_WALK - current.size).coerceAtLeast(0)
+                val unique = uris.filter { candidate ->
+                    val key = candidate.toString()
+                    key !in alreadyPinned && seenThisBatch.add(key)
                 }
-                PhotoPinRef(uri = uri.toString(), takenAt = readDateTaken(uri))
-            }
-            val result = try {
-                repository.pinPhotos(
-                    walkId = walkId,
-                    refs = refs,
-                    pinnedAt = pinnedAt,
-                    cap = MAX_PINS_PER_WALK,
-                )
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                android.util.Log.e(TAG, "pinPhotos failed for walk $walkId", t)
-                return@launch
-            }
-            // Release grants for URIs the repo's transactional clip
-            // dropped (e.g. because a concurrent pinPhotos committed
-            // between our pre-clip and the repo's count). The grant
-            // was taken above; without this, the URI would leak out
-            // of the app-wide persistable-grant quota with no row
-            // and therefore no unpin path to release it. The repo
-            // has already confirmed no other walk references these
-            // URIs, so releasing is safe.
-            result.droppedOrphanUris.forEach { orphan ->
-                runCatching {
-                    context.contentResolver.releasePersistableUriPermission(
-                        Uri.parse(orphan),
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                    )
-                }.onFailure {
-                    android.util.Log.w(
-                        TAG,
-                        "releasePersistableUriPermission (orphan clip) failed for $orphan",
-                        it,
-                    )
+                val optimistic = if (unique.size > remaining) {
+                    unique.take(remaining)
+                } else {
+                    unique
                 }
-            }
-            // Stage 7-B: kick off on-device ML Kit labeling for the
-            // freshly inserted rows. Per-walk batch (not per-photo) —
-            // the runner iterates the pending list, so one call
-            // covers the whole batch even when N > 1 photos landed.
-            // KEEP policy + the runner's pending filter make this a
-            // no-op if a worker is already running for this walk.
-            if (result.insertedIds.isNotEmpty()) {
-                try {
-                    photoAnalysisScheduler.scheduleForWalk(walkId)
+                if (optimistic.isEmpty()) return@launch
+                val pinnedAt = System.currentTimeMillis()
+                val refs = optimistic.map { uri ->
+                    // Hold a persistable read grant so the URI survives
+                    // process death. Safe to swallow SecurityException
+                    // here: some OEM pickers (or SAF-fallback on API
+                    // 28-29 without Play Services) reject the call; the
+                    // ephemeral grant still works for the current
+                    // process, and the row will insert either way. We
+                    // simply lose cross-boot durability on those devices
+                    // — verify during device QA.
+                    runCatching {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                    }.onFailure {
+                        android.util.Log.w(
+                            TAG,
+                            "takePersistableUriPermission failed for $uri",
+                            it,
+                        )
+                    }
+                    PhotoPinRef(uri = uri.toString(), takenAt = readDateTaken(uri))
+                }
+                val result = try {
+                    repository.pinPhotos(
+                        walkId = walkId,
+                        refs = refs,
+                        pinnedAt = pinnedAt,
+                        cap = MAX_PINS_PER_WALK,
+                    )
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
-                    android.util.Log.w(
-                        TAG,
-                        "photo analysis schedule failed for walk $walkId",
-                        t,
-                    )
+                    android.util.Log.e(TAG, "pinPhotos failed for walk $walkId", t)
+                    return@launch
                 }
+                // Release grants for URIs the repo's transactional clip
+                // dropped (e.g. because a concurrent pinPhotos committed
+                // between our pre-clip and the repo's count). The grant
+                // was taken above; without this, the URI would leak out
+                // of the app-wide persistable-grant quota with no row
+                // and therefore no unpin path to release it. The repo
+                // has already confirmed no other walk references these
+                // URIs, so releasing is safe.
+                result.droppedOrphanUris.forEach { orphan ->
+                    runCatching {
+                        context.contentResolver.releasePersistableUriPermission(
+                            Uri.parse(orphan),
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                    }.onFailure {
+                        android.util.Log.w(
+                            TAG,
+                            "releasePersistableUriPermission (orphan clip) failed for $orphan",
+                            it,
+                        )
+                    }
+                }
+                // Stage 7-B: kick off on-device ML Kit labeling for the
+                // freshly inserted rows. Per-walk batch (not per-photo) —
+                // the runner iterates the pending list, so one call
+                // covers the whole batch even when N > 1 photos landed.
+                // KEEP policy + the runner's pending filter make this a
+                // no-op if a worker is already running for this walk.
+                if (result.insertedIds.isNotEmpty()) {
+                    try {
+                        photoAnalysisScheduler.scheduleForWalk(walkId)
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        android.util.Log.w(
+                            TAG,
+                            "photo analysis schedule failed for walk $walkId",
+                            t,
+                        )
+                    }
+                }
+            } finally {
+                _isPinningInFlight.value = false
+                pinPhotosMutex.unlock()
             }
         }
     }
