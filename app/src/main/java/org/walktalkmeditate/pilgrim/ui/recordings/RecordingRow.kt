@@ -371,6 +371,17 @@ private fun UnavailableRow(
 }
 
 
+/**
+ * Trim the editor's text; return null when the result is empty so the
+ * caller can skip persistence. iOS `VoiceRecordingRow.swift:139-154@db4196e`:
+ * "Done" with whitespace-only text exits edit mode WITHOUT writing.
+ * Internal whitespace is preserved.
+ */
+internal fun transcriptionCommitValue(rawText: String): String? {
+    val trimmed = rawText.trim()
+    return trimmed.ifEmpty { null }
+}
+
 @Composable
 private fun TranscriptionEditor(
     initial: String,
@@ -418,14 +429,18 @@ private fun TranscriptionEditor(
             ),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = {
-                onCommit(latestText.trim())
+                transcriptionCommitValue(latestText)?.let(onCommit)
+                onStop()
             }),
         )
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
                 .background(colors.stone.copy(alpha = 0.12f))
-                .clickable { onCommit(latestText.trim()) }
+                .clickable {
+                    transcriptionCommitValue(latestText)?.let(onCommit)
+                    onStop()
+                }
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
             Text(
