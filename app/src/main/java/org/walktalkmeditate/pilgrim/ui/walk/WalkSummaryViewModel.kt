@@ -1466,18 +1466,22 @@ class WalkSummaryViewModel @Inject constructor(
             )
         if (finished.isEmpty()) return null
         val inputs = finished.map { walk ->
+            // For the current walk, use the live event-replay total
+            // (currentDistance) — Walk.distanceMeters is populated by
+            // WalkMetricsCache asynchronously after Finish, and Walk
+            // Summary opens via the same WalkState.Finished transition.
+            // Without the live read, freshly-finished walks would
+            // silently skip LongestWalk in the typical race window
+            // where the cache hasn't written yet. Past walks read the
+            // cached column (backfilled by WalkMetricsBackfillCoordinator
+            // for legacy rows) — drops the prior N+1
+            // `locationSamplesFor + haversine` per-past-walk read that
+            // dominated load time for users with hundreds of walks.
+            // Mirrors the meditation-millis branch below.
             val d = if (walk.id == currentWalk.id) {
                 currentDistance
             } else {
-                walkDistanceMeters(
-                    repository.locationSamplesFor(walk.id).map {
-                        LocationPoint(
-                            timestamp = it.timestamp,
-                            latitude = it.latitude,
-                            longitude = it.longitude,
-                        )
-                    },
-                )
+                walk.distanceMeters ?: 0.0
             }
             // For the current walk, use the live event-replay total
             // (totals.totalMeditatedMillis) — Walk.meditationSeconds is
