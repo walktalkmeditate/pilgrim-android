@@ -49,6 +49,32 @@ internal const val REVEAL_FADE_MS = 600
 internal const val COUNT_UP_DURATION_MS = 2_000
 
 /**
+ * Camera ease duration for the initial Hidden → Zoomed plant. iOS uses
+ * `cameraDuration = 0.1` (`WalkSummaryView.swift:362`) — a quick pull-in,
+ * not an instant snap, so the user perceives the map "arriving" at the
+ * starting point before the longer reveal ease.
+ */
+internal const val REVEAL_ZOOM_PLANT_MS = 100L
+
+/**
+ * Number of progress increments in the distance count-up animation.
+ * iOS schedules `for i in 0...steps` (`WalkSummaryView.swift:384`) —
+ * 31 emissions, 30 transitions. The discrete cadence (≈14 fps) is the
+ * old-odometer feel that distinguishes this from a smooth tween.
+ */
+internal const val COUNT_UP_STEPS = 30
+
+/**
+ * Per-step delay for the count-up emitter. iOS uses
+ * `interval = 2.0 / 30 = 66.67 ms` (Double). Android rounds UP to 67 ms
+ * so total = 30 × 67 = 2010 ms, preserving the perceived iOS rhythm
+ * rather than truncating to 66 ms (which yields 1980 ms, +20 ms drift
+ * in the wrong direction — the final-tick payoff frame matters most
+ * perceptually).
+ */
+internal const val COUNT_UP_INTERVAL_MS = 67L
+
+/**
  * Theme-resolved colors for the route polyline segments. Tokens read at
  * the @Composable layer (LocalPilgrimColors), packaged here so
  * [PilgrimMap] doesn't need to depend on the theme module directly.
