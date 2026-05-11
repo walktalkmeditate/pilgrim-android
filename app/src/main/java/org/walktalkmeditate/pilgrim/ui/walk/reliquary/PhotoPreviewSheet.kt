@@ -97,15 +97,21 @@ private fun PhotoPreviewSheetContent(
     val density = LocalDensity.current
     var dragOffsetDp by remember { mutableStateOf(0.dp) }
     var dismissing by remember { mutableStateOf(false) }
+    var isDragging by remember { mutableStateOf(false) }
 
-    val snapBackOffset by animateFloatAsState(
-        targetValue = dragOffsetDp.value,
+    // Spring only fires on gesture release (snapback to 0). During an active
+    // drag isDragging=true, so displayOffsetDp tracks the finger directly
+    // with no spring lag. On release isDragging flips false and the spring
+    // animates back from dragOffsetDp to 0.
+    val animatedSnapBack by animateFloatAsState(
+        targetValue = if (isDragging) dragOffsetDp.value else 0f,
         animationSpec = spring(
             stiffness = Spring.StiffnessLow,
             dampingRatio = 0.8f,
         ),
-        label = "preview-sheet-drag-offset",
+        label = "preview-sheet-snap-back",
     )
+    val displayOffsetDp = if (isDragging) dragOffsetDp.value else animatedSnapBack
 
     BackHandler(enabled = true) {
         if (dismissing) return@BackHandler
@@ -117,10 +123,12 @@ private fun PhotoPreviewSheetContent(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .graphicsLayer { translationY = with(density) { snapBackOffset.dp.toPx() } }
+            .graphicsLayer { translationY = with(density) { displayOffsetDp.dp.toPx() } }
             .pointerInput(photo.id) {
                 detectVerticalDragGestures(
+                    onDragStart = { isDragging = true },
                     onDragEnd = {
+                        isDragging = false
                         if (dragOffsetDp > DRAG_DISMISS_THRESHOLD_DP) {
                             if (!dismissing) {
                                 dismissing = true
@@ -129,6 +137,10 @@ private fun PhotoPreviewSheetContent(
                         } else {
                             dragOffsetDp = 0.dp
                         }
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        dragOffsetDp = 0.dp
                     },
                     onVerticalDrag = { _, dragAmount ->
                         val deltaDp = with(density) { dragAmount.toDp() }

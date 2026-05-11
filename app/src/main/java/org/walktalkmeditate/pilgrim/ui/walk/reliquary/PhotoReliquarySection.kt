@@ -57,13 +57,30 @@ private const val SKELETON_DEFER_MS = 300L
 private val SKELETON_HEIGHT = 88.dp
 
 internal fun isPhotosPermissionGranted(context: android.content.Context): Boolean {
-    val permission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-        android.Manifest.permission.READ_MEDIA_IMAGES
-    } else {
-        android.Manifest.permission.READ_EXTERNAL_STORAGE
+    val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
+    return when {
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+            // Android 14+: accept either full (READ_MEDIA_IMAGES) or partial
+            // (READ_MEDIA_VISUAL_USER_SELECTED) photo access. Per spec non-goal,
+            // partial-grant is treated the same as full-grant for this bundle;
+            // the "Manage" affordance for partial access is future UX (Phase N).
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.READ_MEDIA_IMAGES,
+            ) == granted || androidx.core.content.ContextCompat.checkSelfPermission(
+                context, "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+            ) == granted
+        }
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU -> {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.READ_MEDIA_IMAGES,
+            ) == granted
+        }
+        else -> {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.READ_EXTERNAL_STORAGE,
+            ) == granted
+        }
     }
-    return androidx.core.content.ContextCompat.checkSelfPermission(context, permission) ==
-        android.content.pm.PackageManager.PERMISSION_GRANTED
 }
 
 /**

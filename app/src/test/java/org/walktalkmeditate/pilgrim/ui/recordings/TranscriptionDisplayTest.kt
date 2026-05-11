@@ -29,14 +29,16 @@ class TranscriptionDisplayTest {
     }
 
     @Test
-    fun textWithEightNewlines_needsExpansion() {
-        val multiline = (1..9).joinToString("\n") { "line" }
+    fun textWith8Lines_needsExpansion() {
+        // iOS split.count > 7 → 8+ lines trips expansion. 8 lines = 7 newlines.
+        val multiline = (1..8).joinToString("\n") { "line" }
         assertTrue(transcriptionNeedsExpansion(multiline))
     }
 
     @Test
-    fun textWithSevenNewlines_doesNotNeedExpansion() {
-        val multiline = (1..8).joinToString("\n") { "line" }
+    fun textWith7Lines_doesNotNeedExpansion() {
+        // 7 lines = 6 newlines; under threshold.
+        val multiline = (1..7).joinToString("\n") { "line" }
         assertFalse(transcriptionNeedsExpansion(multiline))
     }
 

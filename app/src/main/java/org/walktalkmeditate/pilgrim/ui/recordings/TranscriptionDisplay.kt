@@ -38,15 +38,18 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * `text.count > 280 || text.split(separator: "\n").count > 7`.
  * Kotlin uses `String.length` (UTF-16 code units) — minor grapheme
  * divergence on multi-codepoint emoji is acceptable for transcribed
- * speech content. The newline split-count is 1-based on iOS (`8 lines = 8`),
- * so the boundary `> 7` becomes ≥ 8 newlines.
+ * speech content. iOS `split.count` is LINE count (8 lines = count 8),
+ * so `> 7` triggers at 8+ lines = 7+ newlines. Android must compare
+ * `(newlineCount + 1) > LINE_LIMIT` to match the iOS line-count semantics.
  */
 internal const val TRANSCRIPTION_CHAR_LIMIT = 280
-internal const val TRANSCRIPTION_NEWLINE_LIMIT = 7
+internal const val TRANSCRIPTION_LINE_LIMIT = 7
 
 internal fun transcriptionNeedsExpansion(text: String): Boolean =
     text.length > TRANSCRIPTION_CHAR_LIMIT ||
-        text.count { it == '\n' } > TRANSCRIPTION_NEWLINE_LIMIT
+        // Line count = newline count + 1 (mirrors iOS split.count semantics).
+        // > 7 lines requires >= 7 newlines.
+        (text.count { it == '\n' } + 1) > TRANSCRIPTION_LINE_LIMIT
 
 /**
  * Shared transcription presenter used by both the standalone Recordings
