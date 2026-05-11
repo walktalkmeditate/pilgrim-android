@@ -88,6 +88,8 @@ import org.walktalkmeditate.pilgrim.ui.goshuin.WalkMilestoneInput
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.MAX_PINS_PER_WALK
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.ReliquaryState
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.resolveReliquaryState
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutInputs
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutProse
 
@@ -539,6 +541,84 @@ class WalkSummaryViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = emptyList(),
         )
+
+    /**
+     * Tracks the last-known permission state delivered via [onForegrounded]
+     * so that repeated foreground callbacks with the same value are
+     * distinguished from the denied→granted transition that would trigger
+     * a fetch if a MediaStore scan path were added later.
+     *
+     * `false` default: forces a re-evaluation on the first foreground
+     * call, even if the user already granted permission before the
+     * first compose pass delivered a permission snapshot.
+     *
+     * `@Volatile` because [onForegrounded] is called from the Activity
+     * lifecycle (Main thread) while [reliquaryState]'s combine runs on
+     * whatever dispatcher viewModelScope uses — without `@Volatile` the
+     * write might not be visible across threads in time.
+     */
+    @Volatile
+    private var _previousPermissionGranted: Boolean = false
+
+    /**
+     * Spec D6: four-state resolver combining the toggle preference,
+     * current photo permission, and Room-observed pinned photos.
+     *
+     * Android's current architecture uses Room's hot Flow exclusively
+     * for pinned photos — there is no explicit MediaStore scan/fetch
+     * trigger, so [ReliquaryState.Loading] never appears in production
+     * from this VM. The resolver still accepts `isFetching` so a future
+     * MediaStore scan path can wire in without changing the sealed class.
+     * `isFetching` is therefore hard-wired to `false` in this combine.
+     *
+     * Uses [SharingStarted.WhileSubscribed] (matching [pinnedPhotos]) so
+     * unit tests that don't subscribe don't strand a never-completing
+     * collector in viewModelScope. The UI subscribes via
+     * `collectAsStateWithLifecycle`; production behavior is unchanged.
+     *
+     * The permission snapshot is delivered by [onForegrounded] —
+     * [WalkSummaryScreen] must call it on resume with the live
+     * `ContextCompat.checkSelfPermission` result.
+     */
+    private val _permissionGranted = MutableStateFlow(false)
+
+    val reliquaryState: StateFlow<ReliquaryState> =
+        combine(
+            practicePreferences.walkReliquaryEnabled,
+            _permissionGranted,
+            pinnedPhotos,
+        ) { toggleEnabled, permissionGranted, photos ->
+            resolveReliquaryState(
+                toggleEnabled = toggleEnabled,
+                permissionGranted = permissionGranted,
+                isFetching = false,
+                photos = photos,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = ReliquaryState.ToggleOff,
+        )
+
+    /**
+     * Called by [WalkSummaryScreen] on every Activity `onResume` with the
+     * live permission snapshot. Keeps [_permissionGranted] in sync so
+     * [reliquaryState] reflects the true runtime permission state.
+     *
+     * The denied→granted transition tracking ([_previousPermissionGranted])
+     * is a hook for a future MediaStore scan path: when a fetcher lands,
+     * this is the point where `startReliquaryFetch()` would be called.
+     * For now the method is a no-op beyond updating the two state fields.
+     */
+    fun onForegrounded(permissionGranted: Boolean) {
+        val previous = _previousPermissionGranted
+        _previousPermissionGranted = permissionGranted
+        _permissionGranted.value = permissionGranted
+        // Future hook: if (!previous && permissionGranted) startReliquaryFetch()
+        // Suppress unused-variable warning at the compiler level via an
+        // explicit read — the variable is load-bearing for the future path.
+        if (previous == permissionGranted) return
+    }
 
     /**
      * Best-effort cleanup for the displayed walk: handles orphan WAVs,
