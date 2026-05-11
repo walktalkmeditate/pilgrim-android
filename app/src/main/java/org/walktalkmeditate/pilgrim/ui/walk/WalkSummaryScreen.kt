@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,7 +40,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -65,7 +67,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
-import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_INTERVAL_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_STEPS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CelestialLineRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CustomPromptEditorDialog
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
@@ -82,6 +85,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_DEFAULT_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_HERO_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_DURATION_QUOTE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhaseSaver
 import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
@@ -153,7 +157,10 @@ fun WalkSummaryScreen(
     // Re-keys on the loaded walkId so re-entering a different walk replays;
     // re-entering the SAME walk via back-nav also replays (matches iOS).
     val loadedWalkId = (state as? WalkSummaryUiState.Loaded)?.summary?.walk?.id
-    var revealPhase by remember(loadedWalkId) { mutableStateOf(RevealPhase.Hidden) }
+    var revealPhase by rememberSaveable(
+        loadedWalkId,
+        stateSaver = RevealPhaseSaver,
+    ) { mutableStateOf(RevealPhase.Hidden) }
     var zoomTargetBounds by remember(loadedWalkId) {
         mutableStateOf<MapCameraBounds?>(null)
     }
@@ -177,18 +184,72 @@ fun WalkSummaryScreen(
     }
     val targetDistance =
         (state as? WalkSummaryUiState.Loaded)?.summary?.distanceMeters?.toFloat() ?: 0f
-    // Reduce-motion: snap to target instantly with a zero-duration tween.
-    // iOS uses `@Environment(\.accessibilityReduceMotion)` to bypass the
-    // count-up entirely; Android's equivalent is `ANIMATOR_DURATION_SCALE`.
-    val animatedDistanceMeters by animateFloatAsState(
-        targetValue = if (revealPhase == RevealPhase.Revealed) targetDistance else 0f,
-        animationSpec = if (reduceMotion) {
-            tween(durationMillis = 0)
-        } else {
-            tween(durationMillis = COUNT_UP_DURATION_MS, easing = SmoothStepEasing)
-        },
-        label = "summary-distance-countup",
-    )
+    // iOS WalkSummaryView.swift:378-392 — 31 discrete asyncAfter
+    // emissions over 2.0s using smooth-step easing. Android pins
+    // 30*67ms = 2010ms total (rounded up from iOS's 66.67ms interval
+    // to preserve the perceived rhythm). Animatable is keyed on
+    // loadedWalkId so same-walk re-entry resets hard; LaunchedEffect
+    // re-key cancels any in-flight loop via Compose structured
+    // cancellation. Reduce-motion path snaps to target (matches iOS
+    // missing-route fast-path semantics).
+    // Latch keyed on loadedWalkId so a rotation mid- or post-cinematic
+    // restores the COMPLETED state — the Animatable itself is not
+    // saveable (Compose-Foundation gap), so without this latch the
+    // LaunchedEffect would re-run the 31-emission loop after every
+    // config change. iOS doesn't have this problem because UIKit
+    // doesn't recreate views on rotation.
+    var countUpCompleted by rememberSaveable(loadedWalkId) { mutableStateOf(false) }
+    val countUp = remember(loadedWalkId) {
+        Animatable(if (countUpCompleted) targetDistance else 0f)
+    }
+    LaunchedEffect(loadedWalkId, revealPhase, targetDistance) {
+        if (revealPhase != RevealPhase.Revealed) {
+            countUp.snapTo(0f)
+            countUpCompleted = false
+            return@LaunchedEffect
+        }
+        if (countUpCompleted) {
+            countUp.snapTo(targetDistance)
+            return@LaunchedEffect
+        }
+        if (reduceMotion || targetDistance == 0f) {
+            countUp.snapTo(targetDistance)
+            countUpCompleted = true
+            return@LaunchedEffect
+        }
+        for (i in 0..COUNT_UP_STEPS) {
+            val progress = i.toFloat() / COUNT_UP_STEPS
+            countUp.snapTo(targetDistance * SmoothStepEasing.transform(progress))
+            if (i < COUNT_UP_STEPS) delay(COUNT_UP_INTERVAL_MS)
+        }
+        countUpCompleted = true
+    }
+    val animatedDistanceMeters = countUp.value
+
+    // rememberSaveable latch so rotation after the haptic has already
+    // fired does not re-fire a second tap. Stays false until the
+    // ceremonial moment lands, then sticks for the lifetime of the
+    // walk-summary visit (cleared when navigating to a different walk
+    // because the latch is keyed on loadedWalkId).
+    var hapticFired by rememberSaveable(loadedWalkId) { mutableStateOf(false) }
+    // iOS doesn't haptic here, but Pilgrim's Android haptic vocabulary
+    // (Stage 5-B temple bell) calls for a single firm tap at the
+    // ceremonial moment when the camera releases and the route is
+    // revealed. LongPress strength = one firm tap, not slot-machine.
+    // Latched per (loadedWalkId, revealPhase) so it fires once per
+    // walk visit on the Hidden/Zoomed → Revealed edge; phase machine
+    // is monotonic so no oscillation. Suppressed under reduce-motion
+    // and on empty-route walks (where the cinematic itself is skipped).
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(loadedWalkId, revealPhase) {
+        if (revealPhase != RevealPhase.Revealed) return@LaunchedEffect
+        if (hapticFired) return@LaunchedEffect
+        if (reduceMotion) return@LaunchedEffect
+        val loaded = state as? WalkSummaryUiState.Loaded ?: return@LaunchedEffect
+        if (loaded.summary.routePoints.isEmpty()) return@LaunchedEffect
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        hapticFired = true
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.etegamiEvents.collect { ev ->
