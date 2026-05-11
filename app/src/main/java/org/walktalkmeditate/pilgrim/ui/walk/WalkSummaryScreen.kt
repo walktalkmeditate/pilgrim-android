@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,7 +64,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
-import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_DURATION_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_INTERVAL_MS
+import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_STEPS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CelestialLineRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CustomPromptEditorDialog
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
@@ -177,18 +177,31 @@ fun WalkSummaryScreen(
     }
     val targetDistance =
         (state as? WalkSummaryUiState.Loaded)?.summary?.distanceMeters?.toFloat() ?: 0f
-    // Reduce-motion: snap to target instantly with a zero-duration tween.
-    // iOS uses `@Environment(\.accessibilityReduceMotion)` to bypass the
-    // count-up entirely; Android's equivalent is `ANIMATOR_DURATION_SCALE`.
-    val animatedDistanceMeters by animateFloatAsState(
-        targetValue = if (revealPhase == RevealPhase.Revealed) targetDistance else 0f,
-        animationSpec = if (reduceMotion) {
-            tween(durationMillis = 0)
-        } else {
-            tween(durationMillis = COUNT_UP_DURATION_MS, easing = SmoothStepEasing)
-        },
-        label = "summary-distance-countup",
-    )
+    // iOS WalkSummaryView.swift:378-392 — 31 discrete asyncAfter
+    // emissions over 2.0s using smooth-step easing. Android pins
+    // 30*67ms = 2010ms total (rounded up from iOS's 66.67ms interval
+    // to preserve the perceived rhythm). Animatable is keyed on
+    // loadedWalkId so same-walk re-entry resets hard; LaunchedEffect
+    // re-key cancels any in-flight loop via Compose structured
+    // cancellation. Reduce-motion path snaps to target (matches iOS
+    // missing-route fast-path semantics).
+    val countUp = remember(loadedWalkId) { Animatable(0f) }
+    LaunchedEffect(loadedWalkId, revealPhase, targetDistance) {
+        if (revealPhase != RevealPhase.Revealed) {
+            countUp.snapTo(0f)
+            return@LaunchedEffect
+        }
+        if (reduceMotion || targetDistance == 0f) {
+            countUp.snapTo(targetDistance)
+            return@LaunchedEffect
+        }
+        for (i in 0..COUNT_UP_STEPS) {
+            val progress = i.toFloat() / COUNT_UP_STEPS
+            countUp.snapTo(targetDistance * SmoothStepEasing.transform(progress))
+            if (i < COUNT_UP_STEPS) delay(COUNT_UP_INTERVAL_MS)
+        }
+    }
+    val animatedDistanceMeters = countUp.value
 
     LaunchedEffect(viewModel) {
         viewModel.etegamiEvents.collect { ev ->
