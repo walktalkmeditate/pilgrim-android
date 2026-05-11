@@ -51,3 +51,5 @@ mapbox.token
 
 # Claude Code runtime state
 .claude/
+
+.kaijutsu/
