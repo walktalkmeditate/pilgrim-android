@@ -909,6 +909,9 @@ private fun SummaryMap(
                     walkAnnotations = walkAnnotations,
                     walkAnnotationColors = walkAnnotationColors,
                     zoomTargetBounds = zoomTargetBounds,
+                    // TextureView so the Canvas radial-gradient mask
+                    // actually covers map pixels at the corners.
+                    textureBackend = true,
                 )
             }
             // Radial-gradient frame overlay. 0.45 inner-opaque stop matches
