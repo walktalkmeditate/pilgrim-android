@@ -617,16 +617,36 @@ fun WalkSummaryScreen(
                             WalkSummaryDetailsCard(pausedMillis = s.summary.totalPausedMillis)
                         }
 
-                        // 19. Light Reading card (Stage 6-B / 10-C). VM's
-                        // runCatching means a compute failure yields null
-                        // here and the card just doesn't render. Read from
-                        // `lightReadingDisplay` (live combine of summary +
-                        // celestialAwarenessEnabled pref) so toggling the
-                        // pref while the summary is open immediately shows /
-                        // hides the card.
-                        lightReadingDisplay?.let { reading ->
-                            Spacer(Modifier.height(PilgrimSpacing.normal))
-                            WalkLightReadingCard(reading = reading)
+                        // 19. Light Reading card (iOS body line 86 parity).
+                        // Gated on viewModel.hasRevealedLightReading — only
+                        // visible AFTER the user has shared this walk via
+                        // Goshuin / Etegami / Walk Share Journey. Fades in
+                        // over 1200ms (instant under reduce-motion) per iOS
+                        // markSharedAndReveal() animation.
+                        //
+                        // VM's runCatching means a compute failure yields
+                        // null in `lightReadingDisplay` and the card just
+                        // doesn't render. Read from `lightReadingDisplay`
+                        // (live combine of summary + celestialAwarenessEnabled
+                        // pref) so toggling the pref while the summary is
+                        // open immediately shows / hides the card.
+                        val hasRevealedLR by viewModel.hasRevealedLightReading
+                            .collectAsStateWithLifecycle()
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = hasRevealedLR && lightReadingDisplay != null,
+                            enter = androidx.compose.animation.fadeIn(
+                                animationSpec = androidx.compose.animation.core.tween(
+                                    durationMillis = if (reduceMotion) 0 else 1200,
+                                ),
+                            ),
+                            exit = androidx.compose.animation.fadeOut(),
+                        ) {
+                            lightReadingDisplay?.let { reading ->
+                                androidx.compose.foundation.layout.Column {
+                                    Spacer(Modifier.height(PilgrimSpacing.normal))
+                                    WalkLightReadingCard(reading = reading)
+                                }
+                            }
                         }
 
                         // 20. WalkSharingButtons — iOS body line ~90 shareCard.
