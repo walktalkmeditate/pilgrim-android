@@ -160,4 +160,96 @@ class WalkSummaryCountUpTest {
             ),
         )
     }
+
+    /**
+     * Latch contract: once the count-up loop completes, a fresh
+     * LaunchedEffect run with the same target should skip the loop
+     * and snap to target. Replicates the production guard logic.
+     */
+    private suspend fun emitCountUpWithLatch(
+        target: Float,
+        latchInitiallyCompleted: Boolean,
+        onEmit: (Float) -> Unit,
+        delay: suspend (Long) -> Unit,
+    ): Boolean {
+        if (latchInitiallyCompleted) {
+            onEmit(target)
+            return true
+        }
+        for (i in 0..COUNT_UP_STEPS) {
+            val progress = i.toFloat() / COUNT_UP_STEPS
+            onEmit(target * SmoothStepEasing.transform(progress))
+            if (i < COUNT_UP_STEPS) delay(COUNT_UP_INTERVAL_MS)
+        }
+        return true
+    }
+
+    @Test
+    fun countUpLatch_completed_emitsOnceAtTarget() = runTest {
+        val emissions = mutableListOf<Float>()
+        val target = 5000f
+        val latch = emitCountUpWithLatch(
+            target = target,
+            latchInitiallyCompleted = true,
+            onEmit = { emissions.add(it) },
+            delay = { advanceTimeBy(it) },
+        )
+        assertEquals(1, emissions.size)
+        assertEquals(target, emissions.first(), 0.0001f)
+        assertEquals(true, latch)
+    }
+
+    @Test
+    fun countUpLatch_notCompleted_runsFullLoop() = runTest {
+        val emissions = mutableListOf<Float>()
+        val target = 5000f
+        val latch = emitCountUpWithLatch(
+            target = target,
+            latchInitiallyCompleted = false,
+            onEmit = { emissions.add(it) },
+            delay = { advanceTimeBy(it) },
+        )
+        assertEquals(31, emissions.size)
+        assertEquals(target, emissions.last(), 0.0001f)
+        assertEquals(true, latch)
+    }
+
+    /**
+     * Haptic latch: once fired, subsequent recompositions with the
+     * same key set must skip the haptic. Replicates production guard.
+     */
+    private fun shouldFireRevealedHapticWithLatch(
+        revealPhase: RevealPhase,
+        reduceMotion: Boolean,
+        routePointsEmpty: Boolean,
+        hapticAlreadyFired: Boolean,
+    ): Boolean = revealPhase == RevealPhase.Revealed &&
+        !reduceMotion &&
+        !routePointsEmpty &&
+        !hapticAlreadyFired
+
+    @Test
+    fun haptic_suppressed_whenAlreadyFired() {
+        assertEquals(
+            false,
+            shouldFireRevealedHapticWithLatch(
+                revealPhase = RevealPhase.Revealed,
+                reduceMotion = false,
+                routePointsEmpty = false,
+                hapticAlreadyFired = true,
+            ),
+        )
+    }
+
+    @Test
+    fun haptic_fires_whenNotYetFired() {
+        assertTrue(
+            shouldFireRevealedHapticWithLatch(
+                revealPhase = RevealPhase.Revealed,
+                reduceMotion = false,
+                routePointsEmpty = false,
+                hapticAlreadyFired = false,
+            ),
+        )
+    }
 }

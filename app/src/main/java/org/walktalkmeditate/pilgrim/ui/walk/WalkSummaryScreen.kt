@@ -192,14 +192,29 @@ fun WalkSummaryScreen(
     // re-key cancels any in-flight loop via Compose structured
     // cancellation. Reduce-motion path snaps to target (matches iOS
     // missing-route fast-path semantics).
-    val countUp = remember(loadedWalkId) { Animatable(0f) }
+    // Latch keyed on loadedWalkId so a rotation mid- or post-cinematic
+    // restores the COMPLETED state — the Animatable itself is not
+    // saveable (Compose-Foundation gap), so without this latch the
+    // LaunchedEffect would re-run the 31-emission loop after every
+    // config change. iOS doesn't have this problem because UIKit
+    // doesn't recreate views on rotation.
+    var countUpCompleted by rememberSaveable(loadedWalkId) { mutableStateOf(false) }
+    val countUp = remember(loadedWalkId) {
+        Animatable(if (countUpCompleted) targetDistance else 0f)
+    }
     LaunchedEffect(loadedWalkId, revealPhase, targetDistance) {
         if (revealPhase != RevealPhase.Revealed) {
             countUp.snapTo(0f)
+            countUpCompleted = false
+            return@LaunchedEffect
+        }
+        if (countUpCompleted) {
+            countUp.snapTo(targetDistance)
             return@LaunchedEffect
         }
         if (reduceMotion || targetDistance == 0f) {
             countUp.snapTo(targetDistance)
+            countUpCompleted = true
             return@LaunchedEffect
         }
         for (i in 0..COUNT_UP_STEPS) {
@@ -207,9 +222,16 @@ fun WalkSummaryScreen(
             countUp.snapTo(targetDistance * SmoothStepEasing.transform(progress))
             if (i < COUNT_UP_STEPS) delay(COUNT_UP_INTERVAL_MS)
         }
+        countUpCompleted = true
     }
     val animatedDistanceMeters = countUp.value
 
+    // rememberSaveable latch so rotation after the haptic has already
+    // fired does not re-fire a second tap. Stays false until the
+    // ceremonial moment lands, then sticks for the lifetime of the
+    // walk-summary visit (cleared when navigating to a different walk
+    // because the latch is keyed on loadedWalkId).
+    var hapticFired by rememberSaveable(loadedWalkId) { mutableStateOf(false) }
     // iOS doesn't haptic here, but Pilgrim's Android haptic vocabulary
     // (Stage 5-B temple bell) calls for a single firm tap at the
     // ceremonial moment when the camera releases and the route is
@@ -221,10 +243,12 @@ fun WalkSummaryScreen(
     val haptic = LocalHapticFeedback.current
     LaunchedEffect(loadedWalkId, revealPhase) {
         if (revealPhase != RevealPhase.Revealed) return@LaunchedEffect
+        if (hapticFired) return@LaunchedEffect
         if (reduceMotion) return@LaunchedEffect
         val loaded = state as? WalkSummaryUiState.Loaded ?: return@LaunchedEffect
         if (loaded.summary.routePoints.isEmpty()) return@LaunchedEffect
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        hapticFired = true
     }
 
     LaunchedEffect(viewModel) {
