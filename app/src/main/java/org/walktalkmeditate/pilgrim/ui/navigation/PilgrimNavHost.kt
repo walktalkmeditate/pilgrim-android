@@ -358,8 +358,14 @@ fun PilgrimNavHost(
             ),
         ) { entry ->
             val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
-            WalkSummaryScreen(
-                onDone = {
+            // Stage 5: present Walk Summary as a Dialog so the host screen
+            // (Home / Path / Recordings / Goshuin) stays behind it instead
+            // of being replaced — matches iOS .sheet semantics. The Dialog's
+            // onDismissRequest handles the system back gesture; the existing
+            // onDone lambda body is hoisted out so the Done button and the
+            // Dialog's dismiss share the same handler.
+            val onDone: () -> Unit = remember(navController) {
+                {
                     // Done always lands the user on the Journal (HOME)
                     // tab, regardless of how walkSummary was reached:
                     //  - Path-launched walk: stack is [PATH, walkSummary].
@@ -386,13 +392,33 @@ fun PilgrimNavHost(
                         navController.popBackStack(Routes.PATH, inclusive = false)
                         navController.navigateToTab(Routes.HOME)
                     }
-                },
-                onShareJourney = {
-                    navController.navigate(Routes.walkShare(walkId)) {
-                        launchSingleTop = true
-                    }
-                },
+                }
+            }
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            val sheetState = androidx.compose.material3.rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
             )
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            androidx.compose.material3.ModalBottomSheet(
+                onDismissRequest = onDone,
+                sheetState = sheetState,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                    topStart = 20.dp,
+                    topEnd = 20.dp,
+                ),
+                dragHandle = null,
+                containerColor = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.parchmentSecondary,
+                contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0) },
+            ) {
+                WalkSummaryScreen(
+                    onDone = onDone,
+                    onShareJourney = {
+                        navController.navigate(Routes.walkShare(walkId)) {
+                            launchSingleTop = true
+                        }
+                    },
+                )
+            }
         }
         composable(
             route = Routes.WALK_SHARE_PATTERN,

@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,27 +35,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
-import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
-import org.walktalkmeditate.pilgrim.ui.walk.share.JourneyRowState
+import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
+import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiFilename
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiPngWriter
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiShareIntentFactory
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SealShareBitmapWriter
+import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSharingButtons
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
@@ -119,16 +126,6 @@ fun WalkSummaryScreen(
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
     val lightReadingDisplay by viewModel.lightReadingDisplay.collectAsStateWithLifecycle()
     val selectedFavicon by viewModel.selectedFavicon.collectAsStateWithLifecycle()
-    // Stage 8-A: must be collected unconditionally here, not inside
-    // the Loaded branch's `if (routePoints.size >= 2)` nested block.
-    // `collectAsStateWithLifecycle` calls `remember` internally, and
-    // Compose's slot-table traversal requires `remember` calls to be
-    // made from a stable call site. Putting it inside the branch
-    // would shift positions if `state` ever transitions back to
-    // Loading (future pull-to-refresh / deletion flow) and crash
-    // with IllegalStateException. Today's single-emission state
-    // flow happens to mask the bug; hoist pre-emptively.
-    val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
     val celestialSnapshot by viewModel.celestialSnapshotDisplay.collectAsStateWithLifecycle()
     val walkSummaryCalloutProse by viewModel.walkSummaryCalloutProseDisplay.collectAsStateWithLifecycle()
     // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
@@ -139,21 +136,16 @@ fun WalkSummaryScreen(
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
-    // Stage 7-D: etegami share + save wiring. The row is slotted
-    // directly under WalkEtegamiCard below; VM events drive snackbar
-    // feedback + chooser-intent dispatch. `LocalActivity.current` is
-    // non-null in practice — MainActivity hosts every screen —
-    // but we fall back to a snackbar on null rather than crashing.
+    // Stage 7-D: VM events drive snackbar feedback + chooser-intent dispatch.
+    // `LocalActivity.current` is non-null in practice — MainActivity hosts
+    // every screen — but we fall back to a snackbar on null rather than crashing.
     val snackbarHostState = remember { SnackbarHostState() }
-    val etegamiBusy by viewModel.etegamiBusy.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     val context = LocalContext.current
     val msgSaveSuccess = stringResource(R.string.etegami_save_success)
     val msgSaveFailed = stringResource(R.string.etegami_save_failed)
     val msgShareFailed = stringResource(R.string.etegami_share_failed)
     val msgNeedsPermission = stringResource(R.string.etegami_save_needs_permission)
-    val msgCopied = stringResource(R.string.share_journey_copied)
-    val msgChooserTitle = stringResource(R.string.share_modal_chooser_title)
 
     // Stage 13-B: reveal phase machine. Hidden -> Zoomed -> Revealed.
     // Re-keys on the loaded walkId so re-entering a different walk replays;
@@ -292,7 +284,11 @@ fun WalkSummaryScreen(
     // store + flips the flow false.
     val showReveal by viewModel.showSealReveal.collectAsStateWithLifecycle()
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(pilgrimColors.parchmentSecondary),
+    ) {
         // Summary content renders first (z-order: behind the overlay).
         Column(modifier = Modifier.fillMaxSize()) {
             // Stage 13-A: top bar lives OUTSIDE the scroll — iOS parity
@@ -623,63 +619,154 @@ fun WalkSummaryScreen(
                             WalkSummaryDetailsCard(pausedMillis = s.summary.totalPausedMillis)
                         }
 
-                        // 19. Light Reading card (Stage 6-B / 10-C). VM's
-                        // runCatching means a compute failure yields null
-                        // here and the card just doesn't render. Read from
-                        // `lightReadingDisplay` (live combine of summary +
-                        // celestialAwarenessEnabled pref) so toggling the
-                        // pref while the summary is open immediately shows /
-                        // hides the card.
-                        lightReadingDisplay?.let { reading ->
-                            Spacer(Modifier.height(PilgrimSpacing.normal))
-                            WalkLightReadingCard(reading = reading)
+                        // 19. Light Reading card (iOS body line 86 parity).
+                        // Gated on viewModel.hasRevealedLightReading — only
+                        // visible AFTER the user has shared this walk via
+                        // Goshuin / Etegami / Walk Share Journey. Fades in
+                        // over 1200ms (instant under reduce-motion) per iOS
+                        // markSharedAndReveal() animation.
+                        //
+                        // VM's runCatching means a compute failure yields
+                        // null in `lightReadingDisplay` and the card just
+                        // doesn't render. Read from `lightReadingDisplay`
+                        // (live combine of summary + celestialAwarenessEnabled
+                        // pref) so toggling the pref while the summary is
+                        // open immediately shows / hides the card.
+                        val hasRevealedLR by viewModel.hasRevealedLightReading
+                            .collectAsStateWithLifecycle()
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = hasRevealedLR && lightReadingDisplay != null,
+                            enter = androidx.compose.animation.fadeIn(
+                                animationSpec = androidx.compose.animation.core.tween(
+                                    durationMillis = if (reduceMotion) 0 else 1200,
+                                ),
+                            ),
+                            exit = androidx.compose.animation.fadeOut(),
+                        ) {
+                            lightReadingDisplay?.let { reading ->
+                                androidx.compose.foundation.layout.Column {
+                                    Spacer(Modifier.height(PilgrimSpacing.normal))
+                                    WalkLightReadingCard(reading = reading)
+                                }
+                            }
                         }
 
-                        // 20. Etegami + Share Journey (Stage 7-D + 8-A).
-                        // Wrap BOTH the etegami card + share row AND the
-                        // journey-share row in a single hasRoute guard — iOS
-                        // WalkSharingButtons parity (whole card is absent for
-                        // walks with fewer than 2 GPS points). Share endpoint
-                        // also rejects routes < 2 points server-side.
-                        if (s.summary.routePoints.size >= 2) {
-                            s.summary.etegamiSpec?.let { etegami ->
-                                Spacer(Modifier.height(PilgrimSpacing.normal))
-                                WalkEtegamiCard(spec = etegami)
-                                WalkEtegamiShareRow(
-                                    busyAction = etegamiBusy,
-                                    onShare = { viewModel.shareEtegami(etegami) },
-                                    onSave = { viewModel.saveEtegamiToGallery(etegami) },
-                                    onSavePermissionDenied = {
-                                        viewModel.notifyEtegamiSaveNeedsPermission()
-                                    },
-                                )
-                            }
-                            // `cachedShare` is collected unconditionally at the
-                            // composable's top (see hoisting comment there);
-                            // map to the row's tri-state at the call site.
-                            val rowState = cachedShare.toJourneyRowState()
-                            Spacer(Modifier.height(PilgrimSpacing.normal))
-                            org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareJourneyRow(
-                                state = rowState,
-                                onShareJourney = onShareJourney,
-                                onReshare = onShareJourney,
-                                onReopenModal = onShareJourney,
-                                onCopyUrl = { url ->
-                                    org.walktalkmeditate.pilgrim.ui.walk.share.copyUrl(
-                                        context,
-                                        url,
-                                        msgCopied,
-                                    )
-                                },
-                                onShareUrl = { url ->
-                                    org.walktalkmeditate.pilgrim.ui.walk.share.launchShareChooser(
-                                        activity ?: context,
-                                        url,
-                                        msgChooserTitle,
-                                    )
-                                },
-                            )
+                        // 20. WalkSharingButtons — iOS body line ~90 shareCard.
+                        // Replaces the prior scattered WalkEtegamiCard + WalkEtegamiShareRow +
+                        // WalkShareJourneyRow trio with a single parchmentSecondary card.
+                        // Light Reading card stays at section 19 for now; Task 4.2 moves + gates it.
+                        Spacer(Modifier.height(PilgrimSpacing.normal))
+                        // rememberSaveable so a rotation mid-render doesn't
+                        // reset the latch and let a duplicate tap through.
+                        val isGoshuinGenerating = rememberSaveable { mutableStateOf(false) }
+                        val isEtegamiGenerating = rememberSaveable { mutableStateOf(false) }
+                        val shareScope = rememberCoroutineScope()
+                        // Hoist share-related strings into Composable scope —
+                        // lint's LocalContextGetResourceValueCall flags
+                        // ctx.getString() inside lambdas even though the
+                        // lambda body runs outside the composition.
+                        val goshuinChooserTitle =
+                            stringResource(R.string.share_button_goshuin)
+                        val etegamiChooserTitle =
+                            stringResource(R.string.share_button_etegami)
+                        val shareNoChooserMessage =
+                            stringResource(R.string.share_no_chooser)
+                        val baseInk = pilgrimColors.rust
+                        val walkDate = remember(s.summary.walk.startTimestamp) {
+                            java.time.Instant.ofEpochMilli(s.summary.walk.startTimestamp)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toLocalDate()
                         }
+                        val tintedInk = remember(baseInk, walkDate, hemisphere) {
+                            org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+                                .applySeasonalShift(
+                                    base = baseInk,
+                                    intensity = org.walktalkmeditate.pilgrim.ui.theme.seasonal
+                                        .SeasonalColorEngine.Intensity.Full,
+                                    date = walkDate,
+                                    hemisphere = hemisphere,
+                                )
+                        }
+                        WalkSharingButtons(
+                            hasRoute = s.summary.routePoints.size >= 2,
+                            isGoshuinGenerating = isGoshuinGenerating.value,
+                            isEtegamiGenerating = isEtegamiGenerating.value,
+                            onGoshuinShare = {
+                                if (isGoshuinGenerating.value) return@WalkSharingButtons
+                                isGoshuinGenerating.value = true
+                                shareScope.launch {
+                                    try {
+                                        val sealSpec = s.summary.sealSpec
+                                        val bmp = withContext(Dispatchers.Default) {
+                                            EtegamiSealBitmapRenderer.renderToBitmap(
+                                                sealSpec, tintedInk, 512, context,
+                                            )
+                                        }
+                                        val file = SealShareBitmapWriter.writeToCache(
+                                            bmp, s.summary.walk.uuid, context,
+                                        )
+                                        val intent = EtegamiShareIntentFactory.buildFromFile(
+                                            context, file,
+                                            goshuinChooserTitle,
+                                        )
+                                        try {
+                                            context.startActivity(intent)
+                                            viewModel.markCurrentWalkShared()
+                                        } catch (_: android.content.ActivityNotFoundException) {
+                                            shareScope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    shareNoChooserMessage,
+                                                )
+                                            }
+                                        }
+                                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                                        throw ce
+                                    } catch (t: Throwable) {
+                                        android.util.Log.w("WalkSummaryScreen", "goshuin share failed", t)
+                                    } finally {
+                                        isGoshuinGenerating.value = false
+                                    }
+                                }
+                            },
+                            onEtegamiShare = {
+                                if (isEtegamiGenerating.value) return@WalkSharingButtons
+                                val spec = s.summary.etegamiSpec ?: return@WalkSharingButtons
+                                isEtegamiGenerating.value = true
+                                shareScope.launch {
+                                    try {
+                                        val bmp = withContext(Dispatchers.Default) {
+                                            EtegamiBitmapRenderer.render(spec, context)
+                                        }
+                                        val filename = EtegamiFilename.forWalk(spec.startedAtEpochMs)
+                                        val file = EtegamiPngWriter.writeToCache(bmp, filename, context)
+                                        val intent = EtegamiShareIntentFactory.buildFromFile(
+                                            context, file,
+                                            etegamiChooserTitle,
+                                        )
+                                        try {
+                                            context.startActivity(intent)
+                                            viewModel.markCurrentWalkShared()
+                                        } catch (_: android.content.ActivityNotFoundException) {
+                                            shareScope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    shareNoChooserMessage,
+                                                )
+                                            }
+                                        }
+                                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                                        throw ce
+                                    } catch (t: Throwable) {
+                                        android.util.Log.w("WalkSummaryScreen", "etegami share failed", t)
+                                    } finally {
+                                        isEtegamiGenerating.value = false
+                                    }
+                                }
+                            },
+                            onWalkJourneyShare = {
+                                onShareJourney()
+                                viewModel.markCurrentWalkShared()
+                            },
+                        )
                     }
                 }
 
@@ -799,53 +886,65 @@ private fun SummaryMap(
     walkAnnotationColors: WalkAnnotationColors,
     zoomTargetBounds: MapCameraBounds?,
 ) {
-    Card(
+    // Mapbox MapView renders into a SurfaceView by default — a separate
+    // hardware window that punches through Compose graphics layers and
+    // can't be masked via DstIn. The PilgrimMap caller below opts in to
+    // textureBackend = true so the map renders into the parent canvas;
+    // a Canvas overlay then paints a parchment radial-gradient frame ON
+    // TOP, producing the same iOS RadialGradient mask effect (transparent
+    // center → opaque-parchment corners). Card removed: corners fade to
+    // the SCREEN background color (pilgrimColors.parchment) so dark mode
+    // shows a real contrast between map and frame.
+    val parchmentMask = pilgrimColors.parchmentSecondary
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(320.dp)
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithCache {
-                // iOS RadialGradient mask: opaque center -> transparent edge.
-                // 0.45 stop matches iOS's 80/180 startRadius/endRadius ratio.
+            .height(320.dp),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (points.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = stringResource(R.string.walk_map_no_route),
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog,
+                    )
+                }
+            } else {
+                PilgrimMap(
+                    points = points,
+                    routeSegments = routeSegments,
+                    segmentColors = segmentColors,
+                    revealPhase = revealPhase,
+                    reduceMotion = reduceMotion,
+                    followLatest = false,
+                    modifier = Modifier.fillMaxSize(),
+                    walkAnnotations = walkAnnotations,
+                    walkAnnotationColors = walkAnnotationColors,
+                    zoomTargetBounds = zoomTargetBounds,
+                    // TextureView so the Canvas radial-gradient mask
+                    // actually covers map pixels at the corners.
+                    textureBackend = true,
+                )
+            }
+            // Radial-gradient frame overlay. Inner 30% fully transparent
+            // (clear map view), 30% → 100% fades to opaque parchment so
+            // corners blend with the screen background — more pronounced
+            // than the iOS 80/180 (0.44) ratio because Android dark-mode
+            // colors are closer to the map style and need the extra
+            // contrast. Pointer events pass through.
+            Canvas(modifier = Modifier.fillMaxSize()) {
                 val brush = Brush.radialGradient(
                     colorStops = arrayOf(
-                        0f to Color.White,
-                        0.45f to Color.White,
-                        1f to Color.Transparent,
+                        0f to Color.Transparent,
+                        0.30f to Color.Transparent,
+                        1f to parchmentMask,
                     ),
                     center = Offset(size.width / 2f, size.height / 2f),
                     radius = size.minDimension / 2f,
                 )
-                onDrawWithContent {
-                    drawContent()
-                    drawRect(brush = brush, blendMode = BlendMode.DstIn)
-                }
-            },
-        colors = CardDefaults.cardColors(
-            containerColor = pilgrimColors.parchmentSecondary,
-        ),
-    ) {
-        if (points.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = stringResource(R.string.walk_map_no_route),
-                    style = pilgrimType.caption,
-                    color = pilgrimColors.fog,
-                )
+                drawRect(brush = brush)
             }
-        } else {
-            PilgrimMap(
-                points = points,
-                routeSegments = routeSegments,
-                segmentColors = segmentColors,
-                revealPhase = revealPhase,
-                reduceMotion = reduceMotion,
-                followLatest = false,
-                modifier = Modifier.fillMaxSize(),
-                walkAnnotations = walkAnnotations,
-                walkAnnotationColors = walkAnnotationColors,
-                zoomTargetBounds = zoomTargetBounds,
-            )
         }
     }
 }
@@ -864,22 +963,6 @@ private fun SummaryMapPlaceholder() {
             contentColor = pilgrimColors.fog,
         ),
     ) {}
-}
-
-/**
- * Stage 8-A: CachedShare → JourneyRowState projection. `null` or
- * expired → Fresh / Expired respectively; non-null + non-expired →
- * Active. Wall-clock comparison at read time (iOS parity, no ticker).
- */
-private fun CachedShare?.toJourneyRowState(): JourneyRowState = when {
-    this == null -> JourneyRowState.Fresh
-    isExpiredAt() -> JourneyRowState.Expired(expiryOption)
-    else -> JourneyRowState.Active(
-        url = url,
-        expiryEpochMs = expiryEpochMs,
-        shareDateEpochMs = shareDateEpochMs,
-        expiryOption = expiryOption,
-    )
 }
 
 /**

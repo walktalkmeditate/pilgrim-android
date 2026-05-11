@@ -76,6 +76,7 @@ import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec
 import org.walktalkmeditate.pilgrim.data.seal.SealRevealStore
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.data.sharing.WalkSharingTracker
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiCacheSweeper
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiFilename
@@ -251,6 +252,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val practicePreferences: PracticePreferencesRepository,
     private val promptsCoordinator: PromptsCoordinator,
     private val sealRevealStore: SealRevealStore,
+    private val walkSharingTracker: WalkSharingTracker,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -603,6 +605,55 @@ class WalkSummaryViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = ReliquaryState.ToggleOff,
         )
+
+    /**
+     * iOS parity `WalkSummaryView.swift:86,132-134@db4196e` — gates
+     * Light Reading card visibility on whether the user has shared
+     * this walk (via Goshuin, Etegami, or Walk Share Journey). Read from
+     * WalkSharingTracker DataStore.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val hasRevealedLightReading: StateFlow<Boolean> = state
+        .flatMapLatest { s ->
+            if (s is WalkSummaryUiState.Loaded) {
+                walkSharingTracker.hasSharedFlow(s.summary.walk.uuid)
+            } else {
+                kotlinx.coroutines.flow.flowOf(false)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = false,
+        )
+
+    /**
+     * Called from each of the 3 share-button success callbacks in
+     * WalkSharingButtons. Fires only when the share Intent has been
+     * dispatched successfully (per spec D4 — ActivityNotFoundException
+     * snackbar fallback does NOT call this; the engagement signal is
+     * "user reached the system share chooser", which requires a
+     * successful dispatch).
+     *
+     * Non-suspend public API; the body launches on [persistenceScope]
+     * (NOT viewModelScope) so a Dialog dismissal mid-write doesn't
+     * tear the DataStore write down — mirrors [markSealRevealed]'s
+     * fire-and-forget contract.
+     */
+    fun markCurrentWalkShared() {
+        val s = state.value
+        if (s !is WalkSummaryUiState.Loaded) return
+        val uuid = s.summary.walk.uuid
+        persistenceScope.launch {
+            try {
+                walkSharingTracker.markShared(uuid)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "markShared failed for $uuid", t)
+            }
+        }
+    }
 
     /**
      * Called by [WalkSummaryScreen] on every Activity `onResume` with the

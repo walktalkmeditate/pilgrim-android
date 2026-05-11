@@ -54,6 +54,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
+import org.walktalkmeditate.pilgrim.data.sharing.WalkSharingTracker
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
@@ -174,6 +175,17 @@ class WalkSummaryViewModelPromptsTest {
                         java.io.File(
                             context.cacheDir,
                             "vmtest-seal-reveal-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+            ),
+            walkSharingTracker = WalkSharingTracker(
+                dataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            context.cacheDir,
+                            "prompts-test-sharing-${java.util.UUID.randomUUID()}.preferences_pb",
                         )
                     },
                 ),

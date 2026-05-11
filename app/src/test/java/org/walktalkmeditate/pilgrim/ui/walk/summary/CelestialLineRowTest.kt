@@ -81,4 +81,24 @@ class CelestialLineRowTest {
         composeRule.setContent { PilgrimTheme { CelestialLineRow(snapshot = mkSnapshot(moonSign = null, dominantEl = null)) } }
         composeRule.onNodeWithText("Hour of Mercury").assertIsDisplayed()
     }
+
+    // Stage 6.2 guardrail — locks in iOS-parity centering (Arrangement.spacedBy
+    // with CenterHorizontally over a fillMaxWidth Row). Visual centering is
+    // verified in Stage 7 device QA; this test catches a future edit that
+    // reverts to bare spacedBy (which left-aligns content).
+    @Test fun celestialLineRow_modifierChainCentersContent() {
+        val src = java.io.File(
+            "src/main/java/org/walktalkmeditate/pilgrim/ui/walk/summary/CelestialLineRow.kt"
+        ).readText()
+        assert(src.contains("Alignment.CenterHorizontally")) {
+            "CelestialLineRow.kt should use Alignment.CenterHorizontally for iOS-parity centering"
+        }
+        assert(src.contains("fillMaxWidth()")) {
+            "CelestialLineRow.kt should call fillMaxWidth() so centering spans the row"
+        }
+        val bare = Regex("""Arrangement\.spacedBy\(\s*PilgrimSpacing\.small\s*\)""")
+        assert(!bare.containsMatchIn(src)) {
+            "CelestialLineRow.kt should NOT use bare spacedBy(small) — use the 2-arg form with CenterHorizontally"
+        }
+    }
 }

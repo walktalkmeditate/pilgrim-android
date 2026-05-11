@@ -26,6 +26,7 @@ import com.mapbox.geojson.Point
 import kotlinx.coroutines.delay
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
+import com.mapbox.maps.MapInitOptions
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.animation.MapAnimationOptions
@@ -82,6 +83,12 @@ internal fun PilgrimMap(
     walkAnnotations: List<WalkMapAnnotation> = emptyList(),
     walkAnnotationColors: WalkAnnotationColors? = null,
     zoomTargetBounds: MapCameraBounds? = null,
+    // Walk Summary's radial-gradient mask needs the map pixels to live
+    // in the parent compose graphics layer (not a separate SurfaceView
+    // window) so the overlay actually covers map content at the corners.
+    // Caller opt-in to keep ActiveWalk + WalkShare on the faster
+    // SurfaceView backend by default.
+    textureBackend: Boolean = false,
 ) {
     val darkMode = LocalPilgrimDarkTheme.current
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -328,7 +335,11 @@ internal fun PilgrimMap(
             // manager that orphaned the first one's polyline. The cost of
             // avoiding that is a ~100ms blank canvas on first render, which
             // is acceptable for a contemplative walking app.
-            MapView(context).also { view ->
+            val initOptions = MapInitOptions(
+                context = context,
+                textureView = textureBackend,
+            )
+            MapView(context, initOptions).also { view ->
                 mapView = view
             }
         },

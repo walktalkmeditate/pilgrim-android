@@ -51,6 +51,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
+import org.walktalkmeditate.pilgrim.data.sharing.WalkSharingTracker
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
@@ -163,6 +164,17 @@ class WalkSummaryViewModelTest {
                         java.io.File(
                             context.cacheDir,
                             "vmtest-seal-reveal-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+            ),
+            walkSharingTracker = WalkSharingTracker(
+                dataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            context.cacheDir,
+                            "vmtest-sharing-${java.util.UUID.randomUUID()}.preferences_pb",
                         )
                     },
                 ),
