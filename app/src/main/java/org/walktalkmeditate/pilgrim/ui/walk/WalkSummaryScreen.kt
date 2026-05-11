@@ -651,8 +651,10 @@ fun WalkSummaryScreen(
                         // WalkShareJourneyRow trio with a single parchmentSecondary card.
                         // Light Reading card stays at section 19 for now; Task 4.2 moves + gates it.
                         Spacer(Modifier.height(PilgrimSpacing.normal))
-                        val isGoshuinGenerating = remember { mutableStateOf(false) }
-                        val isEtegamiGenerating = remember { mutableStateOf(false) }
+                        // rememberSaveable so a rotation mid-render doesn't
+                        // reset the latch and let a duplicate tap through.
+                        val isGoshuinGenerating = rememberSaveable { mutableStateOf(false) }
+                        val isEtegamiGenerating = rememberSaveable { mutableStateOf(false) }
                         val shareScope = rememberCoroutineScope()
                         val baseInk = pilgrimColors.rust
                         val walkDate = remember(s.summary.walk.startTimestamp) {

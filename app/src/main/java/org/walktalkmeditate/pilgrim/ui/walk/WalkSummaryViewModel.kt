@@ -635,19 +635,21 @@ class WalkSummaryViewModel @Inject constructor(
      * "user reached the system share chooser", which requires a
      * successful dispatch).
      *
-     * Non-suspend public API; the body hops to Dispatchers.IO for the
-     * DataStore write per Stage 2-E memory lesson (viewModelScope.launch
-     * defaults to Main).
+     * Non-suspend public API; the body launches on [persistenceScope]
+     * (NOT viewModelScope) so a Dialog dismissal mid-write doesn't
+     * tear the DataStore write down — mirrors [markSealRevealed]'s
+     * fire-and-forget contract.
      */
     fun markCurrentWalkShared() {
         val s = state.value
         if (s !is WalkSummaryUiState.Loaded) return
         val uuid = s.summary.walk.uuid
-        viewModelScope.launch(Dispatchers.IO) {
+        persistenceScope.launch {
             try {
                 walkSharingTracker.markShared(uuid)
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (t: Throwable) {
-                if (t is CancellationException) throw t
                 android.util.Log.w(TAG, "markShared failed for $uuid", t)
             }
         }
