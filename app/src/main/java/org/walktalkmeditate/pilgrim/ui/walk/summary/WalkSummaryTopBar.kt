@@ -57,7 +57,7 @@ fun WalkSummaryTopBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(pilgrimColors.parchmentSecondary)
+            .background(pilgrimColors.parchment)
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(64.dp)
             .padding(horizontal = PilgrimSpacing.normal),
