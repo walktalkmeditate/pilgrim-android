@@ -281,6 +281,8 @@ open class WalkRepository @Inject constructor(
                             photoUri = ref.uri,
                             pinnedAt = pinnedAt,
                             takenAt = ref.takenAt,
+                            capturedLat = ref.capturedLat,
+                            capturedLng = ref.capturedLng,
                         )
                     },
                 )

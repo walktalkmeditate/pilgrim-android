@@ -141,6 +141,11 @@ internal fun PilgrimMap(
                 "startEnd" to createCircleBitmap(colors.startEnd, darkMode),
                 "meditation" to createCircleBitmap(colors.meditation, darkMode),
                 "voice" to createCircleBitmap(colors.voice, darkMode),
+                // Placeholder iOS-parity photo pin — circular fill in
+                // photo-tile color. v1 cut renders a simple colored
+                // circle; v2 will swap for an actual circular thumbnail
+                // via Mapbox ViewAnnotation + Coil AsyncImage.
+                "photo" to createCircleBitmap(colors.photo, darkMode),
             )
         }
     }
@@ -512,6 +517,8 @@ internal fun PilgrimMap(
                                 bitmaps.getValue("meditation")
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
+                            is WalkMapAnnotationKind.Photo ->
+                                bitmaps.getValue("photo")
                         }
                         annoMgr.create(
                             PointAnnotationOptions()

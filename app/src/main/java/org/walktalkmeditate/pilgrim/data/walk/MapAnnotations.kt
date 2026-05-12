@@ -25,6 +25,19 @@ sealed class WalkMapAnnotationKind {
     @Immutable data object EndPoint : WalkMapAnnotationKind()
     @Immutable data class Meditation(val durationMillis: Long) : WalkMapAnnotationKind()
     @Immutable data class VoiceRecording(val durationMillis: Long) : WalkMapAnnotationKind()
+
+    /**
+     * iOS parity `PilgrimAnnotation.Kind.photo(localIdentifier:)`
+     * (`WalkSummaryView+Map.swift:34-46@db4196e`). Renders a circular
+     * photo thumbnail at the photo's EXIF GPS coordinates. Tapping a
+     * photo pin scrolls the carousel to the matching thumbnail (does
+     * NOT open the preview sheet — iOS comment: "map pin taps focus
+     * the carousel rather than preview").
+     */
+    @Immutable data class Photo(
+        val walkPhotoId: Long,
+        val photoUri: String,
+    ) : WalkMapAnnotationKind()
 }
 
 @Immutable

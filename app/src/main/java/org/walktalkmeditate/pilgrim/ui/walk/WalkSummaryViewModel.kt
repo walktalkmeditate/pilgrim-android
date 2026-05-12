@@ -253,6 +253,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val promptsCoordinator: PromptsCoordinator,
     private val sealRevealStore: SealRevealStore,
     private val walkSharingTracker: WalkSharingTracker,
+    private val photoExifReader: org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -803,7 +804,13 @@ class WalkSummaryViewModel @Inject constructor(
                             it,
                         )
                     }
-                    PhotoPinRef(uri = uri.toString(), takenAt = readDateTaken(uri))
+                    val gps = photoExifReader.read(uri)
+                    PhotoPinRef(
+                        uri = uri.toString(),
+                        takenAt = readDateTaken(uri),
+                        capturedLat = gps?.lat,
+                        capturedLng = gps?.lng,
+                    )
                 }
                 val result = try {
                     repository.pinPhotos(

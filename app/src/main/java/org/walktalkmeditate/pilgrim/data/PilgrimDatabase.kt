@@ -35,7 +35,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
         VoiceRecording::class,
         WalkPhoto::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -169,6 +169,22 @@ abstract class PilgrimDatabase : RoomDatabase() {
         val MIGRATION_6_7: Migration = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `walks` ADD COLUMN `steps` INTEGER")
+            }
+        }
+
+        /**
+         * Adds iOS-parity captured_lat/captured_lng REAL columns to
+         * walk_photos. Populated at pin time from EXIF GPS metadata via
+         * ExifInterface. Null when photo has no GPS EXIF (indoor shot,
+         * screenshot, stripped metadata). Pure `ALTER TABLE ADD COLUMN`
+         * — O(1) on existing rows; pre-pinned photos read null and
+         * render in the carousel only (no map pin). iOS parity:
+         * `WalkSummaryView+Map.swift:34-46@db4196e`.
+         */
+        val MIGRATION_7_8: Migration = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `walk_photos` ADD COLUMN `captured_lat` REAL")
+                db.execSQL("ALTER TABLE `walk_photos` ADD COLUMN `captured_lng` REAL")
             }
         }
     }

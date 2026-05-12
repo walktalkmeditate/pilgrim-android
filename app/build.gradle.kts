@@ -216,6 +216,9 @@ dependencies {
     // iOS-parity backdrop blur for Pilgrim Log + Settings sticky titles.
     implementation(libs.haze)
 
+    // EXIF GPS metadata reader for photo reliquary map pin overlays.
+    implementation(libs.androidx.exifinterface)
+
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.hilt.android)

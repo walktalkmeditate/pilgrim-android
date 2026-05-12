@@ -336,18 +336,47 @@ fun WalkSummaryScreen(
                             startEnd = pilgrimColors.stone,
                             meditation = pilgrimColors.dawn,
                             voice = pilgrimColors.rust,
+                            photo = pilgrimColors.moss,
                         )
 
                         // 1. Map — Stage 13-B bumps height to 320dp + adds the
                         // radial-gradient circular mask + plumbs the reveal
                         // phase + segment colors through to PilgrimMap.
+                        //
+                        // iOS parity `WalkSummaryView+Map.swift:34-46@db4196e` —
+                        // pinned photos that carry EXIF GPS coords are
+                        // appended to the annotation list as Photo pins
+                        // at their captured lat/lng. Photos missing GPS
+                        // (indoor shots, screenshots, stripped metadata)
+                        // are omitted from the map but still appear in
+                        // the reliquary carousel below.
+                        val combinedAnnotations = remember(s.summary.walkAnnotations, pinnedPhotos) {
+                            val photoAnnotations = pinnedPhotos.mapNotNull { p ->
+                                val lat = p.capturedLat
+                                val lng = p.capturedLng
+                                if (lat == null || lng == null) {
+                                    null
+                                } else {
+                                    org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation(
+                                        kind = org.walktalkmeditate.pilgrim.data.walk
+                                            .WalkMapAnnotationKind.Photo(
+                                                walkPhotoId = p.id,
+                                                photoUri = p.photoUri,
+                                            ),
+                                        latitude = lat,
+                                        longitude = lng,
+                                    )
+                                }
+                            }
+                            s.summary.walkAnnotations + photoAnnotations
+                        }
                         SummaryMap(
                             points = s.summary.routePoints,
                             routeSegments = s.summary.routeSegments,
                             revealPhase = revealPhase,
                             segmentColors = segmentColors,
                             reduceMotion = reduceMotion,
-                            walkAnnotations = s.summary.walkAnnotations,
+                            walkAnnotations = combinedAnnotations,
                             walkAnnotationColors = walkAnnotationColors,
                             zoomTargetBounds = zoomTargetBounds,
                         )
