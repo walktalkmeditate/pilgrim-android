@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -145,11 +146,12 @@ fun WaypointMarkingSheet(
 
             // Two static rows of three chips each. With only 6 fixed
             // chips there's no value in LazyVerticalGrid's virtualization
-            // and a non-lazy layout sizes correctly without the height-pin
-            // workaround Robolectric needed for `LazyVerticalGrid`.
-            // If `PRESET_CHIPS` ever grows to a non-multiple-of-3, pad
-            // each short row with `Spacer(Modifier.weight(1f))` so the
-            // chips stay equal-width across rows.
+            // Manual chunked Rows; LazyVerticalGrid needs an explicit
+            // height under Robolectric's stub measure pass, while a
+            // non-lazy grid sizes naturally. Pads the trailing row with
+            // weight(1f) Spacers so a non-multiple-of-3 PRESET_CHIPS
+            // list still produces equal-width chips across rows (Stage
+            // 14-X audit fix; previous chunked(3) silently misaligned).
             PRESET_CHIPS.chunked(3).forEach { rowChips ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -168,6 +170,10 @@ fun WaypointMarkingSheet(
                                 onMark(label, chip.iconKey)
                             },
                         )
+                    }
+                    // Pad short final row to keep chip widths consistent.
+                    repeat(3 - rowChips.size) {
+                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -269,10 +275,12 @@ private fun CustomNoteRow(
             }
         }
         Text(
+            // Locale.US digit formatting so non-ASCII-digit locales still
+            // see ASCII numerals (Stage 5-A regression pattern).
             text = stringResource(
                 R.string.walk_waypoint_count_chars,
-                text.length,
-                MAX_WAYPOINT_CUSTOM_CHARS,
+                String.format(java.util.Locale.US, "%d", text.length),
+                String.format(java.util.Locale.US, "%d", MAX_WAYPOINT_CUSTOM_CHARS),
             ),
             style = pilgrimType.caption,
             color = pilgrimColors.fog.copy(alpha = 0.5f),

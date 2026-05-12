@@ -55,10 +55,17 @@ fun IntentionSettingDialog(
                     maxLines = 3,
                 )
                 Text(
+                    // Pre-format the digits with Locale.US so locales with
+                    // non-ASCII numerals (Arabic, Persian, Hindi) still
+                    // render ASCII digits. Stage 5-A regression pattern.
                     text = stringResource(
                         R.string.walk_waypoint_count_chars,
-                        text.length,
-                        WalkController.MAX_INTENTION_CHARS,
+                        String.format(java.util.Locale.US, "%d", text.length),
+                        String.format(
+                            java.util.Locale.US,
+                            "%d",
+                            WalkController.MAX_INTENTION_CHARS,
+                        ),
                     ),
                     style = pilgrimType.caption,
                     // iOS parity: `IntentionSettingView.swift:113` uses
