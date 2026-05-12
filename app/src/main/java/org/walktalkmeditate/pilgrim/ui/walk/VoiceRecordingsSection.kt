@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,11 +68,15 @@ fun VoiceRecordingsSection(
     recordings: List<VoiceRecording>,
     playbackUiState: PlaybackUiState,
     playbackSpeed: Float,
+    playbackPositionMillis: Long,
+    waveforms: Map<Long, FloatArray>,
     onPlay: (VoiceRecording) -> Unit,
     onPause: () -> Unit,
     onCycleSpeed: () -> Unit,
+    onSeek: (Float) -> Unit,
     onSaveTranscription: (recordingId: Long, newText: String) -> Unit,
     onRetranscribe: (recordingId: Long) -> Unit,
+    onEnsureWaveform: (recordingId: Long, relativePath: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (recordings.isEmpty()) return
@@ -107,19 +112,32 @@ fun VoiceRecordingsSection(
             )
         }
         recordings.forEachIndexed { index, recording ->
-            val isThisRowPlaying = playbackUiState.playingRecordingId == recording.id &&
-                playbackUiState.isPlaying
+            val isActive = playbackUiState.playingRecordingId == recording.id
+            val isThisRowPlaying = isActive && playbackUiState.isPlaying
+            val progress = if (isActive && recording.durationMillis > 0L) {
+                (playbackPositionMillis.toFloat() / recording.durationMillis.toFloat())
+                    .coerceIn(0f, 1f)
+            } else {
+                0f
+            }
             VoiceRecordingRow(
                 indexLabel = index + 1,
                 recording = recording,
                 walkStartTimestamp = walkStartTimestamp,
                 isPlaying = isThisRowPlaying,
+                isActive = isActive,
+                progress = progress,
                 playbackSpeed = playbackSpeed,
+                waveformSamples = waveforms[recording.id],
                 onPlay = { onPlay(recording) },
                 onPause = onPause,
+                onSeek = onSeek,
                 onCycleSpeed = onCycleSpeed,
                 onSaveTranscription = { newText -> onSaveTranscription(recording.id, newText) },
                 onRetranscribe = { onRetranscribe(recording.id) },
+                onEnsureWaveform = {
+                    onEnsureWaveform(recording.id, recording.fileRelativePath)
+                },
             )
         }
     }
@@ -131,13 +149,19 @@ private fun VoiceRecordingRow(
     recording: VoiceRecording,
     walkStartTimestamp: Long,
     isPlaying: Boolean,
+    isActive: Boolean,
+    progress: Float,
     playbackSpeed: Float,
+    waveformSamples: FloatArray?,
     onPlay: () -> Unit,
     onPause: () -> Unit,
+    onSeek: (Float) -> Unit,
     onCycleSpeed: () -> Unit,
     onSaveTranscription: (String) -> Unit,
     onRetranscribe: () -> Unit,
+    onEnsureWaveform: () -> Unit,
 ) {
+    LaunchedEffect(recording.id) { onEnsureWaveform() }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -199,13 +223,28 @@ private fun VoiceRecordingRow(
             )
             SpeedPill(playbackSpeed = playbackSpeed, onCycle = onCycleSpeed)
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(pilgrimColors.fog.copy(alpha = 0.15f)),
-        )
+        if (waveformSamples != null && waveformSamples.isNotEmpty()) {
+            org.walktalkmeditate.pilgrim.ui.walk.summary.WaveformBarView(
+                samples = waveformSamples,
+                progress = progress,
+                onSeek = { fraction ->
+                    if (isActive) {
+                        onSeek(fraction)
+                    } else {
+                        onPlay()
+                        onSeek(fraction)
+                    }
+                },
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(pilgrimColors.fog.copy(alpha = 0.15f)),
+            )
+        }
         when (val transcription = recording.transcription) {
             null -> TranscriptionPlaceholder(
                 text = stringResource(R.string.transcription_pending),
@@ -218,13 +257,6 @@ private fun VoiceRecordingRow(
                 text = transcription,
                 onSave = onSaveTranscription,
                 onRetranscribe = onRetranscribe,
-            )
-        }
-        recording.wordsPerMinute?.let { wpm ->
-            Text(
-                text = stringResource(R.string.recording_wpm_caption, wpm.toInt()),
-                style = pilgrimType.caption,
-                color = pilgrimColors.fog,
             )
         }
     }

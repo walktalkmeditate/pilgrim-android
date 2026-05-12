@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -256,6 +257,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val photoExifReader: org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader,
     private val transcriptionScheduler:
         org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
+    private val waveformCache: org.walktalkmeditate.pilgrim.audio.WaveformCache,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -770,6 +772,33 @@ class WalkSummaryViewModel @Inject constructor(
         viewModelScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
             transcriptionScheduler.scheduleForWalk(walkId)
+        }
+    }
+
+    fun seekPlayback(fraction: Float) = playback.seek(fraction)
+
+    /**
+     * Live playback position passthrough so the [WaveformBarView]'s
+     * progress fill can advance every 100ms while audio plays.
+     */
+    val playbackPositionMillis: StateFlow<Long> = playback.playbackPositionMillis
+
+    private val _waveforms = MutableStateFlow<Map<Long, FloatArray>>(emptyMap())
+    /**
+     * Per-recording waveform samples ([WaveformGenerator] output). UI
+     * triggers loading via [ensureWaveform] when a row enters the
+     * composition; cache hits return synchronously, misses populate
+     * after the IO decode completes. Empty arrays mean "tried + failed
+     * to decode" — the row's WaveformBarView will fall back to a flat
+     * placeholder strip.
+     */
+    val waveforms: StateFlow<Map<Long, FloatArray>> = _waveforms.asStateFlow()
+
+    fun ensureWaveform(recordingId: Long, relativePath: String) {
+        if (_waveforms.value.containsKey(recordingId)) return
+        viewModelScope.launch {
+            val samples = waveformCache.ensure(recordingId, relativePath) ?: FloatArray(0)
+            _waveforms.update { it + (recordingId to samples) }
         }
     }
     fun stopPlayback() = playback.stop()

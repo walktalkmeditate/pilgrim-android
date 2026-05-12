@@ -622,17 +622,25 @@ fun WalkSummaryScreen(
                         if (recordings.isNotEmpty()) {
                             val playbackSpeed by viewModel.playbackSpeed
                                 .collectAsStateWithLifecycle()
+                            val playbackPositionMillis by viewModel.playbackPositionMillis
+                                .collectAsStateWithLifecycle()
+                            val waveforms by viewModel.waveforms
+                                .collectAsStateWithLifecycle()
                             Spacer(Modifier.height(PilgrimSpacing.normal))
                             VoiceRecordingsSection(
                                 walkStartTimestamp = s.summary.walk.startTimestamp,
                                 recordings = recordings,
                                 playbackUiState = playbackUiState,
                                 playbackSpeed = playbackSpeed,
+                                playbackPositionMillis = playbackPositionMillis,
+                                waveforms = waveforms,
                                 onPlay = viewModel::playRecording,
                                 onPause = viewModel::pausePlayback,
                                 onCycleSpeed = viewModel::cyclePlaybackSpeed,
+                                onSeek = viewModel::seekPlayback,
                                 onSaveTranscription = viewModel::saveTranscription,
                                 onRetranscribe = viewModel::retranscribeRecording,
+                                onEnsureWaveform = viewModel::ensureWaveform,
                             )
                         }
 
