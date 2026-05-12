@@ -40,6 +40,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
@@ -148,6 +151,40 @@ private fun TimelineBar(
     // out of the composable) would fire stale-closure taps. rememberUpdatedState
     // closes the gap defensively. Stage 4-B `rememberUpdatedState` precedent.
     val currentOnTap by rememberUpdatedState(onSegmentTapped)
+    // iOS-parity TalkBack: each meditation/talk segment exposes a
+    // CustomAccessibilityAction so the segment-tap zoom-to-bounds is
+    // reachable without sight. The visual gestures (pointerInput +
+    // detectTapGestures) are invisible to screen readers; semantics
+    // fills the gap. Each action's label encodes type + start time +
+    // duration so users can distinguish overlapping segments.
+    val talkActionLabel = stringResource(R.string.summary_timeline_a11y_action_talk)
+    val meditateActionLabel = stringResource(R.string.summary_timeline_a11y_action_meditate)
+    val a11ySegments = segments.filter {
+        it.type == TimelineSegmentType.Talking ||
+            it.type == TimelineSegmentType.Meditating
+    }
+    val a11yActions = remember(a11ySegments) {
+        a11ySegments.map { seg ->
+            val template = when (seg.type) {
+                TimelineSegmentType.Talking -> talkActionLabel
+                TimelineSegmentType.Meditating -> meditateActionLabel
+                else -> ""
+            }
+            val durationSec = ((seg.endMillis - seg.startMillis) / 1000L).toInt()
+            val durationLabel = if (durationSec < 60) {
+                "${durationSec}s"
+            } else {
+                "${durationSec / 60}m"
+            }
+            CustomAccessibilityAction(
+                label = "$template $durationLabel",
+                action = {
+                    currentOnTap(seg.id)
+                    true
+                },
+            )
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -155,6 +192,7 @@ private fun TimelineBar(
             .clip(RoundedCornerShape(4.dp))
             .background(pilgrimColors.moss.copy(alpha = 0.4f))
             .onSizeChanged { widthPx = it.width }
+            .semantics { customActions = a11yActions }
             .pointerInput(segments) {
                 detectTapGestures { offset ->
                     if (widthPx <= 0) return@detectTapGestures
