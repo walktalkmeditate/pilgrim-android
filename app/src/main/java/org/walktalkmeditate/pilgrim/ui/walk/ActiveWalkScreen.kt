@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -707,15 +708,15 @@ private fun TurningWatermark(
                 onClick = onClick,
             )
             .padding(PilgrimSpacing.normal)
-            // `mergeDescendants = true` folds the kanji Text into the
-            // parent's a11y node. Without it TalkBack reads "春分.
-            // 春分. Opens a contemplative ritual card" (the merged Text
-            // content gets concatenated with the overridden
-            // contentDescription). With merge enabled, the parent's
-            // explicit contentDescription replaces the Text content for
-            // accessibility — TalkBack reads only "Spring Equinox.
-            // Opens a contemplative ritual card."
             .semantics(mergeDescendants = true) {
+                // Parent owns the a11y label. The kanji Text below is
+                // hidden from the a11y tree via
+                // `Modifier.clearAndSetSemantics { }` so TalkBack
+                // reads only this contentDescription ("Spring
+                // Equinox. Opens a contemplative ritual card.") —
+                // without the clear, Compose merges the kanji's Text
+                // semantic into the parent and TalkBack concatenates
+                // it with our contentDescription.
                 this.contentDescription = "$contentDescription. $a11yHint"
             },
         contentAlignment = Alignment.Center,
@@ -737,6 +738,7 @@ private fun TurningWatermark(
             // neutral mid-tone on both light + dark mode — direct
             // parity, no role-flip surprise.
             color = pilgrimColors.stone.copy(alpha = 0.18f),
+            modifier = Modifier.clearAndSetSemantics { },
         )
     }
 }
@@ -753,9 +755,13 @@ private fun TurningRitualSheet(
     turning: SeasonalMarker,
     onDismiss: () -> Unit,
 ) {
-    // `skipPartiallyExpanded = true` mirrors iOS's `.medium` detent
-    // without forcing the user to drag through a partial state.
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // `skipPartiallyExpanded = false` leaves M3's PartiallyExpanded
+    // (~50% height) detent available — that's the closest equivalent
+    // to iOS's `.medium` detent. With `skipPartiallyExpanded = true`
+    // M3 lands at full Expanded (~full height), which diverges from
+    // iOS UX. For short content like TurningRitualCard the sheet
+    // settles at PartiallyExpanded on first show.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,

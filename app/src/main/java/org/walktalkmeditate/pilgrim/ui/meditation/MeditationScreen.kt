@@ -5,8 +5,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -232,33 +231,47 @@ fun MeditationScreen(
 
     // iOS parity `MeditationView.swift:743-745@db4196e` — pulse the
     // breathing-ring at the {300, 600, 900, 1200, 1800}s milestones to
-    // mark elapsed meditation. easeInOut(1.5s) 0→1, hold 2s, easeOut(1.5s)
-    // 1→0. snapshotFlow drives the per-second tick; producer is the
-    // `elapsedSeconds += 1` loop above so the counter is exact-integer
-    // monotone (cannot jump a milestone value).
+    // mark elapsed meditation.
     //
-    // `highestFiredMilestone` rememberSaveable latch prevents the
-    // flash from re-firing on rotation / process-death restore at a
-    // milestone second. Without it, a rotation at second 305 would
-    // restart the `LaunchedEffect(Unit)`, snapshotFlow's first
-    // emission would NOT match (305 not in set), but a rotation at
-    // exactly 300 would re-fire. Same `hasSeen` latch pattern as
-    // Stage 5-A's MeditationScreen state observer. The milestones are
-    // strictly monotonic (300 < 600 < 900 < 1200 < 1800), so a single
-    // "highest fired" int captures the full set.
+    // iOS uses `withAnimation(.easeInOut(duration: 1.5))` for the
+    // 0→1 attack (symmetric cubic-in-out) and `withAnimation(.easeOut
+    // (duration: 1.5))` for the 1→0 decay. Compose's
+    // `FastOutSlowInEasing` is Material's ASYMMETRIC curve (0.4, 0,
+    // 0.2, 1) — visually quicker start than iOS. The
+    // `CubicBezierEasing(0.42, 0, 0.58, 1)` and `(0, 0, 0.58, 1)`
+    // constants below are the canonical CSS/iOS curves so the pulse
+    // shape matches.
+    //
+    // Fire condition uses `seconds >= nextUnfiredMilestone` (not
+    // exact-set membership) so a discontinuity in the counter (future
+    // wall-clock-derived timer, debugger fast-forward, etc.) still
+    // fires the first un-fired milestone passed instead of silently
+    // skipping it. Today's `elapsedSeconds += 1` producer is exact-
+    // integer monotone so the difference is invisible, but the
+    // defensive predicate keeps the comment claim load-bearing.
+    //
+    // `highestFiredMilestone` rememberSaveable latch survives
+    // rotation / process-death restore so a recomposition at a
+    // milestone-equal second doesn't double-fire. Stage 5-A `hasSeen`
+    // pattern. Milestones are strictly monotonic
+    // (300 < 600 < 900 < 1200 < 1800), so a single highest-int
+    // captures the full set.
     val milestoneFlash = remember { Animatable(0f) }
     var highestFiredMilestone by rememberSaveable { mutableIntStateOf(-1) }
     LaunchedEffect(Unit) {
         snapshotFlow { elapsedSeconds }
             .collect { seconds ->
-                if (seconds in MILESTONE_SECONDS && seconds > highestFiredMilestone) {
-                    highestFiredMilestone = seconds
+                val nextUnfired = MILESTONE_SECONDS_SORTED
+                    .firstOrNull { it > highestFiredMilestone }
+                    ?: return@collect
+                if (seconds >= nextUnfired) {
+                    highestFiredMilestone = nextUnfired
                     milestoneFlash.snapTo(0f)
                     milestoneFlash.animateTo(
                         targetValue = 1f,
                         animationSpec = tween(
                             durationMillis = MILESTONE_FLASH_IN_MS,
-                            easing = FastOutSlowInEasing,
+                            easing = EASE_IN_OUT,
                         ),
                     )
                     delay(MILESTONE_FLASH_HOLD_MS)
@@ -266,7 +279,7 @@ fun MeditationScreen(
                         targetValue = 0f,
                         animationSpec = tween(
                             durationMillis = MILESTONE_FLASH_OUT_MS,
-                            easing = LinearOutSlowInEasing,
+                            easing = EASE_OUT,
                         ),
                     )
                 }
@@ -457,7 +470,15 @@ private const val DONE_BUTTON_CORNER_DP = 24
  * tick always passes through the exact milestone value, so an exact
  * `seconds in MILESTONE_SECONDS` match fires the ascending edge cleanly.
  */
-private val MILESTONE_SECONDS = setOf(300, 600, 900, 1200, 1800)
+private val MILESTONE_SECONDS_SORTED = listOf(300, 600, 900, 1200, 1800)
 private const val MILESTONE_FLASH_IN_MS = 1_500
 private const val MILESTONE_FLASH_HOLD_MS = 2_000L
 private const val MILESTONE_FLASH_OUT_MS = 1_500
+
+/**
+ * iOS-parity Bezier curves (`MeditationView.swift:743-745@db4196e`):
+ *   `.easeInOut` = symmetric (0.42, 0, 0.58, 1)
+ *   `.easeOut`   = decelerating (0,    0, 0.58, 1)
+ */
+private val EASE_IN_OUT = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
+private val EASE_OUT = CubicBezierEasing(0f, 0f, 0.58f, 1f)
