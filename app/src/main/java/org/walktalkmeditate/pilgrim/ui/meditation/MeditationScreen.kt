@@ -146,48 +146,67 @@ fun MeditationScreen(
 
     // iOS parity `MeditationView.swift:609-650@db4196e` — Done-tap
     // captures the end timestamp synchronously (the user's mental
-    // model is "the meditation ended when I tapped Done"), then plays
-    // a 6.5s closing ceremony locally before invoking endMeditation
-    // with the CAPTURED millis. Without the captured-millis path the
-    // ceremony's 6.5s playback would inflate the recorded interval.
+    // model is "the meditation ended when I tapped Done"). The 6.5s
+    // ceremony plays locally; endMeditation receives the CAPTURED
+    // millis so the 6.5s playback never inflates the recorded
+    // interval.
     //
-    // `rememberSaveable` for the latch + millis so rotation mid-
-    // ceremony doesn't restart the sequence or lose the timestamp.
+    // PR-review fixes folded in here:
+    //  - `viewModel.nowMillis()` reads the same `Clock` the controller
+    //    dispatches against, so a mocked clock in tests stays aligned
+    //    with the captured end-millis (vs an earlier
+    //    `System.currentTimeMillis()` which drifted from injected
+    //    clock-time bases).
+    //  - `dispatched` latch prevents double-fire of `endMeditation` —
+    //    LaunchedEffect runs once and flips the latch; DisposableEffect
+    //    onDispose was removed entirely because it fires on every
+    //    config-change (rotation) and either finalized too early or
+    //    double-finalized after ceremony complete.
+    //  - LaunchedEffect computes remaining delays from elapsed since
+    //    `doneAtMillis` instead of replaying the full sequence — a
+    //    rotation mid-ceremony resumes at the correct phase + remaining
+    //    delay rather than restarting from t=0.
     var didEnd by rememberSaveable { mutableStateOf(false) }
     var doneAtMillis by rememberSaveable { mutableStateOf(0L) }
+    var dispatched by rememberSaveable { mutableStateOf(false) }
     var closingPhase by rememberSaveable { mutableStateOf(ClosingPhase.None) }
     val endSession: () -> Unit = {
         if (!didEnd) {
             didEnd = true
-            doneAtMillis = System.currentTimeMillis()
+            doneAtMillis = viewModel.nowMillis()
             closingPhase = ClosingPhase.Dissolving
         }
     }
-    // The ceremony driver. Single LaunchedEffect keyed on the latch so
-    // it runs exactly once per Done-tap; cancellation (composable
-    // leaving the tree) still calls endMeditation with the captured
-    // millis via the DisposableEffect onDispose below — belt-and-
-    // suspenders matching iOS `onDisappear` fallback.
     LaunchedEffect(didEnd) {
-        if (!didEnd) return@LaunchedEffect
-        delay(CEREMONY_SUMMARY_DELAY_MS)
-        closingPhase = ClosingPhase.Summary
-        delay(CEREMONY_FADE_OUT_DELAY_MS - CEREMONY_SUMMARY_DELAY_MS)
-        closingPhase = ClosingPhase.FadeOut
-        delay(CEREMONY_TOTAL_MS - CEREMONY_FADE_OUT_DELAY_MS)
-        viewModel.endMeditation(endMillis = doneAtMillis)
-    }
-    // Fallback: if the screen tears down mid-ceremony (process death,
-    // walk externally finished, user navigated away), still finalize
-    // with the captured timestamp so the meditation interval reflects
-    // the user's intent rather than the truncated playback duration.
-    val capturedDoneAt by rememberUpdatedState(doneAtMillis)
-    val capturedDidEnd by rememberUpdatedState(didEnd)
-    DisposableEffect(Unit) {
-        onDispose {
-            if (capturedDidEnd && capturedDoneAt > 0L) {
-                viewModel.endMeditation(endMillis = capturedDoneAt)
-            }
+        if (!didEnd || dispatched) return@LaunchedEffect
+        // Elapsed since Done-tap. After a rotation mid-ceremony this is
+        // > 0; the schedule resumes at the correct phase instead of
+        // restarting from t=0.
+        val elapsedAtEntry = (viewModel.nowMillis() - doneAtMillis).coerceAtLeast(0L)
+
+        fun phaseFor(elapsed: Long): ClosingPhase = when {
+            elapsed >= CEREMONY_FADE_OUT_DELAY_MS -> ClosingPhase.FadeOut
+            elapsed >= CEREMONY_SUMMARY_DELAY_MS -> ClosingPhase.Summary
+            else -> ClosingPhase.Dissolving
+        }
+        closingPhase = phaseFor(elapsedAtEntry)
+
+        if (elapsedAtEntry < CEREMONY_SUMMARY_DELAY_MS) {
+            delay(CEREMONY_SUMMARY_DELAY_MS - elapsedAtEntry)
+            closingPhase = ClosingPhase.Summary
+        }
+        if (elapsedAtEntry < CEREMONY_FADE_OUT_DELAY_MS) {
+            val nowElapsed = (viewModel.nowMillis() - doneAtMillis).coerceAtLeast(0L)
+            delay(CEREMONY_FADE_OUT_DELAY_MS - nowElapsed)
+            closingPhase = ClosingPhase.FadeOut
+        }
+        val finalElapsed = (viewModel.nowMillis() - doneAtMillis).coerceAtLeast(0L)
+        if (finalElapsed < CEREMONY_TOTAL_MS) {
+            delay(CEREMONY_TOTAL_MS - finalElapsed)
+        }
+        if (!dispatched) {
+            dispatched = true
+            viewModel.endMeditation(endMillis = doneAtMillis)
         }
     }
 

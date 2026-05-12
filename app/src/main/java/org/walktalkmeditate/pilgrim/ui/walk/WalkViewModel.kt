@@ -755,6 +755,16 @@ class WalkViewModel @Inject constructor(
     }
 
     /**
+     * UI-facing access to the same [Clock] the controller dispatches
+     * against. The meditation closing ceremony captures Done-tap
+     * millis via this so its end-timestamp is on the same time base
+     * as the rest of the reducer (otherwise tests with a mocked clock
+     * and the on-device wall clock would diverge — flagged in PR
+     * review).
+     */
+    fun nowMillis(): Long = clock.now()
+
+    /**
      * CAS guard for double-tap dedup. The Finish button's enabled
      * state derives from `walkState`, which only flips to Finished
      * after `controller.finishWalk()` dispatches + Room finalizes —
