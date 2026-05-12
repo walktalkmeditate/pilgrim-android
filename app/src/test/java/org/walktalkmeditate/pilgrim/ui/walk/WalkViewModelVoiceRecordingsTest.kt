@@ -32,6 +32,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
+import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -76,7 +77,7 @@ class WalkViewModelVoiceRecordingsTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = TestClock(initial = 1_000L)
-        controller = WalkController(repository, clock)
+        controller = WalkController(repository, clock, fakeStepCounter())
         val fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)

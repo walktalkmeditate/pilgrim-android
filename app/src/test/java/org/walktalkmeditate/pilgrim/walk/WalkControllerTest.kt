@@ -24,6 +24,7 @@ import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -52,7 +53,7 @@ class WalkControllerTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = FakeClock(initial = 1_000L)
-        controller = WalkController(repository, clock)
+        controller = WalkController(repository, clock, fakeStepCounter())
     }
 
     @After
@@ -180,7 +181,7 @@ class WalkControllerTest {
         repository.recordLocation(
             RouteDataSample(walkId = walk.id, timestamp = 1_200L, latitude = 0.0, longitude = 0.001),
         )
-        val fresh = WalkController(repository, clock)
+        val fresh = WalkController(repository, clock, fakeStepCounter())
 
         val restored = fresh.restoreActiveWalk()
 
@@ -199,7 +200,7 @@ class WalkControllerTest {
         repository.recordEvent(
             WalkEvent(walkId = walk.id, timestamp = 1_200L, eventType = WalkEventType.PAUSED),
         )
-        val fresh = WalkController(repository, clock)
+        val fresh = WalkController(repository, clock, fakeStepCounter())
 
         fresh.restoreActiveWalk()
 
@@ -216,7 +217,7 @@ class WalkControllerTest {
         repository.recordEvent(
             WalkEvent(walkId = walk.id, timestamp = 1_500L, eventType = WalkEventType.RESUMED),
         )
-        val fresh = WalkController(repository, clock)
+        val fresh = WalkController(repository, clock, fakeStepCounter())
 
         fresh.restoreActiveWalk()
 

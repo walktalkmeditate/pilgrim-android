@@ -73,6 +73,18 @@ data class WalkPhoto(
      */
     @ColumnInfo(name = "analyzed_at")
     val analyzedAt: Long? = null,
+    /**
+     * iOS parity `WalkPhoto.capturedLat` / `capturedLng` — GPS coords
+     * from the photo's EXIF metadata, extracted at pin time. Null when
+     * the photo has no GPS EXIF (indoor shot, screenshot, user-stripped
+     * metadata). When both lat + lng are non-null, the photo renders as
+     * a [WalkMapAnnotationKind.Photo] pin on the Walk Summary map at
+     * that location (iOS parity `WalkSummaryView+Map.swift:34-46@db4196e`).
+     */
+    @ColumnInfo(name = "captured_lat")
+    val capturedLat: Double? = null,
+    @ColumnInfo(name = "captured_lng")
+    val capturedLng: Double? = null,
 ) {
     init {
         // walkId must be a real FK target. Room's autoGenerate starts at 1

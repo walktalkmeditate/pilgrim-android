@@ -179,6 +179,9 @@ class WalkSummaryViewModelTest {
                     },
                 ),
             ),
+            photoExifReader = org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader(
+                context = context,
+            ),
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )

@@ -115,4 +115,11 @@ data class WalkAnnotationColors(
     val startEnd: Color,
     val meditation: Color,
     val voice: Color,
+    /**
+     * Placeholder fill color for iOS-parity photo pins
+     * (`WalkSummaryView+Map.swift:34-46@db4196e`). v1 cut renders a
+     * simple colored circle at the photo's EXIF GPS coords; v2 will
+     * swap to a real circular thumbnail via Mapbox ViewAnnotation.
+     */
+    val photo: Color,
 )

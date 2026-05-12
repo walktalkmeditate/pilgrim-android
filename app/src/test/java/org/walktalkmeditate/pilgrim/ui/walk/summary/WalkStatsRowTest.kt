@@ -28,6 +28,7 @@ class WalkStatsRowTest {
                 WalkStatsRow(
                     distanceMeters = 1_500.0,
                     ascendMeters = 0.0,
+                    steps = null,
                     units = UnitSystem.Metric,
                 )
             }
@@ -43,6 +44,7 @@ class WalkStatsRowTest {
                 WalkStatsRow(
                     distanceMeters = 5_000.0,
                     ascendMeters = 100.0,
+                    steps = null,
                     units = UnitSystem.Metric,
                 )
             }
@@ -59,6 +61,7 @@ class WalkStatsRowTest {
                 WalkStatsRow(
                     distanceMeters = 5_000.0,
                     ascendMeters = 0.5,
+                    steps = null,
                     units = UnitSystem.Metric,
                 )
             }
