@@ -4,6 +4,9 @@ package org.walktalkmeditate.pilgrim.ui.meditation
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -225,6 +229,63 @@ fun MeditationScreen(
     // via ActiveWalk's own state observer.
     BackHandler { endSession() }
 
+    // iOS parity `MeditationView.swift:743-745@db4196e` — pulse the
+    // breathing-ring at the {300, 600, 900, 1200, 1800}s milestones to
+    // mark elapsed meditation.
+    //
+    // iOS uses `withAnimation(.easeInOut(duration: 1.5))` for the
+    // 0→1 attack (symmetric cubic-in-out) and `withAnimation(.easeOut
+    // (duration: 1.5))` for the 1→0 decay. Compose's
+    // `FastOutSlowInEasing` is Material's ASYMMETRIC curve (0.4, 0,
+    // 0.2, 1) — visually quicker start than iOS. The
+    // `CubicBezierEasing(0.42, 0, 0.58, 1)` and `(0, 0, 0.58, 1)`
+    // constants below are the canonical CSS/iOS curves so the pulse
+    // shape matches.
+    //
+    // Fire condition uses `seconds >= nextUnfiredMilestone` (not
+    // exact-set membership) so a discontinuity in the counter (future
+    // wall-clock-derived timer, debugger fast-forward, etc.) still
+    // fires the first un-fired milestone passed instead of silently
+    // skipping it. Today's `elapsedSeconds += 1` producer is exact-
+    // integer monotone so the difference is invisible, but the
+    // defensive predicate keeps the comment claim load-bearing.
+    //
+    // `highestFiredMilestone` rememberSaveable latch survives
+    // rotation / process-death restore so a recomposition at a
+    // milestone-equal second doesn't double-fire. Stage 5-A `hasSeen`
+    // pattern. Milestones are strictly monotonic
+    // (300 < 600 < 900 < 1200 < 1800), so a single highest-int
+    // captures the full set.
+    val milestoneFlash = remember { Animatable(0f) }
+    var highestFiredMilestone by rememberSaveable { mutableIntStateOf(-1) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { elapsedSeconds }
+            .collect { seconds ->
+                val nextUnfired = MILESTONE_SECONDS_SORTED
+                    .firstOrNull { it > highestFiredMilestone }
+                    ?: return@collect
+                if (seconds >= nextUnfired) {
+                    highestFiredMilestone = nextUnfired
+                    milestoneFlash.snapTo(0f)
+                    milestoneFlash.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(
+                            durationMillis = MILESTONE_FLASH_IN_MS,
+                            easing = EASE_IN_OUT,
+                        ),
+                    )
+                    delay(MILESTONE_FLASH_HOLD_MS)
+                    milestoneFlash.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(
+                            durationMillis = MILESTONE_FLASH_OUT_MS,
+                            easing = EASE_OUT,
+                        ),
+                    )
+                }
+            }
+    }
+
     val moss = pilgrimColors.moss
     val breathRhythm = BreathRhythm.byId(LocalBreathRhythm.current)
     MeditationScreenContent(
@@ -234,6 +295,7 @@ fun MeditationScreen(
         onDone = endSession,
         breathRhythm = breathRhythm,
         closingPhase = closingPhase,
+        milestoneFlash = milestoneFlash.value,
     )
 }
 
@@ -272,6 +334,7 @@ internal fun MeditationScreenContent(
     onDone: () -> Unit,
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
     closingPhase: ClosingPhase = ClosingPhase.None,
+    milestoneFlash: Float = 0f,
 ) {
     // Animated phase-driven opacities. Reduce-motion users get the
     // values pinned to their target so the screen still transitions
@@ -318,7 +381,11 @@ internal fun MeditationScreenContent(
             // SCALE_EXHALED for a clean, predictable cycle on the new
             // rhythm.
             key(breathRhythm.id) {
-                BreathingCircle(moss = mossColor, breathRhythm = breathRhythm)
+                BreathingCircle(
+                    moss = mossColor,
+                    breathRhythm = breathRhythm,
+                    milestoneFlash = milestoneFlash,
+                )
             }
             Spacer(Modifier.height(PilgrimSpacing.big))
             Text(
@@ -392,3 +459,26 @@ private fun formatTimer(elapsedSeconds: Int): String {
 
 private const val TIMER_TICK_MS = 1_000L
 private const val DONE_BUTTON_CORNER_DP = 24
+
+/**
+ * iOS parity `MeditationView.swift:743-745@db4196e`:
+ *   • milestone seconds = {300, 600, 900, 1200, 1800}
+ *   • pulse: easeInOut(1.5s) 0→1, hold 2.0s, easeOut(1.5s) 1→0
+ *
+ * iOS uses a ±20s window because its 0.5s float-second timer can land
+ * off-tick on the milestone. Android's `elapsedSeconds += 1` integer
+ * tick always passes through the exact milestone value, so an exact
+ * `seconds in MILESTONE_SECONDS` match fires the ascending edge cleanly.
+ */
+private val MILESTONE_SECONDS_SORTED = listOf(300, 600, 900, 1200, 1800)
+private const val MILESTONE_FLASH_IN_MS = 1_500
+private const val MILESTONE_FLASH_HOLD_MS = 2_000L
+private const val MILESTONE_FLASH_OUT_MS = 1_500
+
+/**
+ * iOS-parity Bezier curves (`MeditationView.swift:743-745@db4196e`):
+ *   `.easeInOut` = symmetric (0.42, 0, 0.58, 1)
+ *   `.easeOut`   = decelerating (0,    0, 0.58, 1)
+ */
+private val EASE_IN_OUT = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
+private val EASE_OUT = CubicBezierEasing(0f, 0f, 0.58f, 1f)
