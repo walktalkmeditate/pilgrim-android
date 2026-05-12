@@ -219,6 +219,9 @@
     <string name="reliquary_permission_denied_action_settings">Open settings</string>
     <string name="reliquary_action_add">Add</string>
     <string name="reliquary_action_full">Full</string>
+    <string name="reliquary_photo_thumbnail_a11y">Pinned photo</string>
+    <string name="reliquary_photo_activate_a11y">Activate</string>
+    <string name="reliquary_photo_open_a11y">Open photo</string>
     <string name="summary_compact_duration_seconds_short">%1$ds</string>
     <string name="summary_compact_duration_minutes_short">%1$dm</string>
 
