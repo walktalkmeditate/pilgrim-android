@@ -511,6 +511,18 @@
     <string name="walk_waypoint_chip_arrived">Arrived</string>
     <string name="walk_waypoint_count_chars">%1$s/%2$s</string>
 
+    <!-- iOS parity ActiveWalkView.swift:711-725@db4196e weather greetings. -->
+    <string name="walk_greeting_weather_clear">A clear day for wandering</string>
+    <string name="walk_greeting_weather_partly_cloudy">Walking under shifting skies</string>
+    <string name="walk_greeting_weather_overcast">Soft light on the path</string>
+    <string name="walk_greeting_weather_light_rain">Walking into the rain</string>
+    <string name="walk_greeting_weather_heavy_rain">The sky walks with you</string>
+    <string name="walk_greeting_weather_thunderstorm">Thunder on the horizon</string>
+    <string name="walk_greeting_weather_snow">Snow on the path</string>
+    <string name="walk_greeting_weather_fog">Walking into the mist</string>
+    <string name="walk_greeting_weather_wind">The wind at your back</string>
+    <string name="walk_greeting_weather_haze">A hazy veil over the world</string>
+
     <!-- Stage 10-E: PermissionsCard -->
     <string name="settings_permissions_title">Permissions</string>
     <string name="settings_permissions_subtitle">What Pilgrim can access</string>
