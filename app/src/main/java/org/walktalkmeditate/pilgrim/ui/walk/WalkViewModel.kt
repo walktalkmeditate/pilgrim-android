@@ -88,8 +88,7 @@ class WalkViewModel @Inject constructor(
     unitsPreferences: UnitsPreferencesRepository,
     practicePreferences: PracticePreferencesRepository,
     private val weatherFetching: WeatherFetching,
-    collectiveRepository:
-        org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository,
+    collectiveStats: org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource,
 ) : ViewModel() {
 
     /**
@@ -100,7 +99,7 @@ class WalkViewModel @Inject constructor(
      * [CollectiveRepository.stats] via `walkedInLastHour()`. Nullable
      * stats (cold start, no fetch yet) collapse to false.
      */
-    val collectivePulseActive: StateFlow<Boolean> = collectiveRepository.stats
+    val collectivePulseActive: StateFlow<Boolean> = collectiveStats.stats
         .map { it?.walkedInLastHour() == true }
         .stateIn(
             scope = viewModelScope,
