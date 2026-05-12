@@ -8,10 +8,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
+import java.time.LocalDate
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -20,17 +22,32 @@ class PilgrimThemeAppearanceTest {
     @get:Rule
     val composeRule = createComposeRule()
 
+    // Fixed date + hemisphere give the seasonal engine a deterministic
+    // input so the expected colors are reproducible across CI runs.
+    private val fixedDate = LocalDate.of(2025, 6, 21)
+    private val fixedHemisphere = Hemisphere.Northern
+
+    private fun expectedLight(): PilgrimColors =
+        pilgrimSeasonalColors(pilgrimLightColors(), fixedDate, fixedHemisphere)
+
+    private fun expectedDark(): PilgrimColors =
+        pilgrimSeasonalColors(pilgrimDarkColors(), fixedDate, fixedHemisphere)
+
     @Test
     fun `light forces light colors`() {
         var captured: PilgrimColors? = null
         composeRule.setContent {
-            PilgrimTheme(appearanceMode = AppearanceMode.Light) {
+            PilgrimTheme(
+                appearanceMode = AppearanceMode.Light,
+                hemisphere = fixedHemisphere,
+                today = fixedDate,
+            ) {
                 val c = pilgrimColors
                 SideEffect { captured = c }
             }
         }
         composeRule.runOnIdle {
-            assertEquals(pilgrimLightColors().parchment, captured!!.parchment)
+            assertEquals(expectedLight().parchment, captured!!.parchment)
         }
     }
 
@@ -38,13 +55,17 @@ class PilgrimThemeAppearanceTest {
     fun `dark forces dark colors`() {
         var captured: PilgrimColors? = null
         composeRule.setContent {
-            PilgrimTheme(appearanceMode = AppearanceMode.Dark) {
+            PilgrimTheme(
+                appearanceMode = AppearanceMode.Dark,
+                hemisphere = fixedHemisphere,
+                today = fixedDate,
+            ) {
                 val c = pilgrimColors
                 SideEffect { captured = c }
             }
         }
         composeRule.runOnIdle {
-            assertEquals(pilgrimDarkColors().parchment, captured!!.parchment)
+            assertEquals(expectedDark().parchment, captured!!.parchment)
         }
     }
 
@@ -58,13 +79,17 @@ class PilgrimThemeAppearanceTest {
         // dark would only be caught by this test).
         var captured: PilgrimColors? = null
         composeRule.setContent {
-            PilgrimTheme(appearanceMode = AppearanceMode.System) {
+            PilgrimTheme(
+                appearanceMode = AppearanceMode.System,
+                hemisphere = fixedHemisphere,
+                today = fixedDate,
+            ) {
                 val c = pilgrimColors
                 SideEffect { captured = c }
             }
         }
         composeRule.runOnIdle {
-            assertEquals(pilgrimLightColors().parchment, captured!!.parchment)
+            assertEquals(expectedLight().parchment, captured!!.parchment)
         }
     }
 
@@ -73,6 +98,6 @@ class PilgrimThemeAppearanceTest {
         // Sanity: the test would silently pass if both palettes were
         // accidentally identical. Verifying they differ ensures the
         // assertions above mean what they say.
-        assertNotEquals(pilgrimLightColors().parchment, pilgrimDarkColors().parchment)
+        assertNotEquals(expectedLight().parchment, expectedDark().parchment)
     }
 }

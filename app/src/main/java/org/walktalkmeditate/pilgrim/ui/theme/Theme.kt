@@ -16,6 +16,9 @@ import org.walktalkmeditate.pilgrim.ui.design.rememberReducedMotion
 @Composable
 fun PilgrimTheme(
     appearanceMode: AppearanceMode = AppearanceMode.System,
+    hemisphere: org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere =
+        org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
+    today: java.time.LocalDate = java.time.LocalDate.now(),
     content: @Composable () -> Unit,
 ) {
     // Resolve appearance preference -> dark/light flag. `System` defers
@@ -32,10 +35,16 @@ fun PilgrimTheme(
     // would allocate fresh instances and — because LocalPilgrimColors and
     // LocalPilgrimTypography are both staticCompositionLocalOf
     // (reference-equality) — invalidate every consumer in the entire app
-    // tree. Key the colors `remember` on `darkTheme` so a flip between
-    // light and dark still produces a fresh palette.
-    val colors = remember(darkTheme) {
-        if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
+    // tree. Key the colors `remember` on `darkTheme`, `hemisphere`, and
+    // `today` so a dark/light flip, a hemisphere change, or a date change
+    // produces a fresh seasonally-shifted palette. iOS parity
+    // `Color.swift@db4196e` wraps every static getter in
+    // `SeasonalColorEngine.seasonalColor` so the whole app picks up
+    // season-driven hue/saturation/brightness shifts; we replicate that
+    // here at theme-construction time via [pilgrimSeasonalColors].
+    val colors = remember(darkTheme, hemisphere, today) {
+        val base = if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
+        pilgrimSeasonalColors(base, today, hemisphere)
     }
     val type = remember { pilgrimTypography() }
 
