@@ -215,6 +215,15 @@ open class WalkRepository @Inject constructor(
     suspend fun countVoiceRecordingsFor(walkId: Long): Int =
         voiceRecordingDao.countForWalk(walkId)
 
+    /**
+     * Walk Summary tap-to-edit + retranscribe path. Updates only the
+     * transcription column without round-tripping the whole entity
+     * (avoids touching the [VoiceRecording.init] invariants that police
+     * durationMillis = end - start).
+     */
+    suspend fun updateVoiceRecordingTranscription(id: Long, transcription: String?) =
+        voiceRecordingDao.updateTranscription(id, transcription)
+
     // --- Stage 7-A: photo reliquary -----------------------------------
 
     /**

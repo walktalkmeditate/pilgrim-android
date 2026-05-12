@@ -287,7 +287,7 @@ fun WalkSummaryScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(pilgrimColors.parchmentSecondary),
+            .background(pilgrimColors.parchment),
     ) {
         // Summary content renders first (z-order: behind the overlay).
         Column(modifier = Modifier.fillMaxSize()) {
@@ -620,13 +620,33 @@ fun WalkSummaryScreen(
 
                         // 16. Voice recordings (Stage 2-E)
                         if (recordings.isNotEmpty()) {
+                            val playbackSpeed by viewModel.playbackSpeed
+                                .collectAsStateWithLifecycle()
+                            val waveforms by viewModel.waveforms
+                                .collectAsStateWithLifecycle()
                             Spacer(Modifier.height(PilgrimSpacing.normal))
                             VoiceRecordingsSection(
                                 walkStartTimestamp = s.summary.walk.startTimestamp,
                                 recordings = recordings,
                                 playbackUiState = playbackUiState,
+                                playbackSpeed = playbackSpeed,
+                                // Pass the StateFlow itself (not a
+                                // collected snapshot) so the per-row
+                                // WaveformBarView can subscribe directly
+                                // inside its own composable scope. The
+                                // 100ms tick then recomposes the bar
+                                // only — screen + header + non-playing
+                                // rows stay stable.
+                                playbackPositionMillisFlow =
+                                    viewModel.playbackPositionMillis,
+                                waveforms = waveforms,
                                 onPlay = viewModel::playRecording,
                                 onPause = viewModel::pausePlayback,
+                                onCycleSpeed = viewModel::cyclePlaybackSpeed,
+                                onSeek = viewModel::seekPlayback,
+                                onSaveTranscription = viewModel::saveTranscription,
+                                onRetranscribe = viewModel::retranscribeRecording,
+                                onEnsureWaveform = viewModel::ensureWaveform,
                             )
                         }
 
@@ -922,10 +942,11 @@ private fun SummaryMap(
     // textureBackend = true so the map renders into the parent canvas;
     // a Canvas overlay then paints a parchment radial-gradient frame ON
     // TOP, producing the same iOS RadialGradient mask effect (transparent
-    // center → opaque-parchment corners). Card removed: corners fade to
-    // the SCREEN background color (pilgrimColors.parchment) so dark mode
-    // shows a real contrast between map and frame.
-    val parchmentMask = pilgrimColors.parchmentSecondary
+    // center → opaque-parchment corners). Mask color matches the screen
+    // bg (pilgrimColors.parchment) so corners dissolve invisibly into the
+    // page — iOS parity (WalkSummaryView+Map.swift@db4196e uses
+    // .mask(RadialGradient) which fades to whatever's behind = page bg).
+    val parchmentMask = pilgrimColors.parchment
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1015,8 +1036,9 @@ fun WalkSummaryWeatherLine(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         Icon(
             painter = painterResource(condition.iconRes),

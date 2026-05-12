@@ -167,6 +167,10 @@ class WalkSummaryViewModelLightReadingGateTest {
             photoExifReader = org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader(
                 context = context,
             ),
+            transcriptionScheduler = object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler { override fun scheduleForWalk(walkId: Long) {} },
+            waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
+                fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
+            ),
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )

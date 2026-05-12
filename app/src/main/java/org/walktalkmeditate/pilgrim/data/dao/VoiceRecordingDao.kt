@@ -43,4 +43,15 @@ interface VoiceRecordingDao {
 
     @Query("SELECT COUNT(*) FROM voice_recordings WHERE walk_id = :walkId")
     suspend fun countForWalk(walkId: Long): Int
+
+    /**
+     * Update the transcription text for an existing recording. Used by
+     * the Walk Summary tap-to-edit affordance and by retranscribe (the
+     * worker writes the new transcript via this path). Setting
+     * [transcription] to null effectively re-queues the row for the
+     * transcription worker, since [observeForWalk] subscribers will see
+     * the pending-state placeholder again.
+     */
+    @Query("UPDATE voice_recordings SET transcription = :transcription WHERE id = :id")
+    suspend fun updateTranscription(id: Long, transcription: String?)
 }

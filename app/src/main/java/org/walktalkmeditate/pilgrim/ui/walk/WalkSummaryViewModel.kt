@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -254,6 +255,9 @@ class WalkSummaryViewModel @Inject constructor(
     private val sealRevealStore: SealRevealStore,
     private val walkSharingTracker: WalkSharingTracker,
     private val photoExifReader: org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader,
+    private val transcriptionScheduler:
+        org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
+    private val waveformCache: org.walktalkmeditate.pilgrim.audio.WaveformCache,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -726,6 +730,95 @@ class WalkSummaryViewModel @Inject constructor(
 
     fun playRecording(recording: VoiceRecording) = playback.play(recording)
     fun pausePlayback() = playback.pause()
+
+    val playbackSpeed: StateFlow<Float> = playback.playbackSpeed
+
+    /**
+     * Cycles playback speed 1.0 → 1.5 → 2.0 → 1.0. Matches iOS
+     * `AudioPlayer.cycleSpeed()` semantics so the speed-pill UI on
+     * [VoiceRecordingRow] is parity with iOS.
+     */
+    fun cyclePlaybackSpeed() {
+        val next = when (playback.playbackSpeed.value) {
+            1.0f -> 1.5f
+            1.5f -> 2.0f
+            else -> 1.0f
+        }
+        playback.setPlaybackSpeed(next)
+    }
+
+    /**
+     * Walk Summary tap-to-edit save action. Trims the user text and
+     * commits the updated transcription via [WalkRepository]. No-op on
+     * blank input (matches iOS `onTranscriptionSave`).
+     */
+    fun saveTranscription(recordingId: Long, newText: String) {
+        val trimmed = newText.trim()
+        if (trimmed.isEmpty()) return
+        // persistenceScope (not viewModelScope) — user navigating Back
+        // immediately after tapping Done would otherwise cancel the
+        // DB write mid-flight and silently lose the edit.
+        persistenceScope.launch {
+            repository.updateVoiceRecordingTranscription(recordingId, trimmed)
+        }
+    }
+
+    /**
+     * Walk Summary retranscribe-single action. Clears the existing
+     * transcription so the row reverts to the pending placeholder, then
+     * schedules the per-walk transcription worker which will pick up
+     * the row again (it queries `WHERE transcription IS NULL`). Matches
+     * iOS `WalkSummaryView.retranscribeSingle` semantics with the
+     * Android worker-queue equivalent.
+     */
+    fun retranscribeRecording(recordingId: Long) {
+        // persistenceScope — see [saveTranscription] for the
+        // back-nav-mid-write rationale.
+        persistenceScope.launch {
+            repository.updateVoiceRecordingTranscription(recordingId, null)
+            transcriptionScheduler.scheduleForWalk(walkId)
+        }
+    }
+
+    fun seekPlayback(fraction: Float) = playback.seek(fraction)
+
+    /**
+     * Live playback position passthrough so the [WaveformBarView]'s
+     * progress fill can advance every 100ms while audio plays.
+     */
+    val playbackPositionMillis: StateFlow<Long> = playback.playbackPositionMillis
+
+    private val _waveforms = MutableStateFlow<Map<Long, FloatArray>>(emptyMap())
+    private val waveformsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+    /**
+     * Per-recording waveform samples ([WaveformGenerator] output). UI
+     * triggers loading via [ensureWaveform] when a row enters the
+     * composition; cache hits return synchronously, misses populate
+     * after the IO decode completes. Empty arrays mean "tried + failed
+     * to decode" — the row's WaveformBarView will fall back to a flat
+     * placeholder strip.
+     */
+    val waveforms: StateFlow<Map<Long, FloatArray>> = _waveforms.asStateFlow()
+
+    fun ensureWaveform(recordingId: Long, relativePath: String) {
+        if (_waveforms.value.containsKey(recordingId)) return
+        // ConcurrentHashMap.newKeySet().add returns false if the key is
+        // already present — atomic check-and-set means rapid successive
+        // LaunchedEffect re-keys (e.g., a Compose row recomposing twice
+        // back-to-back) don't fan out into N duplicate coroutines.
+        // WaveformCache's own mutex would dedupe the actual decode, but
+        // this saves the redundant launch + scope overhead.
+        if (!waveformsInFlight.add(recordingId)) return
+        viewModelScope.launch {
+            try {
+                val samples = waveformCache.ensure(recordingId, relativePath)
+                    ?: FloatArray(0)
+                _waveforms.update { it + (recordingId to samples) }
+            } finally {
+                waveformsInFlight.remove(recordingId)
+            }
+        }
+    }
     fun stopPlayback() = playback.stop()
 
     /**

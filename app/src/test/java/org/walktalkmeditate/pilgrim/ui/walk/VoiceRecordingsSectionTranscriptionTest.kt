@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,8 +45,16 @@ class VoiceRecordingsSectionTranscriptionTest {
                         isPlaying = false,
                         errorMessage = null,
                     ),
+                    playbackSpeed = 1.0f,
+                    playbackPositionMillisFlow = MutableStateFlow(0L),
+                    waveforms = emptyMap(),
                     onPlay = {},
                     onPause = {},
+                    onCycleSpeed = {},
+                    onSeek = {},
+                    onSaveTranscription = { _, _ -> },
+                    onRetranscribe = {},
+                    onEnsureWaveform = { _, _ -> },
                 )
             }
         }
@@ -68,8 +77,16 @@ class VoiceRecordingsSectionTranscriptionTest {
                         isPlaying = false,
                         errorMessage = null,
                     ),
+                    playbackSpeed = 1.0f,
+                    playbackPositionMillisFlow = MutableStateFlow(0L),
+                    waveforms = emptyMap(),
                     onPlay = {},
                     onPause = {},
+                    onCycleSpeed = {},
+                    onSeek = {},
+                    onSaveTranscription = { _, _ -> },
+                    onRetranscribe = {},
+                    onEnsureWaveform = { _, _ -> },
                 )
             }
         }
