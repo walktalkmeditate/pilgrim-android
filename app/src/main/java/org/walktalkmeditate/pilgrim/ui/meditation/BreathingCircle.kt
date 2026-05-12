@@ -121,19 +121,20 @@ internal fun BreathingCircle(
         )
         // Milestone-flash ring — pulses on {300, 600, 900, 1200, 1800}s
         // to mark elapsed meditation time. iOS parity (MeditationView.swift:272@db4196e):
-        // opacity = MILESTONE_RING_BASE_ALPHA + milestoneFlash * MILESTONE_RING_FLASH_ALPHA,
-        // lineWidth = MILESTONE_RING_BASE_WIDTH_PX + milestoneFlash * MILESTONE_RING_FLASH_WIDTH_PX.
-        // When milestoneFlash == 0f, ring is a faint outline (matches resting state).
-        if (milestoneFlash > 0f || MILESTONE_RING_BASE_ALPHA > 0f) {
-            val ringAlpha = MILESTONE_RING_BASE_ALPHA + milestoneFlash * MILESTONE_RING_FLASH_ALPHA
-            val ringWidth = MILESTONE_RING_BASE_WIDTH_PX + milestoneFlash * MILESTONE_RING_FLASH_WIDTH_PX
-            drawCircle(
-                color = moss.copy(alpha = ringAlpha.coerceIn(0f, 1f)),
-                radius = outerRadius,
-                center = center,
-                style = Stroke(width = ringWidth),
-            )
-        }
+        //   opacity   = MILESTONE_RING_BASE_ALPHA + milestoneFlash * MILESTONE_RING_FLASH_ALPHA
+        //   lineWidth = MILESTONE_RING_BASE_WIDTH_DP + milestoneFlash * MILESTONE_RING_FLASH_WIDTH_DP
+        // Stroke widths are dp-converted at draw time (DrawScope inherits
+        // Density). Hardcoded px values at 1f / 1.5f rendered at 0.33dp /
+        // 0.5dp on 3x density (OnePlus 13) — near-invisible. Base alpha
+        // is a non-zero constant so the resting ring is always drawn.
+        val ringAlpha = MILESTONE_RING_BASE_ALPHA + milestoneFlash * MILESTONE_RING_FLASH_ALPHA
+        val ringWidthDp = MILESTONE_RING_BASE_WIDTH_DP + milestoneFlash * MILESTONE_RING_FLASH_WIDTH_DP
+        drawCircle(
+            color = moss.copy(alpha = ringAlpha.coerceIn(0f, 1f)),
+            radius = outerRadius,
+            center = center,
+            style = Stroke(width = ringWidthDp.dp.toPx()),
+        )
     }
 }
 
@@ -202,5 +203,5 @@ private const val CIRCLE_SIZE_DP = 320
 private const val INNER_CORE_FRACTION = 0.5f
 private const val MILESTONE_RING_BASE_ALPHA = 0.25f
 private const val MILESTONE_RING_FLASH_ALPHA = 0.4f
-private const val MILESTONE_RING_BASE_WIDTH_PX = 1f
-private const val MILESTONE_RING_FLASH_WIDTH_PX = 1.5f
+private const val MILESTONE_RING_BASE_WIDTH_DP = 1f
+private const val MILESTONE_RING_FLASH_WIDTH_DP = 1.5f

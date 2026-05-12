@@ -233,15 +233,26 @@ fun MeditationScreen(
     // iOS parity `MeditationView.swift:743-745@db4196e` — pulse the
     // breathing-ring at the {300, 600, 900, 1200, 1800}s milestones to
     // mark elapsed meditation. easeInOut(1.5s) 0→1, hold 2s, easeOut(1.5s)
-    // 1→0. snapshotFlow + collect drives the one-shot per second tick;
-    // a milestone landing exactly on integer seconds (Android's timer is
-    // exact, unlike iOS's 0.5s float) makes a window check unnecessary
-    // for the ascending edge.
+    // 1→0. snapshotFlow drives the per-second tick; producer is the
+    // `elapsedSeconds += 1` loop above so the counter is exact-integer
+    // monotone (cannot jump a milestone value).
+    //
+    // `highestFiredMilestone` rememberSaveable latch prevents the
+    // flash from re-firing on rotation / process-death restore at a
+    // milestone second. Without it, a rotation at second 305 would
+    // restart the `LaunchedEffect(Unit)`, snapshotFlow's first
+    // emission would NOT match (305 not in set), but a rotation at
+    // exactly 300 would re-fire. Same `hasSeen` latch pattern as
+    // Stage 5-A's MeditationScreen state observer. The milestones are
+    // strictly monotonic (300 < 600 < 900 < 1200 < 1800), so a single
+    // "highest fired" int captures the full set.
     val milestoneFlash = remember { Animatable(0f) }
+    var highestFiredMilestone by rememberSaveable { mutableIntStateOf(-1) }
     LaunchedEffect(Unit) {
         snapshotFlow { elapsedSeconds }
             .collect { seconds ->
-                if (seconds in MILESTONE_SECONDS) {
+                if (seconds in MILESTONE_SECONDS && seconds > highestFiredMilestone) {
+                    highestFiredMilestone = seconds
                     milestoneFlash.snapTo(0f)
                     milestoneFlash.animateTo(
                         targetValue = 1f,

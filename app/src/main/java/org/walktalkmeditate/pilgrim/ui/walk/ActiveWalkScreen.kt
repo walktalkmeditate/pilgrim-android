@@ -707,19 +707,36 @@ private fun TurningWatermark(
                 onClick = onClick,
             )
             .padding(PilgrimSpacing.normal)
-            .semantics {
+            // `mergeDescendants = true` folds the kanji Text into the
+            // parent's a11y node. Without it TalkBack reads "春分.
+            // 春分. Opens a contemplative ritual card" (the merged Text
+            // content gets concatenated with the overridden
+            // contentDescription). With merge enabled, the parent's
+            // explicit contentDescription replaces the Text content for
+            // accessibility — TalkBack reads only "Spring Equinox.
+            // Opens a contemplative ritual card."
+            .semantics(mergeDescendants = true) {
                 this.contentDescription = "$contentDescription. $a11yHint"
             },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = kanji,
+            // sp (not dp) so the watermark respects the user's system
+            // font scale — at large-text accessibility settings the
+            // kanji grows. iOS uses 18pt fixed via `.system(size: 18,
+            // weight: .ultraLight)` which does NOT scale with Dynamic
+            // Type. The Android divergence is intentional: respecting
+            // the system font preference is the platform-idiomatic
+            // choice, and the kanji remains visually ambient at every
+            // scale.
             fontSize = 18.sp,
             fontWeight = FontWeight.Light,
-            // iOS uses `.foregroundColor(.stone.opacity(0.18))`. Android's
-            // `ink.copy(alpha = 0.18f)` is the equivalent moss-on-parchment
-            // muted tone in both light + dark mode.
-            color = pilgrimColors.ink.copy(alpha = 0.18f),
+            // iOS uses `.foregroundColor(.stone.opacity(0.18))`.
+            // PilgrimColors exposes `stone` mapped to the same warm
+            // neutral mid-tone on both light + dark mode — direct
+            // parity, no role-flip surprise.
+            color = pilgrimColors.stone.copy(alpha = 0.18f),
         )
     }
 }
