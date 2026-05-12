@@ -26,6 +26,8 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveConfig
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestoneDetector
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepositoryStatsSource
+import org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
@@ -86,6 +88,18 @@ object CollectiveModule {
     @Provides
     @Singleton
     fun provideMilestoneSurface(impl: CollectiveMilestoneDetector): MilestoneSurface = impl
+
+    /**
+     * Narrow read-only StateFlow facet so consumers (e.g.
+     * `WalkViewModel.collectivePulseActive`) can mock without
+     * standing up `CollectiveRepository`'s full cache + service +
+     * scope graph in unit tests.
+     */
+    @Provides
+    @Singleton
+    fun provideCollectiveStatsSource(
+        impl: CollectiveRepositoryStatsSource,
+    ): CollectiveStatsSource = impl
 
     /**
      * Long-lived scope for the repository's fire-and-forget recordWalk

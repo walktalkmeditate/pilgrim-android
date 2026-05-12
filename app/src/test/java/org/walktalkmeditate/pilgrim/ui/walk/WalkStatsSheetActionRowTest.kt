@@ -67,13 +67,13 @@ class WalkStatsSheetActionRowTest {
             )
 
     @Test
-    fun `Active state — Meditate enabled, no Pause button`() {
+    fun `Active state — Pause + Meditate enabled`() {
         render(WalkState.Active(WalkAccumulator(1L, 0L)))
+        // iOS parity (Stage 14-X audit D14): manual Pause button on the
+        // action row when Active. Earlier Android shipped without it
+        // under a "motion-based auto-pause TBD" note.
+        nodeInExpandedWithText("Pause").assertIsEnabled()
         nodeInExpandedWithText("Meditate").assertIsEnabled()
-        // Pause button was removed in Stage 9.5-B device-QA pass to
-        // match iOS reference. Verify no clickable "Pause" exists.
-        composeRule.onAllNodesWithText("Pause")
-            .assertCountEquals(0)
     }
 
     @Test

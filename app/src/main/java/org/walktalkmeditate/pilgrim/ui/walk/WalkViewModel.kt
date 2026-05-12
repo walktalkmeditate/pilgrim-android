@@ -55,6 +55,15 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
  * timer + pace can re-render every second even when no new location
  * sample has arrived.
  */
+/**
+ * `@Immutable` because [walkState] is a sealed type whose subclasses
+ * carry reference-typed [org.walktalkmeditate.pilgrim.domain.Walk]
+ * payloads. Without the annotation Compose infers the field as
+ * Unstable and consumers skip-fail their recompose checks. Same
+ * lesson as Stage 4-D `WalkSummary` (data classes carrying
+ * cross-module reference types).
+ */
+@androidx.compose.runtime.Immutable
 data class WalkUiState(
     val walkState: WalkState,
     val nowMillis: Long,
@@ -79,7 +88,24 @@ class WalkViewModel @Inject constructor(
     unitsPreferences: UnitsPreferencesRepository,
     practicePreferences: PracticePreferencesRepository,
     private val weatherFetching: WeatherFetching,
+    collectiveStats: org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource,
 ) : ViewModel() {
+
+    /**
+     * iOS parity `WalkStartView.swift:164-168@db4196e` —
+     * `CollectiveCounterService.$stats.walkedInLastHour`. When true,
+     * the breathing logo on Path picks up a 1.2s scale+shadow pulse to
+     * signal that someone else is walking right now. Mapped from
+     * [CollectiveRepository.stats] via `walkedInLastHour()`. Nullable
+     * stats (cold start, no fetch yet) collapse to false.
+     */
+    val collectivePulseActive: StateFlow<Boolean> = collectiveStats.stats
+        .map { it?.walkedInLastHour() == true }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = false,
+        )
 
     /**
      * Stage 10-C: passthrough of the units preference. ActiveWalkScreen
@@ -615,6 +641,11 @@ class WalkViewModel @Inject constructor(
                 delay(WEATHER_RETRY_DELAY_MS)
                 fetchAndPersistWeather(walkId)
             }
+        }.also { job ->
+            // KDoc claims the field is cleared on completion — actually
+            // wire that up so a finished Job reference doesn't pin until
+            // the VM is cleared.
+            job.invokeOnCompletion { weatherJob = null }
         }
     }
 

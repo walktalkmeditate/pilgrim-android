@@ -486,6 +486,8 @@ private fun ExpandedContent(
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
             onStartWalk = onStartWalk,
+            onPause = onPause,
+            onResume = onResume,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
             onToggleRecording = onToggleRecording,
@@ -541,6 +543,8 @@ private fun ActionButtonRow(
     audioLevel: Float,
     recordingsCount: Int,
     onStartWalk: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
     onToggleRecording: () -> Unit,
@@ -573,8 +577,37 @@ private fun ActionButtonRow(
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
     ) {
+        // Pause / Resume — iOS parity manual control. Active → Pause,
+        // Paused → Resume, Meditating → disabled (meditation has its
+        // own End control). Stage 14-X audit: prior Android dropped
+        // this entirely under a "motion-based auto-pause TBD" note —
+        // iOS keeps the manual button.
+        when (walkState) {
+            is WalkState.Active -> CircularActionButton(
+                label = stringResource(R.string.walk_action_pause),
+                icon = Icons.Filled.Pause,
+                color = pilgrimColors.stone,
+                onClick = onPause,
+                modifier = Modifier.weight(1f),
+            )
+            is WalkState.Paused -> CircularActionButton(
+                label = stringResource(R.string.walk_action_resume),
+                icon = Icons.Filled.PlayArrow,
+                color = pilgrimColors.moss,
+                onClick = onResume,
+                modifier = Modifier.weight(1f),
+            )
+            else -> CircularActionButton(
+                label = stringResource(R.string.walk_action_pause),
+                icon = Icons.Filled.Pause,
+                color = pilgrimColors.fog,
+                enabled = false,
+                onClick = {},
+                modifier = Modifier.weight(1f),
+            )
+        }
         when (walkState) {
             is WalkState.Active -> CircularActionButton(
                 label = stringResource(R.string.walk_action_meditate_short),

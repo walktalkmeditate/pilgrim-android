@@ -179,6 +179,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
     }
 
@@ -414,6 +415,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
 
         controller.startWalk(intention = null)
@@ -449,6 +451,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
 
         controller.startWalk(intention = null)
@@ -557,6 +560,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -587,6 +591,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -645,6 +650,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -824,6 +830,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             weather,
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
     }
 
@@ -840,6 +847,7 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             prefs,
             FakeWeatherFetching(),
+            collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)
