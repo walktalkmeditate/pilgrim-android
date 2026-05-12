@@ -23,7 +23,15 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import org.walktalkmeditate.pilgrim.R
 import coil3.compose.SubcomposeAsyncImage
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
@@ -50,6 +58,13 @@ internal fun PhotoThumbnail(
         label = "thumbnail-activation-scale",
     )
 
+    // iOS-parity TalkBack actions: PhotoCarouselView.swift:135-149@db4196e
+    // exposes the long-press activation as a CustomAccessibilityAction
+    // ("Activate") and the tap as the default click action. detectTapGestures
+    // is invisible to screen readers; semantics fills the gap.
+    val thumbnailLabel = stringResource(R.string.reliquary_photo_thumbnail_a11y)
+    val activateLabel = stringResource(R.string.reliquary_photo_activate_a11y)
+    val openLabel = stringResource(R.string.reliquary_photo_open_a11y)
     Box(
         modifier = modifier
             .size(THUMBNAIL_SIZE_DP.dp)
@@ -62,6 +77,20 @@ internal fun PhotoThumbnail(
             }
             .clip(RoundedCornerShape(PilgrimCornerRadius.small))
             .background(pilgrimColors.parchmentSecondary)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = thumbnailLabel
+                customActions = listOf(
+                    CustomAccessibilityAction(label = activateLabel) {
+                        onLongPress()
+                        true
+                    },
+                    CustomAccessibilityAction(label = openLabel) {
+                        onTap()
+                        true
+                    },
+                )
+            }
             .pointerInput(photo.id) {
                 detectTapGestures(
                     onLongPress = { onLongPress() },
