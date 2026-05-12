@@ -622,8 +622,6 @@ fun WalkSummaryScreen(
                         if (recordings.isNotEmpty()) {
                             val playbackSpeed by viewModel.playbackSpeed
                                 .collectAsStateWithLifecycle()
-                            val playbackPositionMillis by viewModel.playbackPositionMillis
-                                .collectAsStateWithLifecycle()
                             val waveforms by viewModel.waveforms
                                 .collectAsStateWithLifecycle()
                             Spacer(Modifier.height(PilgrimSpacing.normal))
@@ -632,7 +630,15 @@ fun WalkSummaryScreen(
                                 recordings = recordings,
                                 playbackUiState = playbackUiState,
                                 playbackSpeed = playbackSpeed,
-                                playbackPositionMillis = playbackPositionMillis,
+                                // Pass the StateFlow itself (not a
+                                // collected snapshot) so the per-row
+                                // WaveformBarView can subscribe directly
+                                // inside its own composable scope. The
+                                // 100ms tick then recomposes the bar
+                                // only — screen + header + non-playing
+                                // rows stay stable.
+                                playbackPositionMillisFlow =
+                                    viewModel.playbackPositionMillis,
                                 waveforms = waveforms,
                                 onPlay = viewModel::playRecording,
                                 onPause = viewModel::pausePlayback,

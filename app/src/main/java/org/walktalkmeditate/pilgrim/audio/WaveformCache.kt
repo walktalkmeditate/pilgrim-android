@@ -51,12 +51,22 @@ class WaveformCache @Inject constructor(
             if (recordingId in inFlight) return null
             inFlight += recordingId
         }
-        val result = WaveformGenerator.generate(fileSystem.absolutePath(relativePath))
-        mutex.withLock {
-            inFlight -= recordingId
-            cache[recordingId] = result ?: EMPTY_SENTINEL
+        try {
+            val result = WaveformGenerator.generate(fileSystem.absolutePath(relativePath))
+            mutex.withLock {
+                cache[recordingId] = result ?: EMPTY_SENTINEL
+            }
+            return result
+        } finally {
+            // try/finally so a cancellation OR a non-CE throw still clears
+            // the in-flight marker. Without this, a cancelled load would
+            // permanently lock the recording out of future decode
+            // attempts (subsequent ensure() calls would see the id in
+            // inFlight and short-circuit to null forever).
+            mutex.withLock {
+                inFlight -= recordingId
+            }
         }
-        return result
     }
 
     suspend fun invalidate(recordingId: Long) {

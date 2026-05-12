@@ -6,13 +6,15 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 /**
@@ -25,12 +27,22 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 @Composable
 internal fun WaveformBarView(
     samples: FloatArray,
-    progress: Float,
+    playbackPositionMillisFlow: StateFlow<Long>?,
+    durationMillis: Long,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val active = pilgrimColors.stone
     val inactive = pilgrimColors.fog.copy(alpha = 0.35f)
+    // collectAsStateWithLifecycle is gated on a non-null flow so
+    // non-active rows pay zero subscription cost — only the playing
+    // row's bar wakes on the 100ms tick.
+    val progress: Float = if (playbackPositionMillisFlow != null && durationMillis > 0L) {
+        val pos by playbackPositionMillisFlow.collectAsStateWithLifecycle()
+        (pos.toFloat() / durationMillis.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
     Canvas(
         modifier = modifier
             .fillMaxWidth()
@@ -47,7 +59,7 @@ internal fun WaveformBarView(
         if (samples.isEmpty()) return@Canvas
         drawBars(
             samples = samples,
-            progress = progress.coerceIn(0f, 1f),
+            progress = progress,
             active = active,
             inactive = inactive,
             canvasSize = this.size,

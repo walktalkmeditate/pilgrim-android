@@ -70,6 +70,13 @@ object WaveformGenerator {
                     }
                     out
                 }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                // Structured concurrency: a cancelled load must not be
+                // observed as a decode failure. Without this re-throw,
+                // the catch (Throwable) below would swallow CE and the
+                // caller (WaveformCache) would store EMPTY_SENTINEL,
+                // permanently poisoning the cache for this recording.
+                throw ce
             } catch (t: Throwable) {
                 Log.w(TAG, "Failed to decode waveform for ${file.name}", t)
                 null

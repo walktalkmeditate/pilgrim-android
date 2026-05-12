@@ -68,7 +68,11 @@ fun VoiceRecordingsSection(
     recordings: List<VoiceRecording>,
     playbackUiState: PlaybackUiState,
     playbackSpeed: Float,
-    playbackPositionMillis: Long,
+    // StateFlow (not Long) so the per-row WaveformBarView can
+    // collectAsState inside its own composable scope. The 100ms
+    // playback tick then recomposes the bar only — section/header/
+    // non-playing rows stay stable.
+    playbackPositionMillisFlow: kotlinx.coroutines.flow.StateFlow<Long>,
     waveforms: Map<Long, FloatArray>,
     onPlay: (VoiceRecording) -> Unit,
     onPause: () -> Unit,
@@ -114,19 +118,15 @@ fun VoiceRecordingsSection(
         recordings.forEachIndexed { index, recording ->
             val isActive = playbackUiState.playingRecordingId == recording.id
             val isThisRowPlaying = isActive && playbackUiState.isPlaying
-            val progress = if (isActive && recording.durationMillis > 0L) {
-                (playbackPositionMillis.toFloat() / recording.durationMillis.toFloat())
-                    .coerceIn(0f, 1f)
-            } else {
-                0f
-            }
             VoiceRecordingRow(
                 indexLabel = index + 1,
                 recording = recording,
                 walkStartTimestamp = walkStartTimestamp,
                 isPlaying = isThisRowPlaying,
                 isActive = isActive,
-                progress = progress,
+                // Each row passes the flow + an isActive flag down; only
+                // the active row's bar actually subscribes (gated below).
+                playbackPositionMillisFlow = playbackPositionMillisFlow,
                 playbackSpeed = playbackSpeed,
                 waveformSamples = waveforms[recording.id],
                 onPlay = { onPlay(recording) },
@@ -150,7 +150,7 @@ private fun VoiceRecordingRow(
     walkStartTimestamp: Long,
     isPlaying: Boolean,
     isActive: Boolean,
-    progress: Float,
+    playbackPositionMillisFlow: kotlinx.coroutines.flow.StateFlow<Long>,
     playbackSpeed: Float,
     waveformSamples: FloatArray?,
     onPlay: () -> Unit,
@@ -226,7 +226,8 @@ private fun VoiceRecordingRow(
         if (waveformSamples != null && waveformSamples.isNotEmpty()) {
             org.walktalkmeditate.pilgrim.ui.walk.summary.WaveformBarView(
                 samples = waveformSamples,
-                progress = progress,
+                playbackPositionMillisFlow = if (isActive) playbackPositionMillisFlow else null,
+                durationMillis = recording.durationMillis,
                 onSeek = { fraction ->
                     if (isActive) {
                         onSeek(fraction)
@@ -303,7 +304,12 @@ private fun EditableTranscription(
 ) {
     val clipboard = LocalClipboardManager.current
     var isEditing by rememberSaveable(recordingId) { mutableStateOf(false) }
-    var editText by rememberSaveable(recordingId, text) { mutableStateOf(text) }
+    // editText key intentionally drops `text` — re-keying on every
+    // external transcription change (e.g., the retranscribe worker
+    // committing a new value mid-edit) silently discards the in-progress
+    // buffer. We seed the buffer when the user taps Edit and rely on the
+    // user to Cancel/Done; rotation persists via rememberSaveable.
+    var editText by rememberSaveable(recordingId) { mutableStateOf(text) }
     var expanded by rememberSaveable(recordingId, text) { mutableStateOf(false) }
     val needsExpansion = transcriptionNeedsExpansion(text)
     val maxLines = if (!needsExpansion || expanded || isEditing) Int.MAX_VALUE else 4

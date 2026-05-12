@@ -755,7 +755,10 @@ class WalkSummaryViewModel @Inject constructor(
     fun saveTranscription(recordingId: Long, newText: String) {
         val trimmed = newText.trim()
         if (trimmed.isEmpty()) return
-        viewModelScope.launch {
+        // persistenceScope (not viewModelScope) — user navigating Back
+        // immediately after tapping Done would otherwise cancel the
+        // DB write mid-flight and silently lose the edit.
+        persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, trimmed)
         }
     }
@@ -769,7 +772,9 @@ class WalkSummaryViewModel @Inject constructor(
      * Android worker-queue equivalent.
      */
     fun retranscribeRecording(recordingId: Long) {
-        viewModelScope.launch {
+        // persistenceScope — see [saveTranscription] for the
+        // back-nav-mid-write rationale.
+        persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
             transcriptionScheduler.scheduleForWalk(walkId)
         }
@@ -784,6 +789,7 @@ class WalkSummaryViewModel @Inject constructor(
     val playbackPositionMillis: StateFlow<Long> = playback.playbackPositionMillis
 
     private val _waveforms = MutableStateFlow<Map<Long, FloatArray>>(emptyMap())
+    private val waveformsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     /**
      * Per-recording waveform samples ([WaveformGenerator] output). UI
      * triggers loading via [ensureWaveform] when a row enters the
@@ -796,9 +802,21 @@ class WalkSummaryViewModel @Inject constructor(
 
     fun ensureWaveform(recordingId: Long, relativePath: String) {
         if (_waveforms.value.containsKey(recordingId)) return
+        // ConcurrentHashMap.newKeySet().add returns false if the key is
+        // already present — atomic check-and-set means rapid successive
+        // LaunchedEffect re-keys (e.g., a Compose row recomposing twice
+        // back-to-back) don't fan out into N duplicate coroutines.
+        // WaveformCache's own mutex would dedupe the actual decode, but
+        // this saves the redundant launch + scope overhead.
+        if (!waveformsInFlight.add(recordingId)) return
         viewModelScope.launch {
-            val samples = waveformCache.ensure(recordingId, relativePath) ?: FloatArray(0)
-            _waveforms.update { it + (recordingId to samples) }
+            try {
+                val samples = waveformCache.ensure(recordingId, relativePath)
+                    ?: FloatArray(0)
+                _waveforms.update { it + (recordingId to samples) }
+            } finally {
+                waveformsInFlight.remove(recordingId)
+            }
         }
     }
     fun stopPlayback() = playback.stop()
