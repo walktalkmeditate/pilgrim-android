@@ -509,7 +509,7 @@
     <string name="walk_waypoint_chip_resting">Resting</string>
     <string name="walk_waypoint_chip_inspired">Inspired</string>
     <string name="walk_waypoint_chip_arrived">Arrived</string>
-    <string name="walk_waypoint_count_chars">%1$d/%2$d</string>
+    <string name="walk_waypoint_count_chars">%1$s/%2$s</string>
 
     <!-- Stage 10-E: PermissionsCard -->
     <string name="settings_permissions_title">Permissions</string>

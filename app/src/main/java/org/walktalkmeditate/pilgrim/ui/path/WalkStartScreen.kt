@@ -32,16 +32,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.random.Random
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
@@ -49,6 +51,7 @@ import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.ui.design.BreathingLogo
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.design.MoonPhaseGlyph
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -108,7 +111,14 @@ fun WalkStartScreen(
     // wall-clock ticks. Acceptable: the user will navigate
     // somewhere within hours either way.
     val today = LocalDate.now()
-    val lunarPhase = remember(today) { MoonCalc.moonPhase(Instant.now()) }
+    // Compute moon phase at the START of today's local day so the
+    // result agrees with the `remember(today)` key. Previously
+    // `MoonCalc.moonPhase(Instant.now())` could drift around midnight
+    // UTC when the local day hadn't ticked yet — the key would still
+    // be yesterday-local while the instant was already today-UTC.
+    val lunarPhase = remember(today) {
+        MoonCalc.moonPhase(today.atStartOfDay(ZoneId.systemDefault()).toInstant())
+    }
     // Local "starting" flag was a 1-shot guard that never reset; if
     // startWalk silently fails (state-machine rejection, FGS denial),
     // the button would stay disabled forever. Drive disabled state
@@ -144,11 +154,26 @@ fun WalkStartScreen(
         }
     }
 
+    val reduceMotion = LocalReduceMotion.current
+    val pulseActive by walkViewModel.collectivePulseActive.collectAsStateWithLifecycle()
+    // iOS Dynamic Type ≥ accessibility2 collapses the hero to 60pt logo.
+    // Android proxy: fontScale > 1.3 (system "Larger" font setting).
+    val isLargeText = LocalConfiguration.current.fontScale > 1.3f
+    val logoSize: Dp = if (isLargeText) 60.dp else 100.dp
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(pilgrimColors.parchment),
     ) {
+        // iOS parity `WalkStartView.swift:85-122@db4196e`: layered
+        // background = parchment + time-of-day tint + animated radial
+        // gradient + per-mode atmosphere overlay.
+        PathBackgroundLayers(
+            selectedMode = selectedMode,
+            reduceMotion = reduceMotion,
+            modifier = Modifier.matchParentSize(),
+        )
         // iOS-parity recovery banner: shows when a walk was auto-finalized
         // because the user swiped the app from recents mid-walk. Auto-
         // dismisses after 4s via the banner's internal LaunchedEffect.
@@ -182,7 +207,7 @@ fun WalkStartScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                BreathingLogo(size = 100.dp)
+                BreathingLogo(size = logoSize, pulseActive = pulseActive)
                 Spacer(Modifier.height(PilgrimSpacing.big))
                 Text(
                     text = currentQuote,

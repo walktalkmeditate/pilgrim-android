@@ -2,9 +2,9 @@
 package org.walktalkmeditate.pilgrim.ui.path
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -103,19 +103,25 @@ private fun WanderFootprints() {
 @Composable
 private fun TogetherFootprints(reduceMotion: Boolean) {
     val ink = pilgrimColors.ink
-    val drift by if (reduceMotion) {
-        animateFloatAsState(targetValue = 0f, label = "together-static")
-    } else {
-        rememberInfiniteTransition(label = "together-drift").animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 6000, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "drift",
-        )
-    }
+    // Compose forbids conditional remember*() calls. The previous
+    // `if (reduceMotion) animateFloatAsState(...) else
+    // rememberInfiniteTransition(...).animateFloat(...)` shape changed
+    // slot-table identity when the user toggled the motion preference
+    // at runtime and threw at recompose. Always call the same remember
+    // primitive; switch the produced value in a derived field.
+    // `targetValue = initialValue` when reduceMotion freezes the
+    // animation at 0f with zero per-frame recompose tax, while keeping
+    // the slot table identical across motion-pref toggles.
+    val transition = rememberInfiniteTransition(label = "together-drift")
+    val drift by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = if (reduceMotion) 0f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 6000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "drift",
+    )
     Box(modifier = Modifier.size(width = FRAME_WIDTH, height = FRAME_HEIGHT)) {
         Box(
             modifier = Modifier
@@ -157,19 +163,22 @@ private fun TogetherFootprints(reduceMotion: Boolean) {
 @Composable
 private fun SeekFootprints(reduceMotion: Boolean) {
     val ink = pilgrimColors.ink
-    val float by if (reduceMotion) {
-        animateFloatAsState(targetValue = 0f, label = "seek-static")
-    } else {
-        rememberInfiniteTransition(label = "seek-float").animateFloat(
-            initialValue = -2f,
-            targetValue = 2f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 4000, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "float",
-        )
-    }
+    // See TogetherFootprints for the `targetValue = initialValue`
+    // trick — `targetValue = 0f` when reduceMotion AND `initialValue =
+    // 0f` would pin the animation cleanly. Here `initialValue` is -2f
+    // so we pin to -2f under reduceMotion and apply an offset shift
+    // in the consumer so the visual still reads as centered.
+    val transition = rememberInfiniteTransition(label = "seek-float")
+    val rawFloat by transition.animateFloat(
+        initialValue = -2f,
+        targetValue = if (reduceMotion) -2f else 2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "float",
+    )
+    val float = if (reduceMotion) 0f else rawFloat
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
