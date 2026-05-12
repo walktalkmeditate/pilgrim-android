@@ -133,7 +133,7 @@ internal fun PilgrimMap(
         mutableStateOf<List<PointAnnotation>>(emptyList())
     }
     var renderedWalkAnnotationsKey by remember {
-        mutableStateOf<Pair<List<WalkMapAnnotation>, WalkAnnotationColors?>?>(null)
+        mutableStateOf<Triple<List<WalkMapAnnotation>, WalkAnnotationColors?, Map<Long, Bitmap>>?>(null)
     }
     val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
         walkAnnotationColors?.let { colors ->
@@ -141,14 +141,19 @@ internal fun PilgrimMap(
                 "startEnd" to createCircleBitmap(colors.startEnd, darkMode),
                 "meditation" to createCircleBitmap(colors.meditation, darkMode),
                 "voice" to createCircleBitmap(colors.voice, darkMode),
-                // Placeholder iOS-parity photo pin — circular fill in
-                // photo-tile color. v1 cut renders a simple colored
-                // circle; v2 will swap for an actual circular thumbnail
-                // via Mapbox ViewAnnotation + Coil AsyncImage.
+                // Placeholder photo pin — shown while the real circular
+                // thumbnail loads from the content URI. Replaced per-photo
+                // via [photoPinBitmaps] below as soon as the decode +
+                // mask job completes.
                 "photo" to createCircleBitmap(colors.photo, darkMode),
             )
         }
     }
+    // Per-photo circular thumbnail bitmaps, decoded from the content URIs.
+    // Loaded asynchronously on Dispatchers.IO inside a LaunchedEffect so
+    // the AndroidView update lambda can render the placeholder bitmap
+    // immediately and swap in the real thumbnail when ready.
+    val photoPinBitmaps = rememberPhotoPinBitmaps(walkAnnotations, darkMode)
     var didFitBounds by remember { mutableStateOf(false) }
     // One-shot: set the camera to [initialCenter] exactly once, on
     // whichever composition first has a non-null center AND points is
@@ -503,7 +508,12 @@ internal fun PilgrimMap(
             val annoMgr = annotationManager
             val bitmaps = annotationBitmaps
             if (annoMgr != null && walkAnnotations.isNotEmpty() && bitmaps != null) {
-                val key = walkAnnotations to walkAnnotationColors
+                // Snapshot the photo cache into an immutable Map so the
+                // Triple equality check actually sees content changes —
+                // a SnapshotStateMap reference is stable, so without the
+                // toMap() copy the key would always compare equal and
+                // the placeholder bitmaps would never get replaced.
+                val key = Triple(walkAnnotations, walkAnnotationColors, photoPinBitmaps.toMap())
                 if (renderedWalkAnnotationsKey != key) {
                     if (renderedWalkAnnotations.isNotEmpty()) {
                         renderedWalkAnnotations.forEach { annoMgr.delete(it) }
@@ -518,7 +528,8 @@ internal fun PilgrimMap(
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
                             is WalkMapAnnotationKind.Photo ->
-                                bitmaps.getValue("photo")
+                                photoPinBitmaps[ann.kind.walkPhotoId]
+                                    ?: bitmaps.getValue("photo")
                         }
                         annoMgr.create(
                             PointAnnotationOptions()
