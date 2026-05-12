@@ -297,7 +297,15 @@ private fun ReliquaryHeader(
                 contentDescription = null,
             )
             Spacer(Modifier.width(PilgrimSpacing.xs))
-            Text(if (slotsAvailable > 0) "Add" else "Full")
+            Text(
+                stringResource(
+                    if (slotsAvailable > 0) {
+                        R.string.reliquary_action_add
+                    } else {
+                        R.string.reliquary_action_full
+                    },
+                ),
+            )
         }
     }
 }

@@ -246,7 +246,7 @@ private fun SelectedTooltip(seg: TimelineSegment, showRelativeTime: Boolean) {
             color = pilgrimColors.ink,
         )
         Text(
-            text = formatCompactDurationCaption(seg.endMillis - seg.startMillis),
+            text = compactDurationCaption(seg.endMillis - seg.startMillis),
             style = pilgrimType.caption,
             color = pilgrimColors.fog,
         )
@@ -350,9 +350,14 @@ private fun formatAbsoluteTime(epochMs: Long): String {
         .format(Instant.ofEpochMilli(epochMs).atZone(zone))
 }
 
-private fun formatCompactDurationCaption(millis: Long): String {
+@androidx.compose.runtime.Composable
+private fun compactDurationCaption(millis: Long): String {
     val total = (millis / 1_000L).coerceAtLeast(0L).toInt()
-    return if (total < 60) "${total}s" else "${total / 60}m"
+    return if (total < 60) {
+        stringResource(R.string.summary_compact_duration_seconds_short, total)
+    } else {
+        stringResource(R.string.summary_compact_duration_minutes_short, total / 60)
+    }
 }
 
 private fun averagePaceLabel(samples: List<RouteDataSample>, units: UnitSystem): String? {

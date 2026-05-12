@@ -217,6 +217,10 @@
     <string name="reliquary_permission_denied_title">Photos access needed</string>
     <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk. You can grant access in Settings.</string>
     <string name="reliquary_permission_denied_action_settings">Open settings</string>
+    <string name="reliquary_action_add">Add</string>
+    <string name="reliquary_action_full">Full</string>
+    <string name="summary_compact_duration_seconds_short">%1$ds</string>
+    <string name="summary_compact_duration_minutes_short">%1$dm</string>
 
     <!-- Task 4.1: PhotoPreviewSheet actions -->
     <string name="preview_sheet_open_failed">No gallery app found</string>
