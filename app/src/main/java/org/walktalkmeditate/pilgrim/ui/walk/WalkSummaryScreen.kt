@@ -287,7 +287,7 @@ fun WalkSummaryScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(pilgrimColors.parchmentSecondary),
+            .background(pilgrimColors.parchment),
     ) {
         // Summary content renders first (z-order: behind the overlay).
         Column(modifier = Modifier.fillMaxSize()) {
