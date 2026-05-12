@@ -117,8 +117,11 @@ fun pilgrimDarkColors() = PilgrimColors(
  * - turning{Jade,Gold,Claret,Indigo} → NOT shifted (always-on turning
  *   accents, used standalone on turning days)
  *
- * Returns a fresh [PilgrimColors] with the shifted values; called once
- * per theme composition by [PilgrimTheme].
+ * Returns a fresh [PilgrimColors] with the shifted values; does 9
+ * HSV decompose/recompose allocations per call. Callers MUST wrap in
+ * `remember(darkTheme, hemisphere, today)` or equivalent so it runs
+ * once per theme rebuild — calling from a @Composable scope without
+ * remember reallocates on every recomposition.
  */
 fun pilgrimSeasonalColors(
     base: PilgrimColors,

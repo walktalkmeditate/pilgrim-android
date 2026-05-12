@@ -85,10 +85,12 @@ class MainActivity : ComponentActivity() {
             // iOS parity Color.swift@db4196e — all palette tokens get a
             // SeasonalColorEngine shift applied throughout the app.
             // Hemisphere comes from HemisphereRepository (defaults
-            // Northern); date is captured once per composition so the
-            // palette refreshes at next theme rebuild after midnight.
+            // Northern); date is observed via rememberCurrentDate which
+            // refreshes on every ON_RESUME and at each midnight boundary
+            // so a long-resumed Activity doesn't pin the palette to
+            // yesterday.
             val hemisphere by hemisphereRepository.hemisphere.collectAsStateWithLifecycle()
-            val today = java.time.LocalDate.now()
+            val today by org.walktalkmeditate.pilgrim.ui.theme.rememberCurrentDate()
             PilgrimTheme(
                 appearanceMode = appearanceMode,
                 hemisphere = hemisphere,
