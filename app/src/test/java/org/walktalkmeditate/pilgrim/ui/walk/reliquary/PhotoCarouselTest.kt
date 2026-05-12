@@ -64,7 +64,7 @@ class PhotoCarouselTest {
         composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}").performTouchInput {
             longClick(durationMillis = 500)
         }
-        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-activated").assertExists()
+        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-activated", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -79,9 +79,9 @@ class PhotoCarouselTest {
         composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}").performTouchInput {
             longClick(durationMillis = 500)
         }
-        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-activated").assertExists()
+        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-activated", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithTag("photo-carousel").performTouchInput { swipeLeft() }
-        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-activated").assertDoesNotExist()
+        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-activated", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
@@ -93,6 +93,6 @@ class PhotoCarouselTest {
                 onThumbnailCommit = {},
             )
         }
-        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-pinned-badge").assertExists()
+        composeRule.onNodeWithTag("photo-thumbnail-${photoOne.id}-pinned-badge", useUnmergedTree = true).assertExists()
     }
 }
