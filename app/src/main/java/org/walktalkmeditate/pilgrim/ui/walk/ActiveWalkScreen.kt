@@ -201,7 +201,6 @@ fun ActiveWalkScreen(
     val isStoneUnlocked by viewModel.isStoneUnlocked.collectAsStateWithLifecycle()
     val canPlaceStone by viewModel.canPlaceStone.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val placementWhisperPlacedMsg = stringResource(R.string.placement_whisper_placed)
     val placementStonePlacedMsg = stringResource(R.string.placement_stone_placed)
@@ -558,7 +557,12 @@ fun ActiveWalkScreen(
             WhisperPlacementSheet(
                 onPlace = { category, _ ->
                     showWhisperSheet = false
-                    scope.launch { viewModel.placeWhisper(category) }
+                    // Fire-and-forget — the VM launches into
+                    // viewModelScope so the HTTP round-trip survives
+                    // rotation (UI's rememberCoroutineScope would
+                    // cancel the in-flight request, losing the cap
+                    // increment after server-success).
+                    viewModel.placeWhisper(category)
                 },
                 onDismiss = { showWhisperSheet = false },
             )
@@ -567,7 +571,7 @@ fun ActiveWalkScreen(
             StonePlacementSheet(
                 onPlace = {
                     showStoneSheet = false
-                    scope.launch { viewModel.placeStone() }
+                    viewModel.placeStone()
                 },
                 onDismiss = { showStoneSheet = false },
             )

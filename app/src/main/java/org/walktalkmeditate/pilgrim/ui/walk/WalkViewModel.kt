@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
@@ -930,20 +931,31 @@ class WalkViewModel @Inject constructor(
 
     /**
      * iOS parity `ActiveWalkView.swift:786-834@db4196e` —
-     * server-confirm-then-haptic placement. On success: cap increments
-     * synchronously THEN we emit [PlacementEvent.WhisperPlaced]; on
-     * failure cap stays put and we emit [PlacementEvent.Failed]. The
-     * sheet host on ActiveWalkScreen drives the success haptic +
-     * failure banner from the event.
+     * server-confirm-then-haptic placement.
      *
-     * Manifest is fetched lazily on first placement attempt — if it
-     * fails (no network, decode error), we emit a Failed event so
-     * the user sees a banner rather than a silent dismiss.
+     * Fire-and-forget by design: this function launches into
+     * [viewModelScope], not the caller's composition scope, so a
+     * configuration change (rotation) mid-HTTP does NOT cancel the
+     * request — important because server-side the whisper IS placed
+     * and the local cap MUST increment to keep client/server agreement.
+     * The composition's `rememberCoroutineScope()` would cancel on
+     * disposal and lose the cap increment after server-success.
+     *
+     * `placementMutex` serializes whisper + stone calls so a rapid
+     * double-tap can't bypass the per-walk cap (the previous
+     * cap-check-then-suspend-then-increment had a TOCTOU window —
+     * `Mutex.withLock` closes it).
      */
-    suspend fun placeWhisper(category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory) {
-        // Lazy manifest fetch — once per VM lifetime ideally; for MVP we
-        // re-fetch on every placement attempt if the manifest is still
-        // null. Cheap enough (single GET) for the placement flow.
+    fun placeWhisper(category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory) {
+        viewModelScope.launch {
+            placementMutex.withLock { placeWhisperImpl(category) }
+        }
+    }
+
+    private suspend fun placeWhisperImpl(
+        category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory,
+    ) {
+        if (_whispersPlacedThisWalk.value >= WHISPER_PER_WALK_CAP) return
         if (whisperManifestService.manifest.value == null) {
             val ok = whisperManifestService.refresh()
             if (!ok) {
@@ -962,10 +974,6 @@ class WalkViewModel @Inject constructor(
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "No GPS fix yet"))
             return
         }
-        // Final cap guard — UI gates on canPlaceWhisper but a double-tap
-        // race could fire twice. Idempotent server retries would
-        // double-charge the user. cap-check + reserve-slot pattern.
-        if (_whispersPlacedThisWalk.value >= WHISPER_PER_WALK_CAP) return
         try {
             whisperService.placeWhisper(
                 latitude = location.latitude,
@@ -988,19 +996,25 @@ class WalkViewModel @Inject constructor(
 
     /**
      * iOS parity `ActiveWalkView.swift:836-893@db4196e` — same
-     * server-confirm-then-haptic shape as [placeWhisper]. Result emits
-     * the server-confirmed `stoneCount` so a future bell-tier player
-     * can pick the right `stone-tier-N.m4a` sample (audio deferred to
-     * a follow-up PR).
+     * server-confirm-then-haptic + rotation-safe + mutex-serialized
+     * shape as [placeWhisper]. Result emits the server-confirmed
+     * `stoneCount` so a future bell-tier player can pick the right
+     * `stone-tier-N.m4a` sample (audio deferred to a follow-up PR).
      */
-    suspend fun placeStone() {
+    fun placeStone() {
+        viewModelScope.launch {
+            placementMutex.withLock { placeStoneImpl() }
+        }
+    }
+
+    private suspend fun placeStoneImpl() {
+        if (_stonePlacedThisWalk.value) return
         val state = controller.state.value
         val location = (state as? WalkState.Active)?.walk?.lastLocation
         if (location == null) {
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "No GPS fix yet"))
             return
         }
-        if (_stonePlacedThisWalk.value) return
         try {
             val result = cairnService.placeStone(
                 latitude = location.latitude,
@@ -1015,6 +1029,8 @@ class WalkViewModel @Inject constructor(
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "Couldn't place stone"))
         }
     }
+
+    private val placementMutex = kotlinx.coroutines.sync.Mutex()
 
     private fun tickerFlow(periodMillis: Long): Flow<Long> = flow {
         while (true) {
