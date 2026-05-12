@@ -63,7 +63,7 @@ fun AIPromptsRow(
         Icon(
             imageVector = Icons.Outlined.FormatQuote,
             contentDescription = null,
-            tint = pilgrimColors.ink,
+            tint = pilgrimColors.stone,
             modifier = Modifier.size(28.dp),
         )
         Column(
@@ -78,7 +78,7 @@ fun AIPromptsRow(
             Text(
                 text = subtitle,
                 style = pilgrimType.caption,
-                color = pilgrimColors.ink.copy(alpha = 0.7f),
+                color = pilgrimColors.fog,
             )
         }
         Icon(

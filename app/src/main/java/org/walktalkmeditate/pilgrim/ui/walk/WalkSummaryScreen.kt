@@ -1016,8 +1016,9 @@ fun WalkSummaryWeatherLine(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         Icon(
             painter = painterResource(condition.iconRes),
