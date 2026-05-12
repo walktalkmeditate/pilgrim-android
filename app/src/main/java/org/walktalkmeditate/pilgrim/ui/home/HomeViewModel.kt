@@ -105,21 +105,64 @@ class HomeViewModel internal constructor(
     private val _latestSealSpec = MutableStateFlow<SealSpec?>(null)
     val latestSealSpec: StateFlow<SealSpec?> = _latestSealSpec.asStateFlow()
 
-    private val sealCache = LinkedHashMap<Pair<SealSpec, Int>, ImageBitmap>(8, 0.75f, true)
+    // Active FAB-seal ink color, updated from HomeScreen composition
+    // when the resolved palette (light/dark) changes. Default is the
+    // light-mode stone so render is correct before the screen mounts.
+    private val _fabSealInk = MutableStateFlow(pilgrimLightColors().stone)
+    fun setFabSealInk(color: androidx.compose.ui.graphics.Color) {
+        if (_fabSealInk.value == color) return
+        _fabSealInk.value = color
+        // Invalidate cache when ink changes — otherwise the cached light-
+        // mode bitmap renders against dark parchment.
+        synchronized(sealCache) { sealCache.clear() }
+        // Re-render with the new ink against the current spec.
+        _latestSealSpec.value?.let { spec ->
+            val sizePx = (44 * context.resources.displayMetrics.density).toInt()
+            sealRenderJob?.cancel()
+            sealRenderJob = viewModelScope.launch(defaultDispatcher) {
+                try {
+                    val bmp = EtegamiSealBitmapRenderer.renderToBitmap(spec, color, sizePx, context)
+                    val img = bmp.asImageBitmap()
+                    synchronized(sealCache) {
+                        sealCache[spec to sizePx] = img
+                    }
+                    _latestSealBitmap.value = img
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    android.util.Log.w("HomeViewModel", "seal re-render on ink change failed", t)
+                }
+            }
+        }
+    }
+
+    // SynchronizedMap because reads happen on the upstream combine's
+    // ioDispatcher (via scheduleSealRender) while writes happen on
+    // defaultDispatcher (inside the launch). Without the wrapper a
+    // cancel-and-restart race against a still-rendering job risked
+    // ConcurrentModificationException on rapid emissions.
+    private val sealCache: MutableMap<Pair<SealSpec, Int>, ImageBitmap> =
+        java.util.Collections.synchronizedMap(
+            LinkedHashMap<Pair<SealSpec, Int>, ImageBitmap>(8, 0.75f, true),
+        )
     private var sealRenderJob: Job? = null
 
+    // celestialAwarenessEnabled is intentionally NOT in the combine —
+    // it doesn't affect any per-walk numbers, and re-running the full
+    // per-walk DAO fan-out on every pref toggle was wasteful. The
+    // expand-sheet path reads it via `practicePreferences.value`
+    // directly at the moment of expansion.
     val journalState: StateFlow<JournalUiState> = combine(
         repository.observeAllWalks(),
         unitsPreferences.distanceUnits,
         cachedShareStore.observeAll(),
-        practicePreferences.celestialAwarenessEnabled,
         hemisphereRepository.hemisphere,
-    ) { walks, units, shareCache, celestialEnabled, hemisphere ->
+    ) { walks, units, shareCache, hemisphere ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
             JournalUiState.Empty
         } else {
-            buildSnapshots(finished, units, shareCache, hemisphere, clock.now(), celestialEnabled)
+            buildSnapshots(finished, units, shareCache, hemisphere, clock.now())
         }
     }
         .flowOn(ioDispatcher)
@@ -131,7 +174,6 @@ class HomeViewModel internal constructor(
         shareCache: Map<String, CachedShare>,
         hemisphere: Hemisphere,
         nowMs: Long,
-        celestialAwarenessEnabled: Boolean,
     ): JournalUiState.Loaded {
         // IO: per-walk DAO reads on ioDispatcher.
         data class WalkInputs(
@@ -205,7 +247,7 @@ class HomeViewModel internal constructor(
                 walkCount = newestFirst.size,
                 firstWalkStartMs = perWalk.firstOrNull()?.walk?.startTimestamp ?: 0L,
             )
-            JournalUiState.Loaded(newestFirst, summary, celestialAwarenessEnabled)
+            JournalUiState.Loaded(newestFirst, summary)
         }
 
         scheduleSealRender(walks, units, hemisphere)
@@ -257,14 +299,11 @@ class HomeViewModel internal constructor(
             return
         }
         val distance = newest.distanceMeters ?: 0.0
-        // iOS GoshuinFAB renders the thumbnail with `Color.stone` —
-        // muted gold ink that reads well on both light parchment and
-        // dark parchmentTertiary backgrounds (matches user-shared
-        // dark-mode screenshot showing gold linework, not seasonal-
-        // tinted moss/rust). VMs cannot read @Composable tokens; use
-        // the light-mode palette stone which is gold/tan, the same
-        // visual weight iOS hits.
-        val ink = pilgrimLightColors().stone
+        // iOS GoshuinFAB renders the thumbnail with `Color.stone`. The
+        // resolved palette is pushed in via [setFabSealInk] from
+        // HomeScreen composition so dark mode picks the dark-tuned
+        // stone instead of forcing the light-mode tone.
+        val ink = _fabSealInk.value
         val label = WalkFormat.distanceLabel(distance, units)
         val spec = newest.toSealSpec(distance, ink, label.value, label.unit)
         _latestSealSpec.value = spec
@@ -280,8 +319,14 @@ class HomeViewModel internal constructor(
             try {
                 val bmp = EtegamiSealBitmapRenderer.renderToBitmap(spec, ink, sizePx, context)
                 val img = bmp.asImageBitmap()
-                if (sealCache.size > 4) sealCache.remove(sealCache.keys.first())
-                sealCache[key] = img
+                // LRU eviction + insert MUST be atomic — without the
+                // synchronized block, two coroutines racing here would
+                // see the same `size > 4` and both evict + insert,
+                // corrupting access-order semantics.
+                synchronized(sealCache) {
+                    if (sealCache.size > 4) sealCache.remove(sealCache.keys.first())
+                    sealCache[key] = img
+                }
                 _latestSealBitmap.value = img
             } catch (ce: CancellationException) {
                 throw ce

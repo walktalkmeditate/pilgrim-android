@@ -23,4 +23,17 @@ data class CelestialSnapshot(
     val seasonalMarker: SeasonalMarker?,
 ) {
     fun position(planet: Planet): PlanetaryPosition? = positions.firstOrNull { it.planet == planet }
+
+    /**
+     * Resolved moon zodiac sign symbol for the active [system]. Returns
+     * null when no moon position resolves OR the active zodiac isn't
+     * populated on the position. Centralizes the chained traversal that
+     * was previously inlined in `ExpandCardSheet` (where any rename in
+     * the chain silently null-coalesced to empty string with no signal).
+     */
+    fun moonZodiacSymbol(): String? {
+        val pos = position(Planet.Moon) ?: return null
+        val zodiac = if (system == ZodiacSystem.Tropical) pos.tropical else pos.sidereal
+        return zodiac?.sign?.symbol
+    }
 }

@@ -7,11 +7,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 
 /**
- * Footprint outline — verbatim port of iOS `FootprintShape.swift`.
+ * Footprint outline — verbatim port of iOS `FootprintShape.swift@db4196e`.
  *
- * Asymmetric oval-with-toes: body is an oval covering the lower 65 %
- * of the box, with one big toe + four descending small toes above it.
- * Used by `ExpandCardSheet` header glyph.
+ * Anatomical 8-oval foot: heel + outer-edge + ball-of-foot pads, then
+ * big toe + 4 descending small toes above. The prior 6-oval version
+ * (1 body + 1 big toe + 4 small toes) was a simplification that read
+ * as a generic 5-bubble blob rather than a print.
  *
  * Pure path math. Consumers call
  * `Canvas(size) { drawPath(footprintPath(size), ...) }` directly.
@@ -21,23 +22,62 @@ fun footprintPath(size: Size): Path {
     if (size.width <= 0f || size.height <= 0f) return p
     val w = size.width
     val h = size.height
-    val bodyRect = Rect(
-        offset = Offset(w * 0.20f, h * 0.30f),
-        size = Size(w * 0.60f, h * 0.65f),
-    )
-    p.addOval(bodyRect)
+
+    // Heel — rounded oval at the bottom
     p.addOval(
         Rect(
-            offset = Offset(w * 0.05f, h * 0.05f),
-            size = Size(w * 0.30f, h * 0.28f),
+            offset = Offset(w * 0.22f, h * 0.75f),
+            size = Size(w * 0.50f, h * 0.25f),
         ),
     )
-    val smallToes = listOf(
-        Rect(Offset(w * 0.40f, h * 0.00f), Size(w * 0.20f, h * 0.22f)),
-        Rect(Offset(w * 0.55f, h * 0.04f), Size(w * 0.18f, h * 0.20f)),
-        Rect(Offset(w * 0.68f, h * 0.10f), Size(w * 0.16f, h * 0.18f)),
-        Rect(Offset(w * 0.78f, h * 0.18f), Size(w * 0.14f, h * 0.16f)),
+    // Outer edge — connects heel to ball along the pinky side
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.50f, h * 0.48f),
+            size = Size(w * 0.22f, h * 0.34f),
+        ),
     )
-    smallToes.forEach { p.addOval(it) }
+    // Ball of foot — wide pad below the toes
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.08f, h * 0.38f),
+            size = Size(w * 0.62f, h * 0.22f),
+        ),
+    )
+    // Big toe — largest, on the inner (left) side
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.10f, h * 0.18f),
+            size = Size(w * 0.24f, h * 0.24f),
+        ),
+    )
+    // Second toe — slightly smaller, tucked next to big toe
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.32f, h * 0.10f),
+            size = Size(w * 0.18f, h * 0.22f),
+        ),
+    )
+    // Third toe — middle
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.48f, h * 0.06f),
+            size = Size(w * 0.16f, h * 0.20f),
+        ),
+    )
+    // Fourth toe — smaller
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.62f, h * 0.10f),
+            size = Size(w * 0.14f, h * 0.18f),
+        ),
+    )
+    // Pinky toe — smallest, set back
+    p.addOval(
+        Rect(
+            offset = Offset(w * 0.72f, h * 0.18f),
+            size = Size(w * 0.12f, h * 0.14f),
+        ),
+    )
     return p
 }
