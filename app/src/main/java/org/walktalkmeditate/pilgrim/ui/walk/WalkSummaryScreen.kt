@@ -620,13 +620,17 @@ fun WalkSummaryScreen(
 
                         // 16. Voice recordings (Stage 2-E)
                         if (recordings.isNotEmpty()) {
+                            val playbackSpeed by viewModel.playbackSpeed
+                                .collectAsStateWithLifecycle()
                             Spacer(Modifier.height(PilgrimSpacing.normal))
                             VoiceRecordingsSection(
                                 walkStartTimestamp = s.summary.walk.startTimestamp,
                                 recordings = recordings,
                                 playbackUiState = playbackUiState,
+                                playbackSpeed = playbackSpeed,
                                 onPlay = viewModel::playRecording,
                                 onPause = viewModel::pausePlayback,
+                                onCycleSpeed = viewModel::cyclePlaybackSpeed,
                             )
                         }
 

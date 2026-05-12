@@ -115,7 +115,11 @@
     <string name="summary_stat_steps">Steps</string>
     <string name="summary_stat_elevation">Elevation</string>
     <string name="walk_stat_waypoints">Waypoints</string>
-    <string name="summary_recordings_header">Voice notes</string>
+    <string name="summary_recordings_header">Voice Recordings</string>
+    <string name="recording_index_label">Recording %1$d</string>
+    <string name="recording_enhanced_label">Enhanced</string>
+    <string name="recording_unavailable_label">Recording unavailable</string>
+    <string name="recording_speed_cycle_cd">Cycle playback speed</string>
     <string name="summary_breakdown_walk">Walk</string>
     <string name="summary_breakdown_talk">Talk</string>
     <string name="summary_breakdown_meditate">Meditate</string>

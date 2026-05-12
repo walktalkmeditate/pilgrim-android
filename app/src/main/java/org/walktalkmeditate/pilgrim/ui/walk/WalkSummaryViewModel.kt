@@ -726,6 +726,22 @@ class WalkSummaryViewModel @Inject constructor(
 
     fun playRecording(recording: VoiceRecording) = playback.play(recording)
     fun pausePlayback() = playback.pause()
+
+    val playbackSpeed: StateFlow<Float> = playback.playbackSpeed
+
+    /**
+     * Cycles playback speed 1.0 → 1.5 → 2.0 → 1.0. Matches iOS
+     * `AudioPlayer.cycleSpeed()` semantics so the speed-pill UI on
+     * [VoiceRecordingRow] is parity with iOS.
+     */
+    fun cyclePlaybackSpeed() {
+        val next = when (playback.playbackSpeed.value) {
+            1.0f -> 1.5f
+            1.5f -> 2.0f
+            else -> 1.0f
+        }
+        playback.setPlaybackSpeed(next)
+    }
     fun stopPlayback() = playback.stop()
 
     /**
