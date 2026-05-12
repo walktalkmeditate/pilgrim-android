@@ -523,6 +523,17 @@
     <string name="walk_greeting_weather_wind">The wind at your back</string>
     <string name="walk_greeting_weather_haze">A hazy veil over the world</string>
 
+    <!-- iOS parity ActiveWalkView.swift:735-748@db4196e celestial greetings. -->
+    <string name="walk_greeting_celestial_sun_enters">"The Sun enters %1$s today — %2$s"</string>
+    <string name="walk_greeting_celestial_moon_through">The Moon moves through %1$s</string>
+    <string name="walk_greeting_celestial_hour">Walking in the Hour of %1$s</string>
+
+    <!-- iOS parity AstrologyModels.swift SeasonalMarker.evocativePhrase. -->
+    <string name="turning_phrase_spring_equinox">Light and dark in balance — new beginnings.</string>
+    <string name="turning_phrase_summer_solstice">The longest day — full bloom.</string>
+    <string name="turning_phrase_autumn_equinox">Balance again — the harvest returns.</string>
+    <string name="turning_phrase_winter_solstice">The longest night — quiet, patient seed.</string>
+
     <!-- Stage 10-E: PermissionsCard -->
     <string name="settings_permissions_title">Permissions</string>
     <string name="settings_permissions_subtitle">What Pilgrim can access</string>

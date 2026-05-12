@@ -112,6 +112,113 @@ fun WeatherGreetingOverlay(
     }
 }
 
+/**
+ * iOS parity `ActiveWalkView.swift:735-764@db4196e` celestial
+ * greeting variant — per-walk one-shot, 5s pre-delay before the
+ * 800ms fade-in, 3500ms hold, 1000ms fade-out. Cancelled by walk
+ * teardown (text or walkId flipping to null), with try/finally
+ * cleanup so the overlay doesn't pin stuck visible on cancellation.
+ */
+@Composable
+fun CelestialGreetingOverlay(
+    text: String?,
+    walkId: Long?,
+    modifier: Modifier = Modifier,
+) {
+    var visibleText by rememberSaveable { mutableStateOf<String?>(null) }
+    var shownForWalk by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    LaunchedEffect(text, walkId) {
+        if (text != null && walkId != null && shownForWalk != walkId) {
+            shownForWalk = walkId
+            try {
+                delay(CELESTIAL_PRE_DELAY_MS)
+                visibleText = text
+                delay(GREETING_VISIBLE_MS)
+            } finally {
+                visibleText = null
+            }
+        } else if (walkId == null) {
+            shownForWalk = null
+            visibleText = null
+        }
+    }
+
+    AnimatedVisibility(
+        visible = visibleText != null,
+        enter = fadeIn(animationSpec = tween(durationMillis = 800)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 1000)),
+        modifier = modifier,
+    ) {
+        val message = visibleText ?: return@AnimatedVisibility
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PilgrimSpacing.normal),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.85f))
+                    .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small),
+            ) {
+                Text(
+                    text = message,
+                    style = pilgrimType.body,
+                    color = pilgrimColors.ink,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * iOS parity `ActiveWalkView.swift:735-748@db4196e` — picks one of
+ * three celestial greeting forms in priority order, falling back to
+ * the planetary-hour greeting. Resolves through Android string
+ * resources so a future translation pass can localize the text.
+ *
+ * Note: iOS also has a "${planet} turns inward" form for retrograde
+ * planets, but `CelestialSnapshot` on Android doesn't expose the
+ * retrograde list yet, so that fallback is skipped here.
+ */
+fun celestialGreetingText(
+    snapshot: org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot,
+    resources: android.content.res.Resources,
+): String {
+    val marker = snapshot.seasonalMarker
+    val sun = snapshot.position(org.walktalkmeditate.pilgrim.core.celestial.Planet.Sun)
+    val moon = snapshot.position(org.walktalkmeditate.pilgrim.core.celestial.Planet.Moon)
+    val isTropical = snapshot.system ==
+        org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem.Tropical
+    fun signOf(pos: org.walktalkmeditate.pilgrim.core.celestial.PlanetaryPosition?) =
+        if (isTropical) pos?.tropical?.sign else pos?.sidereal?.sign
+
+    if (marker != null) {
+        val sign = signOf(sun)
+        if (sign != null) {
+            return resources.getString(
+                R.string.walk_greeting_celestial_sun_enters,
+                sign.displayName,
+                marker.displayName,
+            )
+        }
+    }
+    val moonSign = signOf(moon)
+    if (moonSign != null) {
+        return resources.getString(
+            R.string.walk_greeting_celestial_moon_through,
+            moonSign.displayName,
+        )
+    }
+    return resources.getString(
+        R.string.walk_greeting_celestial_hour,
+        snapshot.planetaryHour.planet.displayName,
+    )
+}
+
 private fun greetingStringResFor(condition: WeatherCondition): Int = when (condition) {
     WeatherCondition.CLEAR -> R.string.walk_greeting_weather_clear
     WeatherCondition.PARTLY_CLOUDY -> R.string.walk_greeting_weather_partly_cloudy
@@ -126,3 +233,4 @@ private fun greetingStringResFor(condition: WeatherCondition): Int = when (condi
 }
 
 private const val GREETING_VISIBLE_MS = 3_500L
+private const val CELESTIAL_PRE_DELAY_MS = 5_000L
