@@ -722,6 +722,9 @@
     <string name="turning_equinox_banner">Today, day equals night.</string>
     <string name="turning_solstice_banner">Today the sun stands still.</string>
 
+    <!-- iOS parity TurningRitualCard.swift@db4196e — watermark a11y hint -->
+    <string name="turning_watermark_a11y_hint">Opens a contemplative ritual card</string>
+
     <!-- Stage 14-BCD milestone marker -->
     <plurals name="journal_milestone_km">
         <item quantity="one">%d km</item>
