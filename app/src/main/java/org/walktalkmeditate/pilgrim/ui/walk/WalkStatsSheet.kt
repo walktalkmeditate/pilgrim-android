@@ -139,8 +139,10 @@ fun WalkStatsSheet(
     // Skipped under ReduceMotion. Only winks when sheet is in the
     // minimized detent AND a drag is meaningful (canDrag). LaunchedEffect
     // re-keys on peekHintTrigger so each bump cancels any prior wink.
+    val peekHintReduceMotion = org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion.current
     LaunchedEffect(peekHintTrigger) {
         if (peekHintTrigger == 0) return@LaunchedEffect
+        if (peekHintReduceMotion) return@LaunchedEffect
         if (state != SheetState.Minimized || !canDrag) return@LaunchedEffect
         kotlinx.coroutines.delay(700L)
         if (state != SheetState.Minimized || !canDrag) return@LaunchedEffect

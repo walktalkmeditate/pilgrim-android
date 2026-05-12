@@ -646,7 +646,8 @@ class WalkViewModel @Inject constructor(
                     .CelestialSnapshotCalc.snapshot(
                         atEpochMillis = started.startTimestamp,
                     )
-                _activeCelestialGreeting.value = celestialGreetingText(snapshot)
+                _activeCelestialGreeting.value =
+                    celestialGreetingText(snapshot, context.resources)
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {

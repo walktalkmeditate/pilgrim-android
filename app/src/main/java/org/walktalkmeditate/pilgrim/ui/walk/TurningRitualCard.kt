@@ -17,8 +17,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
-import org.walktalkmeditate.pilgrim.core.celestial.evocativePhrase
+import org.walktalkmeditate.pilgrim.core.celestial.evocativePhraseRes
 import org.walktalkmeditate.pilgrim.core.celestial.kanji
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -37,7 +38,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @Composable
 fun TurningRitualCard(turning: SeasonalMarker, modifier: Modifier = Modifier) {
     val kanji = turning.kanji() ?: return
-    val phrase = turning.evocativePhrase()
+    val phraseRes = turning.evocativePhraseRes()
+    val phrase = phraseRes?.let { stringResource(it) }
     Column(
         modifier = modifier
             .fillMaxWidth()

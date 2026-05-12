@@ -36,15 +36,16 @@ fun SeasonalMarker.bannerTextRes(): Int? = when (this) {
 
 /**
  * iOS parity `AstrologyModels.swift` `SeasonalMarker.evocativePhrase`
- * — contemplative one-liner shown in `TurningRitualCard`. Null for
- * cross-quarter markers (Imbolc/Beltane/Lughnasadh/Samhain) since
- * iOS hides the card on those days too.
+ * — string-resource id for the contemplative one-liner shown in
+ * `TurningRitualCard`. Null for cross-quarter markers since iOS hides
+ * the card on those days too.
  */
-fun SeasonalMarker.evocativePhrase(): String? = when (this) {
-    SeasonalMarker.SpringEquinox -> "Light and dark in balance — new beginnings."
-    SeasonalMarker.SummerSolstice -> "The longest day — full bloom."
-    SeasonalMarker.AutumnEquinox -> "Balance again — the harvest returns."
-    SeasonalMarker.WinterSolstice -> "The longest night — quiet, patient seed."
+@StringRes
+fun SeasonalMarker.evocativePhraseRes(): Int? = when (this) {
+    SeasonalMarker.SpringEquinox -> R.string.turning_phrase_spring_equinox
+    SeasonalMarker.SummerSolstice -> R.string.turning_phrase_summer_solstice
+    SeasonalMarker.AutumnEquinox -> R.string.turning_phrase_autumn_equinox
+    SeasonalMarker.WinterSolstice -> R.string.turning_phrase_winter_solstice
     else -> null
 }
 

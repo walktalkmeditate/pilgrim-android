@@ -177,8 +177,8 @@ fun CelestialGreetingOverlay(
 /**
  * iOS parity `ActiveWalkView.swift:735-748@db4196e` — picks one of
  * three celestial greeting forms in priority order, falling back to
- * the planetary-hour greeting. Pure compute; safe to call from a
- * composition.
+ * the planetary-hour greeting. Resolves through Android string
+ * resources so a future translation pass can localize the text.
  *
  * Note: iOS also has a "${planet} turns inward" form for retrograde
  * planets, but `CelestialSnapshot` on Android doesn't expose the
@@ -186,6 +186,7 @@ fun CelestialGreetingOverlay(
  */
 fun celestialGreetingText(
     snapshot: org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot,
+    resources: android.content.res.Resources,
 ): String {
     val marker = snapshot.seasonalMarker
     val sun = snapshot.position(org.walktalkmeditate.pilgrim.core.celestial.Planet.Sun)
@@ -195,18 +196,27 @@ fun celestialGreetingText(
     fun signOf(pos: org.walktalkmeditate.pilgrim.core.celestial.PlanetaryPosition?) =
         if (isTropical) pos?.tropical?.sign else pos?.sidereal?.sign
 
-    val hourGreeting = "Walking in the Hour of ${snapshot.planetaryHour.planet.displayName}"
     if (marker != null) {
         val sign = signOf(sun)
         if (sign != null) {
-            return "The Sun enters ${sign.displayName} today — ${marker.displayName}"
+            return resources.getString(
+                R.string.walk_greeting_celestial_sun_enters,
+                sign.displayName,
+                marker.displayName,
+            )
         }
     }
     val moonSign = signOf(moon)
     if (moonSign != null) {
-        return "The Moon moves through ${moonSign.displayName}"
+        return resources.getString(
+            R.string.walk_greeting_celestial_moon_through,
+            moonSign.displayName,
+        )
     }
-    return hourGreeting
+    return resources.getString(
+        R.string.walk_greeting_celestial_hour,
+        snapshot.planetaryHour.planet.displayName,
+    )
 }
 
 private fun greetingStringResFor(condition: WeatherCondition): Int = when (condition) {
