@@ -12,8 +12,7 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
  * using [walkDate] + the current hemisphere — the VM can't do it
  * because theme reads require `@Composable` scope.
  *
- * Mirrors [org.walktalkmeditate.pilgrim.ui.home.HomeWalkRow] in
- * spirit: precompute what the VM can, defer theme-dependent work to
+ * Precompute what the VM can, defer theme-dependent work to
  * composition.
  *
  * `@Immutable` is required because [walkDate] is [LocalDate], an
@@ -21,9 +20,7 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
  * the annotation, the Compose compiler marks the class Unstable and
  * [GoshuinSealCell] fails its skip check on any ancestor recomposition
  * (e.g., the hemisphere StateFlow re-emitting the same value). Matches
- * the `@Immutable` precedent on [SealSpec]. [HomeWalkRow] doesn't
- * need this — it holds only primitives + `String?`, which Compose
- * infers as stable automatically.
+ * the `@Immutable` precedent on [SealSpec].
  */
 @Immutable
 data class GoshuinSeal(

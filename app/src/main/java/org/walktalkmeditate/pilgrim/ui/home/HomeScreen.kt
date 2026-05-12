@@ -191,6 +191,12 @@ fun HomeScreen(
     }
     val themeColors = pilgrimColors
     val reduceMotion = LocalReduceMotion.current
+
+    // Push the resolved stone tone into the VM so the FAB-seal renderer
+    // can re-render against the active palette. Without this, the VM
+    // hard-coded `pilgrimLightColors().stone` even in dark mode.
+    val activeStone = pilgrimColors.stone
+    LaunchedEffect(activeStone) { homeViewModel.setFabSealInk(activeStone) }
     val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
     val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
     val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()
@@ -625,20 +631,49 @@ fun HomeScreen(
         val expandedSnap = expandedId?.let { id ->
             snapshots.firstOrNull { it.id == id }
         }
-        if (expandedSnap != null) {
-            val seasonColor = walkDotBaseColor(expandedSnap.startMs, themeColors)
-            ExpandCardSheet(
-                snapshot = expandedSnap,
-                celestial = expandedCelestial,
-                seasonColor = seasonColor,
-                units = units,
-                isShared = expandedSnap.isShared,
-                onViewDetails = { id ->
-                    homeViewModel.setExpandedSnapshotId(null)
-                    onEnterWalkSummary(id)
-                },
-                onDismissRequest = { homeViewModel.setExpandedSnapshotId(null) },
-            )
+        // Hold the LAST non-null snapshot in remember so the
+        // AnimatedVisibility exit animation has a snapshot to render
+        // while sliding out — after the user taps dismiss, expandedId
+        // flips to null, so without this cache the card would
+        // disappear instantly with no exit motion.
+        val lastSnapshot = androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf<WalkSnapshot?>(null)
+        }
+        if (expandedSnap != null) lastSnapshot.value = expandedSnap
+        val renderSnap = lastSnapshot.value
+        // iOS spring(0.25) approximated with a medium-stiffness Compose
+        // spring; slide-from-bottom + fade matches the iOS transition
+        // `.move(edge: .bottom).combined(with: .opacity)`.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expandedSnap != null && renderSnap != null,
+            enter = androidx.compose.animation.slideInVertically(
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                ),
+                initialOffsetY = { it },
+            ) + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically(
+                animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
+                targetOffsetY = { it },
+            ) + androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            renderSnap?.let { snap ->
+                val seasonColor = walkDotBaseColor(snap.startMs, themeColors)
+                ExpandCardSheet(
+                    snapshot = snap,
+                    celestial = expandedCelestial,
+                    seasonColor = seasonColor,
+                    units = units,
+                    isShared = snap.isShared,
+                    onViewDetails = { id ->
+                        homeViewModel.setExpandedSnapshotId(null)
+                        onEnterWalkSummary(id)
+                    },
+                    onDismissRequest = { homeViewModel.setExpandedSnapshotId(null) },
+                )
+            }
         }
 
         // Goshuin FAB. iOS GoshuinFAB.swift@db4196e:

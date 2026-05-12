@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.home.expand
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,18 +21,18 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -44,7 +45,6 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
-import org.walktalkmeditate.pilgrim.core.celestial.Planet
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
@@ -56,21 +56,26 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
- * Material 3 `ModalBottomSheet` rendered when a Journal dot is tapped.
- * Replaces the direct nav-to-summary path; "View details →" button is
- * the new sole entry to Walk Summary.
+ * Floating, all-corners-rounded card that appears when a Journal dot
+ * is tapped. iOS parity `InkScrollView.swift:301-401@db4196e`:
+ * VStack overlaid with `.ultraThinMaterial` background tinted by
+ * `seasonColor.opacity(0.10)`, RoundedRectangle(16) corners, ink-drop
+ * shadow. Previously rendered through `ModalBottomSheet` which added
+ * a system scrim + drag handle + top-corner-only shape that iOS does
+ * not have.
  *
- * Verbatim layout port of iOS `InkScrollView.swift:312-385`.
+ * Caller wraps this in `AnimatedVisibility(expandedSnap != null)`
+ * with a slide-from-bottom + fade enter/exit; this composable itself
+ * is unconditional once visible.
  *
  * Stage 4-B lesson: `rememberUpdatedState(onDismissRequest)` for the
- * dismiss callback used inside the Button onClick lambda — guards
- * against stale closure if the parent recomposes mid-tap.
+ * dismiss callback used inside delayed lambdas — guards against stale
+ * closure if the parent recomposes mid-tap.
  *
  * Stage 6-B lesson: date formatter uses
  * `DateTimeFormatter.ofLocalizedDateTime(...).withLocale(...)` —
  * never the no-Locale `ofPattern` overload.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExpandCardSheet(
     snapshot: WalkSnapshot,
@@ -83,7 +88,6 @@ fun ExpandCardSheet(
     modifier: Modifier = Modifier,
 ) {
     val dismissState = rememberUpdatedState(onDismissRequest)
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     BackHandler(enabled = true) { dismissState.value() }
 
     val dateText = remember(snapshot.startMs) {
@@ -94,66 +98,87 @@ fun ExpandCardSheet(
             .format(Instant.ofEpochMilli(snapshot.startMs))
     }
 
-    val containerColor = pilgrimColors.parchmentSecondary
+    val baseContainerColor = pilgrimColors.parchmentSecondary
+    val seasonOverlay = seasonColor.copy(alpha = 0.10f)
     val dividerColor = seasonColor.copy(alpha = 0.15f)
     val buttonContainer = pilgrimColors.stone.copy(alpha = 0.8f)
     val buttonContent = pilgrimColors.parchment
-    // iOS in-card CTA uses Constants.Typography.annotation (caption-tier),
-    // not body — body made the Android pill chunkier than iOS.
     val buttonStyle = pilgrimType.annotation
 
-    ModalBottomSheet(
-        onDismissRequest = onDismissRequest,
-        sheetState = sheetState,
-        containerColor = containerColor,
-        modifier = modifier,
+    // Outer Box catches any background tap (scrim region) and dismisses
+    // — iOS sheet binding has the same "tap outside to dismiss" affordance.
+    // Using consume:false so child taps still work; the click region is
+    // the un-cropped area outside the card itself.
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) { /* intercept touches; no-op handler */ },
+        contentAlignment = Alignment.BottomCenter,
     ) {
-        Column(
+        // The floating card. All corners rounded to 16dp (iOS
+        // RoundedRectangle(16)); seasonColor.opacity(0.10) layered on
+        // top of parchmentSecondary approximates iOS .ultraThinMaterial
+        // tinted by seasonColor.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PilgrimSpacing.normal, vertical = 16.dp)
-                .padding(bottom = 8.dp),
-            // iOS uses VStack(spacing: 10) — prior 12.dp added ~12dp to
-            // the modal height over six stacked rows.
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small)
+                .shadow(elevation = 8.dp, shape = RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .background(baseContainerColor),
         ) {
-            HeaderRow(
-                snapshot = snapshot,
-                celestial = celestial,
-                seasonColor = seasonColor,
-                isShared = isShared,
-                dateText = dateText,
-            )
+            // seasonColor tint layered on top of the base.
             Box(
-                Modifier.fillMaxWidth().height(1.dp).background(dividerColor),
-            )
-            StatsRow(snapshot = snapshot, units = units)
-            MiniActivityBar(snapshot = snapshot)
-            ActivityPills(snapshot = snapshot)
-            Spacer(Modifier.height(4.dp))
-            Button(
-                onClick = {
-                    val id = snapshot.id
-                    dismissState.value()
-                    onViewDetails(id)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(percent = 50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = buttonContainer,
-                    contentColor = buttonContent,
-                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(seasonOverlay),
             ) {
-                Text(
-                    text = stringResource(R.string.journal_expand_view_details),
-                    style = buttonStyle,
-                )
-                Spacer(Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PilgrimSpacing.normal, vertical = 16.dp)
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    HeaderRow(
+                        snapshot = snapshot,
+                        celestial = celestial,
+                        seasonColor = seasonColor,
+                        isShared = isShared,
+                        dateText = dateText,
+                    )
+                    Box(
+                        Modifier.fillMaxWidth().height(1.dp).background(dividerColor),
+                    )
+                    StatsRow(snapshot = snapshot, units = units)
+                    MiniActivityBar(snapshot = snapshot)
+                    ActivityPills(snapshot = snapshot)
+                    Spacer(Modifier.height(4.dp))
+                    Button(
+                        onClick = {
+                            val id = snapshot.id
+                            dismissState.value()
+                            onViewDetails(id)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = buttonContainer,
+                            contentColor = buttonContent,
+                        ),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.journal_expand_view_details),
+                            style = buttonStyle,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -208,10 +233,7 @@ private fun HeaderRow(
             )
         }
         if (celestial != null) {
-            // Plan referenced `celestial.moonSign.symbol` which does not
-            // exist on CelestialSnapshot. Adapt: derive moon glyph from
-            // the moon's tropical zodiac sign symbol.
-            val moonSymbol = celestial.position(Planet.Moon)?.tropical?.sign?.symbol.orEmpty()
+            val moonSymbol = celestial.moonZodiacSymbol().orEmpty()
             Text(
                 text = "${celestial.planetaryHour.planet.symbol}$moonSymbol",
                 style = TextStyle(fontSize = 10.sp),
