@@ -98,7 +98,9 @@ fun ExpandCardSheet(
     val dividerColor = seasonColor.copy(alpha = 0.15f)
     val buttonContainer = pilgrimColors.stone.copy(alpha = 0.8f)
     val buttonContent = pilgrimColors.parchment
-    val buttonStyle = pilgrimType.body
+    // iOS in-card CTA uses Constants.Typography.annotation (caption-tier),
+    // not body — body made the Android pill chunkier than iOS.
+    val buttonStyle = pilgrimType.annotation
 
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -111,7 +113,9 @@ fun ExpandCardSheet(
                 .fillMaxWidth()
                 .padding(horizontal = PilgrimSpacing.normal, vertical = 16.dp)
                 .padding(bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            // iOS uses VStack(spacing: 10) — prior 12.dp added ~12dp to
+            // the modal height over six stacked rows.
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             HeaderRow(
                 snapshot = snapshot,

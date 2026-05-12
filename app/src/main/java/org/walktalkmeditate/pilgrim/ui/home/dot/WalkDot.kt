@@ -6,10 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -27,6 +25,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.home.WalkSnapshot
 import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryTimeSeconds
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 private const val HALO_SCALE = 3.5f
 private const val HALO_PEAK_ALPHA = 0.15f
@@ -75,14 +74,23 @@ fun WalkDot(
             RippleEffect(color = color, dotSizeDp = sizeDp)
         }
 
-        // 2. Outer halo radial gradient (3.5× core).
+        // 2. Outer halo radial gradient (3.5× core). iOS uses a SwiftUI
+        // RadialGradient with `startRadius = size * 0.5` + `endRadius =
+        // size * 1.8` so the peak alpha forms a soft donut: flat-peak
+        // from r=0 to r=0.5×sizeDp, fading to clear at r=1.8×sizeDp.
+        // Compose's Brush.radialGradient has no startRadius, so we use
+        // colorStops normalized against the halo Canvas radius
+        // (= sizeDp * 1.75): plateau 0..0.286, fade 0.286..1.0.
         Canvas(Modifier.size(haloSizeDp.dp)) {
             val r = size.minDimension / 2f
+            val peak = color.copy(alpha = HALO_PEAK_ALPHA)
+            val plateauStop = (0.5f / (HALO_SCALE / 2f)).coerceIn(0f, 1f)
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(
-                        color.copy(alpha = HALO_PEAK_ALPHA),
-                        Color.Transparent,
+                    colorStops = arrayOf(
+                        0f to peak,
+                        plateauStop to peak,
+                        1f to Color.Transparent,
                     ),
                     center = Offset(size.width / 2f, size.height / 2f),
                     radius = r,
@@ -93,10 +101,28 @@ fun WalkDot(
         }
 
         // 3. Core dot — radial gradient from full color to 70% alpha,
-        // origin biased upper-left to read as 3D.
+        // origin biased upper-left to read as 3D. Drop shadow drawn
+        // BEHIND the core matches iOS `.shadow(color: .ink.opacity(0.15),
+        // radius: 2, x: 1, y: 2)` — Compose Modifier.shadow doesn't
+        // apply to Canvas content directly, so we paint a soft ink
+        // circle offset (1, 2) before the core.
+        val shadowColor = pilgrimColors.ink.copy(alpha = 0.15f)
         Canvas(Modifier.size(sizeDp.dp)) {
             val coreR = size.minDimension / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
+            // Drop shadow: opacity 0.15, offset (1, 2), soft 2px feather
+            // approximated by drawing two slightly larger faded circles.
+            val shadowCenter = Offset(center.x + 1.dp.toPx(), center.y + 2.dp.toPx())
+            drawCircle(
+                color = shadowColor.copy(alpha = 0.07f),
+                radius = coreR + 1.dp.toPx(),
+                center = shadowCenter,
+            )
+            drawCircle(
+                color = shadowColor,
+                radius = coreR,
+                center = shadowCenter,
+            )
             val biasedCenter = Offset(size.width * 0.4f, size.height * 0.35f)
             drawCircle(
                 brush = Brush.radialGradient(
@@ -109,15 +135,17 @@ fun WalkDot(
             )
         }
 
-        // 4. Favicon glyph.
+        // 4. Favicon glyph. iOS `.font(.system(size: size * 0.4)).bold()
+        // .foregroundColor(.parchment)`. The 0.5× ratio used previously
+        // made glyphs crowd the dot interior — 0.4× matches iOS.
         snapshot.favicon?.let { faviconKey ->
             val favicon = WalkFavicon.entries.firstOrNull { it.rawValue == faviconKey }
             if (favicon != null) {
                 Icon(
                     imageVector = favicon.icon,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size((sizeDp * 0.5f).dp),
+                    tint = pilgrimColors.parchment,
+                    modifier = Modifier.size((sizeDp * 0.4f).dp),
                 )
             }
         }
@@ -164,6 +192,10 @@ fun WalkDot(
         }
 
         // 6. Specular highlight — small white-30% radial offset upper-left.
+        // iOS `.opacity(opacity * 0.5)` so older dots fade their
+        // catchlight with the core; the per-row `opacity` is already
+        // multiplied at the root via `graphicsLayer { alpha = opacity }`,
+        // so the inner 0.5 is the iOS multiplier.
         Canvas(
             Modifier
                 .size((sizeDp * 0.7f).dp)
@@ -181,12 +213,15 @@ fun WalkDot(
             )
         }
 
-        // 7. Shared-walk stone ring.
+        // 7. Shared-walk stone ring. iOS uses a fixed
+        // `Color.stone.opacity(0.5)` — earlier Android code reused the
+        // per-dot seasonal `color`, so jade walks got a jade ring.
         if (snapshot.isShared) {
+            val ringColor = pilgrimColors.stone.copy(alpha = 0.5f)
             Canvas(Modifier.size(sharedRingSizeDp.dp)) {
                 val r = size.minDimension / 2f
                 drawCircle(
-                    color = color.copy(alpha = 0.5f),
+                    color = ringColor,
                     radius = r,
                     center = Offset(size.width / 2f, size.height / 2f),
                     style = Stroke(width = 1.dp.toPx()),
