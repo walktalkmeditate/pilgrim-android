@@ -132,6 +132,18 @@ open class WalkRepository @Inject constructor(
         )
     }
 
+    /**
+     * iOS parity Walk.steps. Pass-through to [WalkDao.updateSteps].
+     * Called from [WalkController.finishWalk] with the diff of
+     * `Sensor.TYPE_STEP_COUNTER` cumulative readings between start
+     * and finish; null when the sensor is unavailable, the
+     * ACTIVITY_RECOGNITION permission is denied, or the device
+     * rebooted mid-walk.
+     */
+    suspend fun updateSteps(walkId: Long, steps: Int?) {
+        walkDao.updateSteps(id = walkId, steps = steps)
+    }
+
     suspend fun deleteWalk(walk: Walk) {
         walkDao.delete(walk)
     }
@@ -269,6 +281,8 @@ open class WalkRepository @Inject constructor(
                             photoUri = ref.uri,
                             pinnedAt = pinnedAt,
                             takenAt = ref.takenAt,
+                            capturedLat = ref.capturedLat,
+                            capturedLng = ref.capturedLng,
                         )
                     },
                 )

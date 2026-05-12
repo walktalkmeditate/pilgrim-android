@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -22,17 +23,18 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
- * 1- to 2-column mini-stats below the duration hero.
+ * 1- to 3-column mini-stats below the duration hero. iOS reference:
+ * `WalkSummaryView.statsRow` (`WalkSummaryView.swift:463-488@db4196e`).
  *
- * Steps deferred to a future stage (Walk entity does not yet carry a
- * step counter column). Until then, the row shows Distance always +
- * Elevation when ascend > 1m. iOS reference:
- * `WalkSummaryView.statsRow` (`WalkSummaryView.swift:463-488`).
+ * Renders Distance always; Steps when `steps != null && steps > 0`
+ * (iOS gate `if let steps = walk.steps, steps > 0`); Elevation when
+ * `ascendMeters > 1.0` (iOS gate `walk.ascend > 1`).
  */
 @Composable
 fun WalkStatsRow(
     distanceMeters: Double,
     ascendMeters: Double,
+    steps: Int?,
     units: UnitSystem,
     modifier: Modifier = Modifier,
 ) {
@@ -44,6 +46,12 @@ fun WalkStatsRow(
             label = stringResource(R.string.summary_stat_distance),
             value = WalkFormat.distance(distanceMeters, units),
         )
+        if (steps != null && steps > 0) {
+            MiniStat(
+                label = stringResource(R.string.summary_stat_steps),
+                value = String.format(Locale.US, "%d", steps),
+            )
+        }
         if (ascendMeters > 1.0) {
             MiniStat(
                 label = stringResource(R.string.summary_stat_elevation),

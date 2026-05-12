@@ -48,6 +48,9 @@ interface WalkDao {
         windSpeed: Double?,
     )
 
+    @Query("UPDATE walks SET steps = :steps WHERE id = :id")
+    suspend fun updateSteps(id: Long, steps: Int?)
+
     @Query("SELECT * FROM walks WHERE id = :id")
     suspend fun getById(id: Long): Walk?
 

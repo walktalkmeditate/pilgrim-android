@@ -19,6 +19,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -47,7 +48,7 @@ class WalkControllerDiscardTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = DiscardFakeClock(initial = 1_000L)
-        controller = WalkController(repository, clock)
+        controller = WalkController(repository, clock, fakeStepCounter())
     }
 
     @After
