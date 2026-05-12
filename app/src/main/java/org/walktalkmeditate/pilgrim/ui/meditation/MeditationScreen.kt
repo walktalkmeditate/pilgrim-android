@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -143,18 +144,69 @@ fun MeditationScreen(
         }
     }
 
-    // Double-tap guard on Done: `endMeditation` is an async dispatch;
-    // the state transition lands a frame or two later. Without the
-    // guard, rapid double-taps fire two endMeditation coroutines (the
-    // reducer ignores the second — Active has no MeditateEnd branch —
-    // but two dismissal animations is messy UX). Also blocks
-    // hardware-back from triggering endMeditation after the button
-    // tap already did.
-    var didEnd by remember { mutableStateOf(false) }
+    // iOS parity `MeditationView.swift:609-650@db4196e` — Done-tap
+    // captures the end timestamp synchronously (the user's mental
+    // model is "the meditation ended when I tapped Done"). The 6.5s
+    // ceremony plays locally; endMeditation receives the CAPTURED
+    // millis so the 6.5s playback never inflates the recorded
+    // interval.
+    //
+    // PR-review fixes folded in here:
+    //  - `viewModel.nowMillis()` reads the same `Clock` the controller
+    //    dispatches against, so a mocked clock in tests stays aligned
+    //    with the captured end-millis (vs an earlier
+    //    `System.currentTimeMillis()` which drifted from injected
+    //    clock-time bases).
+    //  - `dispatched` latch prevents double-fire of `endMeditation` —
+    //    LaunchedEffect runs once and flips the latch; DisposableEffect
+    //    onDispose was removed entirely because it fires on every
+    //    config-change (rotation) and either finalized too early or
+    //    double-finalized after ceremony complete.
+    //  - LaunchedEffect computes remaining delays from elapsed since
+    //    `doneAtMillis` instead of replaying the full sequence — a
+    //    rotation mid-ceremony resumes at the correct phase + remaining
+    //    delay rather than restarting from t=0.
+    var didEnd by rememberSaveable { mutableStateOf(false) }
+    var doneAtMillis by rememberSaveable { mutableStateOf(0L) }
+    var dispatched by rememberSaveable { mutableStateOf(false) }
+    var closingPhase by rememberSaveable { mutableStateOf(ClosingPhase.None) }
     val endSession: () -> Unit = {
         if (!didEnd) {
             didEnd = true
-            viewModel.endMeditation()
+            doneAtMillis = viewModel.nowMillis()
+            closingPhase = ClosingPhase.Dissolving
+        }
+    }
+    LaunchedEffect(didEnd) {
+        if (!didEnd || dispatched) return@LaunchedEffect
+        // Elapsed since Done-tap. After a rotation mid-ceremony this is
+        // > 0; the schedule resumes at the correct phase instead of
+        // restarting from t=0.
+        val elapsedAtEntry = (viewModel.nowMillis() - doneAtMillis).coerceAtLeast(0L)
+
+        fun phaseFor(elapsed: Long): ClosingPhase = when {
+            elapsed >= CEREMONY_FADE_OUT_DELAY_MS -> ClosingPhase.FadeOut
+            elapsed >= CEREMONY_SUMMARY_DELAY_MS -> ClosingPhase.Summary
+            else -> ClosingPhase.Dissolving
+        }
+        closingPhase = phaseFor(elapsedAtEntry)
+
+        if (elapsedAtEntry < CEREMONY_SUMMARY_DELAY_MS) {
+            delay(CEREMONY_SUMMARY_DELAY_MS - elapsedAtEntry)
+            closingPhase = ClosingPhase.Summary
+        }
+        if (elapsedAtEntry < CEREMONY_FADE_OUT_DELAY_MS) {
+            val nowElapsed = (viewModel.nowMillis() - doneAtMillis).coerceAtLeast(0L)
+            delay(CEREMONY_FADE_OUT_DELAY_MS - nowElapsed)
+            closingPhase = ClosingPhase.FadeOut
+        }
+        val finalElapsed = (viewModel.nowMillis() - doneAtMillis).coerceAtLeast(0L)
+        if (finalElapsed < CEREMONY_TOTAL_MS) {
+            delay(CEREMONY_TOTAL_MS - finalElapsed)
+        }
+        if (!dispatched) {
+            dispatched = true
+            viewModel.endMeditation(endMillis = doneAtMillis)
         }
     }
 
@@ -181,8 +233,31 @@ fun MeditationScreen(
         enabled = !didEnd,
         onDone = endSession,
         breathRhythm = breathRhythm,
+        closingPhase = closingPhase,
     )
 }
+
+/**
+ * iOS parity `MeditationView.swift:855-857@db4196e`. Four-phase
+ * ceremony that plays after the user taps Done. The captured
+ * Done-tap millis is what gets recorded as the meditation end, so
+ * the ceremony's 6.5s playback never inflates the interval — this
+ * is the iOS bug-fix pattern (originally Date() was sampled at
+ * dismiss time and the meditation row showed 6.5s longer than the
+ * user's session).
+ */
+enum class ClosingPhase { None, Dissolving, Summary, FadeOut }
+
+/**
+ * iOS parity timing constants (`MeditationView.swift:631-650@db4196e`):
+ *   t=0.0s — Dissolving (dim breathing circle, hide timer)
+ *   t=2.0s — Summary (show session-end summary)
+ *   t=5.0s — FadeOut (1.5s overlay tween to parchment)
+ *   t=6.5s — onDismiss(endDate) invoked
+ */
+private const val CEREMONY_SUMMARY_DELAY_MS = 2_000L
+private const val CEREMONY_FADE_OUT_DELAY_MS = 5_000L
+private const val CEREMONY_TOTAL_MS = 6_500L
 
 /**
  * Pure composable — takes explicit state + colors so tests and
@@ -196,7 +271,31 @@ internal fun MeditationScreenContent(
     enabled: Boolean,
     onDone: () -> Unit,
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
+    closingPhase: ClosingPhase = ClosingPhase.None,
 ) {
+    // Animated phase-driven opacities. Reduce-motion users get the
+    // values pinned to their target so the screen still transitions
+    // cleanly without playing the cross-fade tweens.
+    val ceremonyActive = closingPhase != ClosingPhase.None
+    val breathingAlpha = androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (ceremonyActive) 0f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1500),
+        label = "ceremony-breathing-alpha",
+    ).value
+    val summaryAlpha = androidx.compose.animation.core.animateFloatAsState(
+        targetValue = when (closingPhase) {
+            ClosingPhase.Summary -> 1f
+            ClosingPhase.FadeOut -> 1f
+            else -> 0f
+        },
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1500),
+        label = "ceremony-summary-alpha",
+    ).value
+    val fadeOverlayAlpha = androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (closingPhase == ClosingPhase.FadeOut) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1500),
+        label = "ceremony-fadeout-alpha",
+    ).value
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -205,7 +304,8 @@ internal fun MeditationScreenContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(PilgrimSpacing.big),
+                .padding(PilgrimSpacing.big)
+                .graphicsLayer { alpha = breathingAlpha },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -225,6 +325,30 @@ internal fun MeditationScreenContent(
                 text = formatTimer(elapsedSeconds),
                 style = pilgrimType.statValue,
                 color = pilgrimColors.fog,
+            )
+        }
+        // Session summary text — visible during Summary + FadeOut
+        // phases. Cross-fades over 1.5s.
+        if (summaryAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = summaryAlpha },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = formatTimer(elapsedSeconds),
+                    style = pilgrimType.displayMedium,
+                    color = pilgrimColors.ink,
+                )
+            }
+        }
+        // Final fade-to-parchment overlay over the last 1.5s.
+        if (fadeOverlayAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(pilgrimColors.parchment.copy(alpha = fadeOverlayAlpha)),
             )
         }
         OutlinedButton(

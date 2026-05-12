@@ -93,9 +93,19 @@ class WalkController @Inject constructor(
         dispatch(WalkAction.MeditateStart(at = clock.now()))
     }
 
-    suspend fun endMeditation() {
+    /**
+     * @param endMillis explicit end timestamp. iOS parity
+     *   `MeditationView.swift:609-615@db4196e` — the user's Done-tap
+     *   is the conceptual end of the meditation; the 6.5s closing
+     *   ceremony that plays afterwards should NOT inflate the
+     *   recorded interval. Pass `clock.now()` (default) for paths
+     *   that finalize immediately (notification taps, finishWalk
+     *   teardown); pass the captured Done-tap millis for the
+     *   ceremony path.
+     */
+    suspend fun endMeditation(endMillis: Long = clock.now()) {
         Log.i(TAG, "endMeditation invoked from state=${_state.value::class.simpleName}")
-        dispatch(WalkAction.MeditateEnd(at = clock.now()))
+        dispatch(WalkAction.MeditateEnd(at = endMillis))
     }
 
     suspend fun finishWalk() {
