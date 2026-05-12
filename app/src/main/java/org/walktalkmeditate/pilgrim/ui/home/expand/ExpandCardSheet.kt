@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +33,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -105,14 +105,20 @@ fun ExpandCardSheet(
     val buttonContent = pilgrimColors.parchment
     val buttonStyle = pilgrimType.annotation
 
-    // Outer Box catches any background tap (scrim region) and dismisses
-    // — iOS sheet binding has the same "tap outside to dismiss" affordance.
-    // Using consume:false so child taps still work; the click region is
-    // the un-cropped area outside the card itself.
+    // Outer Box gets a clickable that dismisses on tap-outside-the-card
+    // (iOS sheet binding has the same affordance). The card itself
+    // installs its own non-dismissing clickable so taps inside don't
+    // fall through. indication = null on both so neither shows ripple.
+    val outerInteraction = remember { MutableInteractionSource() }
+    val innerInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .pointerInput(Unit) { /* intercept touches; no-op handler */ },
+            .clickable(
+                interactionSource = outerInteraction,
+                indication = null,
+                onClick = { dismissState.value() },
+            ),
         contentAlignment = Alignment.BottomCenter,
     ) {
         // The floating card. All corners rounded to 16dp (iOS
@@ -125,7 +131,12 @@ fun ExpandCardSheet(
                 .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small)
                 .shadow(elevation = 8.dp, shape = RoundedCornerShape(16.dp))
                 .clip(RoundedCornerShape(16.dp))
-                .background(baseContainerColor),
+                .background(baseContainerColor)
+                .clickable(
+                    interactionSource = innerInteraction,
+                    indication = null,
+                    onClick = { /* absorb taps inside the card */ },
+                ),
         ) {
             // seasonColor tint layered on top of the base.
             Box(
