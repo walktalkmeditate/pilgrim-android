@@ -26,6 +26,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +56,15 @@ private val SHEET_HEIGHT_MINIMIZED_DP = 88.dp
  * test can use the same value and the iOS reference is documented.
  */
 internal const val AUTO_INTENTION_DELAY_MS = 500L
+
+/**
+ * iOS parity (`ActiveWalkView.swift:206-235@db4196e`): 0.3s gap
+ * between dismissing the options sheet and presenting the next sheet
+ * (intention / waypoint) so the dismissal + present animations don't
+ * fight. Android's single-overlay layer doesn't strictly require this,
+ * but matching the user-perceived rhythm preserves the iOS feel.
+ */
+internal const val SHEET_HANDOFF_DELAY_MS = 300L
 
 /**
  * Pure predicate extracted from the Stage 10-C auto-intention prompt
@@ -152,6 +163,11 @@ fun ActiveWalkScreen(
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
+    // Composition-scoped scope for the 300ms sheet handoff delay
+    // (D9). Tied to the screen's composition lifetime — cancels on
+    // back-pop / discard so a pending handoff doesn't surface a sheet
+    // after the user has left the screen.
+    val handoffScope = rememberCoroutineScope()
     // Stage 10-C: auto-intention prompt (mirrors iOS
     // `ActiveWalkView.swift:374`). Fires once per walk session 0.5s
     // after the walk transitions to Active when the
@@ -305,6 +321,16 @@ fun ActiveWalkScreen(
             showAutoIntention = true
         }
     }
+    val activeWeather by viewModel.activeWeather.collectAsStateWithLifecycle()
+    // iOS parity (D6/D7 audit): fade a greeting in only while
+    // recording. Hand the overlay a non-null condition exactly once
+    // per state-enter-Active transition; the overlay owns the timer.
+    val greetingCondition = if (navWalkState is WalkState.Active) {
+        activeWeather?.condition
+    } else {
+        null
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
             points = routePoints,
@@ -315,6 +341,15 @@ fun ActiveWalkScreen(
             bottomInsetDp = sheetInsetDp,
             waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
+        )
+        // Weather greeting overlay — fades in over 0.8s + holds 3.5s +
+        // fades out over 1.0s. Aligned to top so it sits above the map
+        // overlay buttons; ZIndex inferred from declaration order.
+        WeatherGreetingOverlay(
+            triggerCondition = greetingCondition,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = PilgrimSpacing.big * 3),
         )
         // iOS-parity overlay row at the top of the map: ellipsis (options)
         // top-left, X (leave walk) top-right.
@@ -363,13 +398,25 @@ fun ActiveWalkScreen(
                 intention = preWalkIntention,
                 onSetIntention = {
                     showOptions = false
-                    showPreWalkIntention = true
+                    // iOS parity `ActiveWalkView.swift:206-235@db4196e`:
+                    // 0.3s delay between dismissing the options sheet and
+                    // presenting the next sheet so the dismissal +
+                    // present animations don't fight. Android's overlay
+                    // system doesn't strictly need this (single overlay
+                    // layer), but the user-perceived rhythm matches.
+                    handoffScope.launch {
+                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
+                        showPreWalkIntention = true
+                    }
                 },
                 waypointCount = waypointCount,
                 canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
                     showOptions = false
-                    showWaypointMarking = true
+                    handoffScope.launch {
+                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
+                        showWaypointMarking = true
+                    }
                 },
                 onDismiss = { showOptions = false },
             )

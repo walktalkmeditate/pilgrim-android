@@ -573,6 +573,7 @@ class WalkViewModel @Inject constructor(
                 // failure. weatherJob.cancel() is idempotent.
                 if (state is WalkState.Finished || state is WalkState.Idle) {
                     weatherJob?.cancel()
+                    _activeWeather.value = null
                 }
             }
         }
@@ -678,8 +679,23 @@ class WalkViewModel @Inject constructor(
         val snapshot = weatherFetching.fetchCurrent(location.latitude, location.longitude)
             ?: return false
         repository.updateWeather(walkId, snapshot)
+        _activeWeather.value = snapshot
         return true
     }
+
+    private val _activeWeather =
+        MutableStateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?>(null)
+
+    /**
+     * iOS parity `ActiveWalkViewModel.swift:weatherSnapshot@db4196e`.
+     * Set after [fetchAndPersistWeather] succeeds; cleared on every
+     * terminal transition by the controller-state observer. Drives the
+     * `WeatherGreetingOverlay` on the active-walk screen — when this
+     * goes non-null AND status is Active, the greeting fades in for
+     * 3.5s then fades out.
+     */
+    val activeWeather: StateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?> =
+        _activeWeather.asStateFlow()
 
     fun pauseWalk() {
         viewModelScope.launch { controller.pauseWalk() }
