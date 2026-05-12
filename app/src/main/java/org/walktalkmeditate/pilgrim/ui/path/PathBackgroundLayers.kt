@@ -12,9 +12,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -46,15 +52,29 @@ internal fun PathBackgroundLayers(
     reduceMotion: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val hour = remember {
-        java.time.LocalTime.now().hour
+    // Refresh hour on every ON_RESUME so a backgrounded app returning
+    // after crossing an hour boundary picks up the new time-of-day
+    // tint. `remember { ... }` alone would freeze at first composition.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var hour by remember { mutableStateOf(java.time.LocalTime.now().hour) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hour = java.time.LocalTime.now().hour
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val tod = remember(hour) { timeOfDayTint(hour) }
 
+    // `targetValue = initialValue` under reduceMotion freezes the
+    // ambient transition at 0f without changing the slot table or
+    // ticking per-frame recomposes.
     val transition = rememberInfiniteTransition(label = "path-ambient")
     val ambientOffsetX by transition.animateFloat(
         initialValue = 0f,
-        targetValue = 0.15f,
+        targetValue = if (reduceMotion) 0f else 0.15f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 15_000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
@@ -63,7 +83,7 @@ internal fun PathBackgroundLayers(
     )
     val ambientOffsetY by transition.animateFloat(
         initialValue = 0f,
-        targetValue = 0.10f,
+        targetValue = if (reduceMotion) 0f else 0.10f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 15_000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,

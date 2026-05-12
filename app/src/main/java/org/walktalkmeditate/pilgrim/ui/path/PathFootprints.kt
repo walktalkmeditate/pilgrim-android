@@ -109,17 +109,19 @@ private fun TogetherFootprints(reduceMotion: Boolean) {
     // slot-table identity when the user toggled the motion preference
     // at runtime and threw at recompose. Always call the same remember
     // primitive; switch the produced value in a derived field.
+    // `targetValue = initialValue` when reduceMotion freezes the
+    // animation at 0f with zero per-frame recompose tax, while keeping
+    // the slot table identical across motion-pref toggles.
     val transition = rememberInfiniteTransition(label = "together-drift")
-    val animatedDrift by transition.animateFloat(
+    val drift by transition.animateFloat(
         initialValue = 0f,
-        targetValue = 1f,
+        targetValue = if (reduceMotion) 0f else 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 6000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "drift",
     )
-    val drift = if (reduceMotion) 0f else animatedDrift
     Box(modifier = Modifier.size(width = FRAME_WIDTH, height = FRAME_HEIGHT)) {
         Box(
             modifier = Modifier
@@ -161,18 +163,22 @@ private fun TogetherFootprints(reduceMotion: Boolean) {
 @Composable
 private fun SeekFootprints(reduceMotion: Boolean) {
     val ink = pilgrimColors.ink
-    // See TogetherFootprints for why this isn't a conditional remember*.
+    // See TogetherFootprints for the `targetValue = initialValue`
+    // trick — `targetValue = 0f` when reduceMotion AND `initialValue =
+    // 0f` would pin the animation cleanly. Here `initialValue` is -2f
+    // so we pin to -2f under reduceMotion and apply an offset shift
+    // in the consumer so the visual still reads as centered.
     val transition = rememberInfiniteTransition(label = "seek-float")
-    val animatedFloat by transition.animateFloat(
+    val rawFloat by transition.animateFloat(
         initialValue = -2f,
-        targetValue = 2f,
+        targetValue = if (reduceMotion) -2f else 2f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 4000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "float",
     )
-    val float = if (reduceMotion) 0f else animatedFloat
+    val float = if (reduceMotion) 0f else rawFloat
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),

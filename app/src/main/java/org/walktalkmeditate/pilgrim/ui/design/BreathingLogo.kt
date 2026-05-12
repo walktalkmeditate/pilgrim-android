@@ -52,44 +52,45 @@ fun BreathingLogo(
     pulseActive: Boolean = false,
 ) {
     // Always call rememberInfiniteTransition — switching between
-    // animated and 0f via the result value, never via a conditional
-    // remember*() call (Compose forbids that, and a runtime toggle of
-    // reducedMotion would otherwise throw at recompose).
+    // animated and 0f via the targetValue, never via a conditional
+    // remember*() call (Compose forbids variable slot patterns).
+    //
+    // `targetValue = initialValue` is the perf trick that lets us
+    // disable an infinite transition without changing the slot table:
+    // animateFloat with equal initial/target ticks ZERO frames so
+    // there's no per-recompose tax when the animation is "off".
     val breathTransition = rememberInfiniteTransition(label = "logo-breath")
-    val animatedBreath by breathTransition.animateFloat(
+    val breath by breathTransition.animateFloat(
         initialValue = 1.0f,
-        targetValue = 1.02f,
+        targetValue = if (reducedMotion) 1.0f else 1.02f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 4000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "breath-scale",
     )
-    val breath = if (reducedMotion) 1.0f else animatedBreath
 
+    val pulseEnabled = pulseActive && !reducedMotion
     val pulseTransition = rememberInfiniteTransition(label = "logo-pulse")
-    val animatedPulse by pulseTransition.animateFloat(
+    val pulse by pulseTransition.animateFloat(
         initialValue = 1.0f,
-        targetValue = 1.03f,
+        targetValue = if (pulseEnabled) 1.03f else 1.0f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "pulse-scale",
     )
-    val pulseShadow by pulseTransition.animateFloat(
+    val shadowAnim by pulseTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 12f,
+        targetValue = if (pulseEnabled) 12f else 0f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "pulse-shadow",
     )
-    val pulse = if (pulseActive && !reducedMotion) animatedPulse else 1.0f
-    val shadowElevation = if (pulseActive && !reducedMotion) pulseShadow else 0f
 
-    val finalScale = breath * pulse
     val stoneColor = pilgrimColors.stone
 
     Image(
@@ -97,16 +98,21 @@ fun BreathingLogo(
         contentDescription = null,
         modifier = modifier
             .size(size)
+            // Modifier.shadow re-runs composition on elevation changes —
+            // when pulseEnabled is false `shadowAnim` is pinned at 0 so
+            // no recompose tax. When enabled, the 1.2s loop runs and
+            // Compose handles the throttling.
             .shadow(
-                elevation = shadowElevation.dp,
+                elevation = shadowAnim.dp,
                 shape = CircleShape,
                 ambientColor = stoneColor,
                 spotColor = stoneColor,
             )
             .clip(RoundedCornerShape(size * 0.18f))
             .graphicsLayer {
-                scaleX = finalScale
-                scaleY = finalScale
+                val scale = breath * pulse
+                scaleX = scale
+                scaleY = scale
             },
     )
 }
