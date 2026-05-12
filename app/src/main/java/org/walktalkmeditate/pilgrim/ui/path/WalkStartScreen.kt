@@ -59,6 +59,15 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 
 /**
+ * iOS parity (`WalkStartView.swift:52-65@db4196e`): footprint
+ * active-mode swap waits 0.45s after the user taps a new mode. The
+ * 0.3s fade-out animation in `PathFootprints` runs first, then the
+ * swap, then the new mode's 0.3s fade-in. Reduce-motion skips the
+ * delay (and the haptic) entirely.
+ */
+private const val MODE_TAP_DISSOLVE_MS = 450L
+
+/**
  * The Path tab — Pilgrim's contemplative pre-walk hub. Ports iOS
  * `WalkStartView`'s structure: breathing logo at top, rotating quote
  * (re-rolls on mode change, no timer), moon-phase glyph, 3-mode
@@ -289,16 +298,30 @@ private fun ModeSelector(
 ) {
     val haptic = LocalHapticFeedback.current
     val soundsEnabled = LocalSoundsEnabled.current
-    // Fire haptic only AFTER the footprint swap composes — iOS pattern
-    // where `.sensoryFeedback` triggers on @Published change. The
-    // `firstFrame` latch suppresses the synthetic emission on first
-    // composition (cold-launch shouldn't buzz).
+    val reduceMotion = LocalReduceMotion.current
+    // iOS parity `WalkStartView.swift:46-65@db4196e` — the footprint
+    // active-mode swap LAGS the label/underline swap by 0.45s, with a
+    // 0.3s fade-out → swap+haptic → 0.3s fade-in cadence. selectedMode
+    // tracks the label/underline (immediate visual feedback);
+    // activeFootprintMode tracks the footprint (delayed swap).
+    var activeFootprintMode by rememberSaveable { mutableStateOf(selectedMode) }
     var firstFrame by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(selectedMode) {
         if (firstFrame) {
             firstFrame = false
+            activeFootprintMode = selectedMode
             return@LaunchedEffect
         }
+        if (reduceMotion) {
+            // 0.2s linear crossfade, no haptic (iOS skips haptic under
+            // ReduceMotion to keep the swap quiet).
+            activeFootprintMode = selectedMode
+            return@LaunchedEffect
+        }
+        // Cancel-on-rapid-retap: if user picks a third mode mid-dissolve,
+        // LaunchedEffect(selectedMode) re-keys and cancels this delay.
+        kotlinx.coroutines.delay(MODE_TAP_DISSOLVE_MS)
+        activeFootprintMode = selectedMode
         if (soundsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -310,6 +333,7 @@ private fun ModeSelector(
                 ModeButton(
                     mode = mode,
                     selected = mode == selectedMode,
+                    footprintActive = mode == activeFootprintMode,
                     onClick = {
                         if (mode != selectedMode) {
                             onSelect(mode)
@@ -343,6 +367,7 @@ private fun ModeSelector(
 private fun ModeButton(
     mode: WalkMode,
     selected: Boolean,
+    footprintActive: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -360,7 +385,7 @@ private fun ModeButton(
     ) {
         PathFootprints(
             mode = mode,
-            isActive = selected,
+            isActive = footprintActive,
         )
         Spacer(Modifier.height(PilgrimSpacing.small))
         Text(

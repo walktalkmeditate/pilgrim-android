@@ -110,6 +110,19 @@ class WalkViewModel @Inject constructor(
         _activeWeather.asStateFlow()
 
     /**
+     * iOS parity `ActiveWalkView.swift:735-764@db4196e` — celestial
+     * greeting computed once per walk-start (based on the walk's
+     * start timestamp + system zone + tropical zodiac). The overlay
+     * schedules its own 5s pre-delay before fading in; this flow
+     * just provides the text payload.
+     *
+     * Cleared on terminal transitions by the controller-state
+     * observer so a back-to-back walk gets a fresh computation.
+     */
+    private val _activeCelestialGreeting = MutableStateFlow<String?>(null)
+    val activeCelestialGreeting: StateFlow<String?> = _activeCelestialGreeting.asStateFlow()
+
+    /**
      * iOS parity `WalkStartView.swift:164-168@db4196e` —
      * `CollectiveCounterService.$stats.walkedInLastHour`. When true,
      * the breathing logo on Path picks up a 1.2s scale+shadow pulse to
@@ -592,6 +605,7 @@ class WalkViewModel @Inject constructor(
                 if (state is WalkState.Finished || state is WalkState.Idle) {
                     weatherJob?.cancel()
                     _activeWeather.value = null
+                    _activeCelestialGreeting.value = null
                 }
             }
         }
@@ -624,6 +638,21 @@ class WalkViewModel @Inject constructor(
             // through Finished tears the weatherJob down before any
             // fetch is issued.
             scheduleWeatherFetch(started.id)
+            // Compute celestial greeting text once per walk start. Cheap
+            // (pure math); cleared on terminal transition by the
+            // controller-state observer below.
+            try {
+                val snapshot = org.walktalkmeditate.pilgrim.core.celestial
+                    .CelestialSnapshotCalc.snapshot(
+                        atEpochMillis = started.startTimestamp,
+                    )
+                _activeCelestialGreeting.value =
+                    celestialGreetingText(snapshot, context.resources)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "celestial greeting compute failed", t)
+            }
             try {
                 ContextCompat.startForegroundService(
                     context,

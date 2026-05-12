@@ -35,6 +35,21 @@ fun SeasonalMarker.bannerTextRes(): Int? = when (this) {
 }
 
 /**
+ * iOS parity `AstrologyModels.swift` `SeasonalMarker.evocativePhrase`
+ * — string-resource id for the contemplative one-liner shown in
+ * `TurningRitualCard`. Null for cross-quarter markers since iOS hides
+ * the card on those days too.
+ */
+@StringRes
+fun SeasonalMarker.evocativePhraseRes(): Int? = when (this) {
+    SeasonalMarker.SpringEquinox -> R.string.turning_phrase_spring_equinox
+    SeasonalMarker.SummerSolstice -> R.string.turning_phrase_summer_solstice
+    SeasonalMarker.AutumnEquinox -> R.string.turning_phrase_autumn_equinox
+    SeasonalMarker.WinterSolstice -> R.string.turning_phrase_winter_solstice
+    else -> null
+}
+
+/**
  * Compute the SeasonalMarker for a UTC instant. Shared by `WalkDotColor`
  * (per-walk dot color) and `TurningDayBanner` (today's banner).
  */
