@@ -104,6 +104,56 @@ fun pilgrimDarkColors() = PilgrimColors(
     turningIndigo = PilgrimPaletteDark.turningIndigo,
 )
 
+/**
+ * iOS parity `Pilgrim/Extensions/SwiftUI/Color.swift@db4196e`. Every
+ * palette getter on iOS wraps the raw asset color in
+ * `SeasonalColorEngine.seasonalColor(named:, intensity:)`, so the whole
+ * app picks up a soft date-and-hemisphere-driven shift throughout the
+ * year. iOS per-token intensity mapping:
+ *
+ * - parchment, parchmentSecondary, parchmentTertiary, ink → `minimal`
+ * - stone, moss, rust, dawn → `full`
+ * - fog → `moderate`
+ * - turning{Jade,Gold,Claret,Indigo} → NOT shifted (always-on turning
+ *   accents, used standalone on turning days)
+ *
+ * Returns a fresh [PilgrimColors] with the shifted values; does 9
+ * HSV decompose/recompose allocations per call. Callers MUST wrap in
+ * `remember(darkTheme, hemisphere, today)` or equivalent so it runs
+ * once per theme rebuild — calling from a @Composable scope without
+ * remember reallocates on every recomposition.
+ */
+fun pilgrimSeasonalColors(
+    base: PilgrimColors,
+    date: java.time.LocalDate,
+    hemisphere: org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere,
+): PilgrimColors {
+    val Min = org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine.Intensity.Minimal
+    val Mod = org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine.Intensity.Moderate
+    val Full = org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine.Intensity.Full
+    fun shift(
+        c: Color,
+        intensity: org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine.Intensity,
+    ): Color = org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+        .applySeasonalShift(c, intensity, date, hemisphere)
+    return PilgrimColors(
+        stone = shift(base.stone, Full),
+        ink = shift(base.ink, Min),
+        parchment = shift(base.parchment, Min),
+        parchmentSecondary = shift(base.parchmentSecondary, Min),
+        parchmentTertiary = shift(base.parchmentTertiary, Min),
+        moss = shift(base.moss, Full),
+        rust = shift(base.rust, Full),
+        fog = shift(base.fog, Mod),
+        dawn = shift(base.dawn, Full),
+        // Turning-day accents stay un-shifted on iOS too.
+        turningJade = base.turningJade,
+        turningGold = base.turningGold,
+        turningClaret = base.turningClaret,
+        turningIndigo = base.turningIndigo,
+    )
+}
+
 val LocalPilgrimColors = staticCompositionLocalOf { pilgrimLightColors() }
 
 /**

@@ -42,6 +42,9 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
     @Inject lateinit var appearancePreferences: AppearancePreferencesRepository
     @Inject lateinit var soundsPreferences: SoundsPreferencesRepository
+    @Inject
+    lateinit var hemisphereRepository:
+        org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,7 +82,20 @@ class MainActivity : ComponentActivity() {
             val soundsEnabled by soundsPreferences.soundsEnabled.collectAsStateWithLifecycle()
             val bellHapticEnabled by soundsPreferences.bellHapticEnabled.collectAsStateWithLifecycle()
             val breathRhythmId by soundsPreferences.breathRhythm.collectAsStateWithLifecycle()
-            PilgrimTheme(appearanceMode = appearanceMode) {
+            // iOS parity Color.swift@db4196e — all palette tokens get a
+            // SeasonalColorEngine shift applied throughout the app.
+            // Hemisphere comes from HemisphereRepository (defaults
+            // Northern); date is observed via rememberCurrentDate which
+            // refreshes on every ON_RESUME and at each midnight boundary
+            // so a long-resumed Activity doesn't pin the palette to
+            // yesterday.
+            val hemisphere by hemisphereRepository.hemisphere.collectAsStateWithLifecycle()
+            val today by org.walktalkmeditate.pilgrim.ui.theme.rememberCurrentDate()
+            PilgrimTheme(
+                appearanceMode = appearanceMode,
+                hemisphere = hemisphere,
+                today = today,
+            ) {
                 CompositionLocalProvider(
                     LocalSoundsEnabled provides soundsEnabled,
                     LocalBellHapticEnabled provides bellHapticEnabled,
