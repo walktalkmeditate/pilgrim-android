@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Landscape
+import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -61,6 +63,21 @@ fun WalkOptionsSheet(
     canDropWaypoint: Boolean,
     onDropWaypoint: () -> Unit,
     onDismiss: () -> Unit,
+    // iOS parity `WalkOptionsSheet.swift:14, 222@db4196e` — whisper +
+    // stone rows surface in the "Traces" section. `whispersRemaining`
+    // is `7 - whispersPlacedThisWalk` (caller computes); a zero value
+    // renders disabled per iOS `canPlaceWhisper`. `isWhisperUnlocked`
+    // gates the visible subtitle ("Unlocks at 7 min" vs
+    // "N remaining"); the row is rendered even when locked so the
+    // user sees the unlock countdown.
+    isWhisperUnlocked: Boolean = false,
+    canPlaceWhisper: Boolean = false,
+    whispersRemaining: Int = 0,
+    onLeaveWhisper: () -> Unit = {},
+    isStoneUnlocked: Boolean = false,
+    canPlaceStone: Boolean = false,
+    stonePlaced: Boolean = false,
+    onPlaceStone: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -107,6 +124,38 @@ fun WalkOptionsSheet(
                         )
                     },
                     onClick = onDropWaypoint,
+                )
+            }
+            // iOS parity `WalkOptionsSheet.swift:90-180@db4196e` —
+            // "Traces" section: whisper + stone rows. Visible only when
+            // the walk is in-progress (canDropWaypoint stands in as a
+            // proxy for Active|Paused state); rendered even when locked
+            // so the user sees the unlock countdown. The connectivity
+            // gate iOS uses (`!isConnected` → hide entire section) is
+            // deferred to a follow-up PR — Android currently relies on
+            // the place-call's network error to surface the failure.
+            if (canDropWaypoint) {
+                OptionRow(
+                    icon = Icons.Outlined.Spa,
+                    title = stringResource(R.string.walk_options_whisper_title),
+                    subtitle = when {
+                        !isWhisperUnlocked -> stringResource(R.string.walk_options_whisper_locked)
+                        whispersRemaining <= 0 -> stringResource(R.string.walk_options_whisper_cap_reached)
+                        else -> stringResource(R.string.walk_options_whisper_remaining, whispersRemaining)
+                    },
+                    enabled = canPlaceWhisper,
+                    onClick = onLeaveWhisper,
+                )
+                OptionRow(
+                    icon = Icons.Outlined.Landscape,
+                    title = stringResource(R.string.walk_options_stone_title),
+                    subtitle = when {
+                        !isStoneUnlocked -> stringResource(R.string.walk_options_stone_locked)
+                        stonePlaced -> stringResource(R.string.walk_options_stone_placed)
+                        else -> stringResource(R.string.walk_options_stone_available)
+                    },
+                    enabled = canPlaceStone,
+                    onClick = onPlaceStone,
                 )
             }
         }

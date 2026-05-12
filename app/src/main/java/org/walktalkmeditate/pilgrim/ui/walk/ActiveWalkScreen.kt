@@ -21,6 +21,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -36,7 +39,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -180,6 +185,49 @@ fun ActiveWalkScreen(
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
+    // iOS parity `ActiveWalkView.swift:222, 285-313@db4196e` — whisper +
+    // stone placement sheet hosts. Both surface from the options sheet
+    // via the existing 300ms handoff pattern. `showWhisperSheet` opens
+    // WhisperPlacementSheet (large detent, expiry + category); the
+    // commit lambda calls `viewModel.placeWhisper(...)` which drives
+    // the server round-trip and emits a [PlacementEvent] for the
+    // success haptic + failure banner.
+    var showWhisperSheet by rememberSaveable { mutableStateOf(false) }
+    var showStoneSheet by rememberSaveable { mutableStateOf(false) }
+    val whispersPlacedThisWalk by viewModel.whispersPlacedThisWalk.collectAsStateWithLifecycle()
+    val isWhisperUnlocked by viewModel.isWhisperUnlocked.collectAsStateWithLifecycle()
+    val canPlaceWhisper by viewModel.canPlaceWhisper.collectAsStateWithLifecycle()
+    val stonePlacedThisWalk by viewModel.stonePlacedThisWalk.collectAsStateWithLifecycle()
+    val isStoneUnlocked by viewModel.isStoneUnlocked.collectAsStateWithLifecycle()
+    val canPlaceStone by viewModel.canPlaceStone.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val placementWhisperPlacedMsg = stringResource(R.string.placement_whisper_placed)
+    val placementStonePlacedMsg = stringResource(R.string.placement_stone_placed)
+    val placementFailedFmt = stringResource(R.string.placement_failed)
+    LaunchedEffect(viewModel) {
+        viewModel.placementEvents.collect { event ->
+            when (event) {
+                is org.walktalkmeditate.pilgrim.ui.walk.PlacementEvent.WhisperPlaced -> {
+                    // iOS parity `ActiveWalkView.swift:811-816@db4196e` —
+                    // medium impact haptic fires AFTER server confirm.
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    snackbarHostState.showSnackbar(placementWhisperPlacedMsg)
+                }
+                is org.walktalkmeditate.pilgrim.ui.walk.PlacementEvent.StonePlaced -> {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    snackbarHostState.showSnackbar(placementStonePlacedMsg)
+                }
+                is org.walktalkmeditate.pilgrim.ui.walk.PlacementEvent.Failed -> {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    snackbarHostState.showSnackbar(
+                        placementFailedFmt.format(event.message),
+                    )
+                }
+            }
+        }
+    }
     // iOS parity `ActiveWalkView.swift:68-70, 138-141, 334-341@db4196e`:
     // computed once per composition because the marker only changes on a
     // day boundary (cardinal turnings are rare; the user crossing midnight
@@ -482,6 +530,46 @@ fun ActiveWalkScreen(
                     }
                 },
                 onDismiss = { showOptions = false },
+                isWhisperUnlocked = isWhisperUnlocked,
+                canPlaceWhisper = canPlaceWhisper,
+                whispersRemaining = (7 - whispersPlacedThisWalk).coerceAtLeast(0),
+                onLeaveWhisper = {
+                    showOptions = false
+                    handoffJob.value?.cancel()
+                    handoffJob.value = handoffScope.launch {
+                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
+                        showWhisperSheet = true
+                    }
+                },
+                isStoneUnlocked = isStoneUnlocked,
+                canPlaceStone = canPlaceStone,
+                stonePlaced = stonePlacedThisWalk,
+                onPlaceStone = {
+                    showOptions = false
+                    handoffJob.value?.cancel()
+                    handoffJob.value = handoffScope.launch {
+                        kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
+                        showStoneSheet = true
+                    }
+                },
+            )
+        }
+        if (showWhisperSheet) {
+            WhisperPlacementSheet(
+                onPlace = { category, _ ->
+                    showWhisperSheet = false
+                    scope.launch { viewModel.placeWhisper(category) }
+                },
+                onDismiss = { showWhisperSheet = false },
+            )
+        }
+        if (showStoneSheet) {
+            StonePlacementSheet(
+                onPlace = {
+                    showStoneSheet = false
+                    scope.launch { viewModel.placeStone() }
+                },
+                onDismiss = { showStoneSheet = false },
             )
         }
         if (showWaypointMarking) {
@@ -596,6 +684,22 @@ fun ActiveWalkScreen(
             peekHintTrigger = peekHintTrigger.value,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+        // iOS parity `ProximityNotificationView.swift@db4196e` — placement
+        // result banner. iOS uses a custom floating banner; Android MVP
+        // uses Material 3 Snackbar (auto-dismissal, accessible) at the
+        // top center so the bottom sheet remains usable. The full
+        // floating-banner port is deferred along with the proximity
+        // detection epic.
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                containerColor = pilgrimColors.parchmentSecondary,
+                contentColor = pilgrimColors.ink,
+            )
+        }
     }
 }
 

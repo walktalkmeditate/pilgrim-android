@@ -17,9 +17,12 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -89,6 +92,14 @@ class WalkViewModel @Inject constructor(
     practicePreferences: PracticePreferencesRepository,
     private val weatherFetching: WeatherFetching,
     collectiveStats: org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource,
+    private val soundsPreferences:
+        org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository,
+    private val whisperService:
+        org.walktalkmeditate.pilgrim.data.whisper.WhisperService,
+    private val cairnService:
+        org.walktalkmeditate.pilgrim.data.cairn.CairnService,
+    private val whisperManifestService:
+        org.walktalkmeditate.pilgrim.data.whisper.WhisperManifestService,
 ) : ViewModel() {
 
     /**
@@ -121,6 +132,31 @@ class WalkViewModel @Inject constructor(
      */
     private val _activeCelestialGreeting = MutableStateFlow<String?>(null)
     val activeCelestialGreeting: StateFlow<String?> = _activeCelestialGreeting.asStateFlow()
+
+    /**
+     * iOS parity `ActiveWalkViewModel.swift:44-46@db4196e` — per-walk
+     * placement caps. Reset to zero on every Idle/Finished →
+     * subsequent-Active transition by the controller-state observer.
+     *
+     *  - whispersPlacedThisWalk: max [WHISPER_PER_WALK_CAP] (7)
+     *  - stonePlacedThisWalk: max 1 (boolean)
+     *
+     * Caller (ActiveWalkScreen) gates row enablement on the derived
+     * [canPlaceWhisper] / [canPlaceStone] StateFlows below uiState.
+     */
+    private val _whispersPlacedThisWalk = MutableStateFlow(0)
+    val whispersPlacedThisWalk: StateFlow<Int> = _whispersPlacedThisWalk.asStateFlow()
+
+    private val _stonePlacedThisWalk = MutableStateFlow(false)
+    val stonePlacedThisWalk: StateFlow<Boolean> = _stonePlacedThisWalk.asStateFlow()
+
+    /**
+     * One-shot UI events for whisper + stone placement results. The
+     * sheet host on [ActiveWalkScreen] collects these to drive the
+     * haptic-on-success / banner-on-failure ordering iOS specifies.
+     */
+    private val _placementEvents = MutableSharedFlow<PlacementEvent>(extraBufferCapacity = 4)
+    val placementEvents: SharedFlow<PlacementEvent> = _placementEvents.asSharedFlow()
 
     /**
      * iOS parity `WalkStartView.swift:164-168@db4196e` —
@@ -177,6 +213,39 @@ class WalkViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
         initialValue = WalkUiState(WalkState.Idle, clock.now()),
     )
+
+    /**
+     * iOS parity `ActiveWalkViewModel.swift:50-53@db4196e`. Derived
+     * unlock predicates from the in-progress walk's active-walking
+     * milliseconds. Recomputed on every [uiState] emission (1 Hz
+     * tick), so the unlock flips visibly the second the threshold is
+     * hit.
+     *
+     *  - `isWhisperUnlocked` at [WHISPER_UNLOCK_SECONDS] (7 minutes)
+     *  - `isStoneUnlocked`   at [STONE_UNLOCK_SECONDS]   (12 minutes)
+     *
+     * `canPlaceX` folds in the per-walk cap so the UI single-source-of
+     * truth is the canPlace flag.
+     */
+    val isWhisperUnlocked: StateFlow<Boolean> = uiState
+        .map { it.activeWalkingMillis / 1000L >= WHISPER_UNLOCK_SECONDS }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), false)
+
+    val isStoneUnlocked: StateFlow<Boolean> = uiState
+        .map { it.activeWalkingMillis / 1000L >= STONE_UNLOCK_SECONDS }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), false)
+
+    val canPlaceWhisper: StateFlow<Boolean> = combine(
+        isWhisperUnlocked,
+        _whispersPlacedThisWalk,
+    ) { unlocked, placed -> unlocked && placed < WHISPER_PER_WALK_CAP }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), false)
+
+    val canPlaceStone: StateFlow<Boolean> = combine(
+        isStoneUnlocked,
+        _stonePlacedThisWalk,
+    ) { unlocked, placed -> unlocked && !placed }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), false)
 
     /**
      * Raw walk-state passthrough for navigation observers.
@@ -606,6 +675,15 @@ class WalkViewModel @Inject constructor(
                     weatherJob?.cancel()
                     _activeWeather.value = null
                     _activeCelestialGreeting.value = null
+                    // iOS parity `ActiveWalkViewModel.swift:44-46@db4196e`
+                    // — caps reset at VM init (new walk). On Android the
+                    // VM is scoped to NavBackStackEntry which persists
+                    // across multiple walks within the same nav surface;
+                    // the equivalent reset point is "leaving in-progress
+                    // state." Resetting on Finished AND Idle (discard)
+                    // covers both terminal paths.
+                    _whispersPlacedThisWalk.value = 0
+                    _stonePlacedThisWalk.value = false
                 }
             }
         }
@@ -765,6 +843,17 @@ class WalkViewModel @Inject constructor(
     fun nowMillis(): Long = clock.now()
 
     /**
+     * iOS parity `MeditationView.swift:559-568@db4196e` — write the
+     * selected breath-rhythm id to settings DataStore. Same write path
+     * that the Settings tab uses; `LocalBreathRhythm.current` updates
+     * on next composition so MeditationScreen's `key(breathRhythm.id)`
+     * triggers a fresh BreathingCircle cycle.
+     */
+    fun setBreathRhythm(id: Int) {
+        viewModelScope.launch { soundsPreferences.setBreathRhythm(id) }
+    }
+
+    /**
      * CAS guard for double-tap dedup. The Finish button's enabled
      * state derives from `walkState`, which only flips to Finished
      * after `controller.finishWalk()` dispatches + Room finalizes —
@@ -839,6 +928,94 @@ class WalkViewModel @Inject constructor(
      */
     suspend fun restoreActiveWalk(): Walk? = controller.restoreActiveWalk()
 
+    /**
+     * iOS parity `ActiveWalkView.swift:786-834@db4196e` —
+     * server-confirm-then-haptic placement. On success: cap increments
+     * synchronously THEN we emit [PlacementEvent.WhisperPlaced]; on
+     * failure cap stays put and we emit [PlacementEvent.Failed]. The
+     * sheet host on ActiveWalkScreen drives the success haptic +
+     * failure banner from the event.
+     *
+     * Manifest is fetched lazily on first placement attempt — if it
+     * fails (no network, decode error), we emit a Failed event so
+     * the user sees a banner rather than a silent dismiss.
+     */
+    suspend fun placeWhisper(category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory) {
+        // Lazy manifest fetch — once per VM lifetime ideally; for MVP we
+        // re-fetch on every placement attempt if the manifest is still
+        // null. Cheap enough (single GET) for the placement flow.
+        if (whisperManifestService.manifest.value == null) {
+            val ok = whisperManifestService.refresh()
+            if (!ok) {
+                _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "Couldn't load whisper catalog"))
+                return
+            }
+        }
+        val whisper = whisperManifestService.randomWhisper(category)
+        if (whisper == null) {
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "No whispers available for this category"))
+            return
+        }
+        val state = controller.state.value
+        val location = (state as? WalkState.Active)?.walk?.lastLocation
+        if (location == null) {
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "No GPS fix yet"))
+            return
+        }
+        // Final cap guard — UI gates on canPlaceWhisper but a double-tap
+        // race could fire twice. Idempotent server retries would
+        // double-charge the user. cap-check + reserve-slot pattern.
+        if (_whispersPlacedThisWalk.value >= WHISPER_PER_WALK_CAP) return
+        try {
+            whisperService.placeWhisper(
+                latitude = location.latitude,
+                longitude = location.longitude,
+                whisperId = whisper.id,
+                category = category,
+                expiry = org.walktalkmeditate.pilgrim.data.whisper.ExpiryDuration.DEFAULT,
+            )
+            _whispersPlacedThisWalk.update { it + 1 }
+            _placementEvents.emit(PlacementEvent.WhisperPlaced(whisper.id))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: org.walktalkmeditate.pilgrim.data.whisper.WhisperError.RateLimited) {
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "Too many whispers placed today"))
+        } catch (e: org.walktalkmeditate.pilgrim.data.whisper.WhisperError) {
+            Log.w(TAG, "placeWhisper failed: ${e.message}")
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "Couldn't place whisper"))
+        }
+    }
+
+    /**
+     * iOS parity `ActiveWalkView.swift:836-893@db4196e` — same
+     * server-confirm-then-haptic shape as [placeWhisper]. Result emits
+     * the server-confirmed `stoneCount` so a future bell-tier player
+     * can pick the right `stone-tier-N.m4a` sample (audio deferred to
+     * a follow-up PR).
+     */
+    suspend fun placeStone() {
+        val state = controller.state.value
+        val location = (state as? WalkState.Active)?.walk?.lastLocation
+        if (location == null) {
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "No GPS fix yet"))
+            return
+        }
+        if (_stonePlacedThisWalk.value) return
+        try {
+            val result = cairnService.placeStone(
+                latitude = location.latitude,
+                longitude = location.longitude,
+            )
+            _stonePlacedThisWalk.value = true
+            _placementEvents.emit(PlacementEvent.StonePlaced(result.id, result.stoneCount))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: org.walktalkmeditate.pilgrim.data.cairn.CairnError) {
+            Log.w(TAG, "placeStone failed: ${e.message}")
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "Couldn't place stone"))
+        }
+    }
+
     private fun tickerFlow(periodMillis: Long): Flow<Long> = flow {
         while (true) {
             emit(clock.now())
@@ -855,5 +1032,22 @@ class WalkViewModel @Inject constructor(
         // retry once after another 10s.
         const val WEATHER_FIRST_DELAY_MS = 2_000L
         const val WEATHER_RETRY_DELAY_MS = 10_000L
+        // iOS parity `ActiveWalkViewModel.swift:50-53@db4196e`
+        const val WHISPER_UNLOCK_SECONDS = 7 * 60L
+        const val STONE_UNLOCK_SECONDS = 12 * 60L
+        const val WHISPER_PER_WALK_CAP = 7
     }
 }
+
+/**
+ * One-shot UI event surfaced by [WalkViewModel.placementEvents]. The
+ * ActiveWalkScreen collector maps these to a haptic + banner per
+ * iOS's server-confirm-then-haptic ordering.
+ */
+sealed class PlacementEvent {
+    data class WhisperPlaced(val serverId: String) : PlacementEvent()
+    data class StonePlaced(val serverId: String, val stoneCount: Int) : PlacementEvent()
+    data class Failed(val kind: PlacementKind, val message: String) : PlacementEvent()
+}
+
+enum class PlacementKind { Whisper, Stone }
