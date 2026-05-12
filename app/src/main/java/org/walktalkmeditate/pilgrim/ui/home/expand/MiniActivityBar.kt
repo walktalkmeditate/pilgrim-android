@@ -27,13 +27,16 @@ fun MiniActivityBar(snapshot: WalkSnapshot, modifier: Modifier = Modifier) {
     val talkFrac = snapshot.talkDurationSec.toFloat() / total.toFloat()
     val meditateFrac = snapshot.meditateDurationSec.toFloat() / total.toFloat()
     val capsule = RoundedCornerShape(2.dp)
-    val mossColor = pilgrimColors.moss.copy(alpha = 0.5f)
-    val rustColor = pilgrimColors.rust.copy(alpha = 0.6f)
-    val dawnColor = pilgrimColors.dawn.copy(alpha = 0.6f)
+    // iOS InkScrollView.swift:431-439@db4196e — moss 0.6 / rust 0.7 /
+    // dawn 0.7 + .frame(height: 4). Prior Android values (0.5/0.6/0.6
+    // alpha + 6dp height) read as washed-out and 50% too thick.
+    val mossColor = pilgrimColors.moss.copy(alpha = 0.6f)
+    val rustColor = pilgrimColors.rust.copy(alpha = 0.7f)
+    val dawnColor = pilgrimColors.dawn.copy(alpha = 0.7f)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(6.dp)
+            .height(4.dp)
             .clip(RoundedCornerShape(percent = 50)),
         horizontalArrangement = Arrangement.spacedBy(1.dp),
     ) {

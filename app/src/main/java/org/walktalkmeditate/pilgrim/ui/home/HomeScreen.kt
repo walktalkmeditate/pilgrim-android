@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
 import dev.chrisbanes.haze.HazeProgressive
@@ -95,6 +96,11 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
+
+// Mirrors WalkDot.kt's HALO_SCALE = 3.5f / 2 — the box that wraps the
+// halo radial gradient is 3.5× the dot's core size, so half of that
+// scale centers the dot on its meander point.
+private const val HALO_HALF = 1.75f
 
 private val JOURNAL_ROW_HEIGHT = 90.dp
 private val JOURNAL_TOP_INSET_DP = 40.dp
@@ -185,6 +191,12 @@ fun HomeScreen(
     }
     val themeColors = pilgrimColors
     val reduceMotion = LocalReduceMotion.current
+
+    // Push the resolved stone tone into the VM so the FAB-seal renderer
+    // can re-render against the active palette. Without this, the VM
+    // hard-coded `pilgrimLightColors().stone` even in dark mode.
+    val activeStone = pilgrimColors.stone
+    LaunchedEffect(activeStone) { homeViewModel.setFabSealInk(activeStone) }
     val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
     val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
     val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()
@@ -473,8 +485,8 @@ fun HomeScreen(
                                             modifier = Modifier
                                                 .offset {
                                                     IntOffset(
-                                                        (xPx - dotSizePx * 1.75f).toInt(),
-                                                        (yPx - dotSizePx * 1.75f).toInt(),
+                                                        (xPx - dotSizePx * HALO_HALF).toInt(),
+                                                        (yPx - dotSizePx * HALO_HALF).toInt(),
                                                     )
                                                 }
                                                 .graphicsLayer { alpha = perDotAlpha },
@@ -521,14 +533,21 @@ fun HomeScreen(
                                     }
 
                                     // Stage 14-BCD task 3: lunar markers.
+                                    // Half of the 10dp marker, in px, so the
+                                    // dot centers on the meander point on
+                                    // every density. Prior raw `5f` literal
+                                    // was px, not dp-converted, which
+                                    // off-centered the marker by ~10px on
+                                    // 3x-density screens.
+                                    val lunarHalfPx = with(LocalDensity.current) { 5.dp.toPx() }
                                     lunarMarkers.forEachIndexed { idx, marker ->
                                         val lunarAlpha = fadeInState.dotAlpha(idx)
                                         Box(
                                             modifier = Modifier
                                                 .offset {
                                                     IntOffset(
-                                                        (marker.xPx - 5f).toInt(),
-                                                        (marker.yPx - 5f).toInt(),
+                                                        (marker.xPx - lunarHalfPx).toInt(),
+                                                        (marker.yPx - lunarHalfPx).toInt(),
                                                     )
                                                 }
                                                 .size(10.dp)
@@ -612,35 +631,65 @@ fun HomeScreen(
         val expandedSnap = expandedId?.let { id ->
             snapshots.firstOrNull { it.id == id }
         }
-        if (expandedSnap != null) {
-            val seasonColor = walkDotBaseColor(expandedSnap.startMs, themeColors)
-            ExpandCardSheet(
-                snapshot = expandedSnap,
-                celestial = expandedCelestial,
-                seasonColor = seasonColor,
-                units = units,
-                isShared = expandedSnap.isShared,
-                onViewDetails = { id ->
-                    homeViewModel.setExpandedSnapshotId(null)
-                    onEnterWalkSummary(id)
-                },
-                onDismissRequest = { homeViewModel.setExpandedSnapshotId(null) },
-            )
+        // Hold the LAST non-null snapshot in remember so the
+        // AnimatedVisibility exit animation has a snapshot to render
+        // while sliding out — after the user taps dismiss, expandedId
+        // flips to null, so without this cache the card would
+        // disappear instantly with no exit motion.
+        val lastSnapshot = androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf<WalkSnapshot?>(null)
+        }
+        if (expandedSnap != null) lastSnapshot.value = expandedSnap
+        val renderSnap = lastSnapshot.value
+        // iOS spring(0.25) approximated with a medium-stiffness Compose
+        // spring; slide-from-bottom + fade matches the iOS transition
+        // `.move(edge: .bottom).combined(with: .opacity)`.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expandedSnap != null && renderSnap != null,
+            enter = androidx.compose.animation.slideInVertically(
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                ),
+                initialOffsetY = { it },
+            ) + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically(
+                animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
+                targetOffsetY = { it },
+            ) + androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            renderSnap?.let { snap ->
+                val seasonColor = walkDotBaseColor(snap.startMs, themeColors)
+                ExpandCardSheet(
+                    snapshot = snap,
+                    celestial = expandedCelestial,
+                    seasonColor = seasonColor,
+                    units = units,
+                    isShared = snap.isShared,
+                    onViewDetails = { id ->
+                        homeViewModel.setExpandedSnapshotId(null)
+                        onEnterWalkSummary(id)
+                    },
+                    onDismissRequest = { homeViewModel.setExpandedSnapshotId(null) },
+                )
+            }
         }
 
-        // Goshuin FAB. Matches iOS GoshuinFAB.swift exactly:
-        // 64dp parchmentTertiary disc + stone-stroke ring + 52dp seal
-        // thumbnail clipped to circle inside. The disc background +
-        // stroke are what give the seal its visible "presence" — the
-        // seal interior is transparent so without the disc it floats
-        // unmoored against parchment.
+        // Goshuin FAB. iOS GoshuinFAB.swift@db4196e:
+        //   Circle .fill(parchmentTertiary) .frame(56, 56)
+        //     .overlay(Circle().stroke(stone.opacity(0.3), lineWidth: 1))
+        //     .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+        //   thumbnail Image .frame(44, 44) .clipShape(Circle())
+        // Prior Android values (48dp / 38dp) were ~14% undersized vs iOS.
         val goshuinFabInteraction = remember { MutableInteractionSource() }
         val goshuinLabel = stringResource(R.string.home_action_view_goshuin)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 12.dp, bottom = 96.dp, top = PilgrimSpacing.big, start = PilgrimSpacing.big)
-                .size(48.dp)
+                .shadow(elevation = 6.dp, shape = CircleShape)
+                .size(56.dp)
                 .clip(CircleShape)
                 .background(pilgrimColors.parchmentTertiary)
                 .border(
@@ -661,7 +710,7 @@ fun HomeScreen(
                 Image(
                     painter = BitmapPainter(seal),
                     contentDescription = null,
-                    modifier = Modifier.size(38.dp).clip(CircleShape),
+                    modifier = Modifier.size(44.dp).clip(CircleShape),
                 )
             } else {
                 Icon(

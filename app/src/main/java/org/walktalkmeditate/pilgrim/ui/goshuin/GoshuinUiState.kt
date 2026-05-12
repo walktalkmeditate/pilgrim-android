@@ -3,7 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 
 /**
  * Three-state load for the goshuin collection. Mirrors
- * [org.walktalkmeditate.pilgrim.ui.home.HomeUiState].
+ * [org.walktalkmeditate.pilgrim.ui.home.JournalUiState].
  *
  * [Loaded.totalCount] equals `seals.size` in Stage 4-C (no filtering
  * yet) but is a separate field so a future favicon filter can render

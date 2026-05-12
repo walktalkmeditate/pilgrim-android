@@ -58,8 +58,9 @@ private fun Pill(color: Color, seconds: Long, labelRes: Int) {
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // iOS InkScrollView.swift:457@db4196e — .frame(width: 4, height: 4).
         Box(
-            modifier = Modifier.size(5.dp).clip(CircleShape).background(color),
+            modifier = Modifier.size(4.dp).clip(CircleShape).background(color),
         )
         Text(
             text = "${formatPillDuration(seconds)} ${stringResource(labelRes)}",

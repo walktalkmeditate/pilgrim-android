@@ -158,15 +158,17 @@ private fun formatDuration(totalSeconds: Long): String {
 }
 
 /**
- * iOS uses `Calendar.dateComponents([.month], …).month` floored at 1.
- * Approximated here with a 30-day month — exact-calendar accuracy is
- * not load-bearing for the journal's "N months" caption, and the
- * approximation tolerates DST + month-length variation cleanly.
+ * iOS parity `Calendar.dateComponents([.month], …).month` floored at 1.
+ * Uses ChronoUnit.MONTHS between LocalDates so the count tracks actual
+ * calendar months and tolerates month-length variation cleanly. Prior
+ * 30-day approximation drifted ~5 days per year.
  */
 private fun monthsSince(firstWalkStartMs: Long, nowMs: Long): Int {
     if (firstWalkStartMs <= 0L || nowMs <= firstWalkStartMs) return 1
-    val deltaMs = nowMs - firstWalkStartMs
-    val months = (deltaMs / (30L * 24L * 60L * 60L * 1000L)).toInt()
+    val zone = java.time.ZoneId.systemDefault()
+    val first = java.time.Instant.ofEpochMilli(firstWalkStartMs).atZone(zone).toLocalDate()
+    val now = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+    val months = java.time.temporal.ChronoUnit.MONTHS.between(first, now).toInt()
     return months.coerceAtLeast(1)
 }
 
