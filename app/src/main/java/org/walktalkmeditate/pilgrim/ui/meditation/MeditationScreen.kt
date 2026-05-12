@@ -4,6 +4,10 @@ package org.walktalkmeditate.pilgrim.ui.meditation
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -225,6 +230,38 @@ fun MeditationScreen(
     // via ActiveWalk's own state observer.
     BackHandler { endSession() }
 
+    // iOS parity `MeditationView.swift:743-745@db4196e` — pulse the
+    // breathing-ring at the {300, 600, 900, 1200, 1800}s milestones to
+    // mark elapsed meditation. easeInOut(1.5s) 0→1, hold 2s, easeOut(1.5s)
+    // 1→0. snapshotFlow + collect drives the one-shot per second tick;
+    // a milestone landing exactly on integer seconds (Android's timer is
+    // exact, unlike iOS's 0.5s float) makes a window check unnecessary
+    // for the ascending edge.
+    val milestoneFlash = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { elapsedSeconds }
+            .collect { seconds ->
+                if (seconds in MILESTONE_SECONDS) {
+                    milestoneFlash.snapTo(0f)
+                    milestoneFlash.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(
+                            durationMillis = MILESTONE_FLASH_IN_MS,
+                            easing = FastOutSlowInEasing,
+                        ),
+                    )
+                    delay(MILESTONE_FLASH_HOLD_MS)
+                    milestoneFlash.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(
+                            durationMillis = MILESTONE_FLASH_OUT_MS,
+                            easing = LinearOutSlowInEasing,
+                        ),
+                    )
+                }
+            }
+    }
+
     val moss = pilgrimColors.moss
     val breathRhythm = BreathRhythm.byId(LocalBreathRhythm.current)
     MeditationScreenContent(
@@ -234,6 +271,7 @@ fun MeditationScreen(
         onDone = endSession,
         breathRhythm = breathRhythm,
         closingPhase = closingPhase,
+        milestoneFlash = milestoneFlash.value,
     )
 }
 
@@ -272,6 +310,7 @@ internal fun MeditationScreenContent(
     onDone: () -> Unit,
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
     closingPhase: ClosingPhase = ClosingPhase.None,
+    milestoneFlash: Float = 0f,
 ) {
     // Animated phase-driven opacities. Reduce-motion users get the
     // values pinned to their target so the screen still transitions
@@ -318,7 +357,11 @@ internal fun MeditationScreenContent(
             // SCALE_EXHALED for a clean, predictable cycle on the new
             // rhythm.
             key(breathRhythm.id) {
-                BreathingCircle(moss = mossColor, breathRhythm = breathRhythm)
+                BreathingCircle(
+                    moss = mossColor,
+                    breathRhythm = breathRhythm,
+                    milestoneFlash = milestoneFlash,
+                )
             }
             Spacer(Modifier.height(PilgrimSpacing.big))
             Text(
@@ -392,3 +435,18 @@ private fun formatTimer(elapsedSeconds: Int): String {
 
 private const val TIMER_TICK_MS = 1_000L
 private const val DONE_BUTTON_CORNER_DP = 24
+
+/**
+ * iOS parity `MeditationView.swift:743-745@db4196e`:
+ *   • milestone seconds = {300, 600, 900, 1200, 1800}
+ *   • pulse: easeInOut(1.5s) 0→1, hold 2.0s, easeOut(1.5s) 1→0
+ *
+ * iOS uses a ±20s window because its 0.5s float-second timer can land
+ * off-tick on the milestone. Android's `elapsedSeconds += 1` integer
+ * tick always passes through the exact milestone value, so an exact
+ * `seconds in MILESTONE_SECONDS` match fires the ascending edge cleanly.
+ */
+private val MILESTONE_SECONDS = setOf(300, 600, 900, 1200, 1800)
+private const val MILESTONE_FLASH_IN_MS = 1_500
+private const val MILESTONE_FLASH_HOLD_MS = 2_000L
+private const val MILESTONE_FLASH_OUT_MS = 1_500

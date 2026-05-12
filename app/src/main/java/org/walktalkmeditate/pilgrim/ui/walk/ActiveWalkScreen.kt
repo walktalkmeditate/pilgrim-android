@@ -18,9 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,11 +37,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.kanji
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
@@ -167,6 +179,14 @@ fun ActiveWalkScreen(
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
+    // iOS parity `ActiveWalkView.swift:68-70, 138-141, 334-341@db4196e`:
+    // computed once per composition because the marker only changes on a
+    // day boundary (cardinal turnings are rare; the user crossing midnight
+    // mid-walk would not flip the visible kanji until they re-enter the
+    // screen). `kanji()` returns null for cross-quarter markers so the
+    // watermark renders only on the four cardinal turnings (春分/夏至/秋分/冬至).
+    val activeTurning = remember { turningMarkerForToday() }
+    var showTurningCard by rememberSaveable { mutableStateOf(false) }
     // Composition-scoped scope for the 300ms sheet handoff delay
     // (D9). Tied to the screen's composition lifetime — cancels on
     // back-pop / discard so a pending handoff doesn't surface a sheet
@@ -245,6 +265,12 @@ fun ActiveWalkScreen(
         if (state !is WalkState.Active && state !is WalkState.Paused) {
             showOptions = false
             showWaypointMarking = false
+            // Same rationale: the watermark + ritual card are tied to
+            // the active-walk surface. A Meditating / Finished / Idle
+            // transition pulls the user elsewhere; a re-emerging sheet
+            // on return (Stage 4-C launchSingleTop + back-nav pattern)
+            // would surprise.
+            showTurningCard = false
         }
         if (state !is WalkState.Idle && showPreWalkIntention) {
             showPreWalkIntention = false
@@ -502,6 +528,30 @@ fun ActiveWalkScreen(
                 onDismiss = { showAutoIntention = false },
             )
         }
+        // iOS parity `ActiveWalkView.swift:80-96, 138-141@db4196e`:
+        // faint kanji watermark on cardinal-turning days. Gated to
+        // in-progress walk + minimized sheet so it doesn't compete with
+        // the bottom sheet's drag affordance when expanded. Tap opens a
+        // contemplative ritual card via ModalBottomSheet.
+        val turningKanji = activeTurning?.kanji()
+        val turningInProgress = navWalkState is WalkState.Active || navWalkState is WalkState.Paused
+        if (turningKanji != null && turningInProgress && sheetState == SheetState.Minimized) {
+            TurningWatermark(
+                kanji = turningKanji,
+                contentDescription = activeTurning.displayName,
+                a11yHint = stringResource(R.string.turning_watermark_a11y_hint),
+                onClick = { showTurningCard = true },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = SHEET_HEIGHT_MINIMIZED_DP + 16.dp),
+            )
+        }
+        if (showTurningCard && activeTurning != null) {
+            TurningRitualSheet(
+                turning = activeTurning,
+                onDismiss = { showTurningCard = false },
+            )
+        }
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
@@ -628,4 +678,78 @@ private fun LeaveWalkDialog(
         titleContentColor = pilgrimColors.ink,
         textContentColor = pilgrimColors.ink,
     )
+}
+
+/**
+ * iOS parity `ActiveWalkView.swift:80-96@db4196e`. Faint kanji glyph
+ * anchored above the minimized stats sheet; tap opens the
+ * [TurningRitualSheet]. The visible glyph stays small (18sp fixed) so
+ * it remains ambient even at large font scale — it's decoration, not
+ * a primary information element. Tap target uses generous padding
+ * (PilgrimSpacing.normal) so even fingers and TalkBack users can hit
+ * it reliably.
+ */
+@Composable
+private fun TurningWatermark(
+    kanji: String,
+    contentDescription: String,
+    a11yHint: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Box(
+        modifier = modifier
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(PilgrimSpacing.normal)
+            .semantics {
+                this.contentDescription = "$contentDescription. $a11yHint"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = kanji,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Light,
+            // iOS uses `.foregroundColor(.stone.opacity(0.18))`. Android's
+            // `ink.copy(alpha = 0.18f)` is the equivalent moss-on-parchment
+            // muted tone in both light + dark mode.
+            color = pilgrimColors.ink.copy(alpha = 0.18f),
+        )
+    }
+}
+
+/**
+ * iOS parity `ActiveWalkView.swift:334-341@db4196e`. Medium-detent
+ * `ModalBottomSheet` presenting the [TurningRitualCard]. The system
+ * drag indicator + swipe-down dismiss the card. Parchment background
+ * matches the iOS `Color.parchment.opacity(0.95)` cue.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TurningRitualSheet(
+    turning: SeasonalMarker,
+    onDismiss: () -> Unit,
+) {
+    // `skipPartiallyExpanded = true` mirrors iOS's `.medium` detent
+    // without forcing the user to drag through a partial state.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = pilgrimColors.parchment.copy(alpha = 0.95f),
+    ) {
+        TurningRitualCard(
+            turning = turning,
+            modifier = Modifier.padding(
+                horizontal = PilgrimSpacing.normal,
+                vertical = PilgrimSpacing.big,
+            ),
+        )
+    }
 }
