@@ -132,6 +132,10 @@ fun ActiveWalkScreen(
     // controller has even transitioned to Active. Pattern matches
     // Stage 9.5-B's WalkTrackingService.hasBeenActive latch.
     val hasSeenInProgress = rememberSaveable { mutableStateOf(false) }
+    // iOS parity (D10 audit): bump on every Idle/Finished → Active
+    // transition so the WalkStatsSheet can play its one-shot peek
+    // wink animation teaching the swipe-to-expand affordance.
+    val peekHintTrigger = rememberSaveable { mutableStateOf(0) }
     var sheetState by rememberSaveable { mutableStateOf(SheetState.Expanded) }
     // Drive sheet auto-state from the PASSTHROUGH walkState so we don't
     // act on a stale uiState during the brief window after returning
@@ -229,6 +233,13 @@ fun ActiveWalkScreen(
             state is WalkState.Paused ||
             state is WalkState.Meditating
         if (isInProgress) {
+            // Bump peek-hint trigger ONLY on the first transition INTO
+            // in-progress this composition cycle — `hasSeenInProgress`
+            // being false means we just came from Idle/Finished (a real
+            // walk start, not a Pause↔Active flip or restoration).
+            if (!hasSeenInProgress.value && state is WalkState.Active) {
+                peekHintTrigger.value++
+            }
             hasSeenInProgress.value = true
         }
         if (state !is WalkState.Active && state !is WalkState.Paused) {
@@ -327,6 +338,7 @@ fun ActiveWalkScreen(
         }
     }
     val activeWeather by viewModel.activeWeather.collectAsStateWithLifecycle()
+    val activeCelestialGreeting by viewModel.activeCelestialGreeting.collectAsStateWithLifecycle()
     // iOS parity (D6/D7 audit): fade a greeting in only while
     // recording. Hand the overlay a non-null condition exactly once
     // per state-enter-Active transition; the overlay owns the timer
@@ -358,6 +370,16 @@ fun ActiveWalkScreen(
         // same anchor.
         WeatherGreetingOverlay(
             triggerCondition = greetingCondition,
+            walkId = greetingWalkId,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = PilgrimSpacing.big * 3),
+        )
+        // Celestial greeting overlay — same anchor as weather, but
+        // schedules its own 5s pre-delay before fading in so the
+        // weather greeting (3.5s + 1s fadeout = 4.5s) finishes first.
+        CelestialGreetingOverlay(
+            text = if (navWalkState is WalkState.Active) activeCelestialGreeting else null,
             walkId = greetingWalkId,
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -520,6 +542,7 @@ fun ActiveWalkScreen(
             onPermissionDenied = viewModel::emitPermissionDenied,
             onDismissError = viewModel::dismissRecorderError,
             onFinish = viewModel::finishWalk,
+            peekHintTrigger = peekHintTrigger.value,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }

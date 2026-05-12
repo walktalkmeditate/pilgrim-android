@@ -35,6 +35,20 @@ fun SeasonalMarker.bannerTextRes(): Int? = when (this) {
 }
 
 /**
+ * iOS parity `AstrologyModels.swift` `SeasonalMarker.evocativePhrase`
+ * — contemplative one-liner shown in `TurningRitualCard`. Null for
+ * cross-quarter markers (Imbolc/Beltane/Lughnasadh/Samhain) since
+ * iOS hides the card on those days too.
+ */
+fun SeasonalMarker.evocativePhrase(): String? = when (this) {
+    SeasonalMarker.SpringEquinox -> "Light and dark in balance — new beginnings."
+    SeasonalMarker.SummerSolstice -> "The longest day — full bloom."
+    SeasonalMarker.AutumnEquinox -> "Balance again — the harvest returns."
+    SeasonalMarker.WinterSolstice -> "The longest night — quiet, patient seed."
+    else -> null
+}
+
+/**
  * Compute the SeasonalMarker for a UTC instant. Shared by `WalkDotColor`
  * (per-walk dot color) and `TurningDayBanner` (today's banner).
  */

@@ -112,6 +112,11 @@ fun WalkStatsSheet(
     onPermissionDenied: () -> Unit,
     onDismissError: () -> Unit,
     onFinish: () -> Unit,
+    // iOS parity (`WalkStatsSheet.swift:265-289@db4196e`): incrementing
+    // this Int triggers a one-shot "wink" animation that lifts the
+    // minimized sheet 6dp and settles back. Caller bumps it once when
+    // the walk transitions ready/waiting → recording.
+    peekHintTrigger: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val canDrag = walkState is WalkState.Active
@@ -121,12 +126,37 @@ fun WalkStatsSheet(
     val thresholdPx = remember(density) { with(density) { DRAG_THRESHOLD_DP.toPx() } }
     val flickPx = remember(density) { with(density) { DRAG_FLICK_VELOCITY_DP.toPx() } }
     val clampPx = remember(density) { with(density) { DRAG_CLAMP_DP.toPx() } }
+    val peekHintOffsetPx = remember(density) { with(density) { 6.dp.toPx() } }
 
     // Animatable so partial drags below the threshold spring back to 0
     // smoothly instead of snapping. snapTo (synchronous set) is used
     // during the drag tick; animateTo runs on release.
     val dragOffset = remember { Animatable(0f) }
     val coroutineScope = rememberCoroutineScope()
+
+    // iOS sheet peek hint — wait 700ms (after the auto-collapse spring
+    // has settled), lift 6dp over 280ms, hold 420ms, then spring back.
+    // Skipped under ReduceMotion. Only winks when sheet is in the
+    // minimized detent AND a drag is meaningful (canDrag). LaunchedEffect
+    // re-keys on peekHintTrigger so each bump cancels any prior wink.
+    LaunchedEffect(peekHintTrigger) {
+        if (peekHintTrigger == 0) return@LaunchedEffect
+        if (state != SheetState.Minimized || !canDrag) return@LaunchedEffect
+        kotlinx.coroutines.delay(700L)
+        if (state != SheetState.Minimized || !canDrag) return@LaunchedEffect
+        dragOffset.animateTo(
+            targetValue = -peekHintOffsetPx,
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = 280),
+        )
+        kotlinx.coroutines.delay(420L)
+        dragOffset.animateTo(
+            targetValue = 0f,
+            animationSpec = androidx.compose.animation.core.spring(
+                dampingRatio = 0.8f,
+                stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+            ),
+        )
+    }
     // Cancel-before-launch the per-delta snapTo so at most one snap is
     // ever queued behind Animatable's internal mutex. Without this, a
     // fast flick gesture queues dozens of stale snapTo coroutines that
