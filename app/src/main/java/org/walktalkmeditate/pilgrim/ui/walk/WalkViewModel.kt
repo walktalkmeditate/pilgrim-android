@@ -743,9 +743,26 @@ class WalkViewModel @Inject constructor(
         viewModelScope.launch { controller.startMeditation() }
     }
 
-    fun endMeditation() {
-        viewModelScope.launch { controller.endMeditation() }
+    /**
+     * @param endMillis explicit end timestamp from the UI. iOS parity
+     *   `MeditationView.swift:609-615@db4196e` — pass the Done-tap
+     *   millis so the closing ceremony's 6.5s playback doesn't
+     *   inflate the recorded meditation interval. Default to
+     *   `clock.now()` for non-ceremony paths.
+     */
+    fun endMeditation(endMillis: Long = clock.now()) {
+        viewModelScope.launch { controller.endMeditation(endMillis) }
     }
+
+    /**
+     * UI-facing access to the same [Clock] the controller dispatches
+     * against. The meditation closing ceremony captures Done-tap
+     * millis via this so its end-timestamp is on the same time base
+     * as the rest of the reducer (otherwise tests with a mocked clock
+     * and the on-device wall clock would diverge — flagged in PR
+     * review).
+     */
+    fun nowMillis(): Long = clock.now()
 
     /**
      * CAS guard for double-tap dedup. The Finish button's enabled
