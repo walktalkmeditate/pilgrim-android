@@ -166,8 +166,13 @@ fun ActiveWalkScreen(
     // Composition-scoped scope for the 300ms sheet handoff delay
     // (D9). Tied to the screen's composition lifetime — cancels on
     // back-pop / discard so a pending handoff doesn't surface a sheet
-    // after the user has left the screen.
+    // after the user has left the screen. `handoffJob` tracks the
+    // single in-flight delay so a re-tap during the 300ms window
+    // cancels the prior handoff (no double-sheet-pop on re-tap).
     val handoffScope = rememberCoroutineScope()
+    val handoffJob = remember {
+        androidx.compose.runtime.mutableStateOf<kotlinx.coroutines.Job?>(null)
+    }
     // Stage 10-C: auto-intention prompt (mirrors iOS
     // `ActiveWalkView.swift:374`). Fires once per walk session 0.5s
     // after the walk transitions to Active when the
@@ -324,12 +329,14 @@ fun ActiveWalkScreen(
     val activeWeather by viewModel.activeWeather.collectAsStateWithLifecycle()
     // iOS parity (D6/D7 audit): fade a greeting in only while
     // recording. Hand the overlay a non-null condition exactly once
-    // per state-enter-Active transition; the overlay owns the timer.
+    // per state-enter-Active transition; the overlay owns the timer
+    // and per-walk one-shot token.
     val greetingCondition = if (navWalkState is WalkState.Active) {
         activeWeather?.condition
     } else {
         null
     }
+    val greetingWalkId = (navWalkState as? WalkState.Active)?.walk?.walkId
 
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
@@ -345,8 +352,13 @@ fun ActiveWalkScreen(
         // Weather greeting overlay — fades in over 0.8s + holds 3.5s +
         // fades out over 1.0s. Aligned to top so it sits above the map
         // overlay buttons; ZIndex inferred from declaration order.
+        // iOS positions the greeting between the status bar and the
+        // ellipsis/X overlay row (~72pt below the safe-area top); the
+        // `PilgrimSpacing.big * 3` constant (24 × 3 = 72.dp) hits the
+        // same anchor.
         WeatherGreetingOverlay(
             triggerCondition = greetingCondition,
+            walkId = greetingWalkId,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = PilgrimSpacing.big * 3),
@@ -404,7 +416,8 @@ fun ActiveWalkScreen(
                     // present animations don't fight. Android's overlay
                     // system doesn't strictly need this (single overlay
                     // layer), but the user-perceived rhythm matches.
-                    handoffScope.launch {
+                    handoffJob.value?.cancel()
+                    handoffJob.value = handoffScope.launch {
                         kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
                         showPreWalkIntention = true
                     }
@@ -413,7 +426,8 @@ fun ActiveWalkScreen(
                 canDropWaypoint = activeWalk?.lastLocation != null,
                 onDropWaypoint = {
                     showOptions = false
-                    handoffScope.launch {
+                    handoffJob.value?.cancel()
+                    handoffJob.value = handoffScope.launch {
                         kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
                         showWaypointMarking = true
                     }

@@ -15,7 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,28 +33,50 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 /**
  * iOS parity `ActiveWalkView.swift:711-732@db4196e` — fades a weather
  * greeting in over 0.8s (easeIn), holds 3.5s, fades out over 1.0s
- * (easeOut). Each [triggerCondition] change drives a fresh
- * appear/dismiss cycle; back-to-back triggers within the visible
- * window are debounced (iOS guards via `weatherGreeting == nil`).
+ * (easeOut). Per-walk one-shot: once shown for a given [walkId],
+ * subsequent re-entries (screen recompositions, navigation back/
+ * forth) on the SAME walk don't re-fire.
  *
- * The composable owns the visibility latch internally — caller only
- * needs to forward `triggerCondition` (the weather snapshot's
- * condition, or null when no walk is active).
+ * Reset signal is a fresh [walkId] (next walk) OR null (walk
+ * ended). The `shownForWalk` token uses `rememberSaveable` so a
+ * rotation mid-walk doesn't make the greeting fire again.
+ *
+ * Caller passes:
+ *   - [triggerCondition] = non-null while the walk is Active AND a
+ *     weather snapshot exists; null otherwise.
+ *   - [walkId] = currently-active walk's uuid (or null when Idle).
+ *
+ * The previous design keyed `LaunchedEffect` on the condition value
+ * directly, which had two failure modes: (a) cancel mid-delay left
+ * the overlay stuck visible, and (b) local `remember` state reset
+ * on nav-back re-entry caused the greeting to fire every return.
+ * Per-walk token + try/finally clear fixes both.
  */
 @Composable
 fun WeatherGreetingOverlay(
     triggerCondition: WeatherCondition?,
+    walkId: Long?,
     modifier: Modifier = Modifier,
 ) {
-    var visibleCondition by remember { mutableStateOf<WeatherCondition?>(null) }
+    var visibleCondition by rememberSaveable { mutableStateOf<WeatherCondition?>(null) }
+    var shownForWalk by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    LaunchedEffect(triggerCondition) {
-        // iOS guard: `weatherGreeting == nil else return` — back-to-back
-        // condition flips within the visible window let the current
-        // greeting finish on its own timer rather than restart it.
-        if (triggerCondition != null && visibleCondition == null) {
+    LaunchedEffect(triggerCondition, walkId) {
+        if (triggerCondition != null && walkId != null && shownForWalk != walkId) {
+            shownForWalk = walkId
             visibleCondition = triggerCondition
-            delay(GREETING_VISIBLE_MS)
+            // try/finally so cancellation (terminal walk transition,
+            // composition leaving the tree) still clears the visible
+            // state instead of pinning the overlay.
+            try {
+                delay(GREETING_VISIBLE_MS)
+            } finally {
+                visibleCondition = null
+            }
+        } else if (walkId == null) {
+            // Walk ended: reset the token so the NEXT walk gets its
+            // own greeting even if it happens to share the condition.
+            shownForWalk = null
             visibleCondition = null
         }
     }
@@ -67,57 +89,6 @@ fun WeatherGreetingOverlay(
     ) {
         val condition = visibleCondition ?: return@AnimatedVisibility
         val message = stringResource(greetingStringResFor(condition))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = PilgrimSpacing.normal),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.85f))
-                    .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small),
-            ) {
-                Text(
-                    text = message,
-                    style = pilgrimType.body,
-                    color = pilgrimColors.ink,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
-/**
- * Same overlay shape as [WeatherGreetingOverlay], but takes a
- * pre-resolved string and fires only when [text] transitions from
- * null → non-null. iOS uses celestial greeting with a 5s pre-delay
- * before the fade; callers handle the delay externally.
- */
-@Composable
-fun TextGreetingOverlay(
-    text: String?,
-    modifier: Modifier = Modifier,
-) {
-    var visibleText by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(text) {
-        if (text != null && visibleText == null) {
-            visibleText = text
-            delay(GREETING_VISIBLE_MS)
-            visibleText = null
-        }
-    }
-
-    AnimatedVisibility(
-        visible = visibleText != null,
-        enter = fadeIn(animationSpec = tween(durationMillis = 800)),
-        exit = fadeOut(animationSpec = tween(durationMillis = 1000)),
-        modifier = modifier,
-    ) {
-        val message = visibleText ?: return@AnimatedVisibility
         Box(
             modifier = Modifier
                 .fillMaxWidth()

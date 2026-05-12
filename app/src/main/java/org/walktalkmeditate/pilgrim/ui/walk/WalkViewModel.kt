@@ -92,6 +92,24 @@ class WalkViewModel @Inject constructor(
 ) : ViewModel() {
 
     /**
+     * iOS parity `ActiveWalkViewModel.swift:weatherSnapshot@db4196e`.
+     * Set after `fetchAndPersistWeather` succeeds; cleared on every
+     * terminal transition by the controller-state observer. Drives
+     * the `WeatherGreetingOverlay` on the active-walk screen — when
+     * this goes non-null AND status is Active, the greeting fades in
+     * for 3.5s then fades out. Declared HERE (above the init block
+     * that mutates it) so property-initialization order is correct;
+     * a later declaration would have the init's `viewModelScope
+     * .launch { controller.state.collect { ... _activeWeather.value =
+     * null } }` see a null `_activeWeather` field at first emission
+     * (compose Stage 2-E init-block-ordering trap, replayed).
+     */
+    private val _activeWeather =
+        MutableStateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?>(null)
+    val activeWeather: StateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?> =
+        _activeWeather.asStateFlow()
+
+    /**
      * iOS parity `WalkStartView.swift:164-168@db4196e` —
      * `CollectiveCounterService.$stats.walkedInLastHour`. When true,
      * the breathing logo on Path picks up a 1.2s scale+shadow pulse to
@@ -683,19 +701,6 @@ class WalkViewModel @Inject constructor(
         return true
     }
 
-    private val _activeWeather =
-        MutableStateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?>(null)
-
-    /**
-     * iOS parity `ActiveWalkViewModel.swift:weatherSnapshot@db4196e`.
-     * Set after [fetchAndPersistWeather] succeeds; cleared on every
-     * terminal transition by the controller-state observer. Drives the
-     * `WeatherGreetingOverlay` on the active-walk screen — when this
-     * goes non-null AND status is Active, the greeting fades in for
-     * 3.5s then fades out.
-     */
-    val activeWeather: StateFlow<org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot?> =
-        _activeWeather.asStateFlow()
 
     fun pauseWalk() {
         viewModelScope.launch { controller.pauseWalk() }
