@@ -10,22 +10,32 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.MicOff
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
 import java.util.Date
@@ -33,8 +43,8 @@ import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.TranscriptionRunner
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
-import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionDisplay
 import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionPlaceholder
+import org.walktalkmeditate.pilgrim.ui.recordings.transcriptionNeedsExpansion
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -47,8 +57,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * recording. Each row shows a play/pause control, the "Recording N"
  * title with duration + Enhanced badge, the wall-clock start time, a
  * speed-cycle pill (1x / 1.5x / 2x), a waveform placeholder, and the
- * transcription text in a `parchmentTertiary` container with a copy
- * affordance on the side (see [TranscriptionDisplay]).
+ * transcription text in a `parchmentTertiary` container with a
+ * right-side action column (copy + retranscribe). Tapping the text
+ * enters inline edit mode (BasicTextField + Done button).
  */
 @Composable
 fun VoiceRecordingsSection(
@@ -59,6 +70,8 @@ fun VoiceRecordingsSection(
     onPlay: (VoiceRecording) -> Unit,
     onPause: () -> Unit,
     onCycleSpeed: () -> Unit,
+    onSaveTranscription: (recordingId: Long, newText: String) -> Unit,
+    onRetranscribe: (recordingId: Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (recordings.isEmpty()) return
@@ -105,6 +118,8 @@ fun VoiceRecordingsSection(
                 onPlay = { onPlay(recording) },
                 onPause = onPause,
                 onCycleSpeed = onCycleSpeed,
+                onSaveTranscription = { newText -> onSaveTranscription(recording.id, newText) },
+                onRetranscribe = { onRetranscribe(recording.id) },
             )
         }
     }
@@ -120,6 +135,8 @@ private fun VoiceRecordingRow(
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onCycleSpeed: () -> Unit,
+    onSaveTranscription: (String) -> Unit,
+    onRetranscribe: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -196,10 +213,11 @@ private fun VoiceRecordingRow(
             TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
                 text = transcription,
             )
-            else -> TranscriptionDisplay(
+            else -> EditableTranscription(
+                recordingId = recording.id,
                 text = transcription,
-                onTap = null,
-                showCopyAffordance = true,
+                onSave = onSaveTranscription,
+                onRetranscribe = onRetranscribe,
             )
         }
         recording.wordsPerMinute?.let { wpm ->
@@ -241,5 +259,132 @@ private fun SpeedPill(
             style = pilgrimType.caption,
             color = if (active) pilgrimColors.parchment else pilgrimColors.stone,
         )
+    }
+}
+
+@Composable
+private fun EditableTranscription(
+    recordingId: Long,
+    text: String,
+    onSave: (String) -> Unit,
+    onRetranscribe: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    var isEditing by rememberSaveable(recordingId) { mutableStateOf(false) }
+    var editText by rememberSaveable(recordingId, text) { mutableStateOf(text) }
+    var expanded by rememberSaveable(recordingId, text) { mutableStateOf(false) }
+    val needsExpansion = transcriptionNeedsExpansion(text)
+    val maxLines = if (!needsExpansion || expanded || isEditing) Int.MAX_VALUE else 4
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(pilgrimColors.parchmentTertiary),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (isEditing) {
+                BasicTextField(
+                    value = editText,
+                    onValueChange = { editText = it },
+                    textStyle = pilgrimType.body.copy(color = pilgrimColors.ink),
+                    cursorBrush = SolidColor(pilgrimColors.stone),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 60.dp, max = 200.dp)
+                        .padding(8.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(end = 8.dp, bottom = 4.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(pilgrimColors.stone.copy(alpha = 0.12f))
+                            .clickable {
+                                val trimmed = editText.trim()
+                                if (trimmed.isNotEmpty() && trimmed != text) {
+                                    onSave(trimmed)
+                                }
+                                isEditing = false
+                            }
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.recording_action_edit_done),
+                            style = pilgrimType.caption,
+                            color = pilgrimColors.stone,
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = text,
+                    style = pilgrimType.body,
+                    color = pilgrimColors.ink,
+                    maxLines = maxLines,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            editText = text
+                            isEditing = true
+                        }
+                        .padding(8.dp),
+                )
+                if (needsExpansion) {
+                    val toggleLabel = stringResource(
+                        if (expanded) R.string.recording_transcription_collapse
+                        else R.string.recording_transcription_expand,
+                    )
+                    Text(
+                        text = toggleLabel,
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = !expanded }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+        if (!isEditing) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.ContentCopy,
+                    contentDescription = stringResource(
+                        R.string.recordings_action_copy_transcription,
+                    ),
+                    tint = pilgrimColors.fog,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { clipboard.setText(AnnotatedString(text)) }
+                        .padding(6.dp),
+                )
+                Icon(
+                    imageVector = Icons.Outlined.Refresh,
+                    contentDescription = stringResource(
+                        R.string.recording_action_retranscribe_cd,
+                    ),
+                    tint = pilgrimColors.fog,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(onClick = onRetranscribe)
+                        .padding(6.dp),
+                )
+            }
+        }
     }
 }

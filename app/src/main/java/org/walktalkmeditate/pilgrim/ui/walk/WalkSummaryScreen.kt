@@ -631,6 +631,8 @@ fun WalkSummaryScreen(
                                 onPlay = viewModel::playRecording,
                                 onPause = viewModel::pausePlayback,
                                 onCycleSpeed = viewModel::cyclePlaybackSpeed,
+                                onSaveTranscription = viewModel::saveTranscription,
+                                onRetranscribe = viewModel::retranscribeRecording,
                             )
                         }
 

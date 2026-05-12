@@ -254,6 +254,8 @@ class WalkSummaryViewModel @Inject constructor(
     private val sealRevealStore: SealRevealStore,
     private val walkSharingTracker: WalkSharingTracker,
     private val photoExifReader: org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader,
+    private val transcriptionScheduler:
+        org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -741,6 +743,34 @@ class WalkSummaryViewModel @Inject constructor(
             else -> 1.0f
         }
         playback.setPlaybackSpeed(next)
+    }
+
+    /**
+     * Walk Summary tap-to-edit save action. Trims the user text and
+     * commits the updated transcription via [WalkRepository]. No-op on
+     * blank input (matches iOS `onTranscriptionSave`).
+     */
+    fun saveTranscription(recordingId: Long, newText: String) {
+        val trimmed = newText.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            repository.updateVoiceRecordingTranscription(recordingId, trimmed)
+        }
+    }
+
+    /**
+     * Walk Summary retranscribe-single action. Clears the existing
+     * transcription so the row reverts to the pending placeholder, then
+     * schedules the per-walk transcription worker which will pick up
+     * the row again (it queries `WHERE transcription IS NULL`). Matches
+     * iOS `WalkSummaryView.retranscribeSingle` semantics with the
+     * Android worker-queue equivalent.
+     */
+    fun retranscribeRecording(recordingId: Long) {
+        viewModelScope.launch {
+            repository.updateVoiceRecordingTranscription(recordingId, null)
+            transcriptionScheduler.scheduleForWalk(walkId)
+        }
     }
     fun stopPlayback() = playback.stop()
 

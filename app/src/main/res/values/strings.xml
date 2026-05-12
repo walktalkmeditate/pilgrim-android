@@ -259,6 +259,8 @@
     <string name="recordings_action_copy_transcription">Copy transcription</string>
     <string name="recording_transcription_collapse">Show less</string>
     <string name="recording_transcription_expand">Show more</string>
+    <string name="recording_action_retranscribe_cd">Retranscribe</string>
+    <string name="recording_action_edit_done">Done</string>
     <string name="recordings_transcription_editor_description">Transcription editor</string>
 
     <!-- Stage 10-D RecordingsListScreen — top-level + section + dialogs -->
