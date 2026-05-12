@@ -224,6 +224,8 @@
     <string name="reliquary_photo_open_a11y">Open photo</string>
     <string name="summary_compact_duration_seconds_short">%1$ds</string>
     <string name="summary_compact_duration_minutes_short">%1$dm</string>
+    <string name="summary_timeline_a11y_action_talk">Zoom to talk segment</string>
+    <string name="summary_timeline_a11y_action_meditate">Zoom to meditation segment</string>
 
     <!-- Task 4.1: PhotoPreviewSheet actions -->
     <string name="preview_sheet_open_failed">No gallery app found</string>
