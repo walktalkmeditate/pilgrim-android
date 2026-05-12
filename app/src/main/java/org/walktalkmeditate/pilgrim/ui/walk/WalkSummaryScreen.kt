@@ -922,10 +922,11 @@ private fun SummaryMap(
     // textureBackend = true so the map renders into the parent canvas;
     // a Canvas overlay then paints a parchment radial-gradient frame ON
     // TOP, producing the same iOS RadialGradient mask effect (transparent
-    // center → opaque-parchment corners). Card removed: corners fade to
-    // the SCREEN background color (pilgrimColors.parchment) so dark mode
-    // shows a real contrast between map and frame.
-    val parchmentMask = pilgrimColors.parchmentSecondary
+    // center → opaque-parchment corners). Mask color matches the screen
+    // bg (pilgrimColors.parchment) so corners dissolve invisibly into the
+    // page — iOS parity (WalkSummaryView+Map.swift@db4196e uses
+    // .mask(RadialGradient) which fades to whatever's behind = page bg).
+    val parchmentMask = pilgrimColors.parchment
     Box(
         modifier = Modifier
             .fillMaxWidth()
