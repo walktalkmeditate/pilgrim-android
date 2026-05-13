@@ -33,12 +33,18 @@ object ProximityPinFilter {
         abstract val id: String
         abstract val latitude: Double
         abstract val longitude: Double
+        // Reviewer-flagged: do NOT add per-frame fields (e.g.
+        // `isNearby`) to these data classes. `distinctUntilChanged`
+        // on the upstream pin flow uses structural equality — a
+        // field that flips with GPS jitter (continuously crossing
+        // any threshold) would defeat the gate and trigger 1Hz
+        // Mapbox `deleteAll` + 30-bitmap allocation churn for every
+        // tick the user is near a pin.
         data class Whisper(
             override val id: String,
             override val latitude: Double,
             override val longitude: Double,
             val category: WhisperCategory,
-            val isNearby: Boolean,
         ) : Pin()
         data class Cairn(
             override val id: String,
@@ -54,7 +60,6 @@ object ProximityPinFilter {
         cairns: List<CachedCairn>,
         userLatitude: Double,
         userLongitude: Double,
-        whisperEncounterRadiusM: Double,
     ): List<Pin> {
         data class Candidate(val pin: Pin, val distance: Double)
         val candidates = mutableListOf<Candidate>()
@@ -73,7 +78,6 @@ object ProximityPinFilter {
                     latitude = w.latitude,
                     longitude = w.longitude,
                     category = cat,
-                    isNearby = dist <= whisperEncounterRadiusM,
                 ),
                 dist,
             )

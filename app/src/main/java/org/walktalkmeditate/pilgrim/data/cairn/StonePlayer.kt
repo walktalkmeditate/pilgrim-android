@@ -84,19 +84,25 @@ open class StonePlayer @Inject constructor(
                 setAudioAttributes(audioAttrs)
                 setVolume(volume, volume)
                 setOnCompletionListener { mp ->
+                    // Callbacks fire on the MediaPlayer thread; the
+                    // focusRequest field is mutated under `lock` in
+                    // requestDuckFocus, so the abandon path must
+                    // share the same lock or it can null a
+                    // freshly-set request from a second rapid
+                    // playForCount call. Reviewer-flagged.
                     synchronized(lock) {
                         if (current === mp) current = null
+                        abandonDuckFocus()
                     }
                     runCatching { mp.release() }
-                    abandonDuckFocus()
                 }
                 setOnErrorListener { mp, what, extra ->
                     Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
                     synchronized(lock) {
                         if (current === mp) current = null
+                        abandonDuckFocus()
                     }
                     runCatching { mp.release() }
-                    abandonDuckFocus()
                     true
                 }
             }

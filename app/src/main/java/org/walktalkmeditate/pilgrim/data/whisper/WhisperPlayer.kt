@@ -131,13 +131,26 @@ open class WhisperPlayer @Inject constructor(
     }
 
     /**
-     * Stop both channels. Called by [WhisperPlacementSheet.onDismiss]
-     * + before a fresh placement-event auto-play.
+     * Stop both channels. Reserved for explicit "kill everything"
+     * paths (process teardown, debug). Most UI dismiss paths should
+     * use [stopPreviewOnly] — see reviewer note on
+     * [WalkViewModel.stopWhisperPreview].
      */
     open fun stop() {
         playJob?.cancel()
         previewJob?.cancel()
         stopPlay()
+        stopPreview()
+    }
+
+    /**
+     * Stop ONLY the preview channel. Called by
+     * [WhisperPlacementSheet]'s `onDismiss` so a proximity / tap /
+     * placement whisper that's mid-playback in the main channel
+     * isn't cut off when the user opens + closes the sheet.
+     */
+    open fun stopPreviewOnly() {
+        previewJob?.cancel()
         stopPreview()
     }
 
@@ -296,16 +309,24 @@ open class WhisperPlayer @Inject constructor(
                 true
             }
         }
+        var focusAcquired = false
         try {
             player.setDataSource(file.absolutePath)
             player.prepare()
             acquireFocusHolder()
+            focusAcquired = true
             player.start()
             bindPlayer(player)
         } catch (e: Exception) {
             Log.w(TAG, "MediaPlayer start failed: ${e.message}")
             runCatching { player.release() }
             _isPlaying.value = false
+            // Reviewer-flagged: if `prepare()` succeeded and
+            // `acquireFocusHolder()` ran but `start()` threw, the
+            // listeners never fire and the refcount stays at +1
+            // permanently → background music stays ducked for the
+            // rest of the walk. Symmetrically release here.
+            if (focusAcquired) releaseFocusHolder()
         }
     }
 

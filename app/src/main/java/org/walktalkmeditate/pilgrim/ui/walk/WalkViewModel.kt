@@ -220,8 +220,6 @@ class WalkViewModel @Inject constructor(
                 cairns = cairns,
                 userLatitude = location.latitude,
                 userLongitude = location.longitude,
-                whisperEncounterRadiusM = org.walktalkmeditate.pilgrim.data.proximity
-                    .ProximityDetectionService.WHISPER_RADIUS_M,
             )
             // Structural-equal lists collapse — `data class Pin` provides
             // content equality, so the operator drops a re-emission when
@@ -1200,10 +1198,14 @@ class WalkViewModel @Inject constructor(
 
     /**
      * Stop the whisper preview channel. Called from
-     * WhisperPlacementSheet.onDismiss + stop button.
+     * WhisperPlacementSheet.onDismiss + stop button. Uses
+     * [WhisperPlayer.stopPreviewOnly] so a main-channel whisper
+     * (proximity / tap / placement) playing concurrently survives a
+     * sheet dismiss. Reviewer-flagged: prior `stop()` killed both
+     * channels and cut mid-sentence whisper audio.
      */
     fun stopWhisperPreview() {
-        whisperPlayer.stop()
+        whisperPlayer.stopPreviewOnly()
     }
 
     /** Pass-through for WhisperPlacementSheet's per-row play/stop toggle. */

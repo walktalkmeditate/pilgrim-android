@@ -34,4 +34,8 @@ open class FakeWhisperPlayer(
         stopCalls += 1
         state.value = false
     }
+    override fun stopPreviewOnly() {
+        stopCalls += 1
+        state.value = false
+    }
 }
