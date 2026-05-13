@@ -13,16 +13,21 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
 class AboutViewModelTest {
 
     @Test
     fun `no walks yields hasWalks=false`() = runTest {
         val source = FakeWalkSource(flowOf(emptyList()))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -42,7 +47,7 @@ class AboutViewModelTest {
             walk(id = 2, start = 5_000, distanceMeters = 2200.0),
         )
         val source = FakeWalkSource(flowOf(walks))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -62,7 +67,7 @@ class AboutViewModelTest {
             Walk(id = 2, startTimestamp = 5_000, endTimestamp = null, distanceMeters = 999.0),
         )
         val source = FakeWalkSource(flowOf(walks))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -86,7 +91,7 @@ class AboutViewModelTest {
             Walk(id = 2, startTimestamp = 5_000, endTimestamp = 6_000, distanceMeters = 1234.0),
         )
         val source = FakeWalkSource(flowOf(walks))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -117,4 +122,12 @@ private class FakeUnits : UnitsPreferencesRepository {
     override suspend fun setDistanceUnits(value: UnitSystem) {
         _distanceUnits.value = value
     }
+}
+
+private class FakeIconSwitcher : org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+    context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+) {
+    override fun currentVariant() =
+        org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) = Unit
 }

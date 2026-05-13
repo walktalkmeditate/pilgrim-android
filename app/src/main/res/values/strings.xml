@@ -657,6 +657,13 @@
     <string name="about_title">About</string>
     <string name="about_back_content_description">Back</string>
     <string name="about_hero_title">Every walk is a\nsmall pilgrimage.</string>
+
+    <!-- iOS parity AboutView.swift:61-84@db4196e — app icon switcher -->
+    <string name="about_app_icon_title">App Icon</string>
+    <string name="about_app_icon_use_guide">Use as app icon</string>
+    <string name="about_app_icon_use_dark">Use dark icon</string>
+    <string name="about_app_icon_reset">Reset to default</string>
+    <string name="about_app_icon_cancel">Cancel</string>
     <string name="about_hero_body">Walking is how we think, process, and return to ourselves. Pilgrim is a quiet companion for the path — no leaderboards, no metrics, just you and the walk.</string>
     <string name="about_pillars_caption">walk · talk · meditate</string>
     <string name="about_pillar_walk_title">walk</string>

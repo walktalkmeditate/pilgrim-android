@@ -9,6 +9,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,6 +87,11 @@ fun AboutScreen(
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val units by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val iconVariant by viewModel.iconVariant.collectAsStateWithLifecycle()
+    val activeGuideId = org.walktalkmeditate.pilgrim.data.voiceguide
+        .LocalActiveVoiceGuideId.current
+    var showIconDialog by androidx.compose.runtime.saveable
+        .rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -120,7 +126,23 @@ fun AboutScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp),
         ) {
-            HeroSection()
+            HeroSection(
+                onLogoTap = {
+                    viewModel.refreshIconVariant()
+                    showIconDialog = true
+                },
+            )
+            if (showIconDialog) {
+                AppIconChoiceDialog(
+                    currentVariant = iconVariant,
+                    activeGuideId = activeGuideId,
+                    onPick = {
+                        viewModel.setIconVariant(it)
+                        showIconDialog = false
+                    },
+                    onDismiss = { showIconDialog = false },
+                )
+            }
             SectionDivider()
             PillarsSection()
             SectionDivider()
@@ -140,7 +162,7 @@ fun AboutScreen(
 }
 
 @Composable
-private fun HeroSection() {
+private fun HeroSection(onLogoTap: () -> Unit = {}) {
     val nowMs = remember { System.currentTimeMillis() }
     val today = remember { LocalDate.now() }
     val tintColor = SeasonalColorEngine.applySeasonalShift(
@@ -166,7 +188,15 @@ private fun HeroSection() {
                 walkDateMs = nowMs,
             )
         }
-        PilgrimLogo(size = 80.dp, breathing = true)
+        PilgrimLogo(
+            size = 80.dp,
+            breathing = true,
+            modifier = Modifier.clickable(
+                onClick = onLogoTap,
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+            ),
+        )
         Text(
             text = stringResource(R.string.about_hero_title),
             style = pilgrimType.displayMedium.copy(fontStyle = FontStyle.Italic),
@@ -532,4 +562,85 @@ private fun formatSinceDate(stats: AboutStats): String {
     val instant = stats.firstWalkInstant ?: return ""
     val formatter = DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault())
     return formatter.format(instant.atZone(ZoneId.systemDefault()))
+}
+
+/**
+ * iOS parity `AboutView.swift:61-84@db4196e` — confirmation dialog
+ * surfaced on PilgrimLogo tap. iOS exposes three conditional buttons:
+ *  - "Use as app icon" — only when voice guide enabled + selected pack
+ *    has a matching themed icon AND that icon is NOT already current
+ *  - "Use dark icon" — when current is NOT already Dark
+ *  - "Reset to default" — when current is NOT already Default
+ *
+ * Material 3 doesn't have a `confirmationDialog`-equivalent multi-button
+ * stack; we use `AlertDialog` with a `Column` of `TextButton`s so the
+ * conditional buttons can each be hidden independently.
+ */
+@Composable
+private fun AppIconChoiceDialog(
+    currentVariant: org.walktalkmeditate.pilgrim.data.launcher.IconVariant,
+    activeGuideId: String?,
+    onPick: (org.walktalkmeditate.pilgrim.data.launcher.IconVariant) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val matchingGuideVariant = org.walktalkmeditate.pilgrim.data.launcher
+        .IconVariant.forGuideId(activeGuideId)
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.about_app_icon_title),
+                style = pilgrimType.heading,
+                color = pilgrimColors.ink,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (matchingGuideVariant != null &&
+                    currentVariant != matchingGuideVariant
+                ) {
+                    androidx.compose.material3.TextButton(
+                        onClick = { onPick(matchingGuideVariant) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.about_app_icon_use_guide))
+                    }
+                }
+                if (currentVariant != org.walktalkmeditate.pilgrim.data.launcher
+                        .IconVariant.Dark
+                ) {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            onPick(org.walktalkmeditate.pilgrim.data.launcher
+                                .IconVariant.Dark)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.about_app_icon_use_dark))
+                    }
+                }
+                if (currentVariant != org.walktalkmeditate.pilgrim.data.launcher
+                        .IconVariant.Default
+                ) {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            onPick(org.walktalkmeditate.pilgrim.data.launcher
+                                .IconVariant.Default)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.about_app_icon_reset))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.about_app_icon_cancel))
+            }
+        },
+        containerColor = pilgrimColors.parchment,
+        titleContentColor = pilgrimColors.ink,
+        textContentColor = pilgrimColors.ink,
+    )
 }
