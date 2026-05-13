@@ -91,6 +91,8 @@ class WalkViewModelWaypointCountTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
     }
 

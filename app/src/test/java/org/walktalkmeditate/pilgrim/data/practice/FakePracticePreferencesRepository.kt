@@ -18,6 +18,7 @@ class FakePracticePreferencesRepository(
     initialCelestialAwarenessEnabled: Boolean = false,
     initialZodiacSystem: ZodiacSystem = ZodiacSystem.Tropical,
     initialWalkReliquaryEnabled: Boolean = false,
+    initialAutoPlayWhisperOnProximity: Boolean = true,
 ) : PracticePreferencesRepository {
 
     private val _beginWithIntention = MutableStateFlow(initialBeginWithIntention)
@@ -42,5 +43,12 @@ class FakePracticePreferencesRepository(
     override val walkReliquaryEnabled: StateFlow<Boolean> = _walkReliquaryEnabled.asStateFlow()
     override suspend fun setWalkReliquaryEnabled(value: Boolean) {
         _walkReliquaryEnabled.value = value
+    }
+
+    private val _autoPlayWhisperOnProximity = MutableStateFlow(initialAutoPlayWhisperOnProximity)
+    override val autoPlayWhisperOnProximity: StateFlow<Boolean> =
+        _autoPlayWhisperOnProximity.asStateFlow()
+    override suspend fun setAutoPlayWhisperOnProximity(value: Boolean) {
+        _autoPlayWhisperOnProximity.value = value
     }
 }

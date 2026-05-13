@@ -297,6 +297,12 @@ class SettingsViewModelPracticeTest {
             reliquaryAttempts += 1
             throw IOException("disk full")
         }
+
+        override val autoPlayWhisperOnProximity: StateFlow<Boolean> =
+            MutableStateFlow(true).asStateFlow()
+        override suspend fun setAutoPlayWhisperOnProximity(value: Boolean) {
+            throw IOException("disk full")
+        }
     }
 
     private class ThrowingUnitsRepository : UnitsPreferencesRepository {
