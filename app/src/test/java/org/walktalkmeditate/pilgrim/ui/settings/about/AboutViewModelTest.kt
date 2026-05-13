@@ -128,6 +128,32 @@ class AboutViewModelTest {
     }
 
     @Test
+    fun `refreshIconVariant re-reads currentVariant and updates flow`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()))
+        // Returns Default on VM init, then Sage on every subsequent
+        // call — refreshIconVariant must reach the Sage emission.
+        val fake = SteppedIconSwitcher(
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default,
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+        )
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.refreshIconVariant()
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
+                current = awaitItem()
+            }
+            assertEquals(
+                org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+                current,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `setIconVariant catch path re-syncs from currentVariant on throw`() = runTest {
         val source = FakeWalkSource(flowOf(emptyList()))
         val fake = ThrowingIconSwitcher()
@@ -192,12 +218,37 @@ private class RecordingIconSwitcher :
     }
 }
 
+private class SteppedIconSwitcher(
+    private val firstCall: org.walktalkmeditate.pilgrim.data.launcher.IconVariant,
+    private val subsequentCalls: org.walktalkmeditate.pilgrim.data.launcher.IconVariant,
+) : org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+    context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+) {
+    private var callCount = 0
+    override fun currentVariant() =
+        if (callCount++ == 0) firstCall else subsequentCalls
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) = Unit
+}
+
 private class ThrowingIconSwitcher :
     org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
         context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
     ) {
+    private var callCount = 0
+    // Reviewer-flagged: a single-value `currentVariant()` would make
+    // the catch-path test pass for the wrong reason — VM init reads
+    // the same value the catch re-sync reads, so the StateFlow emits
+    // nothing and the test observes only the initial value.
+    // Returning Default on the first call (VM init) and Dark on
+    // every subsequent call (catch re-sync) forces an observable
+    // Default → Dark transition that's only reachable if the catch
+    // block executed.
     override fun currentVariant() =
-        org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark
+        if (callCount++ == 0) {
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
+        } else {
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark
+        }
     override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) {
         throw SecurityException("ROM blocked alias toggle")
     }
