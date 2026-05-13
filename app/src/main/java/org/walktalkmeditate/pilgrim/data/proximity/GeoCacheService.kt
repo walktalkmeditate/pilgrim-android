@@ -17,16 +17,13 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.cos
 import kotlin.math.sqrt
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -69,7 +66,6 @@ open class GeoCacheService @Inject constructor(
     private val json: Json,
     private val clock: Clock,
 ) {
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
 
     private val _whispers = MutableStateFlow<List<CachedWhisper>>(emptyList())
@@ -86,28 +82,34 @@ open class GeoCacheService @Inject constructor(
     private var cairnsEtag: String? = null
     private var lastFetchLat: Double? = null
     private var lastFetchLon: Double? = null
+    @Volatile private var hydrated: Boolean = false
 
-    init {
-        // Hydrate from DataStore on construction. The fetch path
-        // populates the cache eagerly; this just makes the cache
-        // available at app startup before any network call.
-        scope.launch {
-            runCatching {
-                val prefs = context.geoCacheStore.data.first()
-                prefs[KEY_WHISPERS]?.let { raw ->
-                    _whispers.value = json.decodeFromString(
-                        ListSerializer(CachedWhisper.serializer()),
-                        raw,
-                    )
-                }
-                prefs[KEY_CAIRNS]?.let { raw ->
-                    _cairns.value = json.decodeFromString(
-                        ListSerializer(CachedCairn.serializer()),
-                        raw,
-                    )
-                }
-            }.onFailure { Log.w(TAG, "hydrate failed: ${it.message}") }
-        }
+    private suspend fun hydrateOnce() {
+        // Lazy first-call hydration. Previously this ran in an init
+        // block on a leaked `SupervisorJob() + Dispatchers.Default`
+        // scope — each `GeoCacheService` construction leaked a coroutine
+        // reading DataStore. In unit tests that built up across the
+        // 1980+ test fleet and wedged the JVM at ~25min (CI timeout).
+        // Lazy + idempotent on `hydrated` flag is safe: the first
+        // `fetchIfNeeded` call hydrates before the network round-trip;
+        // subsequent calls short-circuit.
+        if (hydrated) return
+        runCatching {
+            val prefs = context.geoCacheStore.data.first()
+            prefs[KEY_WHISPERS]?.let { raw ->
+                _whispers.value = json.decodeFromString(
+                    ListSerializer(CachedWhisper.serializer()),
+                    raw,
+                )
+            }
+            prefs[KEY_CAIRNS]?.let { raw ->
+                _cairns.value = json.decodeFromString(
+                    ListSerializer(CachedCairn.serializer()),
+                    raw,
+                )
+            }
+        }.onFailure { Log.w(TAG, "hydrate failed: ${it.message}") }
+        hydrated = true
     }
 
     /**
@@ -138,6 +140,7 @@ open class GeoCacheService @Inject constructor(
      * at the tail. Pending placement TTL pruning + replay match iOS.
      */
     open suspend fun fetchIfNeeded(latitude: Double, longitude: Double) {
+        hydrateOnce()
         mutex.withLock {
             val prevLat = lastFetchLat
             val prevLon = lastFetchLon

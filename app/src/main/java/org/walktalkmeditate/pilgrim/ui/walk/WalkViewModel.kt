@@ -33,7 +33,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -82,7 +81,7 @@ data class WalkUiState(
     val paceSecondsPerKm: Double? get() = WalkStats.averagePaceSecondsPerKm(walkState, nowMillis)
 }
 
-@OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class WalkViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -789,7 +788,15 @@ class WalkViewModel @Inject constructor(
         // throttle on geo cache re-fetch. The service's own 10km
         // threshold gates whether the fetch hits the network; the
         // 300s here just rate-limits the eligibility check.
+        //
+        // Manual timestamp throttle (NOT `Flow.sample`): `sample`
+        // schedules a periodic ticker via `fixedPeriodTicker`, which
+        // emits forever in virtual time and hangs `runTest`'s
+        // `advanceUntilIdle`. CI timed out at 25min on the original
+        // implementation. Manual timestamp gate has no scheduled
+        // ticker — drains cleanly under both real + virtual time.
         viewModelScope.launch {
+            var lastFetchAt = 0L
             controller.state
                 .map { state ->
                     when (state) {
@@ -799,8 +806,10 @@ class WalkViewModel @Inject constructor(
                     }
                 }
                 .filterNotNull()
-                .sample(GEOCACHE_FETCH_THROTTLE_MS)
                 .collect { loc ->
+                    val now = clock.now()
+                    if (now - lastFetchAt < GEOCACHE_FETCH_THROTTLE_MS) return@collect
+                    lastFetchAt = now
                     geoCacheService.fetchIfNeeded(loc.latitude, loc.longitude)
                 }
         }
