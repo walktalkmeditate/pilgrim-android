@@ -35,16 +35,18 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * no expiry picker: tap "Place Stone" → caller fires the HTTP round
  * trip with server-confirm-then-haptic ordering.
  *
- * Deferred from MVP:
- *  - "Add your stone to this cairn" copy + stone-count display when a
- *    nearby cairn is detected within 42m (depends on GeoCache being
- *    ported). MVP always shows the "Start a new cairn here" branch.
+ * Two branches per iOS:
+ *  - [nearbyCairn] != null → "Add your stone to this cairn" + stone
+ *    count. SF symbol `mountain.2.fill` for tier >= medium (>= 7
+ *    stones), else `mountain.2`.
+ *  - [nearbyCairn] == null → "Start a new cairn here".
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StonePlacementSheet(
     onPlace: () -> Unit,
     onDismiss: () -> Unit,
+    nearbyCairn: org.walktalkmeditate.pilgrim.data.cairn.CachedCairn? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     ModalBottomSheet(
@@ -70,21 +72,45 @@ fun StonePlacementSheet(
             Icon(
                 imageVector = Icons.Outlined.Landscape,
                 contentDescription = null,
-                tint = pilgrimColors.moss,
+                tint = if (nearbyCairn != null) pilgrimColors.stone else pilgrimColors.moss,
                 modifier = Modifier.size(56.dp),
             )
-            Text(
-                text = stringResource(R.string.stone_sheet_message),
-                style = pilgrimType.body,
-                color = pilgrimColors.ink,
-                textAlign = TextAlign.Center,
-            )
-            Text(
-                text = stringResource(R.string.stone_sheet_message_caption),
-                style = pilgrimType.caption,
-                color = pilgrimColors.fog,
-                textAlign = TextAlign.Center,
-            )
+            if (nearbyCairn != null) {
+                // Existing-cairn branch: show stone count + "Add your
+                // stone" copy. iOS `StonePlacementSheet.swift:43-61`.
+                Text(
+                    text = if (nearbyCairn.stoneCount == 1) {
+                        stringResource(R.string.stone_sheet_existing_count_one)
+                    } else {
+                        stringResource(
+                            R.string.stone_sheet_existing_count,
+                            nearbyCairn.stoneCount,
+                        )
+                    },
+                    style = pilgrimType.displayMedium,
+                    color = pilgrimColors.ink,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = stringResource(R.string.stone_sheet_existing_title),
+                    style = pilgrimType.body,
+                    color = pilgrimColors.ink,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.stone_sheet_message),
+                    style = pilgrimType.body,
+                    color = pilgrimColors.ink,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = stringResource(R.string.stone_sheet_message_caption),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Text(
                 text = stringResource(R.string.stone_sheet_privacy),
                 style = pilgrimType.caption,

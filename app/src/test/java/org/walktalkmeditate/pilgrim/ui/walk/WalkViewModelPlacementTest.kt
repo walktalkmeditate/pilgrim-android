@@ -99,6 +99,8 @@ class WalkViewModelPlacementTest {
             whisperService = fakeWhisperService,
             cairnService = fakeCairnService,
             whisperManifestService = FakeWhisperManifestService(),
+            geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
+            proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
         )
     }
 
