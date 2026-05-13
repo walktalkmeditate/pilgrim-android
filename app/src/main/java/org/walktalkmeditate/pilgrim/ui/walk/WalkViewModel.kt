@@ -223,7 +223,13 @@ class WalkViewModel @Inject constructor(
                 whisperEncounterRadiusM = org.walktalkmeditate.pilgrim.data.proximity
                     .ProximityDetectionService.WHISPER_RADIUS_M,
             )
-        }.stateIn(
+            // Structural-equal lists collapse — `data class Pin` provides
+            // content equality, so the operator drops a re-emission when
+            // the filtered set is unchanged. The filter still RECOMPUTES
+            // on every location tick (cheap haversine over <= 30 items);
+            // we just avoid downstream bitmap+annotation churn when the
+            // pin set is stable. Reviewer-flagged.
+        }.distinctUntilChanged().stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             emptyList(),

@@ -3,7 +3,10 @@ package org.walktalkmeditate.pilgrim.data.cairn
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Build
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -46,6 +49,13 @@ open class StonePlayer @Inject constructor(
 ) {
     private val lock = Any()
     private var current: MediaPlayer? = null
+    private val audioManager: AudioManager? =
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private val audioAttrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
+    private var focusRequest: AudioFocusRequest? = null
 
     /**
      * Play the bell appropriate for [stoneCount]. No-op when
@@ -65,19 +75,20 @@ open class StonePlayer @Inject constructor(
                 runCatching { it.release() }
             }
             current = null
+            // iOS parity `StonePlayer.swift:18-21@db4196e` — request
+            // transient ducking focus so background music drops to
+            // ~30% for the duration of the bell, then restores. No-op
+            // when no music is playing.
+            requestDuckFocus()
             val player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build(),
-                )
+                setAudioAttributes(audioAttrs)
                 setVolume(volume, volume)
                 setOnCompletionListener { mp ->
                     synchronized(lock) {
                         if (current === mp) current = null
                     }
                     runCatching { mp.release() }
+                    abandonDuckFocus()
                 }
                 setOnErrorListener { mp, what, extra ->
                     Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
@@ -85,6 +96,7 @@ open class StonePlayer @Inject constructor(
                         if (current === mp) current = null
                     }
                     runCatching { mp.release() }
+                    abandonDuckFocus()
                     true
                 }
             }
@@ -98,7 +110,37 @@ open class StonePlayer @Inject constructor(
             } catch (e: Exception) {
                 Log.w(TAG, "playForCount failed: ${e.message}")
                 runCatching { player.release() }
+                abandonDuckFocus()
             }
+        }
+    }
+
+    private fun requestDuckFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val req = AudioFocusRequest.Builder(
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            ).setAudioAttributes(audioAttrs).build()
+            focusRequest = req
+            am.requestAudioFocus(req)
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(
+                null,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            )
+        }
+    }
+
+    private fun abandonDuckFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            focusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(null)
         }
     }
 

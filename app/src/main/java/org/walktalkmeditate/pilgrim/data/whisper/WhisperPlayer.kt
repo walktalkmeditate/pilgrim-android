@@ -3,7 +3,10 @@ package org.walktalkmeditate.pilgrim.data.whisper
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Build
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -76,6 +79,14 @@ open class WhisperPlayer @Inject constructor(
     @Volatile private var previewPlayer: MediaPlayer? = null
     @Volatile private var playJob: Job? = null
     @Volatile private var previewJob: Job? = null
+    private val audioManager: AudioManager? =
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private val audioAttrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+    @Volatile private var focusRequest: AudioFocusRequest? = null
+    @Volatile private var focusHolders: Int = 0
 
     private val _isPlaying = MutableStateFlow(false)
     open val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -132,22 +143,76 @@ open class WhisperPlayer @Inject constructor(
 
     private fun stopPlay() {
         synchronized(this) {
+            val wasPlaying = playPlayer != null
             playPlayer?.let {
                 runCatching { it.stop() }
                 runCatching { it.release() }
             }
             playPlayer = null
+            if (wasPlaying) releaseFocusHolder()
         }
     }
 
     private fun stopPreview() {
         synchronized(this) {
+            val wasPlaying = previewPlayer != null
             previewPlayer?.let {
                 runCatching { it.stop() }
                 runCatching { it.release() }
             }
             previewPlayer = null
             _isPlaying.value = false
+            if (wasPlaying) releaseFocusHolder()
+        }
+    }
+
+    /**
+     * Refcounted transient duck-focus. Each active MediaPlayer holds
+     * one ref; the OS-level focus request fires on 0→1 and abandons
+     * on N→0. iOS uses `.mixWithOthers` instead — Android doesn't
+     * have an equivalent that auto-ducks background music, so we use
+     * `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` to get the same UX.
+     */
+    private fun acquireFocusHolder() {
+        synchronized(this) {
+            if (focusHolders == 0) requestDuckFocus()
+            focusHolders += 1
+        }
+    }
+    private fun releaseFocusHolder() {
+        synchronized(this) {
+            focusHolders -= 1
+            if (focusHolders <= 0) {
+                focusHolders = 0
+                abandonDuckFocus()
+            }
+        }
+    }
+    private fun requestDuckFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val req = AudioFocusRequest.Builder(
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            ).setAudioAttributes(audioAttrs).build()
+            focusRequest = req
+            am.requestAudioFocus(req)
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(
+                null,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            )
+        }
+    }
+    private fun abandonDuckFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            focusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(null)
         }
     }
 
@@ -206,12 +271,7 @@ open class WhisperPlayer @Inject constructor(
         bindPlayer: (MediaPlayer) -> Unit,
     ) {
         val player = MediaPlayer().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
+            setAudioAttributes(audioAttrs)
             setVolume(volume, volume)
             setOnCompletionListener { mp ->
                 runCatching { mp.release() }
@@ -222,6 +282,7 @@ open class WhisperPlayer @Inject constructor(
                 if (mp === playPlayer) {
                     playPlayer = null
                 }
+                releaseFocusHolder()
             }
             setOnErrorListener { mp, what, extra ->
                 Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
@@ -231,12 +292,14 @@ open class WhisperPlayer @Inject constructor(
                     _isPlaying.value = false
                 }
                 if (mp === playPlayer) playPlayer = null
+                releaseFocusHolder()
                 true
             }
         }
         try {
             player.setDataSource(file.absolutePath)
             player.prepare()
+            acquireFocusHolder()
             player.start()
             bindPlayer(player)
         } catch (e: Exception) {
