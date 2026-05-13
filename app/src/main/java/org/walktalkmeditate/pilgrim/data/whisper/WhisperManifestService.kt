@@ -14,7 +14,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -60,11 +63,24 @@ open class WhisperManifestService @Inject constructor(
                     return@withContext false
                 }
                 val bodyStr = response.body.string()
-                val decoded = json.decodeFromString(
-                    WhisperManifest.serializer(),
-                    bodyStr,
-                )
-                _manifest.value = decoded
+                // iOS parity: lossy per-entry decode. A future iOS
+                // release that adds a 9th [WhisperCategory] would
+                // otherwise crash the entire manifest parse on every
+                // pre-update Android user (CDN is updated
+                // independently of the binary). Two-pass: decode the
+                // outer container with `whispers: List<JsonElement>`,
+                // then map each element through a per-entry
+                // `runCatching`. Unknown-enum / missing-field entries
+                // are silently dropped; the rest are kept.
+                val raw = json.decodeFromString(WhisperManifestRaw.serializer(), bodyStr)
+                val parsed = raw.whispers.mapNotNull { elem ->
+                    runCatching {
+                        json.decodeFromJsonElement(WhisperDefinition.serializer(), elem)
+                    }.onFailure { e ->
+                        Log.w(TAG, "skipping unparseable whisper entry: ${e.message}")
+                    }.getOrNull()
+                }
+                _manifest.value = WhisperManifest(version = raw.version, whispers = parsed)
                 true
             }
         } catch (e: CancellationException) {
@@ -77,6 +93,12 @@ open class WhisperManifestService @Inject constructor(
             false
         }
     }
+
+    @Serializable
+    private data class WhisperManifestRaw(
+        val version: Int,
+        @SerialName("whispers") val whispers: List<JsonElement>,
+    )
 
     /**
      * The set of [WhisperCategory] values that have at least one

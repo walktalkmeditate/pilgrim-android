@@ -968,12 +968,21 @@ class WalkViewModel @Inject constructor(
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "No whispers available for this category"))
             return
         }
-        val state = controller.state.value
-        val location = (state as? WalkState.Active)?.walk?.lastLocation
+        // iOS allows placement during Paused state — the Walk accumulator
+        // still carries `lastLocation`. Casting to Active-only here
+        // would emit a spurious "No GPS fix yet" any time the user
+        // taps Place while paused. Unwrap both Active + Paused.
+        val activeWalk = controller.state.value.activeOrPausedWalk()
+        if (activeWalk == null) {
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "No active walk"))
+            return
+        }
+        val location = activeWalk.lastLocation
         if (location == null) {
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "No GPS fix yet"))
             return
         }
+        val capturedWalkId = activeWalk.walkId
         try {
             whisperService.placeWhisper(
                 latitude = location.latitude,
@@ -982,8 +991,22 @@ class WalkViewModel @Inject constructor(
                 category = category,
                 expiry = org.walktalkmeditate.pilgrim.data.whisper.ExpiryDuration.DEFAULT,
             )
-            _whispersPlacedThisWalk.update { it + 1 }
-            _placementEvents.emit(PlacementEvent.WhisperPlaced(whisper.id))
+            // Walk-id guard: if the user ended/discarded the walk while
+            // the HTTP call was in-flight, the cap reset has already
+            // fired (controller-state observer above). Skipping the
+            // increment AND the success event keeps the count
+            // consistent with the post-reset zero AND avoids firing
+            // a "Whisper left along the way" snackbar on whatever
+            // screen the user navigated to (Summary, Idle, etc.) —
+            // the `placementEvents` collector is scoped to the VM, not
+            // the ActiveWalkScreen composition, so a late emit would
+            // surface a context-less snackbar mid-summary. Same
+            // pattern protects placeStoneImpl below. Server-side the
+            // whisper IS placed; we just don't pester the user.
+            if (controller.state.value.activeOrPausedWalk()?.walkId == capturedWalkId) {
+                _whispersPlacedThisWalk.update { it + 1 }
+                _placementEvents.emit(PlacementEvent.WhisperPlaced(whisper.id))
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: org.walktalkmeditate.pilgrim.data.whisper.WhisperError.RateLimited) {
@@ -1009,19 +1032,32 @@ class WalkViewModel @Inject constructor(
 
     private suspend fun placeStoneImpl() {
         if (_stonePlacedThisWalk.value) return
-        val state = controller.state.value
-        val location = (state as? WalkState.Active)?.walk?.lastLocation
+        val activeWalk = controller.state.value.activeOrPausedWalk()
+        if (activeWalk == null) {
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "No active walk"))
+            return
+        }
+        val location = activeWalk.lastLocation
         if (location == null) {
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "No GPS fix yet"))
             return
         }
+        val capturedWalkId = activeWalk.walkId
         try {
             val result = cairnService.placeStone(
                 latitude = location.latitude,
                 longitude = location.longitude,
             )
-            _stonePlacedThisWalk.value = true
-            _placementEvents.emit(PlacementEvent.StonePlaced(result.id, result.stoneCount))
+            // Walk-id guard mirrors placeWhisperImpl — if the user
+            // ended the walk while the cairn POST was in-flight, the
+            // reset has already cleared `_stonePlacedThisWalk` so we
+            // skip setting it to true (next walk starts with stone
+            // unused) AND skip the success snackbar (don't pop a
+            // "stone for your cairn" toast on the summary screen).
+            if (controller.state.value.activeOrPausedWalk()?.walkId == capturedWalkId) {
+                _stonePlacedThisWalk.value = true
+                _placementEvents.emit(PlacementEvent.StonePlaced(result.id, result.stoneCount))
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: org.walktalkmeditate.pilgrim.data.cairn.CairnError) {
@@ -1067,3 +1103,16 @@ sealed class PlacementEvent {
 }
 
 enum class PlacementKind { Whisper, Stone }
+
+/**
+ * Convenience for placement code paths: a [WalkAccumulator] exists
+ * during both [WalkState.Active] AND [WalkState.Paused], and iOS
+ * allows placement during either. Returns null on Idle / Meditating
+ * / Finished.
+ */
+private fun WalkState.activeOrPausedWalk():
+    org.walktalkmeditate.pilgrim.domain.WalkAccumulator? = when (this) {
+    is WalkState.Active -> walk
+    is WalkState.Paused -> walk
+    else -> null
+}

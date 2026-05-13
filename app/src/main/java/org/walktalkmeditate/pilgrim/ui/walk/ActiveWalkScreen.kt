@@ -317,8 +317,14 @@ fun ActiveWalkScreen(
             // the active-walk surface. A Meditating / Finished / Idle
             // transition pulls the user elsewhere; a re-emerging sheet
             // on return (Stage 4-C launchSingleTop + back-nav pattern)
-            // would surprise.
+            // would surprise. Whisper + stone sheets follow the same
+            // rule — and crucially must NOT survive a walk-ending
+            // transition (Finish / Discard) since their onPlace
+            // callbacks fire viewModel.placeX which would attempt to
+            // place on an Idle/Finished walk.
             showTurningCard = false
+            showWhisperSheet = false
+            showStoneSheet = false
         }
         if (state !is WalkState.Idle && showPreWalkIntention) {
             showPreWalkIntention = false
