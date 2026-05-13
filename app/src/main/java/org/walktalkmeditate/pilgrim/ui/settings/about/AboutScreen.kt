@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -75,9 +76,6 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.util.CustomTabs
 import org.walktalkmeditate.pilgrim.ui.util.PlayStore
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
-import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

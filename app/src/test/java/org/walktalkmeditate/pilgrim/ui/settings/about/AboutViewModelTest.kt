@@ -102,6 +102,54 @@ class AboutViewModelTest {
         }
     }
 
+    @Test
+    fun `setIconVariant happy path updates iconVariant`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()))
+        val fake = RecordingIconSwitcher()
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
+                current = awaitItem()
+            }
+            assertEquals(
+                org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+                current,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+            fake.lastSwitchTo,
+        )
+    }
+
+    @Test
+    fun `setIconVariant catch path re-syncs from currentVariant on throw`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()))
+        val fake = ThrowingIconSwitcher()
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.River)
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            // Initial value is Default; ThrowingIconSwitcher.switchTo throws;
+            // catch re-reads currentVariant() which returns Dark.
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark) {
+                current = awaitItem()
+            }
+            assertEquals(
+                org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark,
+                current,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     private fun walk(id: Long, start: Long, distanceMeters: Double) = Walk(
         id = id,
         startTimestamp = start,
@@ -130,4 +178,27 @@ private class FakeIconSwitcher : org.walktalkmeditate.pilgrim.data.launcher.Icon
     override fun currentVariant() =
         org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
     override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) = Unit
+}
+
+private class RecordingIconSwitcher :
+    org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+        context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+    ) {
+    var lastSwitchTo: org.walktalkmeditate.pilgrim.data.launcher.IconVariant? = null
+    override fun currentVariant() =
+        org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) {
+        lastSwitchTo = target
+    }
+}
+
+private class ThrowingIconSwitcher :
+    org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+        context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+    ) {
+    override fun currentVariant() =
+        org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) {
+        throw SecurityException("ROM blocked alias toggle")
+    }
 }

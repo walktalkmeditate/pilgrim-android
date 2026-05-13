@@ -7,6 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -75,21 +76,31 @@ class AboutViewModel @Inject constructor(
     val iconVariant: StateFlow<IconVariant> = _iconVariant.asStateFlow()
 
     fun refreshIconVariant() {
-        _iconVariant.value = iconSwitcher.currentVariant()
+        // Reviewer-flagged: `PackageManager.getComponentEnabledSetting`
+        // is a binder IPC. 9 calls × ~1-5ms each is small but adds
+        // visible jank if scheduled on Main inside the click handler.
+        // Hop to IO; StateFlow writes are thread-safe.
+        viewModelScope.launch(Dispatchers.IO) {
+            _iconVariant.value = iconSwitcher.currentVariant()
+        }
     }
 
     fun setIconVariant(target: IconVariant) {
-        // Reviewer-flagged: `setComponentEnabledSetting` can throw
-        // `SecurityException` on some hardened ROMs. A throw inside
-        // a Compose click handler would propagate to the event
-        // dispatcher and crash. Catch + re-sync from
-        // `currentVariant()` so the UI never lies about which alias
-        // is enabled.
-        try {
-            iconSwitcher.switchTo(target)
-            _iconVariant.value = target
-        } catch (_: Exception) {
-            _iconVariant.value = iconSwitcher.currentVariant()
+        // Reviewer-flagged:
+        //  1. `setComponentEnabledSetting` is binder IPC — same
+        //     IO-hop rationale as `refreshIconVariant`.
+        //  2. The same call can throw `SecurityException` on some
+        //     hardened ROMs. A throw inside a Compose click handler
+        //     would propagate to the event dispatcher and crash.
+        //     Catch + re-sync from `currentVariant()` so the UI
+        //     never lies about which alias is enabled.
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                iconSwitcher.switchTo(target)
+                _iconVariant.value = target
+            } catch (_: Exception) {
+                _iconVariant.value = iconSwitcher.currentVariant()
+            }
         }
     }
 }
