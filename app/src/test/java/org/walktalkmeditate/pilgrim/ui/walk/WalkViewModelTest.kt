@@ -180,6 +180,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
     }
 
@@ -416,6 +420,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
 
         controller.startWalk(intention = null)
@@ -452,6 +460,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
 
         controller.startWalk(intention = null)
@@ -561,6 +573,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -592,6 +608,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -651,6 +671,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -831,6 +855,10 @@ class WalkViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             weather,
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
     }
 
@@ -848,6 +876,10 @@ class WalkViewModelTest {
             prefs,
             FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)

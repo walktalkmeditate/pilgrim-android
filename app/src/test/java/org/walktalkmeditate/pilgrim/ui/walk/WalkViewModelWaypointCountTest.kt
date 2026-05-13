@@ -85,6 +85,10 @@ class WalkViewModelWaypointCountTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.weather.FakeWeatherFetching(),
             collectiveStats = org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource.of(),
+            soundsPreferences = org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository(),
+            whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
+            cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
+            whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
         )
     }
 

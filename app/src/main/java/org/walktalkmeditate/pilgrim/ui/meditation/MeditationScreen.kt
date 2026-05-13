@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.meditation
 
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,16 +27,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -45,6 +53,7 @@ import kotlinx.coroutines.isActive
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
+import org.walktalkmeditate.pilgrim.ui.settings.sounds.BreathRhythmPickerSheet
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -287,7 +296,82 @@ fun MeditationScreen(
     }
 
     val moss = pilgrimColors.moss
-    val breathRhythm = BreathRhythm.byId(LocalBreathRhythm.current)
+
+    // iOS parity `MeditationView.swift:559-568@db4196e` — 100ms re-arm.
+    // The user picks a new rhythm from the inline picker (long-press on
+    // the breathing circle); we want a clean 100ms hold-at-current-scale
+    // pause before the BreathingCircle's keyframe transition restarts at
+    // SCALE_EXHALED with the new rhythm. Without this gap, Compose's
+    // `key(rhythm.id)` snaps to SCALE_EXHALED on the same frame the
+    // settings DataStore emits the new id, producing a visible jump
+    // mid-inhale or mid-exhale.
+    //
+    // `sourceRhythmId` is the live settings-backed value (updates
+    // immediately on `viewModel.setBreathRhythm`). `displayedRhythmId`
+    // is what we pass to BreathingCircle; it lags `sourceRhythmId` by
+    // ~100ms via the LaunchedEffect below. Initial-composition path:
+    // both are equal → no delay → no pause. Rotation: rememberSaveable
+    // restores both to the same value → no delay.
+    val sourceRhythmId = LocalBreathRhythm.current
+    var displayedRhythmId by rememberSaveable { mutableIntStateOf(sourceRhythmId) }
+    LaunchedEffect(sourceRhythmId) {
+        if (sourceRhythmId != displayedRhythmId) {
+            delay(BREATH_RHYTHM_REARM_DELAY_MS)
+            displayedRhythmId = sourceRhythmId
+        }
+    }
+    val breathRhythm = BreathRhythm.byId(displayedRhythmId)
+
+    // iOS parity `MeditationView.swift:60-63@db4196e` — 1.0s long-press
+    // on the breathing circle opens the inline rhythm picker. Soft
+    // haptic on press. ModalBottomSheet hosts BreathRhythmPickerSheet
+    // (the same sheet used in Settings). On rhythm select:
+    // `viewModel.setBreathRhythm(id)` writes to DataStore; the 100ms
+    // re-arm above handles the visual transition.
+    var showRhythmPicker by rememberSaveable { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+
+    // iOS parity `MeditationView.swift:214-230, 726-734@db4196e` — emit a
+    // ripple ring at end-of-inhale on every breath cycle. Cap at 3 rings
+    // on-screen at once (drop-oldest on append). Each ring auto-removes
+    // after [RIPPLE_LIFESPAN_MS] (3.0s).
+    //
+    // The breath-cycle observer is INDEPENDENT of BreathingCircle's
+    // internal `rememberInfiniteTransition` — both started at the same
+    // composition time so the phase boundaries stay synchronized in
+    // practice; a tiny drift after many minutes is invisible.
+    //
+    // No reduce-motion guard — iOS doesn't suppress ripples either.
+    val rippleRings = remember { mutableStateListOf<RippleRing>() }
+    val ringIdSeq = remember { AtomicLong(0L) }
+    LaunchedEffect(breathRhythm.id) {
+        rippleRings.clear()
+        if (breathRhythm.isNone) return@LaunchedEffect
+        val inhaleMs = (breathRhythm.inhaleSeconds * 1000L).toLong()
+        val holdInMs = (breathRhythm.holdInSeconds * 1000L).toLong()
+        val exhaleMs = (breathRhythm.exhaleSeconds * 1000L).toLong()
+        val holdOutMs = (breathRhythm.holdOutSeconds * 1000L).toLong()
+        val tailMs = holdInMs + exhaleMs + holdOutMs
+        if (inhaleMs <= 0L) return@LaunchedEffect
+        while (isActive) {
+            delay(inhaleMs)
+            // iOS: `if rippleRings.count > 3 { rippleRings.removeFirst() }`
+            // — drop oldest BEFORE append so on-screen count never
+            // exceeds RIPPLE_RING_CAP.
+            if (rippleRings.size >= RIPPLE_RING_CAP) rippleRings.removeAt(0)
+            val ring = RippleRing(
+                id = ringIdSeq.incrementAndGet(),
+                spawnedAtMs = SystemClock.elapsedRealtime(),
+            )
+            rippleRings.add(ring)
+            launch {
+                delay(RIPPLE_LIFESPAN_MS)
+                rippleRings.removeAll { it.id == ring.id }
+            }
+            if (tailMs > 0L) delay(tailMs)
+        }
+    }
+
     MeditationScreenContent(
         elapsedSeconds = elapsedSeconds,
         mossColor = moss,
@@ -296,7 +380,21 @@ fun MeditationScreen(
         breathRhythm = breathRhythm,
         closingPhase = closingPhase,
         milestoneFlash = milestoneFlash.value,
+        rippleRings = rippleRings,
+        onCircleLongPress = {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            showRhythmPicker = true
+        },
     )
+    if (showRhythmPicker) {
+        BreathRhythmPickerSheet(
+            currentRhythmId = sourceRhythmId,
+            onSelect = { id ->
+                viewModel.setBreathRhythm(id)
+            },
+            onDismiss = { showRhythmPicker = false },
+        )
+    }
 }
 
 /**
@@ -335,6 +433,8 @@ internal fun MeditationScreenContent(
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
     closingPhase: ClosingPhase = ClosingPhase.None,
     milestoneFlash: Float = 0f,
+    rippleRings: List<RippleRing> = emptyList(),
+    onCircleLongPress: (() -> Unit)? = null,
 ) {
     // Animated phase-driven opacities. Reduce-motion users get the
     // values pinned to their target so the screen still transitions
@@ -372,6 +472,12 @@ internal fun MeditationScreenContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
+            // Layer ripple rings BEHIND BreathingCircle in a centered
+            // Box. iOS structure (ZStack: rippleLayer below breathingCircle).
+            // The Box sizes to the larger child (400dp ring footprint vs
+            // 320dp circle), so the rings extend visibly past the
+            // breathing-circle gradient halo.
+            //
             // `key(breathRhythm.id)` forces a full re-composition of
             // BreathingCircle (and its rememberInfiniteTransition) when
             // the user picks a new rhythm mid-meditation. Without it,
@@ -380,12 +486,22 @@ internal fun MeditationScreenContent(
             // phase. The key restart trades a brief snap to
             // SCALE_EXHALED for a clean, predictable cycle on the new
             // rhythm.
-            key(breathRhythm.id) {
-                BreathingCircle(
-                    moss = mossColor,
-                    breathRhythm = breathRhythm,
-                    milestoneFlash = milestoneFlash,
-                )
+            Box(contentAlignment = Alignment.Center) {
+                MeditationRippleRings(rings = rippleRings, mossColor = mossColor)
+                key(breathRhythm.id) {
+                    BreathingCircle(
+                        moss = mossColor,
+                        breathRhythm = breathRhythm,
+                        milestoneFlash = milestoneFlash,
+                        modifier = if (onCircleLongPress != null) {
+                            Modifier.pointerInput(Unit) {
+                                detectTapGestures(onLongPress = { onCircleLongPress() })
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
+                }
             }
             Spacer(Modifier.height(PilgrimSpacing.big))
             Text(
@@ -470,6 +586,16 @@ private const val DONE_BUTTON_CORNER_DP = 24
  * tick always passes through the exact milestone value, so an exact
  * `seconds in MILESTONE_SECONDS` match fires the ascending edge cleanly.
  */
+/**
+ * iOS parity `MeditationView.swift:559-568@db4196e`:
+ * `DispatchQueue.main.asyncAfter(deadline: .now() + 0.1)` between
+ * `isActive = false` and `startBreathCycle()`. 100ms lets the in-flight
+ * breath-cycle continuation drain (main-queue FIFO; `asyncAfter(.now()
+ * + 0)` arrives in ~1-2ms) and is imperceptible to the user. 50ms would
+ * work but with less margin; 200ms would be a faint visible pause.
+ */
+private const val BREATH_RHYTHM_REARM_DELAY_MS = 100L
+
 private val MILESTONE_SECONDS_SORTED = listOf(300, 600, 900, 1200, 1800)
 private const val MILESTONE_FLASH_IN_MS = 1_500
 private const val MILESTONE_FLASH_HOLD_MS = 2_000L
