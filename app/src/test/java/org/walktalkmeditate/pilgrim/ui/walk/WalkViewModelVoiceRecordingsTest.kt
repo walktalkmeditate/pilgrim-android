@@ -92,6 +92,8 @@ class WalkViewModelVoiceRecordingsTest {
             whisperService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperService(),
             cairnService = org.walktalkmeditate.pilgrim.data.cairn.FakeCairnService(),
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
+            geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
+            proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
         )
     }
 

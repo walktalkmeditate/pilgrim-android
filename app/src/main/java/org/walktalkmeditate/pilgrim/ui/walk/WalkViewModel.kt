@@ -26,11 +26,15 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -101,6 +105,10 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.cairn.CairnService,
     private val whisperManifestService:
         org.walktalkmeditate.pilgrim.data.whisper.WhisperManifestService,
+    private val geoCacheService:
+        org.walktalkmeditate.pilgrim.data.proximity.GeoCacheService,
+    private val proximityService:
+        org.walktalkmeditate.pilgrim.data.proximity.ProximityDetectionService,
 ) : ViewModel() {
 
     /**
@@ -158,6 +166,66 @@ class WalkViewModel @Inject constructor(
      */
     private val _placementEvents = MutableSharedFlow<PlacementEvent>(extraBufferCapacity = 4)
     val placementEvents: SharedFlow<PlacementEvent> = _placementEvents.asSharedFlow()
+
+    /**
+     * iOS parity `ActiveWalkView.swift:handleProximityEvent@db4196e`.
+     * Filters the raw event stream to entered-only (matches iOS UI
+     * which silently drops `.exited` events) and maps to a
+     * UI-friendly [ProximityNotification] enriched with the cached
+     * cairn's stoneCount for tier-based banner copy.
+     */
+    val proximityNotifications:
+        SharedFlow<org.walktalkmeditate.pilgrim.ui.walk.ProximityNotification> =
+        proximityService.events
+            .filter {
+                it.direction == org.walktalkmeditate.pilgrim.data.proximity
+                    .ProximityEvent.Direction.Entered
+            }
+            .map { event ->
+                when (event.target.type) {
+                    org.walktalkmeditate.pilgrim.data.proximity.ProximityTarget.Type.Whisper ->
+                        org.walktalkmeditate.pilgrim.ui.walk.ProximityNotification.Whisper
+                    org.walktalkmeditate.pilgrim.data.proximity.ProximityTarget.Type.Cairn -> {
+                        val cacheId = event.target.id.removePrefix("cairn-")
+                        val cairn = geoCacheService.cairns.value
+                            .firstOrNull { it.id == cacheId }
+                        org.walktalkmeditate.pilgrim.ui.walk.ProximityNotification.Cairn(
+                            tier = cairn?.tier
+                                ?: org.walktalkmeditate.pilgrim.data.cairn.CairnTier.Faint,
+                            stoneCount = cairn?.stoneCount ?: 1,
+                        )
+                    }
+                }
+            }
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS))
+
+    /**
+     * iOS parity `ActiveWalkView.swift:895-906` —
+     * `nearestCachedCairn(within: 42)`. The closest cached cairn to
+     * the current walk's last location, or null if none within 42m.
+     * Drives the StonePlacementSheet branch (existing-cairn copy +
+     * stone count vs new-cairn copy).
+     */
+    val nearbyCairn: StateFlow<org.walktalkmeditate.pilgrim.data.cairn.CachedCairn?> =
+        combine(controller.state, geoCacheService.cairns) { state, cairns ->
+            val location = state.activeOrPausedWalk()?.lastLocation ?: return@combine null
+            cairns
+                .mapNotNull { c ->
+                    val out = FloatArray(1)
+                    android.location.Location.distanceBetween(
+                        location.latitude, location.longitude,
+                        c.latitude, c.longitude, out,
+                    )
+                    val dist = out[0].toDouble()
+                    if (dist <= NEAREST_CAIRN_RADIUS_M) c to dist else null
+                }
+                .minByOrNull { it.second }
+                ?.first
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            null,
+        )
 
     /**
      * iOS parity `WalkStartView.swift:164-168@db4196e` —
@@ -685,8 +753,96 @@ class WalkViewModel @Inject constructor(
                     // covers both terminal paths.
                     _whispersPlacedThisWalk.value = 0
                     _stonePlacedThisWalk.value = false
+                    // iOS parity `ActiveWalkViewModel.swift:210-228` —
+                    // proximity teardown on walk end. `stopListening`
+                    // cancels the location subscription AND clears the
+                    // dedup set so the next walk starts fresh.
+                    proximityService.stopListening()
+                    geoCacheService.invalidateLastFetch()
                 }
             }
+        }
+        // iOS parity `ActiveWalkViewModel.swift:bindProximity@db4196e`.
+        // Pipe the active/paused walk's last-location through to the
+        // proximity service. Sampled internally at 5s by the service.
+        viewModelScope.launch {
+            proximityService.bindToLocation(
+                controller.state
+                    .map { state ->
+                        when (state) {
+                            is WalkState.Active -> state.walk.lastLocation
+                            is WalkState.Paused -> state.walk.lastLocation
+                            else -> null
+                        }
+                    }
+                    .map { loc ->
+                        loc?.let {
+                            android.location.Location("walk").apply {
+                                latitude = it.latitude
+                                longitude = it.longitude
+                            }
+                        }
+                    },
+            )
+        }
+        // iOS parity `ActiveWalkViewModel.swift:405-419` — 300s
+        // throttle on geo cache re-fetch. The service's own 10km
+        // threshold gates whether the fetch hits the network; the
+        // 300s here just rate-limits the eligibility check.
+        viewModelScope.launch {
+            controller.state
+                .map { state ->
+                    when (state) {
+                        is WalkState.Active -> state.walk.lastLocation
+                        is WalkState.Paused -> state.walk.lastLocation
+                        else -> null
+                    }
+                }
+                .filterNotNull()
+                .sample(GEOCACHE_FETCH_THROTTLE_MS)
+                .collect { loc ->
+                    geoCacheService.fetchIfNeeded(loc.latitude, loc.longitude)
+                }
+        }
+        // iOS parity `ActiveWalkViewModel.swift:421-427` — whenever
+        // the geo cache emits new whispers or cairns, rebuild the
+        // proximity target set. `notifiedTargetIDs` is independent
+        // of `targets` so in-flight dedup state survives updates.
+        viewModelScope.launch {
+            combine(geoCacheService.whispers, geoCacheService.cairns) { whispers, cairns ->
+                buildSet<
+                    org.walktalkmeditate.pilgrim.data.proximity.ProximityTarget,
+                > {
+                    whispers.forEach { w ->
+                        add(
+                            org.walktalkmeditate.pilgrim.data.proximity.ProximityTarget(
+                                id = org.walktalkmeditate.pilgrim.data.proximity
+                                    .ProximityTarget.whisperId(w.id),
+                                latitude = w.latitude,
+                                longitude = w.longitude,
+                                radius = org.walktalkmeditate.pilgrim.data.proximity
+                                    .ProximityDetectionService.WHISPER_RADIUS_M,
+                                type = org.walktalkmeditate.pilgrim.data.proximity
+                                    .ProximityTarget.Type.Whisper,
+                            ),
+                        )
+                    }
+                    cairns.forEach { c ->
+                        add(
+                            org.walktalkmeditate.pilgrim.data.proximity.ProximityTarget(
+                                id = org.walktalkmeditate.pilgrim.data.proximity
+                                    .ProximityTarget.cairnId(c.id),
+                                latitude = c.latitude,
+                                longitude = c.longitude,
+                                radius = org.walktalkmeditate.pilgrim.data.proximity
+                                    .ProximityDetectionService.CAIRN_RADIUS_M,
+                                type = org.walktalkmeditate.pilgrim.data.proximity
+                                    .ProximityTarget.Type.Cairn,
+                            ),
+                        )
+                    }
+                }
+            }.collect { proximityService.updateTargets(it) }
         }
     }
 
@@ -1006,15 +1162,47 @@ class WalkViewModel @Inject constructor(
             if (controller.state.value.activeOrPausedWalk()?.walkId == capturedWalkId) {
                 _whispersPlacedThisWalk.update { it + 1 }
                 _placementEvents.emit(PlacementEvent.WhisperPlaced(whisper.id))
+                // iOS parity `ActiveWalkView.swift:823` — suppress
+                // the just-placed whisper so the user doesn't get a
+                // proximity banner on their own placement.
+                proximityService.suppressTarget(
+                    org.walktalkmeditate.pilgrim.data.proximity
+                        .ProximityTarget.whisperId(whisper.id),
+                )
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: org.walktalkmeditate.pilgrim.data.whisper.WhisperError.RateLimited) {
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "Too many whispers placed today"))
+        } catch (e: org.walktalkmeditate.pilgrim.data.whisper.WhisperError.NetworkError) {
+            // iOS parity `GeoCacheService.swift:enqueuePending` — on a
+            // network failure (not server-rejected), enqueue the
+            // placement for replay on the next successful geo-cache
+            // fetch. 7-day TTL + 50-cap enforced by the service.
+            geoCacheService.enqueuePending(
+                org.walktalkmeditate.pilgrim.data.proximity.PendingPlacement(
+                    type = org.walktalkmeditate.pilgrim.data.proximity
+                        .PendingPlacement.PlacementType.Whisper,
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    payload = buildWhisperPayload(whisper.id, category),
+                    timestampMs = clock.now(),
+                ),
+            )
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "Saved for retry — no network"))
         } catch (e: org.walktalkmeditate.pilgrim.data.whisper.WhisperError) {
             Log.w(TAG, "placeWhisper failed: ${e.message}")
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Whisper, "Couldn't place whisper"))
         }
+    }
+
+    private fun buildWhisperPayload(
+        whisperId: String,
+        category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory,
+    ): String {
+        // Coordinates omitted — `GeoCacheService.injectCoords` adds
+        // them at replay time from the stored lat/lon.
+        return """{"whisper_id":"$whisperId","category":"${category.apiValue}","expiry_option":"${org.walktalkmeditate.pilgrim.data.whisper.ExpiryDuration.DEFAULT.apiValue}"}"""
     }
 
     /**
@@ -1057,9 +1245,25 @@ class WalkViewModel @Inject constructor(
             if (controller.state.value.activeOrPausedWalk()?.walkId == capturedWalkId) {
                 _stonePlacedThisWalk.value = true
                 _placementEvents.emit(PlacementEvent.StonePlaced(result.id, result.stoneCount))
+                proximityService.suppressTarget(
+                    org.walktalkmeditate.pilgrim.data.proximity
+                        .ProximityTarget.cairnId(result.id),
+                )
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: org.walktalkmeditate.pilgrim.data.cairn.CairnError.NetworkError) {
+            geoCacheService.enqueuePending(
+                org.walktalkmeditate.pilgrim.data.proximity.PendingPlacement(
+                    type = org.walktalkmeditate.pilgrim.data.proximity
+                        .PendingPlacement.PlacementType.Stone,
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    payload = "{}",
+                    timestampMs = clock.now(),
+                ),
+            )
+            _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "Saved for retry — no network"))
         } catch (e: org.walktalkmeditate.pilgrim.data.cairn.CairnError) {
             Log.w(TAG, "placeStone failed: ${e.message}")
             _placementEvents.emit(PlacementEvent.Failed(PlacementKind.Stone, "Couldn't place stone"))
@@ -1088,6 +1292,12 @@ class WalkViewModel @Inject constructor(
         const val WHISPER_UNLOCK_SECONDS = 7 * 60L
         const val STONE_UNLOCK_SECONDS = 12 * 60L
         const val WHISPER_PER_WALK_CAP = 7
+        // iOS parity `ActiveWalkViewModel.swift:407` — 300s throttle
+        // on GeoCache fetch eligibility checks.
+        const val GEOCACHE_FETCH_THROTTLE_MS = 300_000L
+        // iOS parity `ActiveWalkView.swift:898` — nearest-cairn merge
+        // radius for the StonePlacementSheet "Add to cairn" branch.
+        const val NEAREST_CAIRN_RADIUS_M = 42.0
     }
 }
 

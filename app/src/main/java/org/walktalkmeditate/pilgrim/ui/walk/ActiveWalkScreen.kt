@@ -202,6 +202,25 @@ fun ActiveWalkScreen(
     val canPlaceStone by viewModel.canPlaceStone.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val haptic = LocalHapticFeedback.current
+    val nearbyCairn by viewModel.nearbyCairn.collectAsStateWithLifecycle()
+    var proximityBanner by remember { mutableStateOf<ProximityNotification?>(null) }
+    LaunchedEffect(viewModel) {
+        viewModel.proximityNotifications.collect { notification ->
+            // iOS parity `ActiveWalkView.swift:handleProximityEvent` —
+            // fire haptic + show banner. Haptic intensity differs by
+            // whisper (3 soft transients) vs cairn (2 firm) — Android
+            // approximates with TextHandleMove (light) vs LongPress
+            // (firm) since granular VibrationEffect.Composition would
+            // be its own port.
+            when (notification) {
+                ProximityNotification.Whisper ->
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                is ProximityNotification.Cairn ->
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+            proximityBanner = notification
+        }
+    }
     val placementWhisperPlacedMsg = stringResource(R.string.placement_whisper_placed)
     val placementStonePlacedMsg = stringResource(R.string.placement_stone_placed)
     val placementFailedFmt = stringResource(R.string.placement_failed)
@@ -580,6 +599,7 @@ fun ActiveWalkScreen(
                     viewModel.placeStone()
                 },
                 onDismiss = { showStoneSheet = false },
+                nearbyCairn = nearbyCairn,
             )
         }
         if (showWaypointMarking) {
@@ -710,6 +730,15 @@ fun ActiveWalkScreen(
                 contentColor = pilgrimColors.ink,
             )
         }
+        // iOS parity `ProximityNotificationView.swift@db4196e` — floating
+        // top-center banner for whisper / cairn encounters. Anchored
+        // below the status bar; auto-dismisses 5s after show.
+        ProximityNotificationBanner(
+            event = proximityBanner,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = PilgrimSpacing.big * 2),
+        )
     }
 }
 

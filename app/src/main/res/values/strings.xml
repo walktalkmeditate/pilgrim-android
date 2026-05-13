@@ -514,6 +514,18 @@
     <string name="placement_stone_placed">A stone for your cairn.</string>
     <string name="placement_failed">Couldn\'t place — %1$s</string>
 
+    <!-- iOS parity ProximityNotificationView.swift@db4196e — proximity banners -->
+    <string name="proximity_whisper">A whisper lingers nearby…</string>
+    <string name="proximity_cairn_small">A cairn stands nearby…</string>
+    <string name="proximity_cairn_medium">A cairn of %1$d stones stands nearby…</string>
+    <string name="proximity_cairn_great">A great cairn of %1$d stones…</string>
+    <string name="proximity_cairn_eternal">An eternal cairn of %1$d stones…</string>
+
+    <!-- StonePlacementSheet "Add to cairn" branch -->
+    <string name="stone_sheet_existing_title">Add your stone to this cairn</string>
+    <string name="stone_sheet_existing_count">%1$d stones</string>
+    <string name="stone_sheet_existing_count_one">1 stone</string>
+
     <!-- Stage 10-B: SoundSettingsScreen labels (port of iOS SoundSettingsView). -->
     <string name="settings_sounds_title">Sounds</string>
     <string name="settings_sounds_master_label">Sounds</string>
