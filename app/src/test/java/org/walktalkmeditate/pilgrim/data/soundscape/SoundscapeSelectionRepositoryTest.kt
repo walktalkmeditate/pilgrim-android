@@ -106,6 +106,11 @@ class SoundscapeSelectionRepositoryTest {
 
     private companion object {
         const val DATASTORE_NAME = "soundscape-selection-test"
-        const val AWAIT_TIMEOUT_MS = 10_000L
+        // GitHub Actions runners under contention can exceed 10s on
+        // DataStore round-trips. 3/3 CI runs on PR #107 flaked here
+        // (`select persists and emits` and `selection survives
+        // repository re-construction`). 30s gives enough headroom
+        // without masking a real hang — local runs stay <100ms.
+        const val AWAIT_TIMEOUT_MS = 30_000L
     }
 }
