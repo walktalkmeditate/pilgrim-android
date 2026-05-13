@@ -49,6 +49,8 @@ class DataStorePracticePreferencesRepository @Inject constructor(
         .stateIn(scope, SharingStarted.Eagerly, ZodiacSystem.DEFAULT)
     override val walkReliquaryEnabled: StateFlow<Boolean> =
         boolFlow(KEY_WALK_RELIQUARY_ENABLED, DEFAULT_WALK_RELIQUARY_ENABLED)
+    override val autoPlayWhisperOnProximity: StateFlow<Boolean> =
+        boolFlow(KEY_AUTO_PLAY_WHISPER_ON_PROXIMITY, DEFAULT_AUTO_PLAY_WHISPER_ON_PROXIMITY)
 
     override suspend fun setBeginWithIntention(value: Boolean) {
         dataStore.edit { it[KEY_BEGIN_WITH_INTENTION] = value }
@@ -66,6 +68,10 @@ class DataStorePracticePreferencesRepository @Inject constructor(
         dataStore.edit { it[KEY_WALK_RELIQUARY_ENABLED] = value }
     }
 
+    override suspend fun setAutoPlayWhisperOnProximity(value: Boolean) {
+        dataStore.edit { it[KEY_AUTO_PLAY_WHISPER_ON_PROXIMITY] = value }
+    }
+
     private fun boolFlow(key: Preferences.Key<Boolean>, default: Boolean): StateFlow<Boolean> =
         dataStore.data
             .catch { t ->
@@ -80,11 +86,14 @@ class DataStorePracticePreferencesRepository @Inject constructor(
         const val TAG = "PracticePrefs"
         // iOS UserDefaults keys — match verbatim for cross-platform
         // .pilgrim ZIP round-trip. Keep alphabetical for grep-ability.
+        val KEY_AUTO_PLAY_WHISPER_ON_PROXIMITY =
+            booleanPreferencesKey("autoPlayWhisperOnProximity")
         val KEY_BEGIN_WITH_INTENTION = booleanPreferencesKey("beginWithIntention")
         val KEY_CELESTIAL_AWARENESS_ENABLED = booleanPreferencesKey("celestialAwarenessEnabled")
         val KEY_WALK_RELIQUARY_ENABLED = booleanPreferencesKey("walkReliquaryEnabled")
         val KEY_ZODIAC_SYSTEM = stringPreferencesKey("zodiacSystem")
 
+        const val DEFAULT_AUTO_PLAY_WHISPER_ON_PROXIMITY = true
         const val DEFAULT_BEGIN_WITH_INTENTION = false
         const val DEFAULT_CELESTIAL_AWARENESS_ENABLED = false
         const val DEFAULT_WALK_RELIQUARY_ENABLED = false

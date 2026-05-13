@@ -526,6 +526,20 @@
     <string name="stone_sheet_existing_count">%1$d stones</string>
     <string name="stone_sheet_existing_count_one">1 stone</string>
 
+    <!-- iOS parity CairnDetailView.swift@db4196e — read-only modal -->
+    <plurals name="cairn_detail_stones_plural">
+        <item quantity="one">stone</item>
+        <item quantity="other">stones</item>
+    </plurals>
+    <string name="cairn_detail_close">Close</string>
+    <string name="cairn_tier_faint_desc">A faint cairn just beginning to form.</string>
+    <string name="cairn_tier_small_desc">A small cairn building its presence.</string>
+    <string name="cairn_tier_medium_desc">A cairn well established here.</string>
+    <string name="cairn_tier_large_desc">A large cairn marking this place.</string>
+    <string name="cairn_tier_great_desc">A great cairn — many have passed.</string>
+    <string name="cairn_tier_sacred_desc">A sacred cairn, deeply rooted.</string>
+    <string name="cairn_tier_eternal_desc">An eternal cairn — a landmark for the ages.</string>
+
     <!-- Stage 10-B: SoundSettingsScreen labels (port of iOS SoundSettingsView). -->
     <string name="settings_sounds_title">Sounds</string>
     <string name="settings_sounds_master_label">Sounds</string>
