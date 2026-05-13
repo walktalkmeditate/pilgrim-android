@@ -84,15 +84,21 @@ open class IconSwitcher @Inject constructor(
  * value (unqualified — IconSwitcher prepends the package).
  */
 enum class IconVariant(val aliasName: String) {
-    Default(".IconDefault"),
-    Dark(".IconDark"),
-    Breeze(".IconBreeze"),
-    Drift(".IconDrift"),
-    Dusk(".IconDusk"),
-    Ember(".IconEmber"),
-    River(".IconRiver"),
-    Sage(".IconSage"),
-    Stone(".IconStone");
+    // Reviewer-flagged: `aliasName` is the UN-dotted short name. The
+    // dot prefix is added by IconSwitcher's qualifier — having a dot
+    // BOTH here and in the qualifier produces a double-dot
+    // `org.walktalkmeditate.pilgrim..IconDefault` that PackageManager
+    // silently rejects (no exception; just a no-op). Every switch
+    // would silently no-op.
+    Default("IconDefault"),
+    Dark("IconDark"),
+    Breeze("IconBreeze"),
+    Drift("IconDrift"),
+    Dusk("IconDusk"),
+    Ember("IconEmber"),
+    River("IconRiver"),
+    Sage("IconSage"),
+    Stone("IconStone");
 
     companion object {
         /**

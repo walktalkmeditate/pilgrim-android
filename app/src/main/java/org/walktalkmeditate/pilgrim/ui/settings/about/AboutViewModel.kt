@@ -79,7 +79,17 @@ class AboutViewModel @Inject constructor(
     }
 
     fun setIconVariant(target: IconVariant) {
-        iconSwitcher.switchTo(target)
-        _iconVariant.value = target
+        // Reviewer-flagged: `setComponentEnabledSetting` can throw
+        // `SecurityException` on some hardened ROMs. A throw inside
+        // a Compose click handler would propagate to the event
+        // dispatcher and crash. Catch + re-sync from
+        // `currentVariant()` so the UI never lies about which alias
+        // is enabled.
+        try {
+            iconSwitcher.switchTo(target)
+            _iconVariant.value = target
+        } catch (_: Exception) {
+            _iconVariant.value = iconSwitcher.currentVariant()
+        }
     }
 }

@@ -560,7 +560,12 @@ private fun formatDistance(meters: Double, units: UnitSystem): String {
 
 private fun formatSinceDate(stats: AboutStats): String {
     val instant = stats.firstWalkInstant ?: return ""
-    val formatter = DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault())
+    // Reviewer-flagged: `Locale.getDefault()` applies the device's
+    // DecimalStyle to `yyyy`, producing non-ASCII digits on Arabic/
+    // Persian/Hindi (e.g. ٢٠٢٥ instead of 2025). `Locale.ROOT` keeps
+    // ASCII digits + English month names (acceptable since the app
+    // is English-only per CLAUDE.md). Matches Stage 6-A/6-B precedent.
+    val formatter = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ROOT)
     return formatter.format(instant.atZone(ZoneId.systemDefault()))
 }
 
