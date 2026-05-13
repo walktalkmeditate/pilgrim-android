@@ -186,6 +186,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
     }
 
@@ -428,6 +430,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
 
         controller.startWalk(intention = null)
@@ -470,6 +474,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
 
         controller.startWalk(intention = null)
@@ -585,6 +591,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -622,6 +630,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -687,6 +697,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -873,6 +885,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
     }
 
@@ -896,6 +910,8 @@ class WalkViewModelTest {
             whisperManifestService = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperManifestService(),
             geoCacheService = org.walktalkmeditate.pilgrim.data.proximity.FakeGeoCacheService(),
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
+            whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
+            stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)

@@ -53,4 +53,14 @@ interface PracticePreferencesRepository {
 
     val walkReliquaryEnabled: StateFlow<Boolean>
     suspend fun setWalkReliquaryEnabled(value: Boolean)
+
+    /**
+     * iOS parity `UserPreferences.autoPlayWhisperOnProximity@db4196e`
+     * (default true). Gates the proximity-entry auto-play of a random
+     * whisper from the encountered cache entry's category. Always
+     * folded with `soundsEnabled` at use time. Tap-on-pin is NOT
+     * gated by this flag.
+     */
+    val autoPlayWhisperOnProximity: StateFlow<Boolean>
+    suspend fun setAutoPlayWhisperOnProximity(value: Boolean)
 }

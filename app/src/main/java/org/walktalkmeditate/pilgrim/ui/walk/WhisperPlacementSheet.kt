@@ -12,9 +12,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,10 +63,25 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 fun WhisperPlacementSheet(
     onPlace: (category: WhisperCategory, expiry: ExpiryDuration) -> Unit,
     onDismiss: () -> Unit,
+    isPreviewing: Boolean = false,
+    onPreviewToggle: (WhisperCategory) -> Unit = {},
+    onPreviewStop: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedExpiry by rememberSaveable { mutableStateOf(ExpiryDuration.DEFAULT) }
     var selectedCategory by rememberSaveable { mutableStateOf<WhisperCategory?>(null) }
+    var previewingCategory by rememberSaveable { mutableStateOf<WhisperCategory?>(null) }
+    // iOS parity `WhisperPlacementSheet.swift:69-71@db4196e` — stop
+    // preview on sheet dismiss. Compose equivalent: DisposableEffect
+    // tied to the sheet's composition lifetime.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { onPreviewStop() }
+    }
+    // If preview stops externally (sheet's caller cleared it), clear
+    // the local "playing-this-row" indicator so the icon flips back.
+    androidx.compose.runtime.LaunchedEffect(isPreviewing) {
+        if (!isPreviewing) previewingCategory = null
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -106,6 +125,17 @@ fun WhisperPlacementSheet(
                         category = category,
                         selected = category == selectedCategory,
                         onClick = { selectedCategory = category },
+                        isPreviewing = isPreviewing && category == previewingCategory,
+                        onPreviewToggle = {
+                            if (isPreviewing && category == previewingCategory) {
+                                onPreviewStop()
+                                previewingCategory = null
+                            } else {
+                                onPreviewToggle(category)
+                                previewingCategory = category
+                                selectedCategory = category
+                            }
+                        },
                     )
                 }
             }
@@ -146,6 +176,8 @@ private fun CategoryRow(
     category: WhisperCategory,
     selected: Boolean,
     onClick: () -> Unit,
+    isPreviewing: Boolean = false,
+    onPreviewToggle: () -> Unit = {},
 ) {
     val background = if (selected) {
         pilgrimColors.parchmentSecondary.copy(alpha = 0.5f)
@@ -169,6 +201,18 @@ private fun CategoryRow(
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // iOS parity `WhisperPlacementSheet.swift:98@db4196e` — play/stop
+        // toggle icon, tinted with the category border color.
+        androidx.compose.material3.IconButton(
+            onClick = onPreviewToggle,
+            modifier = Modifier.size(36.dp),
+        ) {
+            androidx.compose.material3.Icon(
+                imageVector = if (isPreviewing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                contentDescription = if (isPreviewing) "Stop preview" else "Preview",
+                tint = category.borderColor,
+            )
+        }
         Text(
             text = stringResource(category.labelRes()),
             style = pilgrimType.body.copy(fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal),

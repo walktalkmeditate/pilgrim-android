@@ -89,6 +89,12 @@ internal fun PilgrimMap(
     // Caller opt-in to keep ActiveWalk + WalkShare on the faster
     // SurfaceView backend by default.
     textureBackend: Boolean = false,
+    // iOS parity `ActiveWalkView.swift:574-659@db4196e` — proximity pin
+    // layer (whisper + cairn). Already-filtered list from
+    // [ProximityPinFilter]; this composable just renders + wires the tap
+    // callback. Empty list → no pin manager work, no allocations.
+    proximityPins: List<ProximityPinFilter.Pin> = emptyList(),
+    onProximityPinTap: (ProximityPinFilter.Pin) -> Unit = {},
 ) {
     val darkMode = LocalPilgrimDarkTheme.current
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
@@ -134,6 +140,17 @@ internal fun PilgrimMap(
     }
     var renderedWalkAnnotationsKey by remember {
         mutableStateOf<Triple<List<WalkMapAnnotation>, WalkAnnotationColors?, Map<Long, Bitmap>>?>(null)
+    }
+    var proximityManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    var renderedProximityPins by remember {
+        mutableStateOf<List<ProximityPinFilter.Pin>>(emptyList())
+    }
+    // Bitmap pin id → (Pin) for the click listener — Mapbox annotation
+    // click callback delivers the PointAnnotation; we look up the
+    // associated Pin via the annotation's textField (used as a key
+    // because PointAnnotation has no opaque data slot).
+    var proximityPinIndex by remember {
+        mutableStateOf<Map<String, ProximityPinFilter.Pin>>(emptyMap())
     }
     val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
         walkAnnotationColors?.let { colors ->
@@ -261,10 +278,23 @@ internal fun PilgrimMap(
         annotationManager = null
         renderedWalkAnnotations = emptyList()
         renderedWalkAnnotationsKey = null
+        proximityManager?.let { view.annotations.removeAnnotationManager(it) }
+        proximityManager = null
+        renderedProximityPins = emptyList()
+        proximityPinIndex = emptyMap()
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
             annotationManager = view.annotations.createPointAnnotationManager()
+            proximityManager = view.annotations.createPointAnnotationManager().apply {
+                addClickListener { annotation ->
+                    val pin = proximityPinIndex[annotation.textField.orEmpty()]
+                    if (pin != null) {
+                        onProximityPinTap(pin)
+                        true
+                    } else false
+                }
+            }
             // Show Mapbox's built-in "you are here" puck on the Active
             // Walk map only. The summary map is a post-hoc review; a live
             // puck there would be out of place. The default 2D puck uses
@@ -540,6 +570,45 @@ internal fun PilgrimMap(
                     renderedWalkAnnotationsKey = key
                 }
             }
+            // iOS parity `ActiveWalkView.swift:574-659@db4196e` —
+            // proximity pin layer rebuild. Snapshot-rebuild gate on
+            // the pin list reference so style-load / zoom re-fires
+            // don't churn the manager.
+            val proxMgr = proximityManager
+            if (proxMgr != null && renderedProximityPins != proximityPins) {
+                proxMgr.deleteAll()
+                val newIndex = mutableMapOf<String, ProximityPinFilter.Pin>()
+                proximityPins.forEach { pin ->
+                    val bitmap = when (pin) {
+                        is ProximityPinFilter.Pin.Whisper ->
+                            createProximityPinBitmap(
+                                color = pin.category.borderColor,
+                                sizeDp = WHISPER_PIN_SIZE_DP,
+                                darkMode = darkMode,
+                            )
+                        is ProximityPinFilter.Pin.Cairn ->
+                            createProximityPinBitmap(
+                                color = if (darkMode) Color(0xFF95A888) else Color(0xFF7A8B6F),
+                                sizeDp = CAIRN_PIN_BASE_DP + pin.tier.ordinal,
+                                darkMode = darkMode,
+                            )
+                    }
+                    val key = pin.id
+                    newIndex[key] = pin
+                    proxMgr.create(
+                        PointAnnotationOptions()
+                            .withPoint(Point.fromLngLat(pin.longitude, pin.latitude))
+                            .withIconImage(bitmap)
+                            .withTextField(key)
+                            // Text is the routing key only — render
+                            // invisible (size 0 + transparent).
+                            .withTextOpacity(0.0)
+                            .withTextSize(0.0),
+                    )
+                }
+                proximityPinIndex = newIndex
+                renderedProximityPins = proximityPins
+            }
         },
         onRelease = { view ->
             // Mapbox v11's lifecycle plugin drives onStart/onStop via the
@@ -567,6 +636,9 @@ internal fun PilgrimMap(
                 annotationManager = null
                 renderedWalkAnnotations = emptyList()
                 renderedWalkAnnotationsKey = null
+                proximityManager = null
+                renderedProximityPins = emptyList()
+                proximityPinIndex = emptyMap()
             }
         },
     )
@@ -619,6 +691,48 @@ private fun createWaypointBitmap(darkMode: Boolean): android.graphics.Bitmap {
  * Reused across all annotations of the same kind in a walk via
  * `remember(walkAnnotationColors, darkMode)`.
  */
+/**
+ * iOS parity `PilgrimMapView.swift:485-503@db4196e` — proximity pin
+ * bitmap. Filled circle in the given color with a parchment stroke
+ * outline (so a category-colored whisper pin reads against either
+ * the light or dark map style). Size in dp; converted to px at
+ * draw time via the device density of the calling Context.
+ */
+private fun createProximityPinBitmap(
+    color: Color,
+    sizeDp: Int,
+    darkMode: Boolean,
+): Bitmap {
+    // 4x dpi factor approximates xxhdpi → device px. Mapbox SDK
+    // accepts the raw Bitmap and scales it; using a fixed 4x gets us
+    // crisp pins at common densities without a Density read here.
+    val sizePx = sizeDp * 4
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val cx = sizePx / 2f
+    val cy = sizePx / 2f
+    val strokeWidth = sizePx * 0.12f
+    val parchment = if (darkMode) 0xFF1A1814.toInt() else 0xFFF5F0E6.toInt()
+    val fill = Paint().apply {
+        isAntiAlias = true
+        this.color = color.toArgb()
+        style = Paint.Style.FILL
+    }
+    val stroke = Paint().apply {
+        isAntiAlias = true
+        this.color = parchment
+        style = Paint.Style.STROKE
+        this.strokeWidth = strokeWidth
+    }
+    val radius = (sizePx / 2f) - strokeWidth
+    canvas.drawCircle(cx, cy, radius, fill)
+    canvas.drawCircle(cx, cy, radius, stroke)
+    return bitmap
+}
+
+private const val WHISPER_PIN_SIZE_DP = 14
+private const val CAIRN_PIN_BASE_DP = 12
+
 private fun createCircleBitmap(color: Color, darkMode: Boolean): Bitmap {
     val size = WAYPOINT_BITMAP_SIZE_PX
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)

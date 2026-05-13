@@ -203,6 +203,8 @@ fun ActiveWalkScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val haptic = LocalHapticFeedback.current
     val nearbyCairn by viewModel.nearbyCairn.collectAsStateWithLifecycle()
+    val proximityPins by viewModel.proximityPins.collectAsStateWithLifecycle()
+    var tappedCairn by remember { mutableStateOf<org.walktalkmeditate.pilgrim.data.cairn.CachedCairn?>(null) }
     var proximityBanner by remember { mutableStateOf<ProximityNotification?>(null) }
     LaunchedEffect(viewModel) {
         viewModel.proximityNotifications.collect { notification ->
@@ -459,7 +461,25 @@ fun ActiveWalkScreen(
             bottomInsetDp = sheetInsetDp,
             waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
+            proximityPins = proximityPins,
+            onProximityPinTap = { pin ->
+                when (pin) {
+                    is ProximityPinFilter.Pin.Whisper ->
+                        viewModel.playRandomWhisperInCategory(pin.category)
+                    is ProximityPinFilter.Pin.Cairn -> {
+                        // Look up the live CachedCairn for the modal.
+                        val cached = viewModel.cachedCairnById(pin.id)
+                        if (cached != null) tappedCairn = cached
+                    }
+                }
+            },
         )
+        tappedCairn?.let { cairn ->
+            CairnDetailSheet(
+                cairn = cairn,
+                onDismiss = { tappedCairn = null },
+            )
+        }
         // Weather greeting overlay — fades in over 0.8s + holds 3.5s +
         // fades out over 1.0s. Aligned to top so it sits above the map
         // overlay buttons; ZIndex inferred from declaration order.
@@ -579,6 +599,7 @@ fun ActiveWalkScreen(
             )
         }
         if (showWhisperSheet) {
+            val isWhisperPreviewing by viewModel.isWhisperPreviewing.collectAsStateWithLifecycle()
             WhisperPlacementSheet(
                 onPlace = { category, _ ->
                     showWhisperSheet = false
@@ -589,7 +610,13 @@ fun ActiveWalkScreen(
                     // increment after server-success).
                     viewModel.placeWhisper(category)
                 },
-                onDismiss = { showWhisperSheet = false },
+                onDismiss = {
+                    viewModel.stopWhisperPreview()
+                    showWhisperSheet = false
+                },
+                isPreviewing = isWhisperPreviewing,
+                onPreviewToggle = viewModel::previewWhisperCategory,
+                onPreviewStop = viewModel::stopWhisperPreview,
             )
         }
         if (showStoneSheet) {

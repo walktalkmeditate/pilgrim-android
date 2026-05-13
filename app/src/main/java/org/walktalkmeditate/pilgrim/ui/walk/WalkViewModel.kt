@@ -93,7 +93,7 @@ class WalkViewModel @Inject constructor(
     private val walkRecoveryRepository:
         org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository,
     unitsPreferences: UnitsPreferencesRepository,
-    practicePreferences: PracticePreferencesRepository,
+    private val practicePreferences: PracticePreferencesRepository,
     private val weatherFetching: WeatherFetching,
     collectiveStats: org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource,
     private val soundsPreferences:
@@ -108,6 +108,10 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.proximity.GeoCacheService,
     private val proximityService:
         org.walktalkmeditate.pilgrim.data.proximity.ProximityDetectionService,
+    private val whisperPlayer:
+        org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer,
+    private val stonePlayer:
+        org.walktalkmeditate.pilgrim.data.cairn.StonePlayer,
 ) : ViewModel() {
 
     /**
@@ -197,6 +201,37 @@ class WalkViewModel @Inject constructor(
                 }
             }
             .shareIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS))
+
+    /**
+     * iOS parity `ActiveWalkView.swift:574-659@db4196e` — proximity pin
+     * list, already filtered (2000m radius + 30 cap + 15m same-type
+     * separation). PilgrimMap consumes this directly. Updates on every
+     * geocache emission AND every controller state change (location
+     * delta drives a re-filter).
+     */
+    val proximityPins:
+        StateFlow<List<org.walktalkmeditate.pilgrim.ui.walk.ProximityPinFilter.Pin>> =
+        combine(controller.state, geoCacheService.whispers, geoCacheService.cairns) {
+                state, whispers, cairns ->
+            val location = state.activeOrPausedWalk()?.lastLocation
+                ?: return@combine emptyList()
+            org.walktalkmeditate.pilgrim.ui.walk.ProximityPinFilter.build(
+                whispers = whispers,
+                cairns = cairns,
+                userLatitude = location.latitude,
+                userLongitude = location.longitude,
+            )
+            // Structural-equal lists collapse — `data class Pin` provides
+            // content equality, so the operator drops a re-emission when
+            // the filtered set is unchanged. The filter still RECOMPUTES
+            // on every location tick (cheap haversine over <= 30 items);
+            // we just avoid downstream bitmap+annotation churn when the
+            // pin set is stable. Reviewer-flagged.
+        }.distinctUntilChanged().stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            emptyList(),
+        )
 
     /**
      * iOS parity `ActiveWalkView.swift:895-906` —
@@ -813,6 +848,34 @@ class WalkViewModel @Inject constructor(
                     geoCacheService.fetchIfNeeded(loc.latitude, loc.longitude)
                 }
         }
+        // iOS parity `ActiveWalkView.swift:944-951@db4196e` — auto-play
+        // a random placeable whisper from the encountered cache entry's
+        // category on every proximity-entry event, gated on both
+        // `autoPlayWhisperOnProximity` AND `soundsEnabled` prefs.
+        // The banner + haptic fire regardless of these prefs (handled
+        // upstream in `proximityNotifications`); only the AUDIO needs
+        // the gate. Tap-on-pin is a separate path with no pref gate
+        // — wired in ActiveWalkScreen.
+        viewModelScope.launch {
+            proximityService.events
+                .filter {
+                    it.direction == org.walktalkmeditate.pilgrim.data.proximity
+                        .ProximityEvent.Direction.Entered
+                }
+                .collect { event ->
+                    if (event.target.type != org.walktalkmeditate.pilgrim.data.proximity
+                            .ProximityTarget.Type.Whisper) return@collect
+                    if (!practicePreferences.autoPlayWhisperOnProximity.value) return@collect
+                    if (!soundsPreferences.soundsEnabled.value) return@collect
+                    val cacheId = event.target.id.removePrefix("whisper-")
+                    val cached = geoCacheService.whispers.value
+                        .firstOrNull { it.id == cacheId } ?: return@collect
+                    val category = cached.resolvedCategory ?: return@collect
+                    val definition = whisperManifestService.randomWhisper(category)
+                        ?: return@collect
+                    whisperPlayer.play(definition)
+                }
+        }
         // iOS parity `ActiveWalkViewModel.swift:421-427` — whenever
         // the geo cache emits new whispers or cairns, rebuild the
         // proximity target set. `notifiedTargetIDs` is independent
@@ -1095,6 +1158,71 @@ class WalkViewModel @Inject constructor(
     suspend fun restoreActiveWalk(): Walk? = controller.restoreActiveWalk()
 
     /**
+     * iOS parity `ActiveWalkView.swift:911-919@db4196e` — tap-on-pin
+     * plays a random placeable whisper from [category] at full volume.
+     * Always fires (no `autoPlayWhisperOnProximity` gate); only
+     * gated by `soundsEnabled` inside WhisperPlayer.
+     */
+    fun playRandomWhisperInCategory(
+        category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory,
+    ) {
+        viewModelScope.launch {
+            val def = whisperManifestService.randomWhisper(category) ?: run {
+                // Lazy manifest fetch if not yet loaded.
+                if (whisperManifestService.manifest.value == null) {
+                    whisperManifestService.refresh()
+                }
+                whisperManifestService.randomWhisper(category)
+            } ?: return@launch
+            whisperPlayer.play(def)
+        }
+    }
+
+    /**
+     * iOS parity `WhisperPlacementSheet.swift:85-96@db4196e` — preview
+     * button on a category row picks a random whisper from the
+     * manifest (including non-placeable/retired) and plays at
+     * preview volume.
+     */
+    fun previewWhisperCategory(
+        category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory,
+    ) {
+        viewModelScope.launch {
+            if (whisperManifestService.manifest.value == null) {
+                whisperManifestService.refresh()
+            }
+            val def = whisperManifestService.randomWhisper(category) ?: return@launch
+            whisperPlayer.preview(def)
+        }
+    }
+
+    /**
+     * Stop the whisper preview channel. Called from
+     * WhisperPlacementSheet.onDismiss + stop button. Uses
+     * [WhisperPlayer.stopPreviewOnly] so a main-channel whisper
+     * (proximity / tap / placement) playing concurrently survives a
+     * sheet dismiss. Reviewer-flagged: prior `stop()` killed both
+     * channels and cut mid-sentence whisper audio.
+     */
+    fun stopWhisperPreview() {
+        whisperPlayer.stopPreviewOnly()
+    }
+
+    /** Pass-through for WhisperPlacementSheet's per-row play/stop toggle. */
+    val isWhisperPreviewing:
+        kotlinx.coroutines.flow.StateFlow<Boolean> get() = whisperPlayer.isPlaying
+
+    /**
+     * Look up a [CachedCairn] by its server id. Used by the map-tap
+     * handler to resolve a tapped pin to the full cached object before
+     * opening [CairnDetailSheet]. Returns null if the cache no longer
+     * contains it (rare — would require a fetch round-trip evicting
+     * the cairn between pin render and tap).
+     */
+    fun cachedCairnById(id: String): org.walktalkmeditate.pilgrim.data.cairn.CachedCairn? =
+        geoCacheService.cairns.value.firstOrNull { it.id == id }
+
+    /**
      * iOS parity `ActiveWalkView.swift:786-834@db4196e` —
      * server-confirm-then-haptic placement.
      *
@@ -1178,6 +1306,11 @@ class WalkViewModel @Inject constructor(
                     org.walktalkmeditate.pilgrim.data.proximity
                         .ProximityTarget.whisperId(whisper.id),
                 )
+                // iOS parity `ActiveWalkView.swift:817-819@db4196e` —
+                // play the just-placed whisper after server confirm.
+                // WhisperPlayer.play short-circuits when soundsEnabled
+                // is off, so the gate stays at the player not here.
+                whisperPlayer.play(whisper)
             }
         } catch (e: CancellationException) {
             throw e
@@ -1282,6 +1415,11 @@ class WalkViewModel @Inject constructor(
                     org.walktalkmeditate.pilgrim.data.proximity
                         .ProximityTarget.cairnId(result.id),
                 )
+                // iOS parity `ActiveWalkView.swift:855-861@db4196e` —
+                // tier bell fires after server confirm, scaled by the
+                // post-placement stone count. Silent when `soundsEnabled`
+                // is off (StonePlayer reads the pref internally).
+                stonePlayer.playForCount(result.stoneCount)
             }
         } catch (e: CancellationException) {
             throw e
