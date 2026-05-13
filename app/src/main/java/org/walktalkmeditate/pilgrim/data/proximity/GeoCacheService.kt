@@ -145,31 +145,41 @@ open class GeoCacheService @Inject constructor(
                 val moved = approxMetersBetween(prevLat, prevLon, latitude, longitude)
                 if (moved <= REFETCH_THRESHOLD_M) return@withLock
             }
-            withContext(Dispatchers.IO) {
+            val (whispersOk, cairnsOk) = withContext(Dispatchers.IO) {
                 val whispersDeferred = async { fetchWhispers(latitude, longitude) }
                 val cairnsDeferred = async { fetchCairns(latitude, longitude) }
-                awaitAll(whispersDeferred, cairnsDeferred)
+                val results = awaitAll(whispersDeferred, cairnsDeferred)
+                results[0] to results[1]
             }
-            lastFetchLat = latitude
-            lastFetchLon = longitude
+            // Only commit the fetch center when at least ONE side
+            // succeeded (2xx or 304 — both mean the server is
+            // reachable). A double-network-failure must NOT update
+            // the center; otherwise the 10km re-fetch threshold
+            // would suppress the next retry until the user moves
+            // 10km, leaving them with an empty cache for the rest
+            // of the walk. Reviewer flag — real bug.
+            if (whispersOk || cairnsOk) {
+                lastFetchLat = latitude
+                lastFetchLon = longitude
+            }
         }
         // Pending replay runs OUTSIDE the mutex so a pending POST
         // doesn't block the next fetch.
         syncPendingPlacements()
     }
 
-    private suspend fun fetchWhispers(lat: Double, lon: Double) {
+    private suspend fun fetchWhispers(lat: Double, lon: Double): Boolean {
         val request = Request.Builder()
             .url("$BASE_URL/api/whispers?lat=$lat&lon=$lon&radius=$FETCH_RADIUS_M")
             .get()
             .apply { whispersEtag?.let { header("If-None-Match", it) } }
             .build()
-        try {
+        return try {
             httpClient.newCall(request).awaitResponse().use { response ->
-                if (response.code == 304) return@use
+                if (response.code == 304) return@use true
                 if (!response.isSuccessful) {
                     Log.w(TAG, "whispers fetch HTTP ${response.code}")
-                    return@use
+                    return@use false
                 }
                 val bodyStr = response.body.string()
                 val decoded = json.decodeFromString(
@@ -179,28 +189,31 @@ open class GeoCacheService @Inject constructor(
                 _whispers.value = decoded
                 response.header("ETag")?.let { whispersEtag = it }
                 context.geoCacheStore.edit { prefs -> prefs[KEY_WHISPERS] = bodyStr }
+                true
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
             Log.w(TAG, "whispers fetch network: ${e.message}")
+            false
         } catch (e: Exception) {
             Log.w(TAG, "whispers fetch decode: ${e.message}")
+            false
         }
     }
 
-    private suspend fun fetchCairns(lat: Double, lon: Double) {
+    private suspend fun fetchCairns(lat: Double, lon: Double): Boolean {
         val request = Request.Builder()
             .url("$BASE_URL/api/cairns?lat=$lat&lon=$lon&radius=$FETCH_RADIUS_M")
             .get()
             .apply { cairnsEtag?.let { header("If-None-Match", it) } }
             .build()
-        try {
+        return try {
             httpClient.newCall(request).awaitResponse().use { response ->
-                if (response.code == 304) return@use
+                if (response.code == 304) return@use true
                 if (!response.isSuccessful) {
                     Log.w(TAG, "cairns fetch HTTP ${response.code}")
-                    return@use
+                    return@use false
                 }
                 val bodyStr = response.body.string()
                 val decoded = json.decodeFromString(
@@ -210,13 +223,16 @@ open class GeoCacheService @Inject constructor(
                 _cairns.value = decoded
                 response.header("ETag")?.let { cairnsEtag = it }
                 context.geoCacheStore.edit { prefs -> prefs[KEY_CAIRNS] = bodyStr }
+                true
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
             Log.w(TAG, "cairns fetch network: ${e.message}")
+            false
         } catch (e: Exception) {
             Log.w(TAG, "cairns fetch decode: ${e.message}")
+            false
         }
     }
 

@@ -82,7 +82,7 @@ data class WalkUiState(
     val paceSecondsPerKm: Double? get() = WalkStats.averagePaceSecondsPerKm(walkState, nowMillis)
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class WalkViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -1196,13 +1196,37 @@ class WalkViewModel @Inject constructor(
         }
     }
 
+    @kotlinx.serialization.Serializable
+    private data class WhisperReplayPayload(
+        @kotlinx.serialization.SerialName("whisper_id") val whisperId: String,
+        val category: String,
+        @kotlinx.serialization.SerialName("expiry_option") val expiryOption: String,
+    )
+
     private fun buildWhisperPayload(
         whisperId: String,
         category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory,
     ): String {
         // Coordinates omitted — `GeoCacheService.injectCoords` adds
-        // them at replay time from the stored lat/lon.
-        return """{"whisper_id":"$whisperId","category":"${category.apiValue}","expiry_option":"${org.walktalkmeditate.pilgrim.data.whisper.ExpiryDuration.DEFAULT.apiValue}"}"""
+        // them at replay time from the stored lat/lon. Use the
+        // project Json singleton (not string interpolation) so an
+        // exotic whisperId / category value can never break the
+        // wire format. (Both are enum / server-assigned today, but
+        // the safety belt costs one struct.)
+        return jsonForPayload.encodeToString(
+            WhisperReplayPayload.serializer(),
+            WhisperReplayPayload(
+                whisperId = whisperId,
+                category = category.apiValue,
+                expiryOption = org.walktalkmeditate.pilgrim.data.whisper
+                    .ExpiryDuration.DEFAULT.apiValue,
+            ),
+        )
+    }
+
+    private val jsonForPayload = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
     }
 
     /**
