@@ -4,14 +4,21 @@ package org.walktalkmeditate.pilgrim.ui.settings.about
 import app.cash.turbine.test
 import java.time.Instant
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -20,9 +27,27 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = android.app.Application::class)
 class AboutViewModelTest {
+
+    // Reviewer-flagged: the 3 icon-variant tests call VM methods that
+    // `viewModelScope.launch(Dispatchers.IO)`. Without `setMain`,
+    // `viewModelScope` would dispatch through the real Android Main
+    // Looper that `runTest` cannot drain; the IO continuations would
+    // be wall-clock-dependent and could flake on slow CI runners.
+    // Pattern matches `SettingsViewModelTest`,
+    // `SoundSettingsViewModelTest`, and every other settings VM test.
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
 
     @Test
     fun `no walks yields hasWalks=false`() = runTest {
