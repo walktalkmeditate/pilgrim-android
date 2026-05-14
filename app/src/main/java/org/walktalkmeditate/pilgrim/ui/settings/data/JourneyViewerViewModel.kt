@@ -46,11 +46,16 @@ class JourneyViewerViewModel @Inject constructor(
     private val _state = MutableStateFlow<JourneyState>(JourneyState.Loading)
     val state: StateFlow<JourneyState> = _state.asStateFlow()
 
-    init {
-        loadJourney()
-    }
-
-    private fun loadJourney() {
+    /**
+     * iOS parity `JourneyViewerView.swift:.task { await prepareData() }`
+     * — `.task` re-fires on every view appearance. Android equivalent
+     * is calling [refresh] from the screen's `Lifecycle.Event.ON_RESUME`
+     * which also fires on first composition (covers cold-start load).
+     * No `init` trigger — would double-fire with ON_RESUME on cold open.
+     * Reviewer-flagged: prior init-only load left stale data after
+     * back-nav.
+     */
+    fun refresh() {
         viewModelScope.launch {
             _state.value = try {
                 buildPayload()

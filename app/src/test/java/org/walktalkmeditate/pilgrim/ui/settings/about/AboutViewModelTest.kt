@@ -4,25 +4,55 @@ package org.walktalkmeditate.pilgrim.ui.settings.about
 import app.cash.turbine.test
 import java.time.Instant
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
 class AboutViewModelTest {
+
+    // Reviewer-flagged: the 3 icon-variant tests call VM methods that
+    // `viewModelScope.launch(Dispatchers.IO)`. Without `setMain`,
+    // `viewModelScope` would dispatch through the real Android Main
+    // Looper that `runTest` cannot drain; the IO continuations would
+    // be wall-clock-dependent and could flake on slow CI runners.
+    // Pattern matches `SettingsViewModelTest`,
+    // `SoundSettingsViewModelTest`, and every other settings VM test.
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
 
     @Test
     fun `no walks yields hasWalks=false`() = runTest {
         val source = FakeWalkSource(flowOf(emptyList()))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -42,7 +72,7 @@ class AboutViewModelTest {
             walk(id = 2, start = 5_000, distanceMeters = 2200.0),
         )
         val source = FakeWalkSource(flowOf(walks))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -62,7 +92,7 @@ class AboutViewModelTest {
             Walk(id = 2, startTimestamp = 5_000, endTimestamp = null, distanceMeters = 999.0),
         )
         val source = FakeWalkSource(flowOf(walks))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
@@ -86,13 +116,87 @@ class AboutViewModelTest {
             Walk(id = 2, startTimestamp = 5_000, endTimestamp = 6_000, distanceMeters = 1234.0),
         )
         val source = FakeWalkSource(flowOf(walks))
-        val vm = AboutViewModel(source, FakeUnits())
+        val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
         vm.stats.test(timeout = 10.seconds) {
             var current = awaitItem()
             while (current.walkCount != 2) current = awaitItem()
             assertEquals(2, current.walkCount)
             assertEquals(1234.0, current.totalDistanceMeters, 0.001)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `setIconVariant happy path updates iconVariant`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()))
+        val fake = RecordingIconSwitcher()
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
+                current = awaitItem()
+            }
+            assertEquals(
+                org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+                current,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+            fake.lastSwitchTo,
+        )
+    }
+
+    @Test
+    fun `refreshIconVariant re-reads currentVariant and updates flow`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()))
+        // Returns Default on VM init, then Sage on every subsequent
+        // call — refreshIconVariant must reach the Sage emission.
+        val fake = SteppedIconSwitcher(
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default,
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+        )
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.refreshIconVariant()
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
+                current = awaitItem()
+            }
+            assertEquals(
+                org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+                current,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `setIconVariant catch path re-syncs from currentVariant on throw`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()))
+        val fake = ThrowingIconSwitcher()
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.River)
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            // Initial value is Default; ThrowingIconSwitcher.switchTo throws;
+            // catch re-reads currentVariant() which returns Dark.
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark) {
+                current = awaitItem()
+            }
+            assertEquals(
+                org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark,
+                current,
+            )
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -116,5 +220,61 @@ private class FakeUnits : UnitsPreferencesRepository {
     override val distanceUnits = _distanceUnits
     override suspend fun setDistanceUnits(value: UnitSystem) {
         _distanceUnits.value = value
+    }
+}
+
+private class FakeIconSwitcher : org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+    context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+) {
+    override fun currentVariant() =
+        org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) = Unit
+}
+
+private class RecordingIconSwitcher :
+    org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+        context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+    ) {
+    var lastSwitchTo: org.walktalkmeditate.pilgrim.data.launcher.IconVariant? = null
+    override fun currentVariant() =
+        org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) {
+        lastSwitchTo = target
+    }
+}
+
+private class SteppedIconSwitcher(
+    private val firstCall: org.walktalkmeditate.pilgrim.data.launcher.IconVariant,
+    private val subsequentCalls: org.walktalkmeditate.pilgrim.data.launcher.IconVariant,
+) : org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+    context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+) {
+    private var callCount = 0
+    override fun currentVariant() =
+        if (callCount++ == 0) firstCall else subsequentCalls
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) = Unit
+}
+
+private class ThrowingIconSwitcher :
+    org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher(
+        context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+    ) {
+    private var callCount = 0
+    // Reviewer-flagged: a single-value `currentVariant()` would make
+    // the catch-path test pass for the wrong reason — VM init reads
+    // the same value the catch re-sync reads, so the StateFlow emits
+    // nothing and the test observes only the initial value.
+    // Returning Default on the first call (VM init) and Dark on
+    // every subsequent call (catch re-sync) forces an observable
+    // Default → Dark transition that's only reachable if the catch
+    // block executed.
+    override fun currentVariant() =
+        if (callCount++ == 0) {
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
+        } else {
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Dark
+        }
+    override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) {
+        throw SecurityException("ROM blocked alias toggle")
     }
 }
