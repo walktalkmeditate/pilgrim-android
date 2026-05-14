@@ -42,6 +42,10 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
     @Inject lateinit var appearancePreferences: AppearancePreferencesRepository
     @Inject lateinit var soundsPreferences: SoundsPreferencesRepository
+    @Inject lateinit var voicePreferences:
+        org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
+    @Inject lateinit var voiceGuideSelection:
+        org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideSelectionRepository
     @Inject
     lateinit var hemisphereRepository:
         org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
@@ -82,6 +86,14 @@ class MainActivity : ComponentActivity() {
             val soundsEnabled by soundsPreferences.soundsEnabled.collectAsStateWithLifecycle()
             val bellHapticEnabled by soundsPreferences.bellHapticEnabled.collectAsStateWithLifecycle()
             val breathRhythmId by soundsPreferences.breathRhythm.collectAsStateWithLifecycle()
+            val voiceGuideEnabled by voicePreferences.voiceGuideEnabled.collectAsStateWithLifecycle()
+            val selectedVoiceGuidePackId by voiceGuideSelection.selectedPackId.collectAsStateWithLifecycle()
+            // iOS parity `PilgrimLogoView.swift:17-22@db4196e` — the
+            // active guide is null when voice guide is disabled OR no
+            // pack selected. Collapsing both flags into one optional
+            // string here lets every consumer (PilgrimLogo, future
+            // app-icon switcher) read a single value.
+            val activeVoiceGuideId = selectedVoiceGuidePackId?.takeIf { voiceGuideEnabled }
             // iOS parity Color.swift@db4196e — all palette tokens get a
             // SeasonalColorEngine shift applied throughout the app.
             // Hemisphere comes from HemisphereRepository (defaults
@@ -100,6 +112,8 @@ class MainActivity : ComponentActivity() {
                     LocalSoundsEnabled provides soundsEnabled,
                     LocalBellHapticEnabled provides bellHapticEnabled,
                     LocalBreathRhythm provides breathRhythmId,
+                    org.walktalkmeditate.pilgrim.data.voiceguide.LocalActiveVoiceGuideId
+                        provides activeVoiceGuideId,
                 ) {
                     // Stage 9.5-A: PilgrimNavHost owns the only Scaffold in
                     // the chain. MainActivity's previous Scaffold was

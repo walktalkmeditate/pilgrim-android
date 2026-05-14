@@ -6,11 +6,18 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher
+import org.walktalkmeditate.pilgrim.data.launcher.IconVariant
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 
@@ -29,17 +36,16 @@ data class AboutStats(
 class AboutViewModel @Inject constructor(
     private val walkSource: AboutWalkSource,
     unitsPreferences: UnitsPreferencesRepository,
+    private val iconSwitcher: IconSwitcher,
 ) : ViewModel() {
 
     val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
     /**
-     * Stage 11-A: reads `Walk.distanceMeters` cache col directly instead
-     * of running `locationSamplesFor` per walk. Cache cols are populated
-     * at finalize-time (Task 5) and a backfill coordinator (Task 6)
-     * drains stale rows in the background, so a `null` is the empty-state
-     * (no walks) or a transient pre-backfill state — both safely handled
-     * by `?: 0.0`. Drops the per-walk N+1 to zero queries.
+     * Reviewer-flagged: `flowOn(Dispatchers.IO)` for parity with
+     * `SettingsViewModel.practiceSummary` — Room hot Flow defaults to
+     * Room's executor but explicit IO insulates against test configs
+     * + future migrations that change the emit dispatcher.
      */
     val stats: StateFlow<AboutStats> = walkSource.observeAllWalks()
         .map { walks ->
@@ -53,9 +59,48 @@ class AboutViewModel @Inject constructor(
             )
         }
         .catch { emit(AboutStats.Empty) }
+        .flowOn(Dispatchers.IO)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000L),
             initialValue = AboutStats.Empty,
         )
+
+    /**
+     * iOS parity `AboutView.swift:73-82@db4196e` — observable current
+     * app-icon variant. Refreshed via [refreshIconVariant] every time
+     * the confirmation dialog opens so the "is current?" predicate
+     * is fresh after a back-to-back switch.
+     */
+    private val _iconVariant = MutableStateFlow(iconSwitcher.currentVariant())
+    val iconVariant: StateFlow<IconVariant> = _iconVariant.asStateFlow()
+
+    fun refreshIconVariant() {
+        // Reviewer-flagged: `PackageManager.getComponentEnabledSetting`
+        // is a binder IPC. 9 calls × ~1-5ms each is small but adds
+        // visible jank if scheduled on Main inside the click handler.
+        // Hop to IO; StateFlow writes are thread-safe.
+        viewModelScope.launch(Dispatchers.IO) {
+            _iconVariant.value = iconSwitcher.currentVariant()
+        }
+    }
+
+    fun setIconVariant(target: IconVariant) {
+        // Reviewer-flagged:
+        //  1. `setComponentEnabledSetting` is binder IPC — same
+        //     IO-hop rationale as `refreshIconVariant`.
+        //  2. The same call can throw `SecurityException` on some
+        //     hardened ROMs. A throw inside a Compose click handler
+        //     would propagate to the event dispatcher and crash.
+        //     Catch + re-sync from `currentVariant()` so the UI
+        //     never lies about which alias is enabled.
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                iconSwitcher.switchTo(target)
+                _iconVariant.value = target
+            } catch (_: Exception) {
+                _iconVariant.value = iconSwitcher.currentVariant()
+            }
+        }
+    }
 }

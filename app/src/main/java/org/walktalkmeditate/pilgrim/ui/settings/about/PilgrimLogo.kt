@@ -19,6 +19,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.voiceguide.LocalActiveVoiceGuideId
 
 /**
  * Pilgrim logo. iOS scales 1.0 → 1.02 over 4s easeInOut when [breathing]
@@ -52,8 +53,10 @@ fun PilgrimLogo(
     } else {
         1.0f
     }
+    val guideId = LocalActiveVoiceGuideId.current
+    val drawableId = drawableForGuide(guideId)
     Image(
-        painter = painterResource(R.drawable.ic_pilgrim_logo),
+        painter = painterResource(drawableId),
         contentDescription = null,
         modifier = modifier
             .size(size)
@@ -64,4 +67,22 @@ fun PilgrimLogo(
             },
         contentScale = ContentScale.Fit,
     )
+}
+
+/**
+ * iOS parity `PilgrimLogoView.swift:15-22@db4196e`. Map the active voice
+ * guide pack id to its themed logo drawable. Unrecognized / null id →
+ * default `ic_pilgrim_logo`. The seven known guide ids are the iOS
+ * v1.5.0 set: breeze, drift, dusk, ember, river, sage, stone. Future
+ * packs without a matching drawable silently fall back to default.
+ */
+private fun drawableForGuide(guideId: String?): Int = when (guideId) {
+    "breeze" -> R.drawable.ic_pilgrim_logo_breeze
+    "drift" -> R.drawable.ic_pilgrim_logo_drift
+    "dusk" -> R.drawable.ic_pilgrim_logo_dusk
+    "ember" -> R.drawable.ic_pilgrim_logo_ember
+    "river" -> R.drawable.ic_pilgrim_logo_river
+    "sage" -> R.drawable.ic_pilgrim_logo_sage
+    "stone" -> R.drawable.ic_pilgrim_logo_stone
+    else -> R.drawable.ic_pilgrim_logo
 }

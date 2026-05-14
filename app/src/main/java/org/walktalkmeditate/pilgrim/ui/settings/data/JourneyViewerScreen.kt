@@ -45,6 +45,20 @@ fun JourneyViewerScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    // iOS parity `JourneyViewerView.swift:.task { await prepareData() }`
+    // — re-load on every view appearance so a walk added in another tab
+    // while this route is in the back-stack appears on return.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
