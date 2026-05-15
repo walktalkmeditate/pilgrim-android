@@ -153,11 +153,12 @@ class SoundscapeDownloadWorkerTest {
         assertEquals(ListenableWorker.Result.failure(), worker.doWork())
     }
 
-    @Test fun `bell-typed asset (wrong type) returns failure`() = runBlocking {
-        // Guard: the worker should only download soundscapes, not bells —
-        // even if the id exists in the manifest.
-        seedManifest(listOf(asset("chime", type = AudioAssetType.BELL)))
-        val worker = buildWorker("chime")
+    @Test fun `unknown-typed asset returns failure`() = runBlocking {
+        // The worker downloads soundscapes AND bells (iOS pre-downloads
+        // both). Any OTHER future asset type is rejected so a forward-
+        // compat manifest addition doesn't get downloaded blindly.
+        seedManifest(listOf(asset("mystery", type = "podcast")))
+        val worker = buildWorker("mystery")
         assertEquals(ListenableWorker.Result.failure(), worker.doWork())
     }
 
@@ -184,6 +185,23 @@ class SoundscapeDownloadWorkerTest {
 
         assertEquals(ListenableWorker.Result.success(), result)
         assertTrue(fileStore.isAvailable(a))
+    }
+
+    @Test fun `downloads BELL asset (not just soundscape) and reports success`() = runBlocking {
+        // Regression: doWork's type guard was `== SOUNDSCAPE`, so every
+        // bell download hard-failed → files/audio/bell stayed empty →
+        // BellFileResolver always fell back to the bundled bell and
+        // every picked bell sounded identical.
+        val bell = asset("temple-bell", size = 6, type = AudioAssetType.BELL)
+        seedManifest(listOf(bell))
+
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray(6))))
+
+        val worker = buildWorker("temple-bell")
+        val result = worker.doWork()
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertTrue(fileStore.isAvailable(bell))
     }
 
     @Test fun `503 triggers single retry then reports retry`() = runBlocking {
