@@ -110,8 +110,6 @@ fun ActiveWalkScreen(
     onFinished: (walkId: Long) -> Unit,
     onEnterMeditation: () -> Unit,
     onDiscarded: () -> Unit,
-    onOpenVoiceGuides: () -> Unit = {},
-    onOpenSoundscapes: () -> Unit = {},
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -408,50 +406,20 @@ fun ActiveWalkScreen(
         // anything else = we're entering an in-progress walk (recovery).
         navWalkState !is WalkState.Idle
     }
-    LaunchedEffect(navWalkState, beginWithIntention, intention) {
-        if (isRecoveryComposition) return@LaunchedEffect
-        if (!shouldAutoPromptIntention(
-                walkState = navWalkState,
-                beginWithIntention = beginWithIntention,
-                intention = intention,
-                hasCheckedAutoIntention = hasCheckedAutoIntention.value,
-            )
-        ) {
-            return@LaunchedEffect
-        }
-        // Set the latch BEFORE the delay so a recompose firing the
-        // effect again (e.g., the per-second tick driving uiState
-        // doesn't fire here, but `intention` flipping null -> "x" via
-        // a separate path would re-key the effect) finds the latch
-        // already set.
-        hasCheckedAutoIntention.value = true
-        delay(AUTO_INTENTION_DELAY_MS)
-        // Re-check after the delay — the user might have set the
-        // intention via the ellipsis menu in the gap, or paused /
-        // discarded the walk. Also guard against sheet collision: if
-        // any other modal surface is already open (ellipsis options,
-        // leave confirm, waypoint marking), don't pop the auto-intent
-        // dialog on top of it. The user can still set the intention
-        // from the options menu they're currently in. `if` instead of
-        // an early-return so the latch stays set in either case (iOS
-        // reference is "fire at most once per walk").
-        // Defense-in-depth: include `showPreWalkIntention` even though
-        // the state-change effect dismisses it on Idle→Active before
-        // this delay starts. If a future refactor decouples that
-        // dismissal, the auto-prompt would otherwise stack on top.
-        // Also include `showAutoIntention` itself — closes the re-entrancy
-        // window where a `remember(activeWalkId)` reset (brief walkId flip
-        // mid-delay) could let a second auto-prompt stack atop a still-
-        // visible first one. The latch is set before the delay, so the
-        // realistic failure path is small, but the guard cost is one
-        // boolean OR.
-        val anyOtherSheetOpen = showOptions || showLeaveConfirm ||
-            showWaypointMarking || showPreWalkIntention ||
-            showAutoIntention
-        if (navWalkState is WalkState.Active && intention == null && !anyOtherSheetOpen) {
-            showAutoIntention = true
-        }
-    }
+    // Product decision (overrides the iOS `ActiveWalkView.swift:374`
+    // auto-prompt): the intention is a PRE-WALK affordance only. The
+    // user sets it from the pre-walk options sheet before pressing
+    // Wander; it is NEVER prompted again after the walk starts. The
+    // post-Active auto-prompt was popping the IntentionSettingDialog
+    // 0.5s into the walk, which the user explicitly does not want.
+    // `showAutoIntention` therefore stays false for the lifetime of
+    // the screen; the auto-prompt machinery
+    // (`hasCheckedAutoIntention` / `isRecoveryComposition` /
+    // `shouldAutoPromptIntention` / `AUTO_INTENTION_DELAY_MS`) is left
+    // in place but inert so the behavior is a one-line revert if the
+    // product call changes.
+    @Suppress("UNUSED_EXPRESSION")
+    run { hasCheckedAutoIntention; isRecoveryComposition }
     val activeWeather by viewModel.activeWeather.collectAsStateWithLifecycle()
     val activeCelestialGreeting by viewModel.activeCelestialGreeting.collectAsStateWithLifecycle()
     // iOS parity (D6/D7 audit): fade a greeting in only while
@@ -529,6 +497,23 @@ fun ActiveWalkScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = PilgrimSpacing.big * 3),
+        )
+        // iOS parity `ActiveWalkView.swift:447-456` — ambient
+        // weather + celestial vignette pinned to the bottom-end of
+        // the map, sitting just above the minimized stats sheet.
+        val activeCelestialSnapshot by viewModel.activeCelestialSnapshot
+            .collectAsStateWithLifecycle()
+        val celestialAwareness by viewModel.celestialAwarenessEnabled
+            .collectAsStateWithLifecycle()
+        val vignetteUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+        WalkVignette(
+            weather = activeWeather,
+            celestial = activeCelestialSnapshot,
+            celestialAwarenessEnabled = celestialAwareness,
+            units = vignetteUnits,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = PilgrimSpacing.normal, bottom = PilgrimSpacing.big * 7),
         )
         // iOS-parity overlay row at the top of the map: ellipsis (options)
         // top-left, X (leave walk) top-right.
@@ -621,14 +606,6 @@ fun ActiveWalkScreen(
                         kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
                         showStoneSheet = true
                     }
-                },
-                onOpenVoiceGuides = {
-                    showOptions = false
-                    onOpenVoiceGuides()
-                },
-                onOpenSoundscapes = {
-                    showOptions = false
-                    onOpenSoundscapes()
                 },
             )
         }

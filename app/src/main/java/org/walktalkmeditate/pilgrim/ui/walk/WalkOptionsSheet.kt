@@ -13,11 +13,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.outlined.EditNote
-import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Landscape
-import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -80,14 +78,6 @@ fun WalkOptionsSheet(
     canPlaceStone: Boolean = false,
     stonePlaced: Boolean = false,
     onPlaceStone: () -> Unit = {},
-    /**
-     * iOS v1.6.0 — mid-walk audio shortcuts. Opens the Voice Guide
-     * picker / Soundscape picker via the same Settings sub-routes so
-     * the user can swap guide or background sound without backing
-     * out to the main Settings tab.
-     */
-    onOpenVoiceGuides: (() -> Unit)? = null,
-    onOpenSoundscapes: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -110,7 +100,8 @@ fun WalkOptionsSheet(
             )
             if (canSetIntention) {
                 OptionRow(
-                    icon = Icons.Outlined.EditNote,
+                    // iOS uses a leaf glyph for the intention row.
+                    icon = Icons.Outlined.Eco,
                     title = stringResource(R.string.walk_options_intention_title),
                     subtitle = intention?.takeIf { it.isNotBlank() }
                         ?: stringResource(R.string.walk_options_intention_pre_walk_unset),
@@ -167,30 +158,6 @@ fun WalkOptionsSheet(
                     enabled = canPlaceStone,
                     onClick = onPlaceStone,
                 )
-            }
-            if (onOpenVoiceGuides != null || onOpenSoundscapes != null) {
-                Text(
-                    text = stringResource(R.string.walk_options_section_audio),
-                    style = pilgrimType.caption,
-                    color = pilgrimColors.stone.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = PilgrimSpacing.small),
-                )
-                if (onOpenVoiceGuides != null) {
-                    OptionRow(
-                        icon = Icons.Outlined.RecordVoiceOver,
-                        title = stringResource(R.string.walk_options_voice_guide_title),
-                        subtitle = stringResource(R.string.walk_options_voice_guide_subtitle),
-                        onClick = onOpenVoiceGuides,
-                    )
-                }
-                if (onOpenSoundscapes != null) {
-                    OptionRow(
-                        icon = Icons.Outlined.GraphicEq,
-                        title = stringResource(R.string.walk_options_soundscape_title),
-                        subtitle = stringResource(R.string.walk_options_soundscape_subtitle),
-                        onClick = onOpenSoundscapes,
-                    )
-                }
             }
         }
     }
