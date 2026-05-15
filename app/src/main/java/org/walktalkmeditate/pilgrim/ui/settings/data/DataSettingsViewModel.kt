@@ -214,7 +214,7 @@ class DataSettingsViewModel @Inject constructor(
         if (_pilgrimImportState.value is PilgrimImportState.Importing) return
         _pilgrimImportState.value = PilgrimImportState.Importing
         viewModelScope.launch {
-            val count = try {
+            val summary = try {
                 pilgrimGateway.import(uri)
             } catch (e: CancellationException) {
                 _pilgrimImportState.value = PilgrimImportState.Idle
@@ -230,7 +230,11 @@ class DataSettingsViewModel @Inject constructor(
                 )
                 return@launch
             }
-            _pilgrimImportState.value = PilgrimImportState.Imported(count)
+            _pilgrimImportState.value = PilgrimImportState.Imported(
+                added = summary.added,
+                replaced = summary.replaced,
+                archived = summary.archived,
+            )
         }
     }
 
@@ -263,6 +267,19 @@ sealed interface PilgrimExportState {
 sealed interface PilgrimImportState {
     object Idle : PilgrimImportState
     object Importing : PilgrimImportState
-    data class Imported(val walkCount: Int) : PilgrimImportState
+
+    /**
+     * iOS parity v1.6.0 — surface added/replaced/archived counts
+     * separately so the import-success Snackbar can say
+     * "0 added, 5 tended, 3 archived" for a re-import of a tended file
+     * vs the simpler "5 walks imported" for a fresh export.
+     */
+    data class Imported(
+        val added: Int,
+        val replaced: Int,
+        val archived: Int,
+    ) : PilgrimImportState {
+        val walkCount: Int get() = added + replaced + archived
+    }
     data class Failed(val message: String) : PilgrimImportState
 }

@@ -96,6 +96,7 @@ class GoshuinViewModelTest {
             repository,
             hemisphereRepo,
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
         )
 
     @Test

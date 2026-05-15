@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -49,6 +50,7 @@ class GoshuinViewModel @Inject constructor(
     private val repository: WalkRepository,
     hemisphereRepository: HemisphereRepository,
     unitsPreferences: UnitsPreferencesRepository,
+    private val archivedRegistry: ArchivedWalkRegistry,
 ) : ViewModel() {
 
     /**
@@ -61,8 +63,16 @@ class GoshuinViewModel @Inject constructor(
 
     val uiState: StateFlow<GoshuinUiState> = repository.observeAllWalks()
         .map { walks ->
+            // iOS parity v1.6.0: archived walks are filtered from
+            // `selectSeals` candidates so they don't receive individual
+            // seals in the Goshuin share renderer. computeStats
+            // continues to receive the unfiltered walks array so
+            // archived walks still count toward the total-stats header
+            // line.
+            val archivedSnapshot = archivedRegistry.snapshot()
             val finished = walks
                 .filter { it.endTimestamp != null }
+                .filterNot { it.uuid in archivedSnapshot }
                 .sortedWith(
                     compareByDescending<Walk> { it.endTimestamp }
                         .thenByDescending { it.id },

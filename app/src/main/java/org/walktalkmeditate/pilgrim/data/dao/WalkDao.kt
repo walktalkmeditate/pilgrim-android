@@ -66,6 +66,12 @@ interface WalkDao {
     @Query("SELECT uuid FROM walks")
     suspend fun getAllUuids(): List<String>
 
+    @Query("SELECT * FROM walks WHERE uuid = :uuid LIMIT 1")
+    suspend fun getByUuid(uuid: String): Walk?
+
+    @Query("DELETE FROM walks WHERE uuid IN (:uuids)")
+    suspend fun deleteByUuids(uuids: List<String>): Int
+
     @Query(
         "SELECT * FROM walks WHERE end_timestamp IS NOT NULL " +
             "ORDER BY end_timestamp DESC LIMIT 1",

@@ -20,4 +20,7 @@ interface WaypointDao {
 
     @Query("SELECT COUNT(*) FROM waypoints WHERE walk_id = :walkId")
     fun observeCountForWalk(walkId: Long): Flow<Int>
+
+    @Query("DELETE FROM waypoints WHERE walk_id = :walkId")
+    suspend fun deleteByWalkId(walkId: Long): Int
 }

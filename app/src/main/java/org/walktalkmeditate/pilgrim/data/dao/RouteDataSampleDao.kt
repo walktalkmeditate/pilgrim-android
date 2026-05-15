@@ -30,4 +30,7 @@ interface RouteDataSampleDao {
             "ORDER BY timestamp DESC LIMIT 1",
     )
     suspend fun getLastForWalk(walkId: Long): RouteDataSample?
+
+    @Query("DELETE FROM route_data_samples WHERE walk_id = :walkId")
+    suspend fun deleteByWalkId(walkId: Long): Int
 }
