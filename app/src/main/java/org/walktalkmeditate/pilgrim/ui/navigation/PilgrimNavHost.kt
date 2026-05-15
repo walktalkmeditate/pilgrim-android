@@ -282,6 +282,11 @@ fun PilgrimNavHost(
                 onBack = { navController.popBackStack() },
             )
         }
+        composable(Routes.JOURNEY_EDITOR) {
+            org.walktalkmeditate.pilgrim.ui.settings.data.JourneyEditorScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
         composable(Routes.ABOUT) {
             org.walktalkmeditate.pilgrim.ui.settings.about.AboutScreen(
                 onBack = { navController.popBackStack() },

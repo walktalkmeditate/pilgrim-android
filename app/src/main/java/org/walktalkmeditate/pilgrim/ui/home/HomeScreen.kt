@@ -691,44 +691,53 @@ fun HomeScreen(
         //     .overlay(Circle().stroke(stone.opacity(0.3), lineWidth: 1))
         //     .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
         //   thumbnail Image .frame(44, 44) .clipShape(Circle())
-        // Prior Android values (48dp / 38dp) were ~14% undersized vs iOS.
-        val goshuinFabInteraction = remember { MutableInteractionSource() }
-        val goshuinLabel = stringResource(R.string.home_action_view_goshuin)
-        Box(
+        // iOS v1.6.0 — hide while a walk popup is expanded so the seal
+        // doesn't float above the modal. AnimatedVisibility cross-fades
+        // the transition.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expandedId == null,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 12.dp, bottom = 96.dp, top = PilgrimSpacing.big, start = PilgrimSpacing.big)
-                .shadow(elevation = 6.dp, shape = CircleShape)
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(pilgrimColors.parchmentTertiary)
-                .border(
-                    width = 1.dp,
-                    color = pilgrimColors.stone.copy(alpha = 0.3f),
-                    shape = CircleShape,
-                )
-                .clickable(
-                    interactionSource = goshuinFabInteraction,
-                    indication = null,
-                    onClick = onEnterGoshuin,
-                )
-                .semantics { contentDescription = goshuinLabel },
-            contentAlignment = Alignment.Center,
+                .padding(end = 12.dp, bottom = 96.dp, top = PilgrimSpacing.big, start = PilgrimSpacing.big),
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut(),
         ) {
-            val seal = latestSealBitmap
-            if (seal != null) {
-                Image(
-                    painter = BitmapPainter(seal),
-                    contentDescription = null,
-                    modifier = Modifier.size(44.dp).clip(CircleShape),
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Outlined.Explore,
-                    contentDescription = null,
-                    tint = pilgrimColors.stone,
-                    modifier = Modifier.size(22.dp),
-                )
+            val goshuinFabInteraction = remember { MutableInteractionSource() }
+            val goshuinLabel = stringResource(R.string.home_action_view_goshuin)
+            Box(
+                modifier = Modifier
+                    .shadow(elevation = 6.dp, shape = CircleShape)
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(pilgrimColors.parchmentTertiary)
+                    .border(
+                        width = 1.dp,
+                        color = pilgrimColors.stone.copy(alpha = 0.3f),
+                        shape = CircleShape,
+                    )
+                    .clickable(
+                        interactionSource = goshuinFabInteraction,
+                        indication = null,
+                        onClick = onEnterGoshuin,
+                    )
+                    .semantics { contentDescription = goshuinLabel },
+                contentAlignment = Alignment.Center,
+            ) {
+                val seal = latestSealBitmap
+                if (seal != null) {
+                    Image(
+                        painter = BitmapPainter(seal),
+                        contentDescription = null,
+                        modifier = Modifier.size(44.dp).clip(CircleShape),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.Explore,
+                        contentDescription = null,
+                        tint = pilgrimColors.stone,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
             }
         }
     }

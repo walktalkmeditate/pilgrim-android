@@ -215,8 +215,15 @@ class OrphanRecordingSweeper @Inject constructor(
                 Log.w(TAG, "refusing to delete file outside recordings root: $candidate")
                 return false
             }
-            if (candidate.name.lowercase().substringAfterLast('.') != "wav") {
-                Log.w(TAG, "refusing to delete non-.wav file: $candidate")
+            // iOS v1.6.0 — sweep both .wav AND .m4a. Android only
+            // writes .wav from AudioRecord today, but a future audio
+            // encoder swap should not strand orphan .m4a files and
+            // .pilgrim files exchanged with iOS users contain .m4a
+            // entries that might land here once the round-trip
+            // pipeline embeds audio.
+            val ext = candidate.name.lowercase().substringAfterLast('.')
+            if (ext != "wav" && ext != "m4a") {
+                Log.w(TAG, "refusing to delete non-audio file: $candidate")
                 return false
             }
             if (!Files.isRegularFile(candidate)) {
