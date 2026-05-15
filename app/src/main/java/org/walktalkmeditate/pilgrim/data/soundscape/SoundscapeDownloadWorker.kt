@@ -51,8 +51,18 @@ class SoundscapeDownloadWorker @AssistedInject constructor(
         // after process death doesn't race the async cache load
         // (Stage 5-D lesson).
         manifestService.initialLoad.await()
+        // Accept BOTH soundscape AND bell assets. The
+        // SoundscapeAutoDownloadObserver enqueues both types (iOS
+        // pre-downloads bells too); `downloadAsset` already routes by
+        // `asset.type` to `/bell/<id>.aac` vs `/soundscape/<id>.aac`.
+        // The previous `== SOUNDSCAPE` guard hard-failed every bell
+        // download, leaving `files/audio/bell` empty so BellFileResolver
+        // always fell back to the bundled `R.raw.bell` — every picked
+        // bell sounded identical.
         val asset = manifestService.asset(id)
-            ?.takeIf { it.type == AudioAssetType.SOUNDSCAPE }
+            ?.takeIf {
+                it.type == AudioAssetType.SOUNDSCAPE || it.type == AudioAssetType.BELL
+            }
             ?: return Result.failure()
 
         if (fileStore.isAvailable(asset)) return Result.success()

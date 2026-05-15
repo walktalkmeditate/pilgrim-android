@@ -127,7 +127,14 @@ class SoundSettingsViewModelTest {
     )
 
     private object NoOpBellPlayer : org.walktalkmeditate.pilgrim.audio.BellPlaying {
+        /** Records the bellId of the most recent routed play() call. */
+        var lastBellId: String? = null
+        var lastBellIdCalls = 0
         override fun play() = Unit
+        override fun play(bellId: String?, scale: Float, withHaptic: Boolean) {
+            lastBellId = bellId
+            lastBellIdCalls += 1
+        }
     }
 
     /**
@@ -151,6 +158,21 @@ class SoundSettingsViewModelTest {
         val bells = vm.availableBells.first { it.isNotEmpty() }
         assertEquals(2, bells.size)
         assertTrue(bells.all { it.type == AudioAssetType.BELL })
+    }
+
+    @Test
+    fun `previewBell routes the asset id to the bell player`() = runTest {
+        NoOpBellPlayer.lastBellId = null
+        NoOpBellPlayer.lastBellIdCalls = 0
+        val vm = newVm()
+        val bells = vm.availableBells.first { it.isNotEmpty() }
+        val target = bells.last()
+        vm.previewBell(target)
+        // Regression guard: previewBell used to call play() with NO id,
+        // so every bell row previewed the bundled fallback and all
+        // sounded identical. It MUST route the picked asset id.
+        assertEquals(1, NoOpBellPlayer.lastBellIdCalls)
+        assertEquals(target.id, NoOpBellPlayer.lastBellId)
     }
 
     @Test

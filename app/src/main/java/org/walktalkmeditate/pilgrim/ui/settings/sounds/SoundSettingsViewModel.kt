@@ -154,15 +154,18 @@ class SoundSettingsViewModel @Inject constructor(
     }
 
     /**
-     * Plays the bell-row preview from the picker sheet. [BellPlayer] is
-     * currently single-asset (bundled `R.raw.bell`) so the asset id is
-     * informational only; once per-id bell downloads land, this can
-     * route to the matching file. iOS plays the asset via
-     * `SoundManagement.previewBell(id:)`.
+     * Plays the bell-row preview from the picker sheet. Routes the
+     * user-picked asset id through [BellPlaying.play] so
+     * [org.walktalkmeditate.pilgrim.audio.BellFileResolver] resolves
+     * the downloaded asset file; if the file isn't on disk yet,
+     * BellPlayer rings the bundled `R.raw.bell` fallback so the user
+     * still hears something. iOS parity `SoundManagement.previewBell(id:)`.
+     *
+     * Previously this passed NO id, so every row previewed the bundled
+     * bell and all options sounded identical.
      */
-    @Suppress("UNUSED_PARAMETER")
     fun previewBell(asset: AudioAsset) {
-        bellPlayer.play(scale = 1.0f, withHaptic = false)
+        bellPlayer.play(bellId = asset.id, scale = 1.0f, withHaptic = false)
     }
 
     fun setSelectedSoundscapeId(value: String?) {
