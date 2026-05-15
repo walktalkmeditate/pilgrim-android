@@ -66,7 +66,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | walk.active.vignette | Views/CelestialVignetteView.swift, Models/Weather/WeatherVignetteView.swift | Weather+celestial vignette bottom-end | ui/walk/WalkVignette.kt | L/D/C | — | live walk | unverified |
 | walk.active.greeting | Scenes/ActiveWalk/ActiveWalkView.swift | Weather/celestial greeting overlay | ui/walk/GreetingOverlay.kt | L/D/C | anim | live walk | unverified |
 | walk.active.sparkline | Scenes/WalkSummary/PaceSparklineView.swift | Live pace sparkline | (verify Android equivalent) | L/D/C | anim | live walk >10 pace pts | unverified |
-| walk.options.idle | Scenes/ActiveWalk/WalkOptionsSheet.swift | Options sheet, pre-walk (intention only, leaf icon) | ui/walk/WalkOptionsSheet.kt | L/D/C | — | none | unverified |
+| walk.options.idle | Scenes/ActiveWalk/WalkOptionsSheet.swift | Options sheet, pre-walk (intention only, leaf icon) | ui/walk/WalkOptionsSheet.kt | L/D/C | — | none | L:close-the-gap→resolved (header-align residual); D/C:unverified |
 | walk.options.inwalk | Scenes/ActiveWalk/WalkOptionsSheet.swift | Options in-walk (waypoint/whisper/stone) | WalkOptionsSheet in-walk | L/D/C | — | live walk | unverified |
 | walk.intention.sheet | Scenes/ActiveWalk/IntentionSettingView.swift | Intention setting sheet | ui/walk/IntentionSettingDialog.kt | L/D/C | — | none | unverified |
 | walk.waypoint.sheet | Scenes/ActiveWalk/WaypointMarkingSheet.swift | Waypoint marking | ui/walk/WaypointMarkingSheet.kt | L/D/C | — | live walk | unverified |
@@ -191,6 +191,9 @@ Per-mode blinded-review results for rows not yet fully verified (a row's table-c
 Both `settings.appearance` and `settings.about` flagged the same chrome divergence: iOS detail screens use a centered nav title; Android used a Material `TopAppBar` with a left-aligned title.
 
 **RESOLVED (2026-05-15, A5/user chose "systemic fix now").** Created shared `ui/design/PilgrimDetailScaffold.kt` (`CenterAlignedTopAppBar` = iOS principal-centered title, `pilgrimType.heading`/ink, parchment, leading back; `contentWindowInsets = WindowInsets(0)` to defer to the nav-host's outer Scaffold — also fixes a latent double-top-inset; optional `snackbarHost` slot). Converted all 10 pushed Settings/Recordings detail screens (appearance, about, feedback, data-detail, journey-editor, journey-viewer, soundscape-picker, voiceguide pack-detail, voiceguide-picker, recordings) to it. Compiles; all converted-screen test classes green; on-device verified (Appearance title now centered, no inset gap). Per-row chrome sub-diffs (settings.appearance item 4, settings.about item 3) are now CLOSED; the remaining settings.appearance items (1 grouping, 2 copy, 3 icons) and settings.about items (1 tree, 2 logo tile) still stand for their own dispositions.
+
+### walk.options.idle
+- **L — `close-the-gap` → RESOLVED in code** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/walk.options.idle__L__{ios,android}.png`. observed-diff: Android rendered a placeholder subtitle "A line for this walk" under "Set Intention"; iOS passes `subtitle: currentIntention` (nil pre-walk → subtitle line omitted). **Fixed:** `OptionRow.subtitle` made nullable + conditionally rendered; intention call site drops the `?: stringResource(...)` placeholder; dead `walk_options_intention_pre_walk_unset` string removed; `WalkOptionsSheetTest` updated (now asserts subtitle absent pre-walk) + green; on-device verified single-line row. **Residual:** sheet header "Options" is left-aligned on Android vs centered on iOS (ModalBottomSheet header — NOT covered by PilgrimDetailScaffold; batched as a minor close-the-gap). D/C pending.
 
 ## Gate summary (computed at U7)
 
