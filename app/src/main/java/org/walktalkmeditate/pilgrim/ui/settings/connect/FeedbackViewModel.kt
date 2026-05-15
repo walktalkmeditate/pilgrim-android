@@ -23,6 +23,10 @@ class FeedbackViewModel @Inject constructor(
     private val _state = MutableStateFlow(FeedbackUiState())
     val state: StateFlow<FeedbackUiState> = _state.asStateFlow()
 
+    // iOS `FeedbackView.deviceInfoPreview` — the exact string attached
+    // when the toggle is on, surfaced to the user as a preview line.
+    val deviceInfo: String = deviceInfoProvider.deviceInfo()
+
     fun selectCategory(category: FeedbackCategory) {
         _state.update { it.copy(selectedCategory = category, errorMessage = null) }
     }

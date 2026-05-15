@@ -75,6 +75,7 @@ fun FeedbackScreen(
         } else {
             FormContent(
                 state = state,
+                deviceInfo = viewModel.deviceInfo,
                 onSelectCategory = viewModel::selectCategory,
                 onUpdateMessage = viewModel::updateMessage,
                 onToggleDeviceInfo = viewModel::toggleIncludeDeviceInfo,
@@ -88,6 +89,7 @@ fun FeedbackScreen(
 @Composable
 private fun FormContent(
     state: FeedbackUiState,
+    deviceInfo: String,
     onSelectCategory: (FeedbackCategory) -> Unit,
     onUpdateMessage: (String) -> Unit,
     onToggleDeviceInfo: (Boolean) -> Unit,
@@ -156,6 +158,18 @@ private fun FormContent(
                     uncheckedThumbColor = pilgrimColors.fog,
                     uncheckedTrackColor = pilgrimColors.parchmentTertiary,
                 ),
+            )
+        }
+
+        // iOS parity: `if includeDeviceInfo { Text(deviceInfoPreview) }`
+        // — the exact string that will be attached, shown muted under
+        // the toggle so the user sees what is transmitted.
+        if (state.includeDeviceInfo) {
+            Text(
+                text = deviceInfo,
+                style = pilgrimType.caption,
+                color = pilgrimColors.fog,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
 
