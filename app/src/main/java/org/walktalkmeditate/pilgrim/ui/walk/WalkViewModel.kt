@@ -146,6 +146,34 @@ class WalkViewModel @Inject constructor(
     val activeCelestialGreeting: StateFlow<String?> = _activeCelestialGreeting.asStateFlow()
 
     /**
+     * Structured celestial snapshot for the active walk — drives the
+     * map-corner CelestialVignette (planetary-hour planet symbol + moon
+     * sign glyph). Distinct from [activeCelestialGreeting] (the prose
+     * line). Computed alongside the greeting at walk start; cleared on
+     * the terminal transition. iOS parity `CelestialVignetteView`.
+     */
+    private val _activeCelestialSnapshot =
+        MutableStateFlow<org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot?>(null)
+    val activeCelestialSnapshot:
+        StateFlow<org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot?> =
+        _activeCelestialSnapshot.asStateFlow()
+
+    /**
+     * Celestial snapshot for "now", recomputed on demand by the
+     * pre-walk (Wander) screen so its corner vignette shows the
+     * planetary hour + moon sign before a walk starts. Pure time-math
+     * (no location, no fetch) so it's cheap to call from a
+     * `LaunchedEffect`. iOS `WalkStartView` shows the same vignette.
+     */
+    fun preWalkCelestialSnapshot():
+        org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot? =
+        runCatching {
+            org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc.snapshot(
+                atEpochMillis = System.currentTimeMillis(),
+            )
+        }.getOrNull()
+
+    /**
      * iOS parity `ActiveWalkViewModel.swift:44-46@db4196e` — per-walk
      * placement caps. Reset to zero on every Idle/Finished →
      * subsequent-Active transition by the controller-state observer.
@@ -293,6 +321,14 @@ class WalkViewModel @Inject constructor(
      * `ActiveWalkView.swift:374`).
      */
     val beginWithIntention: StateFlow<Boolean> = practicePreferences.beginWithIntention
+
+    /**
+     * Gates the map-corner CelestialVignette — iOS only shows the
+     * planetary-hour / moon-sign pill when the user has opted into
+     * celestial awareness (`UserPreferences.celestialAwarenessEnabled`).
+     */
+    val celestialAwarenessEnabled: StateFlow<Boolean> =
+        practicePreferences.celestialAwarenessEnabled
 
     /**
      * Id of a walk that was auto-finalized by `WalkTrackingService.onTaskRemoved`
@@ -778,6 +814,7 @@ class WalkViewModel @Inject constructor(
                     weatherJob?.cancel()
                     _activeWeather.value = null
                     _activeCelestialGreeting.value = null
+                    _activeCelestialSnapshot.value = null
                     // iOS parity `ActiveWalkViewModel.swift:44-46@db4196e`
                     // — caps reset at VM init (new walk). On Android the
                     // VM is scoped to NavBackStackEntry which persists
@@ -955,6 +992,7 @@ class WalkViewModel @Inject constructor(
                     )
                 _activeCelestialGreeting.value =
                     celestialGreetingText(snapshot, context.resources)
+                _activeCelestialSnapshot.value = snapshot
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {

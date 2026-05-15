@@ -729,11 +729,6 @@
     <string name="journey_viewer_loading">Preparing your journey…</string>
     <string name="journey_viewer_no_walks">No walks yet. Take a walk first.</string>
     <!-- iOS v1.6.0 — mid-walk audio shortcuts in WalkOptionsSheet -->
-    <string name="walk_options_section_audio">AUDIO</string>
-    <string name="walk_options_voice_guide_title">Voice guide</string>
-    <string name="walk_options_voice_guide_subtitle">Change guide pack</string>
-    <string name="walk_options_soundscape_title">Soundscape</string>
-    <string name="walk_options_soundscape_subtitle">Ambient sound mix</string>
 
     <!-- iOS parity — hemisphere override (UserPreferences.hemisphereOverride) -->
     <string name="settings_hemisphere_label">Hemisphere</string>
