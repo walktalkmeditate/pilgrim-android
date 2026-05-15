@@ -1467,12 +1467,22 @@ class WalkSummaryViewModel @Inject constructor(
             // but relying on that as load-bearing means the contract drifts
             // and a future refactor (e.g. when a new ActivityType gains a
             // pin) would silently start drawing walking-interval pins.
+            val waypoints = runCatching { repository.waypointsFor(walkId) }
+                .getOrDefault(emptyList())
             val ann = computeWalkMapAnnotations(
                 routeSamples = samples,
                 meditationIntervals = activityIntervals.filter {
                     it.activityType == ActivityType.MEDITATING
                 },
                 voiceRecordings = voiceRecordings,
+                waypoints = waypoints,
+                // Whispers + cairns from the proximity geo-cache are
+                // walk-scoped only via the route radius — surfacing
+                // them on the post-walk summary requires the server-
+                // side scoped fetch (lat/lon/radius/walkId) which is
+                // tracked separately. Leaving the lists empty here
+                // keeps the renderer pipeline alive without faking
+                // pin data.
             )
             seg to ann
         }

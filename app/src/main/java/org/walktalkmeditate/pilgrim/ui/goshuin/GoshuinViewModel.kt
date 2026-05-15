@@ -70,8 +70,8 @@ class GoshuinViewModel @Inject constructor(
             // archived walks still count toward the total-stats header
             // line.
             val archivedSnapshot = archivedRegistry.snapshot()
-            val finished = walks
-                .filter { it.endTimestamp != null }
+            val allFinished = walks.filter { it.endTimestamp != null }
+            val finished = allFinished
                 .filterNot { it.uuid in archivedSnapshot }
                 .sortedWith(
                     compareByDescending<Walk> { it.endTimestamp }
@@ -114,7 +114,19 @@ class GoshuinViewModel @Inject constructor(
                         ),
                     )
                 }
-                GoshuinUiState.Loaded(seals = seals, totalCount = seals.size)
+                // iOS v1.6.0 stats header — totals include archived
+                // walks (their surface stats survived the strip).
+                val totalDistance = allFinished.sumOf { walk ->
+                    walk.distanceMeters ?: distances[walk.id] ?: 0.0
+                }
+                val totalMeditation = allFinished.sumOf { it.meditationSeconds ?: 0L }
+                GoshuinUiState.Loaded(
+                    seals = seals,
+                    totalCount = seals.size,
+                    totalIncludingArchived = allFinished.size,
+                    totalDistanceMeters = totalDistance,
+                    totalMeditationSeconds = totalMeditation,
+                )
             }
         }
         .stateIn(

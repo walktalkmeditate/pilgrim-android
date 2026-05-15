@@ -16,5 +16,13 @@ sealed class GoshuinUiState {
     data class Loaded(
         val seals: List<GoshuinSeal>,
         val totalCount: Int,
+        /**
+         * iOS v1.6.0 — stats header counts ALL finished walks INCLUDING
+         * archived ones. `seals` excludes archived, so this lives as a
+         * separate field. iOS [Goshuin] header reads "N walks · X km · Y min".
+         */
+        val totalIncludingArchived: Int = totalCount,
+        val totalDistanceMeters: Double = 0.0,
+        val totalMeditationSeconds: Long = 0L,
     ) : GoshuinUiState()
 }

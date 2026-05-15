@@ -110,6 +110,8 @@ fun ActiveWalkScreen(
     onFinished: (walkId: Long) -> Unit,
     onEnterMeditation: () -> Unit,
     onDiscarded: () -> Unit,
+    onOpenVoiceGuides: () -> Unit = {},
+    onOpenSoundscapes: () -> Unit = {},
     viewModel: WalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -619,6 +621,14 @@ fun ActiveWalkScreen(
                         kotlinx.coroutines.delay(SHEET_HANDOFF_DELAY_MS)
                         showStoneSheet = true
                     }
+                },
+                onOpenVoiceGuides = {
+                    showOptions = false
+                    onOpenVoiceGuides()
+                },
+                onOpenSoundscapes = {
+                    showOptions = false
+                    onOpenSoundscapes()
                 },
             )
         }
