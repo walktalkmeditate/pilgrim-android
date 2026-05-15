@@ -126,7 +126,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | settings.journey-editor | Scenes/Settings/JourneyEditorView.swift | Edit My Journey webview | ui/settings/data JourneyEditorScreen | L/D/C | — | ≥1 walk | unverified |
 | settings.about | Scenes/Settings/AboutView.swift | About (hero/pillars/data-sources/open-source/motto) | ui/settings/about/AboutScreen.kt | L/D/C | anim | none | L:close-the-gap (motion-pending); D/C:unverified (see detail) |
 | settings.about.iconswitch | Scenes/Settings/AboutView.swift | Tap-logo icon switcher dialog (constellation icon) | ui/settings/about icon dialog | L/D/C | — | none | unverified |
-| settings.feedback | Scenes/Settings/FeedbackView.swift | Feedback form | ui/settings feedback | L/D/C | — | none | unverified |
+| settings.feedback | Scenes/Settings/FeedbackView.swift | Feedback form | ui/settings feedback | L/D/C | — | none | L:close-the-gap→resolved (icon-drift residual); D/C:unverified |
 | settings.practiceheader | Scenes/Settings/PracticeSummaryHeader.swift | Practice summary header (cycling stats + milestone) | ui/settings/PracticeSummaryHeader.kt | L/D/C | anim | ≥1 walk | unverified |
 | **Prompts** ||||||||
 | prompts.list | Scenes/Prompts/PromptListView.swift | Prompt list | (verify Android equivalent) | L/D/C | — | none | unverified |
@@ -194,6 +194,9 @@ Both `settings.appearance` and `settings.about` flagged the same chrome divergen
 
 ### walk.options.idle
 - **L — `close-the-gap` → RESOLVED in code** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/walk.options.idle__L__{ios,android}.png`. observed-diff: Android rendered a placeholder subtitle "A line for this walk" under "Set Intention"; iOS passes `subtitle: currentIntention` (nil pre-walk → subtitle line omitted). **Fixed:** `OptionRow.subtitle` made nullable + conditionally rendered; intention call site drops the `?: stringResource(...)` placeholder; dead `walk_options_intention_pre_walk_unset` string removed; `WalkOptionsSheetTest` updated (now asserts subtitle absent pre-walk) + green; on-device verified single-line row. **Residual:** sheet header "Options" is left-aligned on Android vs centered on iOS (ModalBottomSheet header — NOT covered by PilgrimDetailScaffold; batched as a minor close-the-gap). D/C pending.
+
+### settings.feedback
+- **L — `close-the-gap` → RESOLVED in code** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/settings.feedback__L__{ios,android}.png`. observed-diff: Android omitted the device-info preview line that iOS renders under "Include device info" when ON (Android computed the string for the request but never displayed it). **Fixed:** `FeedbackViewModel.deviceInfo` exposed (`DeviceInfoProvider.deviceInfo()`, already iOS-faithful "Android <rel> · <model> · v<ver>"); `FormContent` renders it (caption/fog) under the toggle when `includeDeviceInfo`, mirroring iOS `if includeDeviceInfo { Text(deviceInfoPreview) }`. Compiles; feedback tests green; on-device verified ("Android 16 · CPH2655 · v0.1.0-debug" — value platform-appropriate per the 0.1.0 no-mirror rule, format matches). Title centered via `PilgrimDetailScaffold` (chrome already cleared). **Residual:** category icons drift (iOS SF `leaf`/`sparkles`/bug vs Android Material) — same SF-vs-Material design-call class as `settings.appearance` item 3; batched. D/C pending.
 
 ## Gate summary (computed at U7)
 
