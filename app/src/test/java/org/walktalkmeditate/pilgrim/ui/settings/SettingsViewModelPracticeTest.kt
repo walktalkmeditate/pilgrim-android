@@ -134,9 +134,7 @@ class SettingsViewModelPracticeTest {
         walkRepository = walkRepository,
         voiceRecordingFileSystem = voiceFs,
         milestoneSurface = NoopMilestoneSurface,
-        bellPlayer = NoopBellPlayer,
-            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
-    )
+        bellPlayer = NoopBellPlayer,    )
 
     @Test
     fun `beginWithIntention reflects repo value`() = runBlocking {

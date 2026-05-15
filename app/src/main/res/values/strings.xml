@@ -730,10 +730,6 @@
     <string name="journey_viewer_no_walks">No walks yet. Take a walk first.</string>
     <!-- iOS v1.6.0 — mid-walk audio shortcuts in WalkOptionsSheet -->
 
-    <!-- iOS parity — hemisphere override (UserPreferences.hemisphereOverride) -->
-    <string name="settings_hemisphere_label">Hemisphere</string>
-    <string name="settings_hemisphere_north">North</string>
-    <string name="settings_hemisphere_south">South</string>
     <!-- iOS v1.6.0 — Edit My Journey webview pointing at edit.pilgrimapp.org -->
     <string name="journey_editor_title">Edit My Journey</string>
     <string name="journey_editor_loading">Preparing your journey for editing…</string>

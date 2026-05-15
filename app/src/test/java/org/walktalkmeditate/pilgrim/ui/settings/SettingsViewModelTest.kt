@@ -139,9 +139,7 @@ class SettingsViewModelTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = milestoneSurface,
-            bellPlayer = bellPlayer,
-            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
-        )
+            bellPlayer = bellPlayer,        )
     }
 
     @After
@@ -330,9 +328,7 @@ class SettingsViewModelTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = FakeMilestoneSurface(),
-            bellPlayer = mutedBell,
-            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
-        )
+            bellPlayer = mutedBell,        )
         mutedVm.onMilestoneShown(CollectiveMilestone.forNumber(108))
         assertEquals(emptyList<Float>(), mutedBell.scaleCalls)
     }
