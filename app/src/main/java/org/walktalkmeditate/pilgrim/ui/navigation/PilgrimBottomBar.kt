@@ -38,6 +38,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -56,18 +57,32 @@ fun PilgrimBottomBar(
 ) {
     val hazeState = LocalAppHazeState.current
     val parchmentColor = pilgrimColors.parchment
+    // Constellation mode: the haze backdrop's `backgroundColor` is the
+    // parchment token, which the constellation override pins to the
+    // near-black indigo #0A0A12. Blurred full-width that reads as an
+    // opaque dark rectangle behind the floating pill (the surrounding
+    // star field is far lighter). Drop the haze layer entirely in
+    // Constellation so the rounded pill floats directly on the star
+    // field — matching the intended "floating pill, not a reserved
+    // band" contract. Light/Dark keep the parchment-tinted blur.
+    val constellation = LocalIsConstellation.current
+    val hazeModifier = if (constellation) {
+        Modifier
+    } else {
+        Modifier.hazeEffect(state = hazeState) {
+            progressive = HazeProgressive.verticalGradient(
+                startIntensity = 0f,
+                endIntensity = 1f,
+            )
+            backgroundColor = parchmentColor
+            tints = listOf(HazeTint(Color.Transparent))
+            noiseFactor = 0f
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .hazeEffect(state = hazeState) {
-                progressive = HazeProgressive.verticalGradient(
-                    startIntensity = 0f,
-                    endIntensity = 1f,
-                )
-                backgroundColor = parchmentColor
-                tints = listOf(HazeTint(Color.Transparent))
-                noiseFactor = 0f
-            }
+            .then(hazeModifier)
             .navigationBarsPadding()
             .padding(horizontal = 64.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,

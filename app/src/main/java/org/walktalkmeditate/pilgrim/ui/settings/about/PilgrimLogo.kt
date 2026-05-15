@@ -53,8 +53,15 @@ fun PilgrimLogo(
     } else {
         1.0f
     }
+    // iOS v1.6.0 `PilgrimLogoView` — constellation appearance wins over
+    // the voice-guide-themed logo (the starlit indigo washi + lavender
+    // serif "p" mark), matching the constellation app icon.
     val guideId = LocalActiveVoiceGuideId.current
-    val drawableId = drawableForGuide(guideId)
+    val drawableId = if (org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation.current) {
+        R.drawable.ic_pilgrim_logo_constellation
+    } else {
+        drawableForGuide(guideId)
+    }
     Image(
         painter = painterResource(drawableId),
         contentDescription = null,

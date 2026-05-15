@@ -93,8 +93,17 @@ fun BreathingLogo(
 
     val stoneColor = pilgrimColors.stone
 
+    // iOS v1.6.0 `PilgrimLogoView` — swap to the starlit constellation
+    // mark (indigo washi + lavender serif "p" + sparse stars) when the
+    // constellation appearance is active.
+    val logoRes = if (org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation.current) {
+        R.drawable.ic_pilgrim_logo_constellation
+    } else {
+        R.drawable.ic_pilgrim_logo
+    }
+
     Image(
-        painter = painterResource(R.drawable.ic_pilgrim_logo),
+        painter = painterResource(logoRes),
         contentDescription = null,
         modifier = modifier
             .size(size)
