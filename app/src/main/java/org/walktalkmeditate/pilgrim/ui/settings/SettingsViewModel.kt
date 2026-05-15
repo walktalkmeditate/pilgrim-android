@@ -65,7 +65,19 @@ class SettingsViewModel @Inject constructor(
     private val voiceRecordingFileSystem: VoiceRecordingFileSystem,
     private val milestoneSurface: MilestoneSurface,
     private val bellPlayer: BellPlaying,
+    private val hemisphereStore:
+        org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereStore,
 ) : ViewModel() {
+
+    val hemisphere: StateFlow<org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere> =
+        hemisphereStore.hemisphere
+
+    fun setHemisphere(value: org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere) {
+        viewModelScope.launch {
+            runCatching { hemisphereStore.setOverride(value) }
+                .onFailure { Log.w(TAG, "failed to persist hemisphere", it) }
+        }
+    }
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
     val optIn: StateFlow<Boolean> = collectiveRepository.optIn

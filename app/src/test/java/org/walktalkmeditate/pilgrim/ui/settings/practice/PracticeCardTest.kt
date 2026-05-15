@@ -80,6 +80,8 @@ class PracticeCardTest {
                         walkReliquary = walkReliquary,
                         onSetWalkReliquary = onSetWalkReliquary,
                         showPhotosDeniedNote = showPhotosDeniedNote,
+                        hemisphere = org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
+                        onSetHemisphere = {},
                     )
                 }
             }

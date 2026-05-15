@@ -139,6 +139,7 @@ class HomeViewModelJournalTest {
             unitsPreferences = FakeUnitsPreferencesRepository(),
             cachedShareStore = cachedShareStore,
             practicePreferences = FakePracticePreferencesRepository(),
+            archivedRegistry = org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
             defaultDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         )

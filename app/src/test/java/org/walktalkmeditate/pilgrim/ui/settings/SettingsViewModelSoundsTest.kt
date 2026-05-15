@@ -127,6 +127,7 @@ class SettingsViewModelSoundsTest {
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
             bellPlayer = NoopBellPlayer,
+            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
         )
         assertEquals(false, vm.soundsEnabled.first())
     }
@@ -145,6 +146,7 @@ class SettingsViewModelSoundsTest {
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
             bellPlayer = NoopBellPlayer,
+            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
         )
         assertEquals(true, vm.soundsEnabled.first())
         vm.setSoundsEnabled(false)
@@ -167,6 +169,7 @@ class SettingsViewModelSoundsTest {
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
             bellPlayer = NoopBellPlayer,
+            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
         )
         // Calling the setter must NOT throw — runCatching inside the
         // VM swallows the IOException and logs it.

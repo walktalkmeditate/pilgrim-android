@@ -62,6 +62,8 @@ fun PracticeCard(
     walkReliquary: Boolean,
     onSetWalkReliquary: (Boolean) -> Unit,
     showPhotosDeniedNote: Boolean,
+    hemisphere: org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere,
+    onSetHemisphere: (org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Resolve string resources once, then remember the resulting
@@ -85,6 +87,16 @@ fun PracticeCard(
             listOf(
                 metric to UnitSystem.Metric,
                 imperial to UnitSystem.Imperial,
+            )
+        }
+    }
+    val hemisphereOptions = run {
+        val north = stringResource(R.string.settings_hemisphere_north)
+        val south = stringResource(R.string.settings_hemisphere_south)
+        remember(north, south) {
+            listOf(
+                north to org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
+                south to org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Southern,
             )
         }
     }
@@ -155,6 +167,18 @@ fun PracticeCard(
             color = pilgrimColors.fog,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+        )
+
+        SettingsDivider()
+
+        // iOS parity — hemisphere override (UserPreferences.hemisphereOverride).
+        // Drives SeasonalColorEngine + InkScroll path so users south of
+        // the equator get a calendar-flipped palette and season labels.
+        SettingPicker(
+            label = stringResource(R.string.settings_hemisphere_label),
+            options = hemisphereOptions,
+            selected = hemisphere,
+            onSelect = onSetHemisphere,
         )
 
         SettingsDivider()

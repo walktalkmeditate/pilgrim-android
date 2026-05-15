@@ -130,6 +130,7 @@ class SettingsViewModelAppearanceTest {
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
             bellPlayer = NoopBellPlayer,
+            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
         )
         assertEquals(AppearanceMode.Dark, vm.appearanceMode.first())
     }
@@ -148,6 +149,7 @@ class SettingsViewModelAppearanceTest {
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
             bellPlayer = NoopBellPlayer,
+            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
         )
         assertEquals(AppearanceMode.System, vm.appearanceMode.first())
         vm.setAppearanceMode(AppearanceMode.Light)
