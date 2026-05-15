@@ -38,7 +38,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | setup.permissions.partial | Scenes/Setup/Permissions/PermissionsView.swift | Location coarse-only / needs-settings degraded | PermissionsScreen degraded states | L/D/C | — | none | unverified |
 | setup.permissions.granted | Scenes/Setup/Permissions/PermissionsView.swift | All granted (auto-advance) | PermissionsScreen complete | L/D/C | — | none | unverified |
 | **Path tab** ||||||||
-| path.wander.idle | Scenes/Home/WalkStartView.swift | Wander mode, idle, moon glyph | ui/path/WalkStartScreen.kt | L/D/C | anim | none | unverified |
+| path.wander.idle | Scenes/Home/WalkStartView.swift | Wander mode, idle, moon glyph | ui/path/WalkStartScreen.kt | L/D/C | anim | none | L:close-the-gap; D/C/rm:unverified (see detail) |
 | path.together.comingsoon | Scenes/Home/WalkStartView.swift | Together mode "coming soon" | WalkStartScreen Together | L/D/C | — | none | unverified |
 | path.seek.comingsoon | Scenes/Home/WalkStartView.swift | Seek mode "coming soon" | WalkStartScreen Seek | L/D/C | — | none | unverified |
 | path.wander.recovery-banner | Scenes/Home/WalkStartView.swift | Recovery banner (stale-walk swipe) | WalkStartScreen RecoveryBanner | L/D/C | anim | recovered walk | unverified |
@@ -138,6 +138,18 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | overlay.proximity | Views/ProximityNotificationView.swift | Proximity whisper notification | ui/walk/ProximityNotificationBanner.kt | L/D/C | anim | nearby whisper | unverified |
 | overlay.pilgrimlogo | Views/PilgrimLogoView.swift | Logo (default/per-guide/constellation) | ui/design/BreathingLogo.kt, ui/settings/about/PilgrimLogo.kt | L/D/C | anim | none | unverified |
 | overlay.streakflame | Views/StreakFlameView.swift | Streak flame (dual flicker) | ui/settings/StreakFlame.kt | L/D/C | anim | streak ≥1 | unverified |
+
+## Per-row verdict detail
+
+Per-mode blinded-review results for rows not yet fully verified (a row's table-cell stays partial until every `appearance` mode + motion is reviewed; row effective verdict = worst mode).
+
+### path.wander.idle
+
+- **L (Light) — `close-the-gap`** (fresh blinded reviewer, 2026-05-15)
+  - evidence: `evidence/path.wander.idle__L__ios.png`, `evidence/path.wander.idle__L__android.png`; motion: `evidence/motion/path.wander.idle__L__{ios,android}.frames/` (iOS also `.mov`; Android frame-sampled — on-device `screenrecord` is OEM-blocked on the OnePlus, U6 frame-sample method used)
+  - observed-diff: Android renders an EXTRA bottom-end celestial moon pill (`WalkVignette`, BottomEnd) on the pre-walk screen that iOS `WalkStartView` does not have — iOS `CelestialVignetteView` is used only in `ActiveWalkView.swift:450` (active walk), never pre-walk (capturer verified iOS host `MainTabView.swift` does not wrap it either; behavior slice was complete).
+  - **U7 triage hint (rationale — attached structurally AFTER verdict, NOT shown to reviewer):** the Android pre-walk celestial pill was added per explicit user request ("it's not showing the weather and celestial signs on the bottom right corner … for the walk and pre-walk screen"). The user's ask conflated pre-walk with active-walk, OR is a deliberate Android enhancement. U7 dispositions this as `re-justify` (dated user-requested divergence) OR `close-the-gap` (remove from pre-walk to match iOS) — A5/user owns the call.
+  - D (Dark), C (Constellation), reduce-motion: NOT yet captured → row stays partial.
 
 ## Gate summary (computed at U7)
 
