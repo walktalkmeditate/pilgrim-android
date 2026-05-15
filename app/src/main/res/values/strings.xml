@@ -560,6 +560,25 @@
     <string name="settings_bell_picker_title">Choose bell</string>
     <string name="settings_bell_picker_none">None</string>
     <string name="settings_breath_rhythm_picker_title">Choose breath rhythm</string>
+    <string name="meditation_options_title">Meditation Options</string>
+    <string name="meditation_options_voice_guide_section">VOICE GUIDE</string>
+    <string name="meditation_options_breath_section">BREATH RHYTHM</string>
+    <string name="meditation_options_voice_guide_off_name">Off</string>
+    <string name="meditation_options_voice_guide_off_subtitle">Meditate in silence</string>
+    <string name="meditation_options_voice_guide_not_downloaded">Not downloaded</string>
+
+    <!-- Closing-ceremony phrases. iOS MeditationView.swift:354-360
+         random-pick one on Done tap. -->
+    <string name="meditation_closing_phrase_1">Be at peace</string>
+    <string name="meditation_closing_phrase_2">Stillness carries forward</string>
+    <string name="meditation_closing_phrase_3">The path continues</string>
+    <string name="meditation_closing_phrase_4">Return gently</string>
+    <string name="meditation_closing_phrase_5">Carry this calm with you</string>
+
+    <!-- Soundscape affordance under the breathing timer. -->
+    <string name="meditation_soundscape_silence">♪ Silence</string>
+    <string name="meditation_soundscape_paused">♪ Paused</string>
+    <string name="meditation_soundscape_playing">♪ %1$s</string>
     <string name="settings_soundscape_label">Soundscape</string>
     <string name="settings_atmosphere_bells_soundscapes_row">Bells &amp; Soundscapes</string>
     <string name="settings_atmosphere_bells_soundscapes_subtitle">Per-event chimes, ambient sound, breath rhythm</string>

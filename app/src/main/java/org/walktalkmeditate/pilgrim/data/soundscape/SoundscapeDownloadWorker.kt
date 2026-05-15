@@ -65,8 +65,11 @@ class SoundscapeDownloadWorker @AssistedInject constructor(
 
     private suspend fun downloadAsset(asset: AudioAsset): Boolean =
         withContext(Dispatchers.IO) {
-            val url = baseUrl.trimEnd('/') + "/soundscape/${asset.id}.aac"
+            // iOS parity: bells live under /bell/<id>.aac, soundscapes
+            // under /soundscape/<id>.aac. asset.type drives the route.
+            val url = baseUrl.trimEnd('/') + "/${asset.type}/${asset.id}.aac"
             val expectedSize = asset.fileSizeBytes
+            fileStore.ensureTypeDir(asset)
             val target = fileStore.fileFor(asset)
             val tmp = File(target.parentFile, target.name + TMP_SUFFIX)
             try {

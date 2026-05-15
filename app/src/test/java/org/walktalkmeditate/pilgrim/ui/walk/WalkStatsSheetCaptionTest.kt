@@ -51,8 +51,6 @@ class WalkStatsSheetCaptionTest {
             recordingsCount = 0,
                 units = UnitSystem.Metric,
             intention = intention,
-            onPause = {},
-            onResume = {},
             onStartWalk = {},
             onStartMeditation = {},
             onEndMeditation = {},

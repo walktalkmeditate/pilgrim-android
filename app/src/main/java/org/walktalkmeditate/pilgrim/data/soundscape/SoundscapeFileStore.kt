@@ -29,8 +29,27 @@ class SoundscapeFileStore @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     private val root: File by lazy {
-        File(context.filesDir, SOUNDSCAPE_DIR).also { it.mkdirs() }
+        File(context.filesDir, AUDIO_DIR).also { it.mkdirs() }
     }
+
+    /**
+     * Per-type subdir (e.g. `audio/soundscape`, `audio/bell`).
+     * Lazily creates the directory so [fileFor] can be called from
+     * tests + callers that expect `fileFor(...).writeBytes(...)` to
+     * succeed without a separate mkdir step (matches the pre-type
+     * routing contract). Cost is one `mkdirs()` per asset access —
+     * the syscall is fast and idempotent.
+     */
+    private fun typeDir(asset: AudioAsset): File =
+        File(root, asset.type).also { it.mkdirs() }
+
+    /**
+     * Kept as a public alias for callers that want to make the
+     * directory-creation step explicit (e.g.
+     * [SoundscapeDownloadWorker]). Returns the same File [typeDir]
+     * would.
+     */
+    fun ensureTypeDir(asset: AudioAsset): File = typeDir(asset)
 
     private val _invalidations = MutableSharedFlow<Unit>(
         replay = 0,
@@ -46,7 +65,7 @@ class SoundscapeFileStore @Inject constructor(
      * Keeping this pure read-only lets orchestrator-side eligibility
      * checks run on any dispatcher without StrictMode complaints.
      */
-    fun fileFor(asset: AudioAsset): File = File(root, "${asset.id}.aac")
+    fun fileFor(asset: AudioAsset): File = File(typeDir(asset), "${asset.id}.aac")
 
     /** True iff the file exists AND its length matches the manifest. */
     fun isAvailable(asset: AudioAsset): Boolean {
@@ -76,8 +95,9 @@ class SoundscapeFileStore @Inject constructor(
      * `File.length()` is a blocking syscall on every entry.
      */
     suspend fun totalSize(): Long = withContext(Dispatchers.IO) {
-        val files = root.listFiles() ?: return@withContext 0L
-        files.sumOf { if (it.isFile) it.length() else 0L }
+        // Walks every per-type subdir under `audio/` recursively so
+        // bell + soundscape caches both count toward the total.
+        root.walkTopDown().sumOf { if (it.isFile) it.length() else 0L }
     }
 
     /**
@@ -88,13 +108,16 @@ class SoundscapeFileStore @Inject constructor(
      */
     suspend fun clearAll() {
         withContext(Dispatchers.IO) {
-            val files = root.listFiles() ?: return@withContext
-            files.forEach { if (it.isFile) it.delete() }
+            root.walkTopDown().forEach { if (it.isFile) it.delete() }
         }
         _invalidations.tryEmit(Unit)
     }
 
     private companion object {
-        const val SOUNDSCAPE_DIR = "audio/soundscape"
+        // `audio/` is the umbrella; per-type subdirs (`soundscape/`,
+        // `bell/`) live underneath so a single file store handles
+        // every AudioAsset type. Existing `audio/soundscape/...`
+        // downloads remain at the same path.
+        const val AUDIO_DIR = "audio"
     }
 }

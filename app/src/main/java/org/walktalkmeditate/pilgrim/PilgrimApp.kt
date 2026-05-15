@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder
 import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
@@ -30,6 +31,14 @@ class PilgrimApp : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var orphanSweeperScheduler: OrphanSweeperScheduler
+
+    /**
+     * First-launch defaults for bell + soundscape selections. iOS
+     * mirrors this via `AppDelegate.swift:61-73`. Must run BEFORE
+     * [meditationBellObserver] starts collecting so the start/end
+     * bell ids are non-null on the first meditation transition.
+     */
+    @Inject lateinit var soundsPreferencesSeeder: SoundsPreferencesSeeder
 
     /**
      * Referenced in [onCreate] to force Hilt to instantiate the
@@ -163,6 +172,18 @@ class PilgrimApp : Application(), Configuration.Provider {
         // periodic sweeper runs on its own daily cadence regardless of
         // how often the user opens the app.
         orphanSweeperScheduler.scheduleDaily()
+
+        // Seed bell + soundscape selection defaults on first launch
+        // so MeditationBellObserver's null-id "None" guard doesn't
+        // silence a fresh install. runBlocking matches the
+        // recoverStaleWalks precedent — single DataStore.edit, <50ms.
+        try {
+            kotlinx.coroutines.runBlocking { soundsPreferencesSeeder.seedDefaultsIfNeeded() }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "seedDefaultsIfNeeded failed", t)
+        }
 
         // Force Hilt to instantiate the bell observer so its `init`
         // block subscribes to the walk-state flow for the whole app

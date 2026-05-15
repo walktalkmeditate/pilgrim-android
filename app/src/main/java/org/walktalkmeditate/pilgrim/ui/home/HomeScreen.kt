@@ -657,7 +657,17 @@ fun HomeScreen(
                 animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
                 targetOffsetY = { it },
             ) + androidx.compose.animation.fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
+            // Lift just above the floating pill nav with a small
+            // breathing margin. User feedback (2026-05-14): modal
+            // should still cover the Goshuin FAB on the right — the
+            // FAB is a one-tap-away alt; while the preview is up the
+            // user is focused on the row's stats, not the FAB.
+            // zIndex(2f) forces the modal in front of the FAB despite
+            // declaration order (FAB block below in the same Box).
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 88.dp)
+                .zIndex(2f),
         ) {
             renderSnap?.let { snap ->
                 val seasonColor = walkDotBaseColor(snap.startMs, themeColors)

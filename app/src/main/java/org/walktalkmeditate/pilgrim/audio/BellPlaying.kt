@@ -60,4 +60,16 @@ interface BellPlaying {
     fun play(scale: Float = 1.0f, withHaptic: Boolean = true) {
         play(scale)
     }
+
+    /**
+     * Fire the bell whose downloaded asset matches [bellId]. When the
+     * file isn't on disk yet (or no manifest entry exists), the
+     * implementation falls back to the bundled bell so the user always
+     * hears something. Default body delegates to the 2-arg
+     * `play(scale, withHaptic)` so existing fakes keep working — the
+     * production `BellPlayer` overrides this with the file-routed path.
+     */
+    fun play(bellId: String?, scale: Float = 1.0f, withHaptic: Boolean = true) {
+        play(scale, withHaptic)
+    }
 }

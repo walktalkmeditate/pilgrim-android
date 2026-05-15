@@ -137,7 +137,12 @@ class SoundSettingsScreenTest {
             manifestService = manifestService,
             fileStore = fileStore,
             downloadScheduler = NoOpScheduler,
+            bellPlayer = NoOpBellPlayer,
         )
+    }
+
+    private object NoOpBellPlayer : org.walktalkmeditate.pilgrim.audio.BellPlaying {
+        override fun play() = Unit
     }
 
     private object NoOpScheduler : org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler {

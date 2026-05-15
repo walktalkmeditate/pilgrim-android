@@ -4,7 +4,6 @@ package org.walktalkmeditate.pilgrim.ui.walk
 import android.app.Application
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -47,7 +46,7 @@ class WalkStatsSheetActionRowTest {
                 audioLevel = 0f,
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
-                onPause = {}, onResume = {}, onStartWalk = {},
+                onStartWalk = {},
                 onStartMeditation = onStartMeditation, onEndMeditation = onEndMeditation,
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
                 onFinish = onFinish,
@@ -67,12 +66,8 @@ class WalkStatsSheetActionRowTest {
             )
 
     @Test
-    fun `Active state — Pause + Meditate enabled`() {
+    fun `Active state — Meditate enabled`() {
         render(WalkState.Active(WalkAccumulator(1L, 0L)))
-        // iOS parity (Stage 14-X audit D14): manual Pause button on the
-        // action row when Active. Earlier Android shipped without it
-        // under a "motion-based auto-pause TBD" note.
-        nodeInExpandedWithText("Pause").assertIsEnabled()
         nodeInExpandedWithText("Meditate").assertIsEnabled()
     }
 

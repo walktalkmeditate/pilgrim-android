@@ -3,104 +3,68 @@ package org.walktalkmeditate.pilgrim.audio
 
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.reflect.KClass
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
-import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.walk.BellTrigger
 
 /**
- * Subscribes to the walk-state flow and fires [BellPlaying.play] on
- * every USER-INITIATED Meditating boundary transition:
- *  - Active → Meditating (user tapped Meditate — start bell)
- *  - Meditating → Active (user tapped Done — end bell)
- *  - Meditating → Finished (walk finished during meditation — end bell)
+ * Subscribes to [WalkController.bellTriggers] and plays the bundled
+ * bell for every user-initiated walk / meditation boundary:
+ *  - [BellTrigger.WalkStart]       — start of a new walk
+ *  - [BellTrigger.WalkEnd]         — finish of the walk
+ *  - [BellTrigger.MeditationStart] — user tapped Meditate
+ *  - [BellTrigger.MeditationEnd]   — user tapped Done
  *
- * Discards its first collection — observing the CURRENT state of a
- * `@Singleton` controller at app-init time is not a transition (it
- * is always cold-process `Idle` because
- * [org.walktalkmeditate.pilgrim.walk.WalkController] initializes its
- * state flow to `Idle`).
+ * The trigger SharedFlow is fire-and-forget (no replay, no state),
+ * so a cold-start subscription never replays past events — that's
+ * exactly the property the iOS `SoundManagement.onWalkStart()`
+ * pattern relies on. The restore path writes directly into
+ * [WalkController.state] without going through `startWalk()` /
+ * `startMeditation()`, so it doesn't emit a trigger and the observer
+ * stays silent on resume.
  *
- * **Restore-path suppression.** After the first-emission skip lands on
- * `Idle`, `HomeScreen`'s resume-check may call `restoreActiveWalk()`,
- * which writes a restored state (possibly `Meditating`) directly into
- * the state flow. The observer would see `Idle → Meditating` and fire
- * a spurious "welcome back" bell — a bell the user did not trigger.
- * The guard below treats `Idle → Meditating` as a restore path, not a
- * user-initiated boundary. User-initiated `MeditateStart` dispatches
- * always originate from `Active` (you can't meditate without first
- * starting a walk), so `Active → Meditating` and `Idle → Meditating`
- * are domain-distinguishable.
+ * Per-event id (`walkStartBellId`, `walkEndBellId`,
+ * `meditationStartBellId`, `meditationEndBellId`) gates whether the
+ * bell fires at all — `null` (user picked "None") suppresses the
+ * strike. First-install seeds live in
+ * `org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder`.
  *
  * Instantiated eagerly at app start via `PilgrimApp.onCreate`'s
  * `@Inject` reference — without that reference, Hilt is lazy and the
  * observer's `init` block never runs.
  *
- * Same bell asset fires for both directions (start and end), matching
- * iOS's MVP behavior. See the design spec for the single-asset rationale.
- *
- * **Per-event bell selection (deferred).** Stage 10-B Chunk B persists
- * `meditationStartBellId` and `meditationEndBellId` so a user's choice
- * survives across launches AND a `.pilgrim` ZIP can round-trip with
- * iOS. The runtime path that resolves those ids to an [AudioAsset]
- * + plays the matching file is NOT yet wired — [BellPlayer] is
- * hardcoded to the bundled `R.raw.bell` resource. Generalizing
- * BellPlayer to accept an asset (similar to
- * [org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapePlayer.play])
- * is intentionally deferred to a future PR; it requires a
- * bell-specific file store + download orchestration that doesn't
- * fit the Stage 10-B scope. Until then, both bell-id prefs persist
- * silently and the bundled bell plays for every meditation
- * boundary.
+ * Same bell asset fires for every trigger (single bundled
+ * `R.raw.bell`); per-id asset routing is deferred to the bell-pack
+ * download epic.
  */
 @Singleton
 class MeditationBellObserver @Inject constructor(
-    // `@JvmSuppressWildcards` is required because Kotlin's
-    // `StateFlow<WalkState>` compiles to Java's
-    // `StateFlow<? extends WalkState>` — Dagger sees the producer-site
-    // wildcard on the parameter but the provider declares an invariant
-    // `StateFlow<WalkState>`, so without the suppression the bindings
-    // don't match and the app fails to compose at Hilt-gen time.
-    @MeditationObservedWalkState walkState: StateFlow<@JvmSuppressWildcards WalkState>,
-    bellPlayer: BellPlaying,
+    // `@JvmSuppressWildcards` mirrors the precedent on
+    // `@MeditationObservedWalkState walkState: StateFlow<...WalkState>` —
+    // Kotlin's covariant generic compiles to a Java wildcard that
+    // doesn't match Dagger's invariant binding produced by
+    // `provideBellTriggers`.
+    bellTriggers: SharedFlow<@JvmSuppressWildcards BellTrigger>,
+    private val bellPlayer: BellPlaying,
     private val soundsPreferences: SoundsPreferencesRepository,
     @MeditationBellScope scope: CoroutineScope,
 ) {
     init {
         scope.launch {
-            var lastStateClass: KClass<out WalkState>? = null
-            walkState.collect { state ->
-                val curr = state::class
-                val prev = lastStateClass
-                lastStateClass = curr
-                // First emission is the CURRENT state of a @Singleton
-                // at app init — always `Idle` because WalkController
-                // initializes there. Skip.
-                if (prev == null) return@collect
-                val wasMeditating = prev == WalkState.Meditating::class
-                val isMeditating = curr == WalkState.Meditating::class
-                // Suppress the bell on the restore path. After the
-                // Idle first-emission is consumed, `restoreActiveWalk`
-                // may write a resumed `Meditating` state; that's not a
-                // user-initiated boundary — silent resume. User-
-                // initiated `MeditateStart` always comes from Active.
-                val isRestoreIntoMeditating =
-                    prev == WalkState.Idle::class && isMeditating
-                if (wasMeditating != isMeditating && !isRestoreIntoMeditating) {
-                    // Stage 10-B master sounds toggle: short-circuit if user has muted.
-                    if (soundsPreferences.soundsEnabled.value) {
-                        // iOS-faithful: meditation start/end bells pair a
-                        // `.medium` haptic when `bellHapticEnabled` is on
-                        // (BellPlayer.swift:29-31; SoundManagement.swift:43
-                        // forwards `withHaptic: hapticEnabled`). Stage 12-C
-                        // moves haptic coupling to the player layer; the
-                        // observer simply requests `withHaptic = true` and
-                        // BellPlayer gates internally on the user pref.
-                        bellPlayer.play(scale = 1.0f, withHaptic = true)
-                    }
+            bellTriggers.collect { trigger ->
+                if (!soundsPreferences.soundsEnabled.value) return@collect
+                val bellId = when (trigger) {
+                    BellTrigger.WalkStart -> soundsPreferences.walkStartBellId.value
+                    BellTrigger.WalkEnd -> soundsPreferences.walkEndBellId.value
+                    BellTrigger.MeditationStart -> soundsPreferences.meditationStartBellId.value
+                    BellTrigger.MeditationEnd -> soundsPreferences.meditationEndBellId.value
                 }
+                if (bellId == null) return@collect
+                // Pass the picked id; BellPlayer plays the downloaded
+                // file when available, else falls back to bundled.
+                bellPlayer.play(bellId = bellId, scale = 1.0f, withHaptic = true)
             }
         }
     }

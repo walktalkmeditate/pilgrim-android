@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
@@ -44,6 +45,7 @@ class SoundSettingsViewModel @Inject constructor(
     private val manifestService: AudioManifestService,
     private val fileStore: SoundscapeFileStore,
     private val downloadScheduler: org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler,
+    private val bellPlayer: BellPlaying,
 ) : ViewModel() {
 
     val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
@@ -149,6 +151,18 @@ class SoundSettingsViewModel @Inject constructor(
             runCatching { soundsPreferences.setMeditationEndBellId(value) }
                 .onFailure { Log.w(TAG, "failed to persist meditation-end bell id", it) }
         }
+    }
+
+    /**
+     * Plays the bell-row preview from the picker sheet. [BellPlayer] is
+     * currently single-asset (bundled `R.raw.bell`) so the asset id is
+     * informational only; once per-id bell downloads land, this can
+     * route to the matching file. iOS plays the asset via
+     * `SoundManagement.previewBell(id:)`.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun previewBell(asset: AudioAsset) {
+        bellPlayer.play(scale = 1.0f, withHaptic = false)
     }
 
     fun setSelectedSoundscapeId(value: String?) {

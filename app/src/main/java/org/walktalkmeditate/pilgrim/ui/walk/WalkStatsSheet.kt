@@ -32,7 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.SelfImprovement
@@ -103,8 +102,6 @@ fun WalkStatsSheet(
     recordingsCount: Int,
     units: UnitSystem,
     intention: String? = null,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
@@ -282,8 +279,6 @@ fun WalkStatsSheet(
                         recordingsCount = recordingsCount,
                         units = units,
                         intention = intention,
-                        onPause = onPause,
-                        onResume = onResume,
                         onStartWalk = onStartWalk,
                         onStartMeditation = onStartMeditation,
                         onEndMeditation = onEndMeditation,
@@ -418,8 +413,6 @@ private fun ExpandedContent(
     recordingsCount: Int,
     units: UnitSystem,
     intention: String?,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
@@ -518,8 +511,6 @@ private fun ExpandedContent(
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
             onStartWalk = onStartWalk,
-            onPause = onPause,
-            onResume = onResume,
             onStartMeditation = onStartMeditation,
             onEndMeditation = onEndMeditation,
             onToggleRecording = onToggleRecording,
@@ -575,8 +566,6 @@ private fun ActionButtonRow(
     audioLevel: Float,
     recordingsCount: Int,
     onStartWalk: () -> Unit,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
     onStartMeditation: () -> Unit,
     onEndMeditation: () -> Unit,
     onToggleRecording: () -> Unit,
@@ -591,9 +580,17 @@ private fun ActionButtonRow(
     //   Start to begin recording. iOS's `.ready` state. Pre-walk intention
     //   is set via the ellipsis menu's Set Intention row, NOT here.
     // - Active/Paused/Meditating: 3-button row Meditate / Mic / End.
-    //   Manual Pause is dropped — iOS uses motion-based auto-pause we
-    //   don't have yet.
-    if (walkState == WalkState.Idle) {
+    //   Manual Pause is intentionally absent — user feedback (2026-05-14)
+    //   removed it after the brief iOS-parity port; motion-based auto-pause
+    //   is the long-term plan.
+    // Treat `Finished` the same as `Idle` for the pre-walk surface.
+    // The @Singleton WalkController stays in `Finished` after the
+    // user's previous walk wraps up (it transitions to Active again
+    // only on the next `startWalk()` call), so a "wander again" entry
+    // into ACTIVE_WALK observes `Finished` until the user taps Start
+    // here. Showing the Start button — not a row of disabled
+    // controls — matches the ready-to-record intent.
+    if (walkState == WalkState.Idle || walkState is WalkState.Finished) {
         Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center,
@@ -607,53 +604,27 @@ private fun ActionButtonRow(
         }
         return
     }
+    // SpaceEvenly + no weight modifiers keeps each button at its
+    // intrinsic 80dp × 80dp circular footprint. Earlier `weight(1f)`
+    // distribution stretched each button to ~120dp wide × 80dp tall
+    // (oval) after the pause button was removed and only 3 buttons
+    // remained in the row.
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+        horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
-        // Pause / Resume — iOS parity manual control. Active → Pause,
-        // Paused → Resume, Meditating → disabled (meditation has its
-        // own End control). Stage 14-X audit: prior Android dropped
-        // this entirely under a "motion-based auto-pause TBD" note —
-        // iOS keeps the manual button.
-        when (walkState) {
-            is WalkState.Active -> CircularActionButton(
-                label = stringResource(R.string.walk_action_pause),
-                icon = Icons.Filled.Pause,
-                color = pilgrimColors.stone,
-                onClick = onPause,
-                modifier = Modifier.weight(1f),
-            )
-            is WalkState.Paused -> CircularActionButton(
-                label = stringResource(R.string.walk_action_resume),
-                icon = Icons.Filled.PlayArrow,
-                color = pilgrimColors.moss,
-                onClick = onResume,
-                modifier = Modifier.weight(1f),
-            )
-            else -> CircularActionButton(
-                label = stringResource(R.string.walk_action_pause),
-                icon = Icons.Filled.Pause,
-                color = pilgrimColors.fog,
-                enabled = false,
-                onClick = {},
-                modifier = Modifier.weight(1f),
-            )
-        }
         when (walkState) {
             is WalkState.Active -> CircularActionButton(
                 label = stringResource(R.string.walk_action_meditate_short),
                 icon = Icons.Outlined.SelfImprovement,
                 color = pilgrimColors.dawn,
                 onClick = onStartMeditation,
-                modifier = Modifier.weight(1f),
             )
             is WalkState.Meditating -> CircularActionButton(
                 label = stringResource(R.string.walk_action_end_meditation_short),
                 icon = Icons.Filled.Stop,
                 color = pilgrimColors.dawn,
                 onClick = onEndMeditation,
-                modifier = Modifier.weight(1f),
             )
             else -> CircularActionButton(
                 label = stringResource(R.string.walk_action_meditate_short),
@@ -661,7 +632,6 @@ private fun ActionButtonRow(
                 color = pilgrimColors.fog,
                 enabled = false,
                 onClick = {},
-                modifier = Modifier.weight(1f),
             )
         }
         MicActionButton(
@@ -671,14 +641,12 @@ private fun ActionButtonRow(
             onToggle = onToggleRecording,
             onPermissionDenied = onPermissionDenied,
             onDismissError = onDismissError,
-            modifier = Modifier.weight(1f),
         )
         CircularActionButton(
             label = stringResource(R.string.walk_action_finish_short),
             icon = Icons.Filled.Stop,
             color = pilgrimColors.fog,
             onClick = onFinish,
-            modifier = Modifier.weight(1f),
         )
     }
 }

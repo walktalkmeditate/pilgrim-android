@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
@@ -53,7 +54,6 @@ import kotlinx.coroutines.isActive
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
-import org.walktalkmeditate.pilgrim.ui.settings.sounds.BreathRhythmPickerSheet
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -85,8 +85,12 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 fun MeditationScreen(
     onEnded: () -> Unit,
     viewModel: WalkViewModel = hiltViewModel(),
+    optionsViewModel: MeditationOptionsViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
+    val soundscapeName by optionsViewModel.selectedSoundscapeName.collectAsStateWithLifecycle()
+    val soundscapeMuted by optionsViewModel.muted.collectAsStateWithLifecycle()
+    val voicePlaying by optionsViewModel.voicePlaying.collectAsStateWithLifecycle()
     // Navigation observer reads this (not ui.walkState) — bypasses
     // the WhileSubscribed stateIn's stale-cache trap.
     val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
@@ -106,7 +110,16 @@ fun MeditationScreen(
     // (screen rotation mid-session); `mutableIntStateOf` has a built-in
     // saver that handles the int-specialization correctly.
     var elapsedSeconds by rememberSaveable { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
+    // Breath cycle count: increments at the end of each exhale (matches
+    // iOS `breathIn()` which bumps `breathCount` when phase transitions
+    // from exhale/holdOut → inhale). Surfaced under the timer.
+    var breathCount by rememberSaveable { mutableIntStateOf(0) }
+    var didEnd by rememberSaveable { mutableStateOf(false) }
+    // Tick keys on `didEnd` so the loop cancels the instant the user
+    // taps Done — iOS `clock.stop()` is called inside `beginClosingCeremony`,
+    // freezing the displayed time at the captured millis.
+    LaunchedEffect(didEnd) {
+        if (didEnd) return@LaunchedEffect
         while (isActive) {
             delay(TIMER_TICK_MS)
             elapsedSeconds += 1
@@ -135,10 +148,17 @@ fun MeditationScreen(
     // `mutableStateOf<Boolean>` has a built-in saver, same as
     // `mutableIntStateOf` used for `elapsedSeconds` above.
     var hasSeenMeditating by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(navWalkState::class) {
+    // Ceremony-complete latch: dispatched once the 6.5s closing
+    // animation finishes. The state observer below gates `onEnded` on
+    // BOTH `hasSeenMeditating` AND `ceremonyComplete` so we dispatch
+    // `endMeditation` immediately on Done (stops voice guide + fires
+    // end bell) while the visual ceremony stays mounted until the
+    // outro finishes.
+    var ceremonyComplete by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(navWalkState::class, ceremonyComplete) {
         when {
             navWalkState is WalkState.Meditating -> hasSeenMeditating = true
-            hasSeenMeditating -> currentOnEnded()
+            hasSeenMeditating && ceremonyComplete -> currentOnEnded()
         }
     }
 
@@ -179,19 +199,36 @@ fun MeditationScreen(
     //    `doneAtMillis` instead of replaying the full sequence — a
     //    rotation mid-ceremony resumes at the correct phase + remaining
     //    delay rather than restarting from t=0.
-    var didEnd by rememberSaveable { mutableStateOf(false) }
     var doneAtMillis by rememberSaveable { mutableStateOf(0L) }
-    var dispatched by rememberSaveable { mutableStateOf(false) }
     var closingPhase by rememberSaveable { mutableStateOf(ClosingPhase.None) }
+    // Random closing phrase picked once per Done tap (iOS parity
+    // `MeditationView.swift:627`). Persist via rememberSaveable so a
+    // rotation mid-ceremony doesn't re-roll mid-fade.
+    val closingPhrases = listOf(
+        stringResource(R.string.meditation_closing_phrase_1),
+        stringResource(R.string.meditation_closing_phrase_2),
+        stringResource(R.string.meditation_closing_phrase_3),
+        stringResource(R.string.meditation_closing_phrase_4),
+        stringResource(R.string.meditation_closing_phrase_5),
+    )
+    var closingPhrase by rememberSaveable { mutableStateOf("") }
     val endSession: () -> Unit = {
         if (!didEnd) {
             didEnd = true
             doneAtMillis = viewModel.nowMillis()
             closingPhase = ClosingPhase.Dissolving
+            closingPhrase = closingPhrases.random()
+            // iOS parity (MeditationView.swift:629): fire end-bell +
+            // dispatch `endMeditation` IMMEDIATELY on Done tap. Stops
+            // voice guide via the orchestrator's state observer,
+            // freezes accounting at the captured millis, and lets the
+            // meditation-end bell ring during the outro instead of
+            // 6.5s after the user's last interaction.
+            viewModel.endMeditation(endMillis = doneAtMillis)
         }
     }
     LaunchedEffect(didEnd) {
-        if (!didEnd || dispatched) return@LaunchedEffect
+        if (!didEnd) return@LaunchedEffect
         // Elapsed since Done-tap. After a rotation mid-ceremony this is
         // > 0; the schedule resumes at the correct phase instead of
         // restarting from t=0.
@@ -217,10 +254,7 @@ fun MeditationScreen(
         if (finalElapsed < CEREMONY_TOTAL_MS) {
             delay(CEREMONY_TOTAL_MS - finalElapsed)
         }
-        if (!dispatched) {
-            dispatched = true
-            viewModel.endMeditation(endMillis = doneAtMillis)
-        }
+        ceremonyComplete = true
     }
 
     // Intercept hardware back; treat as Done. Without this, back pops
@@ -344,8 +378,12 @@ fun MeditationScreen(
     // No reduce-motion guard — iOS doesn't suppress ripples either.
     val rippleRings = remember { mutableStateListOf<RippleRing>() }
     val ringIdSeq = remember { AtomicLong(0L) }
-    LaunchedEffect(breathRhythm.id) {
+    // Key on `didEnd` too so the loop cancels on Done (matches
+    // iOS `isActive = false` inside beginClosingCeremony, which halts
+    // the breath cycle producer).
+    LaunchedEffect(breathRhythm.id, didEnd) {
         rippleRings.clear()
+        if (didEnd) return@LaunchedEffect
         if (breathRhythm.isNone) return@LaunchedEffect
         val inhaleMs = (breathRhythm.inhaleSeconds * 1000L).toLong()
         val holdInMs = (breathRhythm.holdInSeconds * 1000L).toLong()
@@ -369,6 +407,10 @@ fun MeditationScreen(
                 rippleRings.removeAll { it.id == ring.id }
             }
             if (tailMs > 0L) delay(tailMs)
+            // iOS parity `MeditationView.swift:717-720`: increment
+            // breath count at end-of-exhale (= end of one full cycle).
+            // Surfaces under the timer.
+            breathCount += 1
         }
     }
 
@@ -378,20 +420,34 @@ fun MeditationScreen(
         enabled = !didEnd,
         onDone = endSession,
         breathRhythm = breathRhythm,
+        breathCount = breathCount,
         closingPhase = closingPhase,
+        closingPhrase = closingPhrase,
         milestoneFlash = milestoneFlash.value,
         rippleRings = rippleRings,
+        soundscapeName = soundscapeName,
+        soundscapeMuted = soundscapeMuted,
+        voicePlaying = voicePlaying,
+        onSoundscapeTap = {
+            if (soundscapeName != null) {
+                optionsViewModel.toggleSoundscapeMute()
+            } else {
+                showRhythmPicker = true
+            }
+        },
+        onSoundscapeLongPress = {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            showRhythmPicker = true
+        },
         onCircleLongPress = {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             showRhythmPicker = true
         },
     )
     if (showRhythmPicker) {
-        BreathRhythmPickerSheet(
+        MeditationOptionsSheet(
             currentRhythmId = sourceRhythmId,
-            onSelect = { id ->
-                viewModel.setBreathRhythm(id)
-            },
+            onSelectRhythm = { id -> viewModel.setBreathRhythm(id) },
             onDismiss = { showRhythmPicker = false },
         )
     }
@@ -431,9 +487,16 @@ internal fun MeditationScreenContent(
     enabled: Boolean,
     onDone: () -> Unit,
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
+    breathCount: Int = 0,
     closingPhase: ClosingPhase = ClosingPhase.None,
+    closingPhrase: String = "",
     milestoneFlash: Float = 0f,
     rippleRings: List<RippleRing> = emptyList(),
+    soundscapeName: String? = null,
+    soundscapeMuted: Boolean = false,
+    voicePlaying: Boolean = false,
+    onSoundscapeTap: () -> Unit = {},
+    onSoundscapeLongPress: () -> Unit = {},
     onCircleLongPress: (() -> Unit)? = null,
 ) {
     // Animated phase-driven opacities. Reduce-motion users get the
@@ -464,14 +527,26 @@ internal fun MeditationScreenContent(
             .fillMaxSize()
             .background(pilgrimColors.parchment),
     ) {
+        // iOS parity `MeditationView.swift:54-89` — VStack(spacing: 0)
+        // with Spacer + breathingCircle + (labels) + Spacer + done.
+        // Spacers at top/bottom absorb leftover space evenly, anchoring
+        // the breathing circle in the visual center; the timer + labels
+        // sit DIRECTLY below the circle in a fixed-size block. The
+        // earlier `Arrangement.Center` re-centered the COMBINED column
+        // every frame, so the timer visibly drifted with the breathing
+        // circle's pulse — even though `graphicsLayer.scaleX/Y` doesn't
+        // change layout bounds, the perceived offset between circle
+        // center and timer line shifted as the circle visually grew /
+        // shrank. The Spacer+content+Spacer arrangement locks the
+        // timer's screen-Y to a fixed offset below the circle's
+        // layout-anchor.
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(PilgrimSpacing.big)
-                .graphicsLayer { alpha = breathingAlpha },
+                .padding(PilgrimSpacing.big),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
         ) {
+            Spacer(Modifier.weight(1f))
             // Layer ripple rings BEHIND BreathingCircle in a centered
             // Box. iOS structure (ZStack: rippleLayer below breathingCircle).
             // The Box sizes to the larger child (400dp ring footprint vs
@@ -483,16 +558,34 @@ internal fun MeditationScreenContent(
             // the user picks a new rhythm mid-meditation. Without it,
             // changing rhythms can resume the new keyframe spec at the
             // old cycle's offset — visually jumping to a nonsensical
-            // phase. The key restart trades a brief snap to
-            // SCALE_EXHALED for a clean, predictable cycle on the new
-            // rhythm.
-            Box(contentAlignment = Alignment.Center) {
+            // phase.
+            // Fixed-size 400dp slot — matches MAX_RING_SIZE_DP so the
+            // Box's measured height stays constant whether ripple rings
+            // are on-screen or not. Without this lock, the Box collapsed
+            // to BreathingCircle's 320dp between cycles and re-grew to
+            // 400dp on every ring spawn, dragging the timer +/- 40dp
+            // along the breath. iOS achieves the same with a ZStack
+            // sized to the max ring footprint.
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    // Lock HEIGHT only (not width) — width must remain
+                    // bounded by the parent Column's available space,
+                    // otherwise tests viewport-wider-than-circle reject
+                    // the assertion. Layout height stays constant
+                    // whether ripple rings are on-screen or not.
+                    .height(400.dp)
+                    .graphicsLayer { alpha = breathingAlpha },
+            ) {
                 MeditationRippleRings(rings = rippleRings, mossColor = mossColor)
                 key(breathRhythm.id) {
                     BreathingCircle(
                         moss = mossColor,
                         breathRhythm = breathRhythm,
                         milestoneFlash = milestoneFlash,
+                        // iOS parity MeditationView.swift:656: 2.0x
+                        // slowdown while voice-guide prompt narrates.
+                        breathSpeedMultiplier = if (voicePlaying) 2.0f else 1.0f,
                         modifier = if (onCircleLongPress != null) {
                             Modifier.pointerInput(Unit) {
                                 detectTapGestures(onLongPress = { onCircleLongPress() })
@@ -502,29 +595,83 @@ internal fun MeditationScreenContent(
                         },
                     )
                 }
+                // Voice rings overlay — 4 concentric, pulsing circles
+                // shown ONLY while a voice-guide prompt is playing
+                // (iOS MeditationView.swift:673-684).
+                if (voicePlaying) {
+                    VoiceGuideRings(mossColor = mossColor)
+                }
             }
-            Spacer(Modifier.height(PilgrimSpacing.big))
-            Text(
-                text = formatTimer(elapsedSeconds),
-                style = pilgrimType.statValue,
-                color = pilgrimColors.fog,
-            )
-        }
-        // Session summary text — visible during Summary + FadeOut
-        // phases. Cross-fades over 1.5s.
-        if (summaryAlpha > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = summaryAlpha },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = formatTimer(elapsedSeconds),
-                    style = pilgrimType.displayMedium,
-                    color = pilgrimColors.ink,
-                )
+            // Closing summary replaces the regular labels during the
+            // Summary + FadeOut phases. Cross-fades over 1.5s.
+            if (summaryAlpha > 0f) {
+                Column(
+                    modifier = Modifier
+                        .padding(top = PilgrimSpacing.big)
+                        .graphicsLayer { alpha = summaryAlpha },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = formatTimer(elapsedSeconds),
+                        style = pilgrimType.displayMedium,
+                        color = pilgrimColors.ink,
+                    )
+                    if (closingPhrase.isNotEmpty()) {
+                        Text(
+                            text = closingPhrase,
+                            style = pilgrimType.body,
+                            color = pilgrimColors.fog,
+                        )
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .padding(top = 16.dp)
+                        .graphicsLayer { alpha = breathingAlpha },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (!breathRhythm.isNone) {
+                        Text(
+                            text = "$breathCount",
+                            style = pilgrimType.caption,
+                            color = pilgrimColors.fog.copy(alpha = 0.4f),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text(
+                        text = formatTimer(elapsedSeconds),
+                        style = pilgrimType.statValue,
+                        color = pilgrimColors.fog,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    val labelText = when {
+                        soundscapeName != null && soundscapeMuted ->
+                            stringResource(R.string.meditation_soundscape_paused)
+                        soundscapeName != null ->
+                            stringResource(R.string.meditation_soundscape_playing, soundscapeName)
+                        else -> stringResource(R.string.meditation_soundscape_silence)
+                    }
+                    val labelAlpha = when {
+                        soundscapeName != null && soundscapeMuted -> 0.2f
+                        soundscapeName != null -> 0.35f
+                        else -> 0.25f
+                    }
+                    Text(
+                        text = labelText,
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog.copy(alpha = labelAlpha),
+                        modifier = Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { onSoundscapeTap() },
+                                onLongPress = { onSoundscapeLongPress() },
+                            )
+                        },
+                    )
+                }
             }
+            Spacer(Modifier.weight(1f))
         }
         // Final fade-to-parchment overlay over the last 1.5s.
         if (fadeOverlayAlpha > 0f) {
@@ -534,28 +681,28 @@ internal fun MeditationScreenContent(
                     .background(pilgrimColors.parchment.copy(alpha = fadeOverlayAlpha)),
             )
         }
-        OutlinedButton(
-            onClick = onDone,
-            enabled = enabled,
-            shape = RoundedCornerShape(DONE_BUTTON_CORNER_DP.dp),
-            // Set the content color on the button itself so M3 can
-            // auto-derive `disabledContentColor` (contentColor × 0.38
-            // alpha). An explicit `color` on the child Text would
-            // bypass `LocalContentColor` — the text would stay full
-            // `fog` even when disabled, giving the user no visual
-            // signal that their tap was accepted during the ~1-2
-            // frame state-transition window.
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = pilgrimColors.fog,
-            ),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = PilgrimSpacing.big),
-        ) {
-            Text(
-                text = stringResource(R.string.meditation_done),
-                style = pilgrimType.button,
-            )
+        // iOS parity `MeditationView.swift:84-88`: hide the Done
+        // button entirely during the closing ceremony (`if !isClosing`).
+        // Keeping it visible-but-disabled looked broken on device —
+        // the user perceived the meditation as "still running" because
+        // the action surface stayed on screen.
+        if (!ceremonyActive) {
+            OutlinedButton(
+                onClick = onDone,
+                enabled = enabled,
+                shape = RoundedCornerShape(DONE_BUTTON_CORNER_DP.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = pilgrimColors.fog,
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = PilgrimSpacing.big),
+            ) {
+                Text(
+                    text = stringResource(R.string.meditation_done),
+                    style = pilgrimType.button,
+                )
+            }
         }
     }
 }

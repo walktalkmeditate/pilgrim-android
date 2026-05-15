@@ -46,8 +46,16 @@ class SoundscapeAutoDownloadObserver @Inject constructor(
 
         manifestService.assets.collect { assets ->
             val missing = withContext(Dispatchers.IO) {
+                // iOS pre-downloads BOTH bells AND soundscapes (~few MB
+                // total). Android does the same now that the file
+                // store paths by `asset.type`; user-picked bells play
+                // their selected sound instead of falling back to the
+                // bundled `R.raw.bell`.
                 assets
-                    .filter { it.type == AudioAssetType.SOUNDSCAPE }
+                    .filter {
+                        it.type == AudioAssetType.SOUNDSCAPE ||
+                            it.type == AudioAssetType.BELL
+                    }
                     .filter { !fileStore.isAvailable(it) }
             }
             for (asset in missing) {
