@@ -1,3 +1,5 @@
+> **SUPERSEDED** by `docs/parity/2026-05-15-parity-ledger.md` — findings predate the v1.6.0 port + bug fixes and are stale. Format precedent only.
+
 # Parity Spec: WalkSummary
 
 | field | value |
