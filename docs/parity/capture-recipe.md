@@ -4,7 +4,14 @@ Per-row capture loop driving both platforms into each ledger state, attaching pa
 
 > **Capture-execution status (updated 2026-05-15):** iOS half UNBLOCKED + proven — `xcode-select` switched to `/Applications/Xcode.app`, iPhone 17 sim boots, `Pilgrim.app` (Debug, fcd2255) builds + installs, `--demo-mode` launch arg runs `ScreenshotDataSeeder` (seeds walks + bypasses onboarding), `xcrun simctl io <udid> screenshot` is scriptable. First iOS reference shots staged (`evidence/setup.welcome.entrance__L__ios.png`, `evidence/path.wander.idle__L__ios.png`).
 >
-> Still blocking paired verdicts: (1) **Android device disconnected** — `adb devices` empty; the paired Android column can't be captured. (2) **Binary `parity-seed.pilgrim` not yet extracted** — the iOS app is seeded via `ScreenshotDataSeeder` (App-Store-tuned; may not cover archived/tended/108-walk edge rows); a real shared seed must be exported from a populated app and round-trip-checked. Until both clear, rows stay `unverified` (a one-sided iOS shot never yields `match` per the review protocol).
+> **Resolved since:** Android device reconnected; real shared seed staged (`fixtures/parity-seed.pilgrim`); Android seed import VERIFIED (23→39 walks, v1.6.0 tended/archived path exercised on real data).
+>
+> **Remaining hard blocker — iOS-sim UI automation:** `xcrun simctl` has no tap/gesture primitive. `simctl openurl file://<seed>` routes the file to the iOS **Files "Save" dialog** (Pilgrim recognizes the PILGRIM doc type) but does NOT auto-import — completing the import (Save → Pilgrim Settings→Data→Import→Browse→pick) needs scriptable taps. No `idb`/`fbsimctl` installed. So the iOS half of every **seed-gated** row cannot be captured headlessly until one of:
+> 1. `brew install facebook/fb/idb-companion && pipx install fb-idb` → then drive sim UI like Android's `uiautomator` (preferred — fully unblocks the loop).
+> 2. One-time hand-drag of `fixtures/parity-seed.pilgrim` onto the booted sim → import in Pilgrim by hand; afterward `simctl` screenshots are scriptable for the seeded-state captures.
+> 3. Run against a real iOS device with the v1.6.0 build + the seed imported.
+>
+> `seed req: none` rows (Welcome, Permissions, Path-idle, Settings tree, Appearance, About, sound/bell, options-idle, intention sheet, prompts, constellation overlay) are NOT blocked by this — both platforms reach them from a fresh/default state and can be paired now.
 
 ## iOS capture commands (proven)
 
