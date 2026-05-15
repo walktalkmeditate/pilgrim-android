@@ -110,7 +110,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | settings.root | Scenes/Settings/SettingsView.swift | Settings card stack | ui/settings/SettingsScreen.kt | L/D/C | — | none | L:close-the-gap; D/C:unverified (see detail) |
 | settings.practice | Scenes/Settings/SettingsCards/PracticeCard.swift | Practice card (intention/celestial/zodiac/units/hemisphere/collective/reliquary) | ui/settings/practice/PracticeCard.kt | L/D/C | — | none | unverified |
 | settings.atmosphere | Scenes/Settings/SettingsCards/AtmosphereCard.swift | Atmosphere card (appearance nav row + sounds) | ui/settings/AtmosphereCard.kt | L/D/C | — | none | unverified |
-| settings.appearance | Scenes/Settings/AppearanceView.swift | Appearance detail (4 rows) | ui/settings/AppearanceScreen.kt | L/D/C | — | none | unverified |
+| settings.appearance | Scenes/Settings/AppearanceView.swift | Appearance detail (4 rows) | ui/settings/AppearanceScreen.kt | L/D/C | — | none | L:close-the-gap; D/C:unverified (see detail) |
 | settings.voice | Scenes/Settings/SettingsCards/VoiceCard.swift | Voice card | ui/settings/voice | L/D/C | — | none | unverified |
 | settings.permissions | Scenes/Settings/SettingsCards/PermissionsCard.swift | Permissions card | ui/settings/permissions | L/D/C | — | none | unverified |
 | settings.data | Scenes/Settings/SettingsCards/DataCard.swift | Data card | ui/settings/data DataCard | L/D/C | — | none | unverified |
@@ -169,6 +169,15 @@ Per-mode blinded-review results for rows not yet fully verified (a row's table-c
 ## Capture-methodology finding (cross-cutting — affects every seed-gated + stateful row)
 
 **Seed baseline was NOT equalized before import.** iOS sim (`74 walks·116mi` season / `149·226mi` all-time) and Android device (`39 walks·44km` season / `149·363km` all-time) imported the SAME `parity-seed.pilgrim` but onto **different pre-existing data** (iOS sim carried `--demo-mode` walks; Android device had 23 real user walks + the user's real settings). All-time distance actually corresponds (226mi ≈ 363km — unit display only); season counts/toggle-state diverge purely from baseline residue. **Consequence:** seed-gated and settings-state rows cannot be fairly pixel/state-compared until BOTH platforms import the seed onto a CLEAN wiped baseline (the `README-seed.md` round-trip-equivalence gate). No-seed structural rows (path modes, settings card structure, appearance/about/feedback chrome) remain valid now. Seeded rows (journal populated, goshuin, archived, summary, practice header stats) must be (re)captured post-clean-baseline or their verdicts carry a `state-artifact-risk` caveat.
+
+### settings.appearance
+- **L — `close-the-gap`** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/settings.appearance__L__{ios,android}.png`. Four distinct sub-divergences (itemized for U7 batch / focused follow-up):
+  1. **Container grouping:** iOS = one grouped card with internal hairline dividers; Android = 4 separate elevated cards with gaps. (structural Compose change)
+  2. **Description copy (3 of 4 reworded):** "Match the system setting"→"Match your system theme"; "Parchment background, ink text"→"Parchment, ink, and warm sand"; "Easy on the eyes for evening walks"→"Restful low-light reading". (trivial string fix — change Android `settings_appearance_*_description` to iOS wording)
+  3. **Icons:** iOS SF Symbols (circle.righthalf.filled / sun.max / moon / sparkles) vs Android Material (Brightness6 / LightMode / Brightness4 / AutoAwesome). SF Symbols are iOS-native — needs a design call: approximate with custom vectors vs accept Material substitution (latter blocks `match` by R6).
+  4. **Title/back chrome:** iOS centered "Appearance" + circular back button; Android left-aligned title + plain ArrowBack TopAppBar.
+  - **U7 disposition needed (A5/user):** items 1,2,4 are unambiguous close-the-gap (fixable); item 3 (icons) needs the design call. Not fixed inline — batched as a focused follow-up (mixed trivial + structural + design).
+  - D/C pending.
 
 ## Gate summary (computed at U7)
 
