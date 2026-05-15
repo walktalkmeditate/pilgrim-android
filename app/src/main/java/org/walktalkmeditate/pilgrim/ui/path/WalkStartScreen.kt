@@ -256,29 +256,6 @@ fun WalkStartScreen(
                 Text(stringResource(buttonLabelFor(selectedMode)))
             }
         }
-        // iOS parity `WalkStartView` — the same ambient celestial
-        // vignette the active walk shows, pinned bottom-end. Pre-walk
-        // has no fetched weather (that starts with the walk), so only
-        // the celestial pill renders here; it's pure time-math.
-        val preWalkCelestial = androidx.compose.runtime.remember {
-            walkViewModel.preWalkCelestialSnapshot()
-        }
-        val celestialAwareness by walkViewModel.celestialAwarenessEnabled
-            .collectAsStateWithLifecycle()
-        val vignetteUnits by walkViewModel.distanceUnits
-            .collectAsStateWithLifecycle()
-        org.walktalkmeditate.pilgrim.ui.walk.WalkVignette(
-            weather = null,
-            celestial = preWalkCelestial,
-            celestialAwarenessEnabled = celestialAwareness,
-            units = vignetteUnits,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(
-                    end = org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing.normal,
-                    bottom = org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing.big * 6,
-                ),
-        )
     }
 }
 
