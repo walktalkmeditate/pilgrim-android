@@ -20,6 +20,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.onboarding.OnboardingPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBellHapticEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var walkController: WalkController
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
     @Inject lateinit var appearancePreferences: AppearancePreferencesRepository
+    @Inject lateinit var onboardingPreferences: OnboardingPreferencesRepository
     @Inject lateinit var soundsPreferences: SoundsPreferencesRepository
     @Inject lateinit var voicePreferences:
         org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
@@ -125,6 +127,8 @@ class MainActivity : ComponentActivity() {
                     // bar gaps above the gesture inset.
                     val deepLink by pendingDeepLink
                     Box(modifier = Modifier.fillMaxSize()) {
+                        val welcomeCompleted by onboardingPreferences
+                            .welcomeCompleted.collectAsStateWithLifecycle()
                         PilgrimNavHost(
                             pendingDeepLink = deepLink,
                             onDeepLinkConsumed = {
@@ -140,6 +144,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 setIntent(cleared)
                             },
+                            welcomeCompleted = welcomeCompleted,
                         )
                         // iOS parity v1.6.0: constellation overlay
                         // applied on top of all root content so stars +

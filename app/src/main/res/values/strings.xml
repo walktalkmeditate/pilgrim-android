@@ -850,4 +850,24 @@
     <string name="journal_expand_pill_meditate">meditate</string>
     <string name="journal_expand_view_details">View details</string>
     <string name="journal_expand_dismiss_a11y">Close walk details</string>
+
+    <!-- Welcome screen (iOS v1.6.0 parity Setup/Welcome/WelcomeView.swift) -->
+    <string name="welcome_begin_button">Begin</string>
+    <string name="welcome_begin_a11y">Begin your journey</string>
+    <string name="welcome_breath_cue">Take a breath. We’re right with you.</string>
+    <string name="welcome_privacy_promise">No accounts. Your recordings stay private and on your device.</string>
+    <string name="welcome_quote_1">Every journey begins\nwith a single step</string>
+    <string name="welcome_quote_2">The path is made\nby walking</string>
+    <string name="welcome_quote_3">Not all who wander\nare lost</string>
+    <string name="welcome_quote_4">Solvitur ambulando —\nit is solved by walking</string>
+    <string name="welcome_quote_5">Walk as if you are kissing\nthe earth with your feet</string>
+    <string name="welcome_quote_6">The journey of a thousand miles\nbegins beneath your feet</string>
+    <string-array name="welcome_quote_pool">
+        <item>@string/welcome_quote_1</item>
+        <item>@string/welcome_quote_2</item>
+        <item>@string/welcome_quote_3</item>
+        <item>@string/welcome_quote_4</item>
+        <item>@string/welcome_quote_5</item>
+        <item>@string/welcome_quote_6</item>
+    </string-array>
 </resources>

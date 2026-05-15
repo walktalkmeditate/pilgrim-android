@@ -63,6 +63,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 val LocalAppHazeState = compositionLocalOf { HazeState() }
 
 object Routes {
+    const val WELCOME = "welcome"
     const val PERMISSIONS = "permissions"
     const val PATH = "path"
     const val HOME = "home"
@@ -126,6 +127,15 @@ fun PilgrimNavHost(
     permissionsViewModel: PermissionsViewModel = hiltViewModel(),
     pendingDeepLink: org.walktalkmeditate.pilgrim.widget.DeepLinkTarget? = null,
     onDeepLinkConsumed: () -> Unit = {},
+    /**
+     * iOS parity v1.6.0 Welcome ritual. When `false`, the start
+     * destination is [Routes.WELCOME] so first-launch users see the
+     * breathing-logo + footprints + privacy-promise sequence before
+     * the Permissions prompt. Subsequent launches read `true` and skip
+     * straight to PERMISSIONS (which itself skips to PATH if the
+     * required perms are already granted).
+     */
+    welcomeCompleted: Boolean = true,
 ) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
@@ -146,11 +156,20 @@ fun PilgrimNavHost(
         // (Path's Wander button, etc.) to clear the pill footprint.
         NavHost(
             navController = navController,
-            startDestination = Routes.PERMISSIONS,
+            startDestination = if (welcomeCompleted) Routes.PERMISSIONS else Routes.WELCOME,
             modifier = Modifier
                 .fillMaxSize()
                 .hazeSource(appHazeState),
         ) {
+        composable(Routes.WELCOME) {
+            org.walktalkmeditate.pilgrim.ui.onboarding.WelcomeScreen(
+                onBegin = {
+                    navController.navigate(Routes.PERMISSIONS) {
+                        popUpTo(Routes.WELCOME) { inclusive = true }
+                    }
+                },
+            )
+        }
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 onComplete = {
