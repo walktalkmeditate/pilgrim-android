@@ -487,6 +487,26 @@ fun PilgrimNavHost(
         }
         }
 
+        // iOS parity v1.6.0: constellation overlay painted on top of
+        // every screen — stars + nebulae + cosmic gradient render when
+        // AppearanceMode == Constellation. Nebulae are SUPPRESSED on
+        // Active Walk + Walk Summary + Meditation (and Walk Share) so
+        // the purple/blue clouds don't clash with the dense Mapbox map
+        // and warm parchmentSecondary cards. Stars + cosmic gradient
+        // still render there.
+        val noNebulaeRoutes = remember {
+            setOf(Routes.ACTIVE_WALK, Routes.MEDITATION)
+        }
+        val nebulaeOn = when {
+            currentRoute == null -> true
+            currentRoute in noNebulaeRoutes -> false
+            currentRoute.startsWith("walk_summary") -> false
+            currentRoute.startsWith("walk_share") -> false
+            else -> true
+        }
+        org.walktalkmeditate.pilgrim.ui.design
+            .ConstellationDecoration(includesNebulae = nebulaeOn)
+
         // Pill overlays the screen content at BottomCenter — content
         // extends edge-to-edge behind the pill so the area around the
         // pill is whatever the screen renders (parchment canvas, journal
