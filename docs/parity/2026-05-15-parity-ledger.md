@@ -39,8 +39,8 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | setup.permissions.granted | Scenes/Setup/Permissions/PermissionsView.swift | All granted (auto-advance) | PermissionsScreen complete | L/D/C | — | none | unverified |
 | **Path tab** ||||||||
 | path.wander.idle | Scenes/Home/WalkStartView.swift | Wander mode, idle, moon glyph | ui/path/WalkStartScreen.kt | L/D/C | anim | none | L:close-the-gap; D/C/rm:unverified (see detail) |
-| path.together.comingsoon | Scenes/Home/WalkStartView.swift | Together mode "coming soon" | WalkStartScreen Together | L/D/C | — | none | unverified |
-| path.seek.comingsoon | Scenes/Home/WalkStartView.swift | Seek mode "coming soon" | WalkStartScreen Seek | L/D/C | — | none | unverified |
+| path.together.comingsoon | Scenes/Home/WalkStartView.swift | Together mode "coming soon" | WalkStartScreen Together | L/D/C | — | none | L:match; D/C:unverified |
+| path.seek.comingsoon | Scenes/Home/WalkStartView.swift | Seek mode "coming soon" | WalkStartScreen Seek | L/D/C | — | none | L:match; D/C:unverified |
 | path.wander.recovery-banner | Scenes/Home/WalkStartView.swift | Recovery banner (stale-walk swipe) | WalkStartScreen RecoveryBanner | L/D/C | anim | recovered walk | unverified |
 | path.wander.vignette | Views/CelestialVignetteView.swift | Pre-walk celestial vignette (no weather) | ui/walk/WalkVignette.kt | L/D/C | — | none | unverified |
 | **Journal tab** ||||||||
@@ -152,6 +152,12 @@ Per-mode blinded-review results for rows not yet fully verified (a row's table-c
   - **L re-review #2 (post-pill-fix, fresh blinded reviewer):** `close-the-gap` — Android lacked iOS `runEntrance` staggered fade (logo→quote→moon, 0.5s decelerate, +0.4s/+0.6s delays; logo also scales 0.95→1.0). **Resolved in code:** added staggered entrance + reduceMotion-immediate path to `WalkStartScreen.kt` (mirrors `WelcomeScreen.kt` convention: `animateFloatAsState` + `graphicsLayer{alpha}`). Compiles + `WalkStartScreenTest` green.
   - **L net state:** `close-the-gap (resolved-in-code ×2: pre-walk pill removed + entrance stagger added). Final recapture+re-review deferred to a consolidation pass — entrance is a one-shot on-appear; capturing it needs burst timed to navigation.`
   - D (Dark), C (Constellation), reduce-motion: NOT yet captured → row stays partial.
+
+### path.together.comingsoon
+- **L — `match`** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/path.together.comingsoon__L__{ios,android}.png`. observed-diff: none. Selector (TOGETHER selected, stone label + underline, dimmed siblings), "coming soon" caption, disabled fog "Walk Together" button, together footprint cluster all correspond; quote text differs (random pool, not a divergence). D/C pending.
+
+### path.seek.comingsoon
+- **L — `match`** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/path.seek.comingsoon__L__{ios,android}.png`. observed-diff: none. SEEK selected + underline, "coming soon" caption, disabled button, seek footprint (lead print + dissolving-dot stack) correspond; quote text differs (random pool). D/C pending.
 
 ## Gate summary (computed at U7)
 
