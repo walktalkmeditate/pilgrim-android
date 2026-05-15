@@ -124,7 +124,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | settings.export-confirm | Scenes/Settings/ExportConfirmationSheet.swift | Export confirmation sheet | ui/settings/data ExportConfirmationSheet | L/D/C | — | ≥1 walk | unverified |
 | settings.journey-viewer | Scenes/Settings/JourneyViewerView.swift | Journey viewer webview | ui/settings/data JourneyViewerScreen | L/D/C | — | ≥1 walk | unverified |
 | settings.journey-editor | Scenes/Settings/JourneyEditorView.swift | Edit My Journey webview | ui/settings/data JourneyEditorScreen | L/D/C | — | ≥1 walk | unverified |
-| settings.about | Scenes/Settings/AboutView.swift | About (hero/pillars/data-sources/open-source/motto) | ui/settings/about/AboutScreen.kt | L/D/C | anim | none | unverified |
+| settings.about | Scenes/Settings/AboutView.swift | About (hero/pillars/data-sources/open-source/motto) | ui/settings/about/AboutScreen.kt | L/D/C | anim | none | L:close-the-gap (motion-pending); D/C:unverified (see detail) |
 | settings.about.iconswitch | Scenes/Settings/AboutView.swift | Tap-logo icon switcher dialog (constellation icon) | ui/settings/about icon dialog | L/D/C | — | none | unverified |
 | settings.feedback | Scenes/Settings/FeedbackView.swift | Feedback form | ui/settings feedback | L/D/C | — | none | unverified |
 | settings.practiceheader | Scenes/Settings/PracticeSummaryHeader.swift | Practice summary header (cycling stats + milestone) | ui/settings/PracticeSummaryHeader.kt | L/D/C | anim | ≥1 walk | unverified |
@@ -178,6 +178,17 @@ Per-mode blinded-review results for rows not yet fully verified (a row's table-c
   4. **Title/back chrome:** iOS centered "Appearance" + circular back button; Android left-aligned title + plain ArrowBack TopAppBar.
   - **U7 disposition needed (A5/user):** items 1,2,4 are unambiguous close-the-gap (fixable); item 3 (icons) needs the design call. Not fixed inline — batched as a focused follow-up (mixed trivial + structural + design).
   - D/C pending.
+
+### settings.about
+- **L — `close-the-gap` (motion-pending)** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/settings.about__L__{ios,android}.png`. Still divergences (dispositive — motion can only add, not remove; full clear needs U6 motion later):
+  1. **Tree/scenery glyph above the logo** — Android renders `TreeScenery` above the hero logo; iOS `AboutView` has no tree/scenery at all. (Android-only decoration → close-the-gap)
+  2. **Logo tile color:** Android purple/mauve guide-themed tile vs iOS neutral parchment "p". (partly state — active voice-guide; confirm under clean baseline whether default also diverges)
+  3. **Nav chrome:** left-aligned title + back arrow (Android `TopAppBar`) vs iOS centered nav title. — see Systemic finding below.
+  - Copy + pillar structure correspond. D/C + motion pending.
+
+## Systemic finding — Settings detail-screen nav chrome
+
+Both `settings.appearance` and `settings.about` flagged the same chrome divergence: **iOS detail screens use a centered nav title (+ iOS-style back); Android uses a Material `TopAppBar` with a left-aligned title + leading `ArrowBack`.** This almost certainly recurs on EVERY Settings detail screen (data-detail, recordings, sound, voiceguide, journey-viewer/editor, feedback). Recommend a **single systemic fix** (a shared iOS-parity detail-scaffold: centered title + iOS-style back) rather than per-row close-the-gap churn. Flagged for U7 / A5 decision before sweeping the remaining detail rows — fixing the scaffold once would clear this sub-diff across ~8 rows at once.
 
 ## Gate summary (computed at U7)
 
