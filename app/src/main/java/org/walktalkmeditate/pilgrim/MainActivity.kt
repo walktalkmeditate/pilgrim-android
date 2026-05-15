@@ -126,35 +126,25 @@ class MainActivity : ComponentActivity() {
                     // status/nav-bar padding) and would have produced bottom-
                     // bar gaps above the gesture inset.
                     val deepLink by pendingDeepLink
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        val welcomeCompleted by onboardingPreferences
-                            .welcomeCompleted.collectAsStateWithLifecycle()
-                        PilgrimNavHost(
-                            pendingDeepLink = deepLink,
-                            onDeepLinkConsumed = {
-                                pendingDeepLink.value = null
-                                // Strip the deep-link extras from the attached
-                                // intent so a config change (rotation, locale)
-                                // doesn't re-parse + re-navigate them.
-                                // setIntent persists the mutation across
-                                // activity recreation.
-                                val cleared = intent.apply {
-                                    removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
-                                    removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
-                                }
-                                setIntent(cleared)
-                            },
-                            welcomeCompleted = welcomeCompleted,
-                        )
-                        // iOS parity v1.6.0: constellation overlay
-                        // applied on top of all root content so stars +
-                        // nebulae + cosmic gradient render across every
-                        // screen. Active Walk + Walk Summary + Meditation
-                        // re-apply with `nebulae=false` to avoid clashing
-                        // with the dense map / warm parchment cards.
-                        org.walktalkmeditate.pilgrim.ui.design
-                            .ConstellationDecoration(includesNebulae = true)
-                    }
+                    val welcomeCompleted by onboardingPreferences
+                        .welcomeCompleted.collectAsStateWithLifecycle()
+                    PilgrimNavHost(
+                        pendingDeepLink = deepLink,
+                        onDeepLinkConsumed = {
+                            pendingDeepLink.value = null
+                            // Strip the deep-link extras from the attached
+                            // intent so a config change (rotation, locale)
+                            // doesn't re-parse + re-navigate them.
+                            // setIntent persists the mutation across
+                            // activity recreation.
+                            val cleared = intent.apply {
+                                removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
+                                removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
+                            }
+                            setIntent(cleared)
+                        },
+                        welcomeCompleted = welcomeCompleted,
+                    )
                 }
             }
         }

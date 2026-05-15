@@ -57,10 +57,42 @@ fun WalkDot(
     contentDescription: String,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * iOS v1.6.0 — archived walks render as a thin hollow fog ring
+     * (`stroke(Color.fog.opacity(0.5), lineWidth: 1)`) instead of the
+     * full layered dot. Suppresses ripple / halo / favicon / activity
+     * arcs / specular / shared-ring decoration so the released walk
+     * reads as a quiet placeholder, not a live entry.
+     */
+    isArchived: Boolean = false,
 ) {
     val haloSizeDp = sizeDp * HALO_SCALE
     val activityRingSizeDp = sizeDp + ACTIVITY_RING_OFFSET_DP
     val sharedRingSizeDp = sizeDp + SHARED_RING_OFFSET_DP
+    if (isArchived) {
+        // Hollow ring at the dot's nominal size — matches iOS
+        // `WalkDotView.archivedRing` (1 px stroke, fog @ 50%).
+        Box(
+            modifier = modifier
+                .size(sizeDp.dp)
+                .graphicsLayer { alpha = opacity }
+                .semantics { this.contentDescription = contentDescription }
+                .clickable(onClick = onTap),
+            contentAlignment = Alignment.Center,
+        ) {
+            val ringColor = pilgrimColors.fog.copy(alpha = 0.5f)
+            Canvas(Modifier.size(sizeDp.dp)) {
+                val r = size.minDimension / 2f - 0.5f
+                drawCircle(
+                    color = ringColor,
+                    radius = r,
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    style = Stroke(width = 1.dp.toPx()),
+                )
+            }
+        }
+        return
+    }
     Box(
         modifier = modifier
             .size(haloSizeDp.dp)
