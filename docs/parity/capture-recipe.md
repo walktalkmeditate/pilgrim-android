@@ -2,16 +2,19 @@
 
 Per-row capture loop driving both platforms into each ledger state, attaching paired evidence, then invoking the U4 blinded review.
 
-> **Capture-execution status (updated 2026-05-15):** iOS half UNBLOCKED + proven — `xcode-select` switched to `/Applications/Xcode.app`, iPhone 17 sim boots, `Pilgrim.app` (Debug, fcd2255) builds + installs, `--demo-mode` launch arg runs `ScreenshotDataSeeder` (seeds walks + bypasses onboarding), `xcrun simctl io <udid> screenshot` is scriptable. First iOS reference shots staged (`evidence/setup.welcome.entrance__L__ios.png`, `evidence/path.wander.idle__L__ios.png`).
+> **Capture-execution status (updated 2026-05-15):** BOTH HALVES UNBLOCKED + PROVEN. The paired capture loop can now run headlessly end-to-end.
 >
-> **Resolved since:** Android device reconnected; real shared seed staged (`fixtures/parity-seed.pilgrim`); Android seed import VERIFIED (23→39 walks, v1.6.0 tended/archived path exercised on real data).
+> **iOS:** `xcode-select` → `/Applications/Xcode.app`; iPhone 17 sim (`DA1A3D70-71D5-427C-9A8A-451166E94047`, iOS 26.3) boots; `Pilgrim.app` (Debug, fcd2255) installs; `xcrun simctl io <udid> screenshot` scriptable. **iOS-sim UI automation RESOLVED via idb** — `idb-companion` (Homebrew) + `fb-idb 1.1.7` (`~/.local/bin`) installed; `idb ui tap` drives the sim like Android's `uiautomator`. Seed imported via: `simctl openurl file://<seed>` → Files Save dialog → `idb ui tap` Save → fresh Pilgrim launch → tab pill → Settings → Data → Import Data → doc picker → tap saved file. **iOS seed import VERIFIED:** alert "16 walks added, 53 walks archived" + Settings shows "74 walks · 116 mi / 149 walks · 226 mi / 59 days, the path unbroken".
 >
-> **Remaining hard blocker — iOS-sim UI automation:** `xcrun simctl` has no tap/gesture primitive. `simctl openurl file://<seed>` routes the file to the iOS **Files "Save" dialog** (Pilgrim recognizes the PILGRIM doc type) but does NOT auto-import — completing the import (Save → Pilgrim Settings→Data→Import→Browse→pick) needs scriptable taps. No `idb`/`fbsimctl` installed. So the iOS half of every **seed-gated** row cannot be captured headlessly until one of:
-> 1. `brew install facebook/fb/idb-companion && pipx install fb-idb` → then drive sim UI like Android's `uiautomator` (preferred — fully unblocks the loop).
-> 2. One-time hand-drag of `fixtures/parity-seed.pilgrim` onto the booted sim → import in Pilgrim by hand; afterward `simctl` screenshots are scriptable for the seeded-state captures.
-> 3. Run against a real iOS device with the v1.6.0 build + the seed imported.
+> **Android:** device reconnected; shared seed `fixtures/parity-seed.pilgrim` staged; import VERIFIED (23→39 walks, v1.6.0 tended/archived path exercised on real data).
 >
-> `seed req: none` rows (Welcome, Permissions, Path-idle, Settings tree, Appearance, About, sound/bell, options-idle, intention sheet, prompts, constellation overlay) are NOT blocked by this — both platforms reach them from a fresh/default state and can be paired now.
+> **idb operational gotchas (learned 2026-05-15):**
+> - **Duplicate companions silently break taps.** Two `idb_companion` procs on one udid → `idb ui tap` returns success but injects nothing; `idb ui describe-all` returns only the app shell. Fix: `pkill -f idb_companion; rm /tmp/idb/*.sock`; start exactly one; `idb connect <udid>`.
+> - **Native alerts (`UIAlertController`) are a separate `UIWindow`** — `idb ui tap` cannot reach the OK button and `describe-all` won't list it. Dismiss by `simctl terminate` + relaunch; persisted writes (Core Data import) survive the relaunch.
+> - **Coords are LOGICAL points** (iPhone 17 = 402×874; screenshot 1206×2622 = ÷3). The bottom tab pill is inset: calibrated Settings tab = `(292, 835)`, Journal ≈ `(190, 835)`, Path ≈ `(110, 835)`.
+> - idb env: `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"`. Companion: `(idb_companion --udid $D > /tmp/idbc2.log 2>&1 &)`.
+>
+> `seed req: none` rows (Welcome, Permissions, Path-idle, Settings tree, Appearance, About, sound/bell, options-idle, intention sheet, prompts, constellation overlay) reach state from fresh/default on both platforms — pair them first; seed-gated rows now also fully capturable.
 
 ## iOS capture commands (proven)
 
