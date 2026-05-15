@@ -70,7 +70,7 @@ class WalkOptionsSheetTest {
     }
 
     @Test
-    fun `pre-walk Set Intention subtitle shows fallback when null`() {
+    fun `pre-walk Set Intention omits subtitle when null (iOS parity)`() {
         composeRule.setContent {
             WalkOptionsSheet(
                 canSetIntention = true,
@@ -82,7 +82,10 @@ class WalkOptionsSheetTest {
                 onDismiss = {},
             )
         }
-        composeRule.onNodeWithText("A line for this walk").assertIsDisplayed()
+        // iOS WalkOptionsSheet passes subtitle = currentIntention (nil
+        // pre-walk) so no subtitle line is rendered — not a placeholder.
+        composeRule.onNodeWithText("A line for this walk").assertDoesNotExist()
+        composeRule.onNodeWithText("Set Intention").assertIsDisplayed()
     }
 
     @Test

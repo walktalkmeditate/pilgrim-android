@@ -103,8 +103,10 @@ fun WalkOptionsSheet(
                     // iOS uses a leaf glyph for the intention row.
                     icon = Icons.Outlined.Eco,
                     title = stringResource(R.string.walk_options_intention_title),
-                    subtitle = intention?.takeIf { it.isNotBlank() }
-                        ?: stringResource(R.string.walk_options_intention_pre_walk_unset),
+                    // iOS: subtitle = currentIntention (nil pre-walk →
+                    // the subtitle line is omitted entirely, not a
+                    // placeholder). Match: null when unset.
+                    subtitle = intention?.takeIf { it.isNotBlank() },
                     onClick = onSetIntention,
                 )
             }
@@ -167,7 +169,7 @@ fun WalkOptionsSheet(
 private fun OptionRow(
     icon: ImageVector,
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
@@ -201,7 +203,9 @@ private fun OptionRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, style = pilgrimType.body, color = titleColor)
-            Text(text = subtitle, style = pilgrimType.caption, color = pilgrimColors.fog)
+            if (!subtitle.isNullOrBlank()) {
+                Text(text = subtitle, style = pilgrimType.caption, color = pilgrimColors.fog)
+            }
         }
         Icon(
             imageVector = Icons.Filled.ChevronRight,
