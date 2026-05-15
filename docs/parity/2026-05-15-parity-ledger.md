@@ -107,7 +107,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | goshuin.share-render | Scenes/Goshuin/GoshuinShareRenderer.swift | Full-collection share image 1080×1920 | (NO Android equivalent — gap) | n/a | — | ≥1 walk | unverified |
 | goshuin.page-indicators | Scenes/Goshuin/GoshuinPageView.swift | TabView page dots (6/page) | (Android uses LazyVerticalGrid — divergence) | L/D/C | — | ≥7 walks | unverified |
 | **Settings** ||||||||
-| settings.root | Scenes/Settings/SettingsView.swift | Settings card stack | ui/settings/SettingsScreen.kt | L/D/C | — | none | unverified |
+| settings.root | Scenes/Settings/SettingsView.swift | Settings card stack | ui/settings/SettingsScreen.kt | L/D/C | — | none | L:close-the-gap; D/C:unverified (see detail) |
 | settings.practice | Scenes/Settings/SettingsCards/PracticeCard.swift | Practice card (intention/celestial/zodiac/units/hemisphere/collective/reliquary) | ui/settings/practice/PracticeCard.kt | L/D/C | — | none | unverified |
 | settings.atmosphere | Scenes/Settings/SettingsCards/AtmosphereCard.swift | Atmosphere card (appearance nav row + sounds) | ui/settings/AtmosphereCard.kt | L/D/C | — | none | unverified |
 | settings.appearance | Scenes/Settings/AppearanceView.swift | Appearance detail (4 rows) | ui/settings/AppearanceScreen.kt | L/D/C | — | none | unverified |
@@ -158,6 +158,17 @@ Per-mode blinded-review results for rows not yet fully verified (a row's table-c
 
 ### path.seek.comingsoon
 - **L — `match`** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/path.seek.comingsoon__L__{ios,android}.png`. observed-diff: none. SEEK selected + underline, "coming soon" caption, disabled button, seek footprint (lead print + dissolving-dot stack) correspond; quote text differs (random pool). D/C pending.
+
+### settings.root
+- **L — `close-the-gap`** (fresh blinded reviewer, 2026-05-15). evidence: `evidence/settings.root__L__{ios,android}.png`. Card-stack structure (PracticeSummaryHeader + Practice/Atmosphere/Voice/Permissions/Data/Connect, same order) corresponds.
+  - **Real divergence (capturer-confirmed in code):** Android `PracticeCard` renders an always-visible **Hemisphere (North/South)** segmented row. iOS has **no hemisphere UI anywhere** — `UserPreferences.hemisphereOverride` is auto-set from location once in `HomeViewModel.swift:108` (`guard … == nil`), never user-editable. observed-diff: *Android exposes a manual Hemisphere picker row in Practice settings that iOS does not have.*
+  - **Reviewer flags that were STATE ARTIFACTS, not bugs (capturer-verified):** (a) "Zodiac shown unconditionally" — false: Android gates Zodiac behind `AnimatedVisibility(visible=celestialAwareness)`, logic identical to iOS `if celestialAwareness`; difference was only because Android device had Celestial-awareness ON and iOS sim had it OFF. (b) Toggle defaults (intention/celestial ON vs OFF) and (c) header season numbers differ — both because the two devices imported the seed onto **non-equal baselines** (see Capture-methodology note below), not code parity bugs.
+  - **U7 disposition needed (A5/user):** remove Android manual Hemisphere row (match iOS auto-detect) vs re-justify (deliberate Android control — but Android seasonal engine's reliance on a manual override must be checked first; iOS auto-derives from location).
+  - D/C pending.
+
+## Capture-methodology finding (cross-cutting — affects every seed-gated + stateful row)
+
+**Seed baseline was NOT equalized before import.** iOS sim (`74 walks·116mi` season / `149·226mi` all-time) and Android device (`39 walks·44km` season / `149·363km` all-time) imported the SAME `parity-seed.pilgrim` but onto **different pre-existing data** (iOS sim carried `--demo-mode` walks; Android device had 23 real user walks + the user's real settings). All-time distance actually corresponds (226mi ≈ 363km — unit display only); season counts/toggle-state diverge purely from baseline residue. **Consequence:** seed-gated and settings-state rows cannot be fairly pixel/state-compared until BOTH platforms import the seed onto a CLEAN wiped baseline (the `README-seed.md` round-trip-equivalence gate). No-seed structural rows (path modes, settings card structure, appearance/about/feedback chrome) remain valid now. Seeded rows (journal populated, goshuin, archived, summary, practice header stats) must be (re)captured post-clean-baseline or their verdicts carry a `state-artifact-risk` caveat.
 
 ## Gate summary (computed at U7)
 
