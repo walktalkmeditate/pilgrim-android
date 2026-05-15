@@ -27,6 +27,14 @@ data class WalkSnapshot(
     val favicon: String?,
     val isShared: Boolean,
     val weatherCondition: String?,
+    /**
+     * iOS v1.6.0 — true when the walk's UUID is in
+     * [org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry].
+     * The Home walk dot renders as a hollow fog ring (no halo / no
+     * favicon / no activity arcs) and the expand card collapses to a
+     * "Released" tag w/ "full record removed" footer.
+     */
+    val isArchived: Boolean = false,
 ) {
     /** Walk-only duration (total minus talk minus meditate, floored at 0). */
     val walkOnlyDurationSec: Long

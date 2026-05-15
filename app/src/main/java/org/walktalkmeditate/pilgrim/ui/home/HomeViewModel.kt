@@ -63,6 +63,7 @@ class HomeViewModel internal constructor(
     unitsPreferences: UnitsPreferencesRepository,
     private val cachedShareStore: CachedShareStore,
     private val practicePreferences: PracticePreferencesRepository,
+    private val archivedRegistry: org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry,
     private val defaultDispatcher: CoroutineDispatcher,
     private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
@@ -76,6 +77,7 @@ class HomeViewModel internal constructor(
         unitsPreferences: UnitsPreferencesRepository,
         cachedShareStore: CachedShareStore,
         practicePreferences: PracticePreferencesRepository,
+        archivedRegistry: org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry,
     ) : this(
         context = context,
         repository = repository,
@@ -84,6 +86,7 @@ class HomeViewModel internal constructor(
         unitsPreferences = unitsPreferences,
         cachedShareStore = cachedShareStore,
         practicePreferences = practicePreferences,
+        archivedRegistry = archivedRegistry,
         defaultDispatcher = Dispatchers.Default,
         ioDispatcher = Dispatchers.IO,
     )
@@ -157,12 +160,13 @@ class HomeViewModel internal constructor(
         unitsPreferences.distanceUnits,
         cachedShareStore.observeAll(),
         hemisphereRepository.hemisphere,
-    ) { walks, units, shareCache, hemisphere ->
+        archivedRegistry.archivedRegistry,
+    ) { walks, units, shareCache, hemisphere, archivedMap ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
             JournalUiState.Empty
         } else {
-            buildSnapshots(finished, units, shareCache, hemisphere, clock.now())
+            buildSnapshots(finished, units, shareCache, hemisphere, archivedMap.keys, clock.now())
         }
     }
         .flowOn(ioDispatcher)
@@ -173,6 +177,7 @@ class HomeViewModel internal constructor(
         units: UnitSystem,
         shareCache: Map<String, CachedShare>,
         hemisphere: Hemisphere,
+        archivedUuids: Set<String>,
         nowMs: Long,
     ): JournalUiState.Loaded {
         // IO: per-walk DAO reads on ioDispatcher.
@@ -235,6 +240,7 @@ class HomeViewModel internal constructor(
                     favicon = input.walk.favicon,
                     isShared = shareCache[input.walk.uuid]?.isExpiredAt(nowMs) == false,
                     weatherCondition = input.walk.weatherCondition,
+                    isArchived = input.walk.uuid in archivedUuids,
                 )
             }
             val newestFirst = oldestFirstSnapshots.reversed()

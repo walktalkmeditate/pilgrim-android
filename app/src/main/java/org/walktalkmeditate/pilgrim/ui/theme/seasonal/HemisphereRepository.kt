@@ -33,12 +33,21 @@ import org.walktalkmeditate.pilgrim.location.LocationSource
  * Matches the iOS `UserPreferences.hemisphereOverride` + first-walk
  * inference behavior. See the Stage 3-D design spec for context.
  */
+/**
+ * Test seam over [HemisphereRepository] so VM tests can substitute an
+ * in-memory fake without spinning up DataStore + LocationSource.
+ */
+interface HemisphereStore {
+    val hemisphere: StateFlow<Hemisphere>
+    suspend fun setOverride(hemisphere: Hemisphere)
+}
+
 @Singleton
 class HemisphereRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val locationSource: LocationSource,
     @HemisphereRepositoryScope private val scope: CoroutineScope,
-) {
+) : HemisphereStore {
     /**
      * Current best-guess hemisphere. Backed by DataStore; emits
      * [Hemisphere.Northern] as the initial value before the first
@@ -51,7 +60,7 @@ class HemisphereRepository @Inject constructor(
      * can recover on the next subscription (an Eagerly collector
      * that dies on a disk error wouldn't restart).
      */
-    val hemisphere: StateFlow<Hemisphere> =
+    override val hemisphere: StateFlow<Hemisphere> =
         dataStore.data
             // Disk / serialization errors from DataStore land here. We
             // log + fall back to Northern instead of crashing the
@@ -81,7 +90,7 @@ class HemisphereRepository @Inject constructor(
      * A future Settings screen will call this when the user toggles
      * hemisphere manually. Current callers: tests.
      */
-    suspend fun setOverride(hemisphere: Hemisphere) {
+    override suspend fun setOverride(hemisphere: Hemisphere) {
         dataStore.edit { it[KEY_HEMISPHERE] = hemisphere.toInt() }
     }
 

@@ -478,6 +478,7 @@ fun HomeScreen(
                                             meditateColor = dawnColor,
                                             opacity = opacity,
                                             isNewest = index == 0,
+                                            isArchived = snap.isArchived,
                                             contentDescription = "walk dot $index",
                                             onTap = {
                                                 homeViewModel.setExpandedSnapshotId(snap.id)

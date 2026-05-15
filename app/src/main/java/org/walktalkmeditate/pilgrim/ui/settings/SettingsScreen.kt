@@ -136,6 +136,7 @@ fun SettingsScreen(
                 )
             }
             item {
+                val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
                 PracticeCard(
                     beginWithIntention = beginWithIntention,
                     onSetBeginWithIntention = viewModel::setBeginWithIntention,
@@ -150,6 +151,8 @@ fun SettingsScreen(
                     walkReliquary = walkReliquary,
                     onSetWalkReliquary = viewModel::setWalkReliquaryEnabled,
                     showPhotosDeniedNote = showPhotosDeniedNote,
+                    hemisphere = hemisphere,
+                    onSetHemisphere = viewModel::setHemisphere,
                 )
             }
             // iOS card order: Practice → Atmosphere → Voice → Permissions

@@ -135,6 +135,7 @@ class SettingsViewModelPracticeTest {
         voiceRecordingFileSystem = voiceFs,
         milestoneSurface = NoopMilestoneSurface,
         bellPlayer = NoopBellPlayer,
+            hemisphereStore = org.walktalkmeditate.pilgrim.ui.theme.seasonal.FakeHemisphereStore(),
     )
 
     @Test
