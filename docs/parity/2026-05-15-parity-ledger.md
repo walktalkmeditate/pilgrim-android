@@ -6,6 +6,8 @@
 - **Android target:** `feat/v1.6.0-parity`
 - **Generated:** 2026-05-15 (U1) — regenerate via `docs/parity/README-parity-ledger.md`
 - **Plan:** `docs/plans/2026-05-15-001-feat-ios-android-parity-verification-plan.md`
+- **Seed:** `docs/parity/fixtures/parity-seed.pilgrim` — real iOS-exported tended file: 16 full walks + 53 archived + 1 modification (covers archived/tended/journal-populated/goshuin; 108-walk milestone NOT covered → those rows await a richer seed).
+- **2026-05-15 capture-session note:** iOS env unblocked + proven (sim builds/installs/seeds/screenshots). Android seed import VERIFIED on real data — importing `parity-seed.pilgrim` took the Journal from 23→39 walks / 44.1 km, exercising the v1.6.0 tended-mode + archived-strip path end-to-end without error (evidence: `evidence/journal.inkscroll.populated__L__android.png`, `evidence/settings.data-detail__L__android.png`). This is the **Android half + behavioral confirmation** of the archived/tended ledger rows; those rows stay `unverified` pending the **iOS-side paired capture** (iOS-sim must import the SAME file — UI-automation/hand-import is the remaining friction; `--demo-mode` ScreenshotDataSeeder is NOT data-identical so cannot be used for seed-gated rows).
 
 ## Verdict legend
 
