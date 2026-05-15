@@ -361,7 +361,19 @@ fun ActiveWalkScreen(
             showAutoIntention = false
         }
         when (state) {
-            is WalkState.Finished -> onFinished(state.walk.walkId)
+            // Gate Finished re-fire on `hasSeenInProgress` for the same
+            // reason as the Idle → onDiscarded branch below: when the
+            // user taps Done on the summary, the @Singleton controller
+            // remains in `Finished` until the NEXT `startWalk()` call.
+            // Wandering again navigates back into ACTIVE_WALK while
+            // controller.state is still `Finished` from the prior walk;
+            // without the latch the LaunchedEffect's first-composition
+            // fire would re-navigate to the OLD walk's summary,
+            // stranding the user in a Done → Start → previous-summary
+            // loop. Pattern matches the Idle/onDiscarded latch.
+            is WalkState.Finished -> if (hasSeenInProgress.value) {
+                onFinished(state.walk.walkId)
+            }
             is WalkState.Meditating -> onEnterMeditation()
             WalkState.Idle -> if (hasSeenInProgress.value) onDiscarded()
             else -> Unit
@@ -444,12 +456,24 @@ fun ActiveWalkScreen(
     // recording. Hand the overlay a non-null condition exactly once
     // per state-enter-Active transition; the overlay owns the timer
     // and per-walk one-shot token.
+    //
+    // walkId must stay STABLE across Active ↔ Meditating ↔ Paused so
+    // the overlay's `shownForWalk == walkId` per-walk guard survives
+    // a mid-walk meditation. Earlier `as? WalkState.Active` flipped
+    // walkId to null on meditation entry, which triggered the
+    // overlay's "walk ended" reset; the greeting then re-fired when
+    // meditation ended and Active returned.
+    val greetingWalkId = when (val s = navWalkState) {
+        is WalkState.Active -> s.walk.walkId
+        is WalkState.Paused -> s.walk.walkId
+        is WalkState.Meditating -> s.walk.walkId
+        else -> null
+    }
     val greetingCondition = if (navWalkState is WalkState.Active) {
         activeWeather?.condition
     } else {
         null
     }
-    val greetingWalkId = (navWalkState as? WalkState.Active)?.walk?.walkId
 
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
@@ -726,8 +750,6 @@ fun ActiveWalkScreen(
             // viewModel.intention; Android keeps them split because the
             // pre-walk path doesn't write to Room until commit.
             intention = preWalkIntention ?: intention,
-            onPause = viewModel::pauseWalk,
-            onResume = viewModel::resumeWalk,
             onStartWalk = {
                 viewModel.startWalk(intention = preWalkIntention)
                 preWalkIntention = null

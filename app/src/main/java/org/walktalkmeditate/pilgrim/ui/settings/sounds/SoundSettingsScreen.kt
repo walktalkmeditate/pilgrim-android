@@ -227,6 +227,7 @@ fun SoundSettingsScreen(
                 }
             },
             onDismiss = { activePicker = null },
+            onPreview = viewModel::previewBell,
         )
     }
 

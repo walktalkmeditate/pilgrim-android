@@ -49,7 +49,7 @@ class WalkStatsSheetDragGestureTest {
                 recorderState = VoiceRecorderUiState.Idle, audioLevel = 0f,
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
-                onPause = {}, onResume = {}, onStartWalk = {},
+                onStartWalk = {},
                 onStartMeditation = {}, onEndMeditation = {},
                 onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
                 onFinish = {},

@@ -18,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 /**
@@ -33,6 +34,15 @@ class MeditationScreenTest {
 
     private val moss = Color(0xFF7A8B6F)
 
+    // BreathRhythm.byId(6) = "None" — skips the InfiniteTransition
+    // inside BreathingCircle (see `if (rhythm.isNone) ... SCALE_INHALED`
+    // branch). Tests that call `assertIsDisplayed` need `waitForIdle()`
+    // to actually settle; the default Calm rhythm spins forever and
+    // never finalises layout, so the text-node assertion blocks
+    // (Robolectric flake). The cadence/breath-cycle behavior is
+    // covered by on-device QA and the cadenced Done-click tests below.
+    private val noneRhythm = BreathRhythm.byId(6)
+
     @Test fun `renders at elapsed 0 shows 0 colon 00 timer`() {
         composeRule.setContent {
             PilgrimTheme {
@@ -42,6 +52,7 @@ class MeditationScreenTest {
                         mossColor = moss,
                         enabled = true,
                         onDone = {},
+                        breathRhythm = noneRhythm,
                     )
                 }
             }
@@ -59,6 +70,7 @@ class MeditationScreenTest {
                         mossColor = moss,
                         enabled = true,
                         onDone = {},
+                        breathRhythm = noneRhythm,
                     )
                 }
             }
@@ -115,6 +127,7 @@ class MeditationScreenTest {
                         mossColor = moss,
                         enabled = true,
                         onDone = {},
+                        breathRhythm = noneRhythm,
                     )
                 }
             }

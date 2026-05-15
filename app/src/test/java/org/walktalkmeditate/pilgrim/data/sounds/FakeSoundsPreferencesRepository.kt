@@ -17,10 +17,14 @@ class FakeSoundsPreferencesRepository(
     initialBellHapticEnabled: Boolean = true,
     initialBellVolume: Float = 0.7f,
     initialSoundscapeVolume: Float = 0.4f,
-    initialWalkStartBellId: String? = null,
-    initialWalkEndBellId: String? = null,
-    initialMeditationStartBellId: String? = null,
-    initialMeditationEndBellId: String? = null,
+    // Defaults mirror production first-launch seeds from
+    // [org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder].
+    // Tests that exercise the "None" (`null`) suppression branch pass
+    // `null` explicitly.
+    initialWalkStartBellId: String? = "echo-chime",
+    initialWalkEndBellId: String? = "gentle-harp",
+    initialMeditationStartBellId: String? = "temple-bell",
+    initialMeditationEndBellId: String? = "yoga-chime",
     initialBreathRhythm: Int = 0,
 ) : SoundsPreferencesRepository {
     private val _soundsEnabled = MutableStateFlow(initialSoundsEnabled)

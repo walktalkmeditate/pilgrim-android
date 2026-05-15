@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.meditation
 
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -45,6 +45,10 @@ internal fun BreathingCircle(
     modifier: Modifier = Modifier,
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
     milestoneFlash: Float = 0f,
+    // iOS `MeditationView.swift:656`: `breathSpeedMultiplier = 2.0`
+    // during voice-guide prompts so the breath cycle visibly slows
+    // while the user hears narration. 1.0 = normal cadence.
+    breathSpeedMultiplier: Float = 1.0f,
 ) {
     // Cache the moss-alpha color lists so a 30-minute session doesn't
     // allocate on every frame. The brushes are built inside the Canvas
@@ -72,7 +76,7 @@ internal fun BreathingCircle(
         // point — matches iOS's open-meditation interpretation.
         SCALE_INHALED
     } else {
-        rememberBreathScale(breathRhythm)
+        rememberBreathScale(breathRhythm, breathSpeedMultiplier)
     }
 
     Canvas(
@@ -155,13 +159,14 @@ internal fun BreathingCircle(
  * `isNone` branch.
  */
 @Composable
-private fun rememberBreathScale(rhythm: BreathRhythm): Float {
+private fun rememberBreathScale(rhythm: BreathRhythm, speedMultiplier: Float): Float {
     val transition = rememberInfiniteTransition(label = "breath")
 
-    val inhaleMs = (rhythm.inhaleSeconds * 1000.0).toInt()
-    val holdInMs = (rhythm.holdInSeconds * 1000.0).toInt()
-    val exhaleMs = (rhythm.exhaleSeconds * 1000.0).toInt()
-    val holdOutMs = (rhythm.holdOutSeconds * 1000.0).toInt()
+    val safeMultiplier = if (speedMultiplier <= 0f) 1f else speedMultiplier
+    val inhaleMs = (rhythm.inhaleSeconds * 1000.0 * safeMultiplier).toInt()
+    val holdInMs = (rhythm.holdInSeconds * 1000.0 * safeMultiplier).toInt()
+    val exhaleMs = (rhythm.exhaleSeconds * 1000.0 * safeMultiplier).toInt()
+    val holdOutMs = (rhythm.holdOutSeconds * 1000.0 * safeMultiplier).toInt()
     val totalMs = inhaleMs + holdInMs + exhaleMs + holdOutMs
 
     if (totalMs <= 0) {
@@ -170,18 +175,20 @@ private fun rememberBreathScale(rhythm: BreathRhythm): Float {
         return SCALE_INHALED
     }
 
-    val animation = remember(rhythm.id) {
+    // iOS `MeditationView.swift:723,771` uses `.easeInOut(duration:)`
+    // for the inhale + exhale phases, which is the symmetric cubic-in-
+    // out curve = `CubicBezierEasing(0.42, 0, 0.58, 1)`. Compose's
+    // `FastOutSlowInEasing` is Material's ASYMMETRIC `(0.4, 0, 0.2, 1)`
+    // — visually quicker start than iOS. Use the canonical iOS curve.
+    val easeInOut = remember { CubicBezierEasing(0.42f, 0f, 0.58f, 1f) }
+
+    val animation = remember(rhythm.id, safeMultiplier) {
         keyframes<Float> {
             durationMillis = totalMs
-            // Phase 0: starting (exhaled) value at t=0.
-            SCALE_EXHALED at 0 using FastOutSlowInEasing
-            // Phase 1: end of inhale — at SCALE_INHALED.
+            SCALE_EXHALED at 0 using easeInOut
             SCALE_INHALED at inhaleMs using LinearEasing
-            // Phase 2: end of hold-in — still at SCALE_INHALED (a hold).
-            SCALE_INHALED at (inhaleMs + holdInMs) using FastOutSlowInEasing
-            // Phase 3: end of exhale — at SCALE_EXHALED.
+            SCALE_INHALED at (inhaleMs + holdInMs) using easeInOut
             SCALE_EXHALED at (inhaleMs + holdInMs + exhaleMs) using LinearEasing
-            // Phase 4: end of hold-out — back at SCALE_EXHALED, repeat.
             SCALE_EXHALED at (inhaleMs + holdInMs + exhaleMs + holdOutMs)
         }
     }

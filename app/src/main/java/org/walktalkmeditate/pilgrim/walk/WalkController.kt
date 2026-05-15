@@ -5,8 +5,11 @@ import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -43,6 +46,28 @@ class WalkController @Inject constructor(
     private val _state = MutableStateFlow<WalkState>(WalkState.Idle)
     val state: StateFlow<WalkState> = _state.asStateFlow()
 
+    /**
+     * Bell-trigger event stream. iOS dispatches bells via explicit
+     * `SoundManagement.onWalkStart()` / `onWalkEnd()` /
+     * `onMeditationStart()` / `onMeditationEnd()` calls — not via
+     * state-flow observation — so the restore path (which writes
+     * directly to `_state`) doesn't fire stray bells. Mirroring that
+     * here: every user-initiated transition emits the corresponding
+     * trigger. Observers subscribe to this flow instead of the state
+     * flow when they need user-intent semantics.
+     *
+     * `replay = 0` + `extraBufferCapacity = 4` so a late subscriber
+     * misses any in-flight emission (matches iOS's
+     * fire-and-forget semantics) and bursty triggers (e.g. fast
+     * Active → Meditate → Active toggles) don't block the dispatch
+     * mutex if a slow observer is mid-collect.
+     */
+    private val _bellTriggers = MutableSharedFlow<BellTrigger>(
+        replay = 0,
+        extraBufferCapacity = 4,
+    )
+    val bellTriggers: SharedFlow<BellTrigger> = _bellTriggers.asSharedFlow()
+
     private val dispatchMutex = Mutex()
 
     /**
@@ -75,6 +100,7 @@ class WalkController @Inject constructor(
         // text ("mourning Y", "anxiety about Z") that we don't want landing
         // in logcat where other debug tooling might capture it.
         Log.i(TAG, "startWalk id=${walk.id} intentionSet=${sanitized != null} at=$startedAt")
+        _bellTriggers.tryEmit(BellTrigger.WalkStart)
         walk
     }
 
@@ -91,6 +117,7 @@ class WalkController @Inject constructor(
     suspend fun startMeditation() {
         Log.i(TAG, "startMeditation invoked from state=${_state.value::class.simpleName}")
         dispatch(WalkAction.MeditateStart(at = clock.now()))
+        _bellTriggers.tryEmit(BellTrigger.MeditationStart)
     }
 
     /**
@@ -106,11 +133,21 @@ class WalkController @Inject constructor(
     suspend fun endMeditation(endMillis: Long = clock.now()) {
         Log.i(TAG, "endMeditation invoked from state=${_state.value::class.simpleName}")
         dispatch(WalkAction.MeditateEnd(at = endMillis))
+        _bellTriggers.tryEmit(BellTrigger.MeditationEnd)
     }
 
     suspend fun finishWalk() {
         Log.i(TAG, "finishWalk invoked from state=${_state.value::class.simpleName}")
+        val wasInProgress = _state.value !is WalkState.Idle &&
+            _state.value !is WalkState.Finished
         dispatch(WalkAction.Finish(at = clock.now()))
+        // Only fire walk-end on a real terminal transition. Without
+        // this guard, a redundant finish call (double-tap, notification
+        // race) from already-Finished/Idle state would ring a stray
+        // bell.
+        if (wasInProgress) {
+            _bellTriggers.tryEmit(BellTrigger.WalkEnd)
+        }
     }
 
     /**

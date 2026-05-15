@@ -5,7 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -14,146 +14,164 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
-import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
-import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.walk.BellTrigger
 
 /**
  * Unit tests for [MeditationBellObserver] using a counting
- * [FakeBellPlayer] + `MutableStateFlow<WalkState>`. Covers:
+ * [FakeBellPlayer] + `MutableSharedFlow<BellTrigger>`. Covers:
  *
- *  - First emission (app-init snapshot) does NOT fire a bell
- *    regardless of state (matches the cold-start Idle or the
- *    restored-session Meditating case).
- *  - Active↔Meditating transitions fire exactly one bell each
- *    direction.
- *  - Meditating→Finished fires one bell (walk finished during
- *    meditation).
- *  - Idle→Active (and other non-meditation transitions) fire zero
- *    bells.
- *  - Full sequence through multiple meditations accumulates the
- *    correct count.
+ *  - Every trigger rings one bell when prefs allow it.
+ *  - `null` bell-id (user picked "None") suppresses the corresponding trigger.
+ *  - Master sounds toggle gates every trigger.
+ *  - Late-subscriber semantics: the SharedFlow does not replay, so a
+ *    cold-start subscription never hears past emissions (no spurious
+ *    "welcome back" bells on resume).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MeditationBellObserverTest {
 
-    private val acc = WalkAccumulator(walkId = 1L, startedAt = 1_000L)
-
-    @Test fun `first emission Idle does not fire bell`() = runTest {
-        val s = newScenario(initial = WalkState.Idle)
+    @Test fun `WalkStart trigger fires one bell`() = runTest {
+        val s = newScenario()
         advanceUntilIdle()
-        assertEquals(0, s.player.playCount)
-        s.cancel()
-    }
-
-    @Test fun `first emission Meditating does not fire bell`() = runTest {
-        // Restored-session case: the @Singleton controller is already
-        // in Meditating state before the observer subscribes. The
-        // observer treats this as a non-transition — no bell.
-        val s = newScenario(initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L))
-        advanceUntilIdle()
-        assertEquals(0, s.player.playCount)
-        s.cancel()
-    }
-
-    @Test fun `Active then Meditating fires one bell`() = runTest {
-        val s = newScenario(initial = WalkState.Active(acc))
-        advanceUntilIdle()
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+        s.triggers.tryEmit(BellTrigger.WalkStart)
         advanceUntilIdle()
         assertEquals(1, s.player.playCount)
         s.cancel()
     }
 
-    @Test fun `Meditating then Active fires one bell`() = runTest {
-        val s = newScenario(initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L))
+    @Test fun `WalkEnd trigger fires one bell`() = runTest {
+        val s = newScenario()
         advanceUntilIdle()
-        s.state.value = WalkState.Active(acc)
-        advanceUntilIdle()
-        // First emission (Meditating) skipped as the snapshot; the
-        // subsequent transition to Active is the real ring.
-        assertEquals(1, s.player.playCount)
-        s.cancel()
-    }
-
-    @Test fun `Meditating then Finished fires one bell`() = runTest {
-        val s = newScenario(initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L))
-        advanceUntilIdle()
-        s.state.value = WalkState.Finished(acc, endedAt = 3_000L)
+        s.triggers.tryEmit(BellTrigger.WalkEnd)
         advanceUntilIdle()
         assertEquals(1, s.player.playCount)
         s.cancel()
     }
 
-    @Test fun `same-class Meditating re-emission does not fire bell`() = runTest {
-        // Guard for a future refactor: if the observer ever compared
-        // by value instead of class, two Meditating states with
-        // different `meditationStartedAt` timestamps would count as
-        // a transition and ring a spurious bell. Class-compare is
-        // correct; this test documents the invariant.
-        val s = newScenario(initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L))
+    @Test fun `MeditationStart trigger fires one bell`() = runTest {
+        val s = newScenario()
         advanceUntilIdle()
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 3_000L)
+        s.triggers.tryEmit(BellTrigger.MeditationStart)
+        advanceUntilIdle()
+        assertEquals(1, s.player.playCount)
+        s.cancel()
+    }
+
+    @Test fun `MeditationEnd trigger fires one bell`() = runTest {
+        val s = newScenario()
+        advanceUntilIdle()
+        s.triggers.tryEmit(BellTrigger.MeditationEnd)
+        advanceUntilIdle()
+        assertEquals(1, s.player.playCount)
+        s.cancel()
+    }
+
+    @Test fun `meditation boundary bell requests haptic`() = runTest {
+        val s = newScenario()
+        advanceUntilIdle()
+        s.triggers.tryEmit(BellTrigger.MeditationStart)
+        advanceUntilIdle()
+        assertEquals(listOf(true), s.player.hapticCalls)
+        s.cancel()
+    }
+
+    @Test fun `master toggle off suppresses every trigger`() = runTest {
+        val s = newScenario(
+            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
+        )
+        advanceUntilIdle()
+        s.triggers.tryEmit(BellTrigger.WalkStart)
+        s.triggers.tryEmit(BellTrigger.MeditationStart)
+        s.triggers.tryEmit(BellTrigger.MeditationEnd)
+        s.triggers.tryEmit(BellTrigger.WalkEnd)
         advanceUntilIdle()
         assertEquals(0, s.player.playCount)
         s.cancel()
     }
 
-    @Test fun `Idle then Meditating (restore path) does not fire bell`() = runTest {
-        // Real-world scenario: user's walk was mid-meditation when the
-        // process was killed. App relaunches: `WalkController` inits
-        // to `Idle`. HomeScreen's resume-check calls `restoreActiveWalk`,
-        // which writes `Meditating` to the state flow. This is not a
-        // user-initiated boundary — the user hasn't tapped Meditate
-        // this session. Observer must suppress the bell for this path
-        // even though the Meditating state is the second emission
-        // (not the first, which is what the generic skip catches).
-        val s = newScenario(initial = WalkState.Idle)
+    @Test fun `WalkStart None suppresses bell`() = runTest {
+        val s = newScenario(
+            soundsPreferences = FakeSoundsPreferencesRepository(
+                initialSoundsEnabled = true,
+                initialWalkStartBellId = null,
+            ),
+        )
         advanceUntilIdle()
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+        s.triggers.tryEmit(BellTrigger.WalkStart)
         advanceUntilIdle()
         assertEquals(0, s.player.playCount)
         s.cancel()
     }
 
-    @Test fun `Idle then Active fires zero bells`() = runTest {
-        val s = newScenario(initial = WalkState.Idle)
+    @Test fun `WalkEnd None suppresses bell`() = runTest {
+        val s = newScenario(
+            soundsPreferences = FakeSoundsPreferencesRepository(
+                initialSoundsEnabled = true,
+                initialWalkEndBellId = null,
+            ),
+        )
         advanceUntilIdle()
-        s.state.value = WalkState.Active(acc)
+        s.triggers.tryEmit(BellTrigger.WalkEnd)
         advanceUntilIdle()
-        // Idle→Active is a walk-start transition, not a meditation
-        // boundary. No bell.
         assertEquals(0, s.player.playCount)
         s.cancel()
     }
 
-    @Test fun `full sequence fires four bells`() = runTest {
-        // Idle → Active → Meditating → Active → Meditating → Finished
-        // = 4 meditation boundary transitions → 4 bells.
-        val s = newScenario(initial = WalkState.Idle)
+    @Test fun `MeditationStart None suppresses bell`() = runTest {
+        val s = newScenario(
+            soundsPreferences = FakeSoundsPreferencesRepository(
+                initialSoundsEnabled = true,
+                initialMeditationStartBellId = null,
+            ),
+        )
         advanceUntilIdle()
-
-        s.state.value = WalkState.Active(acc); advanceUntilIdle()
-        assertEquals(0, s.player.playCount)   // Idle→Active, no bell
-
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L); advanceUntilIdle()
-        assertEquals(1, s.player.playCount)   // Active→Meditating
-
-        s.state.value = WalkState.Active(acc); advanceUntilIdle()
-        assertEquals(2, s.player.playCount)   // Meditating→Active
-
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 4_000L); advanceUntilIdle()
-        assertEquals(3, s.player.playCount)   // Active→Meditating
-
-        s.state.value = WalkState.Finished(acc, endedAt = 5_000L); advanceUntilIdle()
-        assertEquals(4, s.player.playCount)   // Meditating→Finished
-
+        s.triggers.tryEmit(BellTrigger.MeditationStart)
+        advanceUntilIdle()
+        assertEquals(0, s.player.playCount)
         s.cancel()
+    }
+
+    @Test fun `MeditationEnd None suppresses bell`() = runTest {
+        val s = newScenario(
+            soundsPreferences = FakeSoundsPreferencesRepository(
+                initialSoundsEnabled = true,
+                initialMeditationEndBellId = null,
+            ),
+        )
+        advanceUntilIdle()
+        s.triggers.tryEmit(BellTrigger.MeditationEnd)
+        advanceUntilIdle()
+        assertEquals(0, s.player.playCount)
+        s.cancel()
+    }
+
+    @Test fun `late subscription does NOT replay past triggers`() = runTest {
+        // SharedFlow with replay=0 is the restore-path guarantee: an
+        // observer instantiated AFTER an emission missed it. The
+        // controller's restoreActiveWalk() writes directly to _state
+        // and does NOT emit a trigger, but this test also pins the
+        // SharedFlow's replay semantics in case someone bumps replay
+        // > 0 in a future refactor.
+        val triggers = MutableSharedFlow<BellTrigger>(replay = 0, extraBufferCapacity = 4)
+        // Pre-emit BEFORE the observer subscribes.
+        triggers.tryEmit(BellTrigger.MeditationStart)
+        val player = FakeBellPlayer()
+        val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        MeditationBellObserver(
+            bellTriggers = triggers,
+            bellPlayer = player,
+            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            scope = scope,
+        )
+        advanceUntilIdle()
+        assertEquals(0, player.playCount)
+        scope.coroutineContext[Job]?.cancel()
     }
 
     // ----- scaffolding ----------------------------------------------
 
     private class Scenario(
-        val state: MutableStateFlow<WalkState>,
+        val triggers: MutableSharedFlow<BellTrigger>,
         val player: FakeBellPlayer,
         val scope: CoroutineScope,
     ) {
@@ -163,85 +181,26 @@ class MeditationBellObserverTest {
     }
 
     private fun TestScope.newScenario(
-        initial: WalkState,
-        soundsPreferences: SoundsPreferencesRepository = FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+        soundsPreferences: SoundsPreferencesRepository =
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
     ): Scenario {
-        val state = MutableStateFlow(initial)
+        val triggers = MutableSharedFlow<BellTrigger>(replay = 0, extraBufferCapacity = 4)
         val fakePlayer = FakeBellPlayer()
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         MeditationBellObserver(
-            walkState = state,
+            bellTriggers = triggers,
             bellPlayer = fakePlayer,
             soundsPreferences = soundsPreferences,
             scope = scope,
         )
-        return Scenario(state, fakePlayer, scope)
-    }
-
-    @Test fun `meditation boundary bell requests haptic`() = runTest {
-        // Stage 12-C: meditation start/end bells must pair `.medium`
-        // haptic (iOS BellPlayer.swift:29-31 + SoundManagement.swift:43).
-        // The observer requests `withHaptic = true`; the player gates
-        // internally on `bellHapticEnabled`. Asserting the request, not
-        // the gate.
-        val s = newScenario(initial = WalkState.Active(acc))
-        advanceUntilIdle()
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
-        advanceUntilIdle()
-        assertEquals(listOf(true), s.player.hapticCalls)
-        s.cancel()
-    }
-
-    @Test fun `master toggle off suppresses Active to Meditating bell`() = runTest {
-        val s = newScenario(
-            initial = WalkState.Active(acc),
-            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
-        )
-        advanceUntilIdle()
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
-        advanceUntilIdle()
-        // Master sounds toggle is OFF — the Active→Meditating boundary
-        // would normally ring, but the gate suppresses it.
-        assertEquals(0, s.player.playCount)
-        s.cancel()
-    }
-
-    @Test fun `master toggle off suppresses Meditating to Active bell`() = runTest {
-        val s = newScenario(
-            initial = WalkState.Meditating(acc, meditationStartedAt = 2_000L),
-            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
-        )
-        advanceUntilIdle()
-        s.state.value = WalkState.Active(acc)
-        advanceUntilIdle()
-        assertEquals(0, s.player.playCount)
-        s.cancel()
-    }
-
-    @Test fun `master toggle flipped on mid-session unmutes subsequent bells`() = runTest {
-        val prefs = FakeSoundsPreferencesRepository(initialSoundsEnabled = false)
-        val s = newScenario(initial = WalkState.Active(acc), soundsPreferences = prefs)
-        advanceUntilIdle()
-        s.state.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
-        advanceUntilIdle()
-        assertEquals(0, s.player.playCount)   // muted
-
-        prefs.setSoundsEnabled(true)
-        advanceUntilIdle()
-        s.state.value = WalkState.Active(acc)
-        advanceUntilIdle()
-        assertEquals(1, s.player.playCount)   // unmuted, ring on the boundary
-        s.cancel()
+        return Scenario(triggers, fakePlayer, scope)
     }
 }
 
 /**
  * Counts [play] calls and captures the [withHaptic] flag passed by the
- * call site. Stage 12-C: `MeditationBellObserver` now invokes the
- * 2-arg overload with `withHaptic = true`, so the fake must override
- * that overload directly — otherwise the `BellPlaying` interface
- * default routes back through [play] (no-arg) and the haptic-flag
- * assertions can't observe what the call site actually passed.
+ * call site. The 2-arg overload is what the observer uses; that's the
+ * one to override directly to preserve the haptic-flag assertions.
  */
 private class FakeBellPlayer : BellPlaying {
     var playCount = 0
@@ -251,8 +210,12 @@ private class FakeBellPlayer : BellPlaying {
         playCount += 1
     }
 
+    override fun play(scale: Float) {
+        playCount += 1
+    }
+
     override fun play(scale: Float, withHaptic: Boolean) {
         playCount += 1
-        hapticCalls += withHaptic
+        hapticCalls.add(withHaptic)
     }
 }

@@ -123,7 +123,12 @@ class SoundSettingsViewModelTest {
         manifestService = manifestService,
         fileStore = fileStore,
         downloadScheduler = NoOpScheduler,
+        bellPlayer = NoOpBellPlayer,
     )
+
+    private object NoOpBellPlayer : org.walktalkmeditate.pilgrim.audio.BellPlaying {
+        override fun play() = Unit
+    }
 
     /**
      * Tests don't need a real WorkManager scheduler — every cancel

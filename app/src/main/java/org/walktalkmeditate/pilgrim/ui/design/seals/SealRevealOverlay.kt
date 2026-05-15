@@ -216,11 +216,15 @@ private const val MILESTONE_HOLD_BONUS_MS = 500L
 private const val SPRING_DAMPING = 0.6f
 private const val SPRING_STIFFNESS = 500f
 
-// User feedback (Stage 14-A device QA): the dim parchment backdrop
-// reads as a "rectangle" on top of the journal/summary. Drop to fully
-// transparent so the seal floats over the actual content. Tap-to-
-// dismiss still works via the fillMaxSize + clickable below.
-private const val OVERLAY_BACKGROUND_ALPHA = 0f
+// User feedback (2026-05-14): the goshuin should be shown FIRST,
+// then the post-walk summary. Use fully-opaque parchment so the
+// summary is occluded for the duration of the reveal; the outer
+// Box's `.alpha(opacity)` modifier fades the backdrop + seal
+// together on Dismissing, revealing the summary underneath. The
+// parchment color matches the summary's own background so there's
+// no visible "rectangle on top" — the page transitions cleanly
+// from blank-parchment + seal → summary.
+private const val OVERLAY_BACKGROUND_ALPHA = 1f
 private const val SHADOW_ALPHA_REVEALED = 0.25f
 private const val SHADOW_ELEVATION_DP = 12
 private const val DEFAULT_SEAL_SIZE_DP = 220

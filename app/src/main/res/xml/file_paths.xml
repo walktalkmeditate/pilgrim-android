@@ -14,9 +14,16 @@
                      manifest.json + walks/<uuid>.json + schema.json
                      + optional photos/ (when user opts in). Same
                      OS-clears-on-pressure lifecycle.
+  - seals/           Goshuin seal PNGs produced by
+                     SealShareBitmapWriter for the post-walk share
+                     button. Subpath `seals/share/seal-<uuid>.png`.
+                     Without this entry, FileProvider.getUriForFile
+                     throws IllegalArgumentException and the share
+                     intent silently no-ops.
 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="etegami_cache" path="etegami/" />
     <cache-path name="recordings_export" path="recordings_export/" />
     <cache-path name="pilgrim_export" path="pilgrim_export/" />
+    <cache-path name="seals_cache" path="seals/" />
 </paths>

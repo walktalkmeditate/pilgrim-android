@@ -13,14 +13,20 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.audio.AudioCapture
 import org.walktalkmeditate.pilgrim.audio.AudioRecordCapture
+import org.walktalkmeditate.pilgrim.audio.BellFileResolver
 import org.walktalkmeditate.pilgrim.audio.BellPlayer
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.audio.MeditationBellScope
 import org.walktalkmeditate.pilgrim.audio.MeditationObservedWalkState
+import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
+import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.walk.BellTrigger
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 @Module
@@ -71,5 +77,33 @@ abstract class AudioModule {
         fun provideMeditationObservedWalkState(
             controller: WalkController,
         ): StateFlow<WalkState> = controller.state
+
+        /**
+         * Expose `WalkController.bellTriggers` for `MeditationBellObserver`.
+         * Narrow `SharedFlow` interface keeps tests injectable — the
+         * observer never needs to emit, only collect.
+         */
+        @Provides
+        @Singleton
+        fun provideBellTriggers(controller: WalkController): SharedFlow<BellTrigger> =
+            controller.bellTriggers
+
+        /**
+         * Resolves a bell id to a downloaded asset file via
+         * [AudioManifestService] + [SoundscapeFileStore]. Returns null
+         * when the bell hasn't been downloaded yet so
+         * [BellPlayer.playInternal] can fall back to the bundled
+         * `R.raw.bell`.
+         */
+        @Provides
+        @Singleton
+        fun provideBellFileResolver(
+            manifestService: AudioManifestService,
+            fileStore: SoundscapeFileStore,
+        ): BellFileResolver = BellFileResolver { id ->
+            val asset = manifestService.assets.value
+                .firstOrNull { it.id == id && it.type == AudioAssetType.BELL }
+            asset?.let { fileStore.fileFor(it) }?.takeIf { it.exists() }
+        }
     }
 }

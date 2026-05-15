@@ -13,6 +13,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -61,22 +62,47 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
  *
  * See `docs/superpowers/specs/2026-04-20-stage-5b-temple-bell-design.md`.
  */
+/**
+ * Resolves a bell id to a downloaded asset file. Returns null when
+ * the asset isn't on disk (or no manifest entry exists), in which
+ * case [BellPlayer] falls back to the bundled `R.raw.bell`.
+ */
+fun interface BellFileResolver {
+    fun resolve(bellId: String): File?
+}
+
 @Singleton
 class BellPlayer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val audioManager: AudioManager,
     private val soundsPreferences: SoundsPreferencesRepository,
     private val vibrator: Vibrator,
+    private val bellFileResolver: BellFileResolver = BellFileResolver { null },
 ) : BellPlaying {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun play() {
-        playInternal(scale = 1.0f)
+        playInternal(scale = 1.0f, bellId = null)
     }
 
     override fun play(scale: Float) {
-        playInternal(scale = scale)
+        playInternal(scale = scale, bellId = null)
+    }
+
+    /**
+     * iOS parity entry point for per-event bell selection. The caller
+     * passes the user-picked bell id (e.g. `"echo-chime"`,
+     * `"temple-bell"`) — if the asset has been downloaded by
+     * [SoundscapeAutoDownloadObserver], its file plays here; otherwise
+     * the bundled `R.raw.bell` fallback rings so the user always
+     * hears SOMETHING while the network catches up.
+     */
+    override fun play(bellId: String?, scale: Float, withHaptic: Boolean) {
+        val audioStarted = playInternal(scale = scale, bellId = bellId)
+        if (audioStarted && withHaptic && soundsPreferences.bellHapticEnabled.value) {
+            fireMediumImpact()
+        }
     }
 
     /**
@@ -96,13 +122,7 @@ class BellPlayer @Inject constructor(
      * Stage 12-C: see Item C of `2026-04-30-stage-12-…-design.md`.
      */
     override fun play(scale: Float, withHaptic: Boolean) {
-        // Audio-success gate matches iOS BellPlayer.swift:21-35: iOS only
-        // fires the haptic AFTER `p.play()` succeeds; if AVAudioPlayer
-        // throws (focus denied, file missing, other-app holding exclusive
-        // audio), control jumps to the catch and the haptic skips.
-        // Without this gate Android emits a "phantom haptic" with no
-        // audio when focus is denied (e.g. user is on a phone call).
-        val audioStarted = playInternal(scale = scale)
+        val audioStarted = playInternal(scale = scale, bellId = null)
         if (audioStarted && withHaptic && soundsPreferences.bellHapticEnabled.value) {
             fireMediumImpact()
         }
@@ -116,7 +136,7 @@ class BellPlayer @Inject constructor(
      * skips. Without this gate Android would emit a "phantom haptic"
      * when audio focus is denied (e.g. user is on a phone call).
      */
-    private fun playInternal(scale: Float): Boolean {
+    private fun playInternal(scale: Float, bellId: String?): Boolean {
         val bellAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -233,13 +253,24 @@ class BellPlayer @Inject constructor(
 
         try {
             player.setAudioAttributes(bellAttributes)
-            val afd = context.resources.openRawResourceFd(R.raw.bell) ?: run {
-                Log.w(TAG, "bell resource file descriptor null")
-                cleanup()
-                return false
-            }
-            afd.use {
-                player.setDataSource(it.fileDescriptor, it.startOffset, it.length)
+            // Per-event bell selection (iOS parity): resolve the
+            // user-picked bell id to a downloaded asset via
+            // [bellFileResolver]. If the file exists, play it;
+            // otherwise (no id, manifest miss, file not yet downloaded)
+            // fall back to the bundled bell so the user always hears
+            // SOMETHING while the network catches up.
+            val assetFile: File? = bellId?.let(bellFileResolver::resolve)
+            if (assetFile != null) {
+                player.setDataSource(assetFile.absolutePath)
+            } else {
+                val afd = context.resources.openRawResourceFd(R.raw.bell) ?: run {
+                    Log.w(TAG, "bell resource file descriptor null")
+                    cleanup()
+                    return false
+                }
+                afd.use {
+                    player.setDataSource(it.fileDescriptor, it.startOffset, it.length)
+                }
             }
             player.prepare()
         } catch (t: Throwable) {
