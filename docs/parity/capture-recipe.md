@@ -2,7 +2,22 @@
 
 Per-row capture loop driving both platforms into each ledger state, attaching paired evidence, then invoking the U4 blinded review.
 
-> **Capture-execution status:** BLOCKED this session — no iOS simulator or iOS device available (`xcrun simctl list devices` empty; no iOS device connected). The Android half + this recipe are ready; the iOS half + paired diff resume once an iOS capture environment exists. This is the environment prerequisite the plan's Risk row flagged, not a workaround.
+> **Capture-execution status (updated 2026-05-15):** iOS half UNBLOCKED + proven — `xcode-select` switched to `/Applications/Xcode.app`, iPhone 17 sim boots, `Pilgrim.app` (Debug, fcd2255) builds + installs, `--demo-mode` launch arg runs `ScreenshotDataSeeder` (seeds walks + bypasses onboarding), `xcrun simctl io <udid> screenshot` is scriptable. First iOS reference shots staged (`evidence/setup.welcome.entrance__L__ios.png`, `evidence/path.wander.idle__L__ios.png`).
+>
+> Still blocking paired verdicts: (1) **Android device disconnected** — `adb devices` empty; the paired Android column can't be captured. (2) **Binary `parity-seed.pilgrim` not yet extracted** — the iOS app is seeded via `ScreenshotDataSeeder` (App-Store-tuned; may not cover archived/tended/108-walk edge rows); a real shared seed must be exported from a populated app and round-trip-checked. Until both clear, rows stay `unverified` (a one-sided iOS shot never yields `match` per the review protocol).
+
+## iOS capture commands (proven)
+
+```
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer   # one-time, needs a real TTY
+xcrun simctl boot <udid>
+xcodebuild -workspace Pilgrim.xcworkspace -scheme Pilgrim -configuration Debug \
+  -destination 'platform=iOS Simulator,id=<udid>' -derivedDataPath /tmp/pilgrim-ios-dd build
+xcrun simctl install <udid> /tmp/pilgrim-ios-dd/Build/Products/Debug-iphonesimulator/Pilgrim.app
+xcrun simctl launch <udid> org.walktalkmeditate.pilgrim --demo-mode   # seeded; drop arg for fresh/onboarding rows
+xcrun simctl io <udid> screenshot evidence/<row-id>__<mode>__ios.png
+xcrun simctl ui <udid> appearance dark|light   # appearance cross-cut (constellation = in-app Settings→Appearance)
+```
 
 ## Prerequisites
 
