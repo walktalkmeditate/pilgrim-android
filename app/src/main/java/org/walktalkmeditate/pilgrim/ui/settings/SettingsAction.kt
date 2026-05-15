@@ -51,4 +51,10 @@ sealed interface SettingsAction {
     data object OpenPodcast : SettingsAction
     data object OpenPlayStoreReview : SettingsAction
     data object SharePilgrim : SettingsAction
+
+    /** Opens the AppearanceScreen detail (iOS v1.6.0 parity nav row pattern). */
+    data object OpenAppearance : SettingsAction
+
+    /** Opens the JourneyEditor webview (iOS v1.6.0). */
+    data object OpenJourneyEditor : SettingsAction
 }

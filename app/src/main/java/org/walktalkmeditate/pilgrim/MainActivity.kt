@@ -8,10 +8,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -121,22 +124,32 @@ class MainActivity : ComponentActivity() {
                     // status/nav-bar padding) and would have produced bottom-
                     // bar gaps above the gesture inset.
                     val deepLink by pendingDeepLink
-                    PilgrimNavHost(
-                        pendingDeepLink = deepLink,
-                        onDeepLinkConsumed = {
-                            pendingDeepLink.value = null
-                            // Strip the deep-link extras from the attached
-                            // intent so a config change (rotation, locale)
-                            // doesn't re-parse + re-navigate them.
-                            // setIntent persists the mutation across
-                            // activity recreation.
-                            val cleared = intent.apply {
-                                removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
-                                removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
-                            }
-                            setIntent(cleared)
-                        },
-                    )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        PilgrimNavHost(
+                            pendingDeepLink = deepLink,
+                            onDeepLinkConsumed = {
+                                pendingDeepLink.value = null
+                                // Strip the deep-link extras from the attached
+                                // intent so a config change (rotation, locale)
+                                // doesn't re-parse + re-navigate them.
+                                // setIntent persists the mutation across
+                                // activity recreation.
+                                val cleared = intent.apply {
+                                    removeExtra(DeepLinkTarget.EXTRA_DEEP_LINK)
+                                    removeExtra(DeepLinkTarget.EXTRA_WALK_ID)
+                                }
+                                setIntent(cleared)
+                            },
+                        )
+                        // iOS parity v1.6.0: constellation overlay
+                        // applied on top of all root content so stars +
+                        // nebulae + cosmic gradient render across every
+                        // screen. Active Walk + Walk Summary + Meditation
+                        // re-apply with `nebulae=false` to avoid clashing
+                        // with the dense map / warm parchment cards.
+                        org.walktalkmeditate.pilgrim.ui.design
+                            .ConstellationDecoration(includesNebulae = true)
+                    }
                 }
             }
         }

@@ -2,7 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.settings
 
 import android.app.Application
-import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -24,57 +24,53 @@ class AtmosphereCardTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun `renders all three segments`() {
-        composeRule.setContent {
-            PilgrimTheme {
-                AtmosphereCard(
-                    currentMode = AppearanceMode.System,
-                    onSelectMode = {},
-                    soundsEnabled = true,
-                    onSetSoundsEnabled = {},
-                    onAction = {},
-                )
-            }
-        }
-        composeRule.onNodeWithText("Auto").assertExists()
-        composeRule.onNodeWithText("Light").assertExists()
-        composeRule.onNodeWithText("Dark").assertExists()
-    }
-
-    @Test
-    fun `current selection is marked selected`() {
+    fun `renders appearance nav row with current selection`() {
         composeRule.setContent {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.Dark,
-                    onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
                     onAction = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Dark").assertIsSelected()
+        composeRule.onNodeWithText("Appearance").assertIsDisplayed()
+        composeRule.onNodeWithText("Dark").assertIsDisplayed()
     }
 
     @Test
-    fun `tapping a segment fires onSelectMode with the right value`() {
-        var picked: AppearanceMode? = null
+    fun `tapping appearance nav row fires OpenAppearance`() {
+        var fired: SettingsAction? = null
         composeRule.setContent {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.System,
-                    onSelectMode = { picked = it },
+                    soundsEnabled = true,
+                    onSetSoundsEnabled = {},
+                    onAction = { fired = it },
+                )
+            }
+        }
+        composeRule.onNodeWithText("Appearance").performClick()
+        composeRule.runOnIdle {
+            assertEquals(SettingsAction.OpenAppearance, fired)
+        }
+    }
+
+    @Test
+    fun `constellation mode shows Constellation as detail`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                AtmosphereCard(
+                    currentMode = AppearanceMode.Constellation,
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
                     onAction = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Light").performClick()
-        composeRule.runOnIdle {
-            assertEquals(AppearanceMode.Light, picked)
-        }
+        composeRule.onNodeWithText("Constellation").assertIsDisplayed()
     }
 
     @Test
@@ -83,15 +79,14 @@ class AtmosphereCardTest {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.System,
-                    onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
                     onAction = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Sounds").assertExists()
-        composeRule.onNodeWithText("Bells, voice guides, haptics, and ambient soundscapes").assertExists()
+        composeRule.onNodeWithText("Sounds").assertIsDisplayed()
+        composeRule.onNodeWithText("Bells, voice guides, haptics, and ambient soundscapes").assertIsDisplayed()
     }
 
     @Test
@@ -101,16 +96,12 @@ class AtmosphereCardTest {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.System,
-                    onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = { lastValue = it },
                     onAction = {},
                 )
             }
         }
-        // The label text "Sounds" sits in a Column without a click
-        // target — only the M3 Switch is toggleable. Find the Switch
-        // via `isToggleable()` semantics rather than label text.
         composeRule.onNode(isToggleable()).performClick()
         composeRule.runOnIdle {
             assertEquals(false, lastValue)
@@ -123,14 +114,13 @@ class AtmosphereCardTest {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.System,
-                    onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
                     onAction = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Bells & Soundscapes").assertExists()
+        composeRule.onNodeWithText("Bells & Soundscapes").assertIsDisplayed()
     }
 
     @Test
@@ -139,7 +129,6 @@ class AtmosphereCardTest {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.System,
-                    onSelectMode = {},
                     soundsEnabled = false,
                     onSetSoundsEnabled = {},
                     onAction = {},
@@ -156,7 +145,6 @@ class AtmosphereCardTest {
             PilgrimTheme {
                 AtmosphereCard(
                     currentMode = AppearanceMode.System,
-                    onSelectMode = {},
                     soundsEnabled = true,
                     onSetSoundsEnabled = {},
                     onAction = { fired = it },
