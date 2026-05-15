@@ -35,7 +35,7 @@ class IntentionSettingDialogTest {
                 onDismiss = {},
             )
         }
-        composeRule.onNodeWithText("A line for this walk…").performTextInput("  walk well  ")
+        composeRule.onNodeWithText("What purpose guides this walk?").performTextInput("  walk well  ")
         composeRule.onNodeWithText("Set").performClick()
         assertEquals("walk well", saved)
     }
@@ -65,7 +65,7 @@ class IntentionSettingDialogTest {
             )
         }
         val longText = "x".repeat(200)
-        composeRule.onNodeWithText("A line for this walk…").performTextInput(longText)
+        composeRule.onNodeWithText("What purpose guides this walk?").performTextInput(longText)
         composeRule.onNodeWithText("Set").performClick()
         assertEquals(140, saved?.length)
     }
