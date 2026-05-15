@@ -267,6 +267,7 @@
     <string name="recording_transcription_expand">Show more</string>
     <string name="recording_action_retranscribe_cd">Retranscribe</string>
     <string name="recording_action_edit_done">Done</string>
+    <string name="recording_action_edit_cd">Edit transcription</string>
     <string name="recordings_transcription_editor_description">Transcription editor</string>
 
     <!-- Stage 10-D RecordingsListScreen — top-level + section + dialogs -->
@@ -850,6 +851,13 @@
     <string name="journal_expand_pill_meditate">meditate</string>
     <string name="journal_expand_view_details">View details</string>
     <string name="journal_expand_dismiss_a11y">Close walk details</string>
+
+    <!-- About → Data Sources (iOS v1.6.0 parity AboutView.swift Data Sources section).
+         iOS lists Apple WeatherKit attribution per the WeatherKit Legal terms.
+         Android uses Open-Meteo (CC-BY 4.0); attribution is similarly mandatory. -->
+    <string name="about_data_sources_header">DATA SOURCES</string>
+    <string name="about_data_sources_body">Weather conditions and temperature recorded with each walk are fetched at the start of the walk from Open-Meteo, a free open-data weather service.</string>
+    <string name="about_data_sources_weather_link">Open-Meteo — Attribution &amp; terms</string>
 
     <!-- Welcome screen (iOS v1.6.0 parity Setup/Welcome/WelcomeView.swift) -->
     <string name="welcome_begin_button">Begin</string>

@@ -151,6 +151,8 @@ fun AboutScreen(
             }
             OpenSourceSection()
             SectionDivider()
+            DataSourcesSection()
+            SectionDivider()
             MottoSection()
             SeasonalVignetteSection()
             VersionSection()
@@ -368,6 +370,47 @@ private fun FootprintTrailSection() {
                 )
             }
         }
+    }
+}
+
+/**
+ * iOS parity v1.6.0 — About section listing the third-party data
+ * sources backing per-walk telemetry. iOS uses WeatherKit and
+ * attributes Apple Weather; Android uses Open-Meteo (CC-BY 4.0) and
+ * surfaces a link to their attribution terms.
+ */
+@Composable
+private fun DataSourcesSection() {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.about_data_sources_header),
+            style = pilgrimType.caption.copy(letterSpacing = 2.sp),
+            color = pilgrimColors.stone.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            text = stringResource(R.string.about_data_sources_body),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Spacer(Modifier.height(8.dp))
+        OpenSourceLinkRow(
+            icon = Icons.Filled.Public,
+            label = stringResource(R.string.about_data_sources_weather_link),
+            external = false,
+            onClick = {
+                CustomTabs.launch(
+                    context,
+                    Uri.parse("https://open-meteo.com/en/license"),
+                )
+            },
+        )
     }
 }
 

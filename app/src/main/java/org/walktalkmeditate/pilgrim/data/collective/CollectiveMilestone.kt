@@ -8,7 +8,20 @@ data class CollectiveMilestone(
     val message: String,
 ) {
     companion object {
-        val SACRED_NUMBERS = listOf(108, 1_080, 2_160, 10_000, 33_333, 88_000, 108_000)
+        /**
+         * MUST stay ascending — both [CollectiveMilestoneDetector.check]
+         * (which `break`s at the first matching threshold) and the
+         * fresh-install fast-forward (which calls `lastOrNull` to find
+         * the highest already-crossed value) depend on it. iOS lifted
+         * this to a `static let` with a `precondition` for the same
+         * reason after v1.6.0.
+         */
+        val SACRED_NUMBERS: List<Int> = listOf(108, 1_080, 2_160, 10_000, 33_333, 88_000, 108_000)
+            .also { numbers ->
+                require(numbers.zipWithNext().all { (a, b) -> a < b }) {
+                    "SACRED_NUMBERS must be strictly ascending; got $numbers"
+                }
+            }
 
         fun forNumber(number: Int): CollectiveMilestone {
             val message = when (number) {
