@@ -188,7 +188,9 @@ Per-mode blinded-review results for rows not yet fully verified (a row's table-c
 
 ## Systemic finding — Settings detail-screen nav chrome
 
-Both `settings.appearance` and `settings.about` flagged the same chrome divergence: **iOS detail screens use a centered nav title (+ iOS-style back); Android uses a Material `TopAppBar` with a left-aligned title + leading `ArrowBack`.** This almost certainly recurs on EVERY Settings detail screen (data-detail, recordings, sound, voiceguide, journey-viewer/editor, feedback). Recommend a **single systemic fix** (a shared iOS-parity detail-scaffold: centered title + iOS-style back) rather than per-row close-the-gap churn. Flagged for U7 / A5 decision before sweeping the remaining detail rows — fixing the scaffold once would clear this sub-diff across ~8 rows at once.
+Both `settings.appearance` and `settings.about` flagged the same chrome divergence: iOS detail screens use a centered nav title; Android used a Material `TopAppBar` with a left-aligned title.
+
+**RESOLVED (2026-05-15, A5/user chose "systemic fix now").** Created shared `ui/design/PilgrimDetailScaffold.kt` (`CenterAlignedTopAppBar` = iOS principal-centered title, `pilgrimType.heading`/ink, parchment, leading back; `contentWindowInsets = WindowInsets(0)` to defer to the nav-host's outer Scaffold — also fixes a latent double-top-inset; optional `snackbarHost` slot). Converted all 10 pushed Settings/Recordings detail screens (appearance, about, feedback, data-detail, journey-editor, journey-viewer, soundscape-picker, voiceguide pack-detail, voiceguide-picker, recordings) to it. Compiles; all converted-screen test classes green; on-device verified (Appearance title now centered, no inset gap). Per-row chrome sub-diffs (settings.appearance item 4, settings.about item 3) are now CLOSED; the remaining settings.appearance items (1 grouping, 2 copy, 3 icons) and settings.about items (1 tree, 2 logo tile) still stand for their own dispositions.
 
 ## Gate summary (computed at U7)
 

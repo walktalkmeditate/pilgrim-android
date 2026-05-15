@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
@@ -35,13 +33,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -64,6 +59,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
@@ -92,7 +88,6 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
  * confirmation. The VM owns playback / edit-mode / search state and the
  * underlying delete + retranscribe operations — see [RecordingsListViewModel].
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordingsListScreen(
     onBack: () -> Unit,
@@ -101,35 +96,11 @@ fun RecordingsListScreen(
     viewModel: RecordingsListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val colors = pilgrimColors
 
-    Scaffold(
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.recordings_screen_title),
+        onBack = onBack,
         modifier = modifier,
-        // The outer PilgrimNavHost Scaffold already consumed system bar
-        // insets — pass WindowInsets(0) to avoid the double-counted
-        // whitespace gap (same reason as VoiceGuidePickerScreen).
-        contentWindowInsets = WindowInsets(0),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.recordings_screen_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(
-                                R.string.settings_back_content_description,
-                            ),
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = colors.parchment,
-                    titleContentColor = colors.ink,
-                    navigationIconContentColor = colors.ink,
-                ),
-            )
-        },
-        containerColor = colors.parchment,
     ) { padding ->
         when (val s = state) {
             RecordingsListUiState.Loading -> {
