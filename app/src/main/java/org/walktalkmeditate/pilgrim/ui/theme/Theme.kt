@@ -23,28 +23,36 @@ fun PilgrimTheme(
 ) {
     // Resolve appearance preference -> dark/light flag. `System` defers
     // to the platform via `isSystemInDarkTheme()`; `Light`/`Dark` force
-    // the theme regardless of system setting.
+    // the theme regardless of system setting. `Constellation` also
+    // resolves to dark (iOS `AppearanceMode.constellation.resolvedScheme
+    // == .dark`) but applies the constellation override on top.
     val darkTheme = when (appearanceMode) {
         AppearanceMode.System -> isSystemInDarkTheme()
         AppearanceMode.Light -> false
         AppearanceMode.Dark -> true
+        AppearanceMode.Constellation -> true
     }
+    val constellation = appearanceMode.isConstellation
 
     // Cache the PilgrimColors AND PilgrimTypography instances across
     // recompositions. Without `remember`, every PilgrimTheme recomposition
     // would allocate fresh instances and — because LocalPilgrimColors and
     // LocalPilgrimTypography are both staticCompositionLocalOf
     // (reference-equality) — invalidate every consumer in the entire app
-    // tree. Key the colors `remember` on `darkTheme`, `hemisphere`, and
-    // `today` so a dark/light flip, a hemisphere change, or a date change
-    // produces a fresh seasonally-shifted palette. iOS parity
+    // tree. Key the colors `remember` on `darkTheme`, `hemisphere`,
+    // `today`, AND `constellation` so a constellation flip rebuilds the
+    // palette with the indigo override applied. iOS parity
     // `Color.swift@db4196e` wraps every static getter in
     // `SeasonalColorEngine.seasonalColor` so the whole app picks up
     // season-driven hue/saturation/brightness shifts; we replicate that
-    // here at theme-construction time via [pilgrimSeasonalColors].
-    val colors = remember(darkTheme, hemisphere, today) {
+    // here at theme-construction time via [pilgrimSeasonalColors] and
+    // then layer the constellation override on top (which BYPASSES the
+    // seasonal shift for the 5 pinned tokens per iOS v1.6.0
+    // `constellationOverride`).
+    val colors = remember(darkTheme, hemisphere, today, constellation) {
         val base = if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
-        pilgrimSeasonalColors(base, today, hemisphere)
+        val shifted = pilgrimSeasonalColors(base, today, hemisphere)
+        if (constellation) pilgrimConstellationOverride(shifted) else shifted
     }
     val type = remember { pilgrimTypography() }
 
@@ -109,6 +117,7 @@ fun PilgrimTheme(
     CompositionLocalProvider(
         LocalPilgrimColors provides colors,
         LocalPilgrimDarkTheme provides darkTheme,
+        LocalIsConstellation provides constellation,
         LocalPilgrimTypography provides type,
         LocalReduceMotion provides reducedMotion,
         // User-directed: Pilgrim has no Material tap ripples. Two

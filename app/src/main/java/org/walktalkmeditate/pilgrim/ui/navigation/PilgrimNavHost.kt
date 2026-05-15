@@ -86,7 +86,9 @@ object Routes {
     const val RECORDINGS_LIST = "recordings"
     const val DATA_SETTINGS = "data_settings"
     const val JOURNEY_VIEWER = "journey_viewer"
+    const val JOURNEY_EDITOR = "journey_editor"
     const val ABOUT = "about"
+    const val APPEARANCE = "appearance"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -263,6 +265,11 @@ fun PilgrimNavHost(
         }
         composable(Routes.ABOUT) {
             org.walktalkmeditate.pilgrim.ui.settings.about.AboutScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.APPEARANCE) {
+            org.walktalkmeditate.pilgrim.ui.settings.AppearanceScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -610,5 +617,9 @@ private fun handleSettingsAction(
             navController.navigate(Routes.ABOUT) { launchSingleTop = true }
         SettingsAction.OpenJourneyViewer ->
             navController.navigate(Routes.JOURNEY_VIEWER) { launchSingleTop = true }
+        SettingsAction.OpenJourneyEditor ->
+            navController.navigate(Routes.JOURNEY_EDITOR) { launchSingleTop = true }
+        SettingsAction.OpenAppearance ->
+            navController.navigate(Routes.APPEARANCE) { launchSingleTop = true }
     }
 }

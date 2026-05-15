@@ -193,6 +193,12 @@
     <string name="settings_appearance_auto">Auto</string>
     <string name="settings_appearance_light">Light</string>
     <string name="settings_appearance_dark">Dark</string>
+    <string name="settings_appearance_constellation">Constellation</string>
+    <string name="settings_appearance_screen_title">Appearance</string>
+    <string name="settings_appearance_auto_description">Match your system theme</string>
+    <string name="settings_appearance_light_description">Parchment, ink, and warm sand</string>
+    <string name="settings_appearance_dark_description">Restful low-light reading</string>
+    <string name="settings_appearance_constellation_description">A quiet night sky with drifting stars</string>
     <string name="settings_sounds_label">Sounds</string>
     <string name="settings_sounds_description">Bells, voice guides, haptics, and ambient soundscapes</string>
 

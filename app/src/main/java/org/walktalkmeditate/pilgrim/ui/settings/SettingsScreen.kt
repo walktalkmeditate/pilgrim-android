@@ -159,7 +159,6 @@ fun SettingsScreen(
             item {
                 AtmosphereCard(
                     currentMode = appearanceMode,
-                    onSelectMode = viewModel::setAppearanceMode,
                     soundsEnabled = soundsEnabled,
                     onSetSoundsEnabled = viewModel::setSoundsEnabled,
                     onAction = onAction,
