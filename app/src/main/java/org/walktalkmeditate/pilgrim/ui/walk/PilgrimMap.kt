@@ -549,7 +549,7 @@ internal fun PilgrimMap(
                         renderedWalkAnnotations.forEach { annoMgr.delete(it) }
                     }
                     renderedWalkAnnotations = walkAnnotations.map { ann ->
-                        val bitmap = when (ann.kind) {
+                        val bitmap = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
                                 bitmaps.getValue("startEnd")
@@ -558,8 +558,32 @@ internal fun PilgrimMap(
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
                             is WalkMapAnnotationKind.Photo ->
-                                photoPinBitmaps[ann.kind.walkPhotoId]
+                                photoPinBitmaps[k.walkPhotoId]
                                     ?: bitmaps.getValue("photo")
+                            is WalkMapAnnotationKind.Waypoint ->
+                                // Reuse the meditation pin until a
+                                // dedicated waypoint icon ships; iOS
+                                // renders these with a flag glyph.
+                                bitmaps.getValue("meditation")
+                            is WalkMapAnnotationKind.Whisper ->
+                                // Render with the proximity-style soft
+                                // colored circle. Generated per-pin so
+                                // the category color reads correctly.
+                                createProximityPinBitmap(
+                                    color = androidx.compose.ui.graphics.Color(k.categoryColor),
+                                    sizeDp = WHISPER_PIN_SIZE_DP,
+                                    darkMode = darkMode,
+                                )
+                            is WalkMapAnnotationKind.Cairn ->
+                                createProximityPinBitmap(
+                                    color = if (darkMode) {
+                                        androidx.compose.ui.graphics.Color(0xFF95A888)
+                                    } else {
+                                        androidx.compose.ui.graphics.Color(0xFF7A8B6F)
+                                    },
+                                    sizeDp = CAIRN_PIN_BASE_DP + (k.tier - 1).coerceAtLeast(0),
+                                    darkMode = darkMode,
+                                )
                         }
                         annoMgr.create(
                             PointAnnotationOptions()

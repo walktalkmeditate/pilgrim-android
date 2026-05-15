@@ -123,13 +123,66 @@ internal fun GoshuinScreenContent(
             when (uiState) {
                 is GoshuinUiState.Loading -> GoshuinLoading()
                 is GoshuinUiState.Empty -> GoshuinEmpty()
-                is GoshuinUiState.Loaded -> GoshuinGrid(
-                    seals = uiState.seals,
-                    hemisphere = hemisphere,
-                    onSealTap = onSealTap,
-                )
+                is GoshuinUiState.Loaded -> {
+                    // iOS v1.6.0 stats header — three pill-formatted
+                    // counts (walks · distance · meditation min)
+                    // that include archived walks.
+                    GoshuinStatsHeader(
+                        totalWalks = uiState.totalIncludingArchived,
+                        totalDistanceMeters = uiState.totalDistanceMeters,
+                        totalMeditationSeconds = uiState.totalMeditationSeconds,
+                    )
+                    Spacer(Modifier.height(PilgrimSpacing.small))
+                    GoshuinGrid(
+                        seals = uiState.seals,
+                        hemisphere = hemisphere,
+                        onSealTap = onSealTap,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun GoshuinStatsHeader(
+    totalWalks: Int,
+    totalDistanceMeters: Double,
+    totalMeditationSeconds: Long,
+) {
+    val km = totalDistanceMeters / 1000.0
+    val minutes = totalMeditationSeconds / 60L
+    val walksLabel = java.text.NumberFormat.getNumberInstance(java.util.Locale.getDefault())
+        .format(totalWalks)
+    val kmLabel = String.format(java.util.Locale.getDefault(), "%.1f km", km)
+    val minLabel = String.format(java.util.Locale.US, "%d min", minutes)
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PilgrimSpacing.big),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+    ) {
+        StatPill(value = walksLabel, label = "walks")
+        StatPill(value = kmLabel, label = "distance")
+        StatPill(value = minLabel, label = "meditation")
+    }
+}
+
+@Composable
+private fun StatPill(value: String, label: String) {
+    androidx.compose.foundation.layout.Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = value,
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Text(
+            text = label,
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+        )
     }
 }
 

@@ -3,9 +3,12 @@ package org.walktalkmeditate.pilgrim.data.walk
 
 import androidx.compose.runtime.Immutable
 import kotlin.math.abs
+import org.walktalkmeditate.pilgrim.data.cairn.CachedCairn
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.whisper.CachedWhisper
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 
 /**
@@ -38,6 +41,40 @@ sealed class WalkMapAnnotationKind {
         val walkPhotoId: Long,
         val photoUri: String,
     ) : WalkMapAnnotationKind()
+
+    /**
+     * iOS parity `PilgrimAnnotation.Kind.waypoint(label:icon:)`. User-
+     * dropped pin during the walk via the Options sheet. Label is the
+     * user-provided text (defaults to "Waypoint"); icon is the
+     * favicon-style glyph key (sf-symbol name on iOS, normalised to
+     * Material icon mapping on Android).
+     */
+    @Immutable data class Waypoint(
+        val label: String,
+        val iconKey: String? = null,
+    ) : WalkMapAnnotationKind()
+
+    /**
+     * iOS parity `PilgrimAnnotation.Kind.whisper(categoryColor:isNearby:)`.
+     * Server-side pinned whisper at a chosen point along the walk. Rendered
+     * as a glyph at `categoryColor` with a soft halo when `isNearby == true`.
+     */
+    @Immutable data class Whisper(
+        val whisperId: String,
+        val categoryColor: Long,
+        val isNearby: Boolean = false,
+    ) : WalkMapAnnotationKind()
+
+    /**
+     * iOS parity `PilgrimAnnotation.Kind.cairn(stoneCount:tier:)`. Pile of
+     * stones placed during meditation; tier is the visual tier index
+     * (1..3) and stoneCount drives the silhouette layering.
+     */
+    @Immutable data class Cairn(
+        val cairnId: String,
+        val stoneCount: Int,
+        val tier: Int,
+    ) : WalkMapAnnotationKind()
 }
 
 @Immutable
@@ -65,6 +102,9 @@ fun computeWalkMapAnnotations(
     routeSamples: List<RouteDataSample>,
     meditationIntervals: List<ActivityInterval>,
     voiceRecordings: List<VoiceRecording>,
+    waypoints: List<Waypoint> = emptyList(),
+    nearbyWhispers: List<CachedWhisper> = emptyList(),
+    nearbyCairns: List<CachedCairn> = emptyList(),
 ): List<WalkMapAnnotation> {
     if (routeSamples.isEmpty()) return emptyList()
     val out = mutableListOf<WalkMapAnnotation>()
@@ -95,6 +135,54 @@ fun computeWalkMapAnnotations(
             kind = WalkMapAnnotationKind.VoiceRecording(r.durationMillis),
             latitude = closest.latitude,
             longitude = closest.longitude,
+        )
+    }
+
+    // iOS v1.5 parity — user-dropped waypoints live at their own
+    // captured lat/lon (no GPS-sample alignment needed).
+    for (w in waypoints) {
+        out += WalkMapAnnotation(
+            kind = WalkMapAnnotationKind.Waypoint(
+                label = w.label ?: "Waypoint",
+                iconKey = w.icon,
+            ),
+            latitude = w.latitude,
+            longitude = w.longitude,
+        )
+    }
+
+    // Whispers + cairns come from the server geo-cache (CachedWhisper /
+    // CachedCairn). They are NOT walk-scoped; the caller passes the
+    // subset the user encountered along this walk (filtered by walk
+    // route + radius in the repository layer).
+    for (w in nearbyWhispers) {
+        val color = w.resolvedCategory?.borderColor?.let { c ->
+            // Pack Compose Color → ARGB long for stability + serialisation.
+            val a = (c.alpha * 255f).toInt() and 0xFF
+            val r = (c.red * 255f).toInt() and 0xFF
+            val g = (c.green * 255f).toInt() and 0xFF
+            val b = (c.blue * 255f).toInt() and 0xFF
+            ((a.toLong() shl 24) or (r.toLong() shl 16) or (g.toLong() shl 8) or b.toLong())
+        } ?: 0xFF8B7355L
+        out += WalkMapAnnotation(
+            kind = WalkMapAnnotationKind.Whisper(
+                whisperId = w.whisperId,
+                categoryColor = color,
+                isNearby = false,
+            ),
+            latitude = w.latitude,
+            longitude = w.longitude,
+        )
+    }
+    for (c in nearbyCairns) {
+        out += WalkMapAnnotation(
+            kind = WalkMapAnnotationKind.Cairn(
+                cairnId = c.id,
+                stoneCount = c.stoneCount,
+                tier = c.tier.ordinal + 1,
+            ),
+            latitude = c.latitude,
+            longitude = c.longitude,
         )
     }
 

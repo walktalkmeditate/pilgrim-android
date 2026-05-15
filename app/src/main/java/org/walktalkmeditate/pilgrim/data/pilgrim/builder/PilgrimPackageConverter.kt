@@ -131,7 +131,14 @@ object PilgrimPackageConverter {
             activities = bundle.activityIntervals.map { it.toPilgrimActivity() },
             voiceRecordings = bundle.voiceRecordings.map { it.toPilgrimVoiceRecording() },
             intention = walk.intention,
-            reflection = null,
+            // iOS v1.6.0 — emit PilgrimReflection with the user's notes
+            // as text. Style + celestialContext stay null on Android
+            // (no UI to capture style; celestial computation is
+            // walk-time only). iOS does the same for walks predating
+            // the celestial feature.
+            reflection = walk.notes?.takeIf { it.isNotBlank() }?.let {
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimReflection(text = it)
+            },
             heartRates = emptyList(),
             workoutEvents = emptyList(),
             favicon = walk.favicon,
@@ -268,7 +275,9 @@ object PilgrimPackageConverter {
             endTimestamp = if (pilgrim.finishedRecording) pilgrim.endDate.toEpochMilli() else null,
             intention = pilgrim.intention,
             favicon = pilgrim.favicon,
-            notes = null,
+            // iOS v1.6.0 — round-trip reflection.text → walk.notes so
+            // tended re-imports preserve the user's reflection edit.
+            notes = pilgrim.reflection?.text,
             weatherCondition = pilgrim.weather?.condition,
             weatherTemperature = pilgrim.weather?.temperature,
             weatherHumidity = pilgrim.weather?.humidity,

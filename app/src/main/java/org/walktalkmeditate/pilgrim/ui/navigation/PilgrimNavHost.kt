@@ -358,6 +358,16 @@ fun PilgrimNavHost(
                     // leaving a walk.
                     navController.popBackStack(Routes.PATH, inclusive = false)
                 },
+                onOpenVoiceGuides = {
+                    navController.navigate(Routes.VOICE_GUIDE_PICKER) {
+                        launchSingleTop = true
+                    }
+                },
+                onOpenSoundscapes = {
+                    navController.navigate(Routes.SOUNDSCAPE_PICKER) {
+                        launchSingleTop = true
+                    }
+                },
             )
         }
         composable(Routes.MEDITATION) {
