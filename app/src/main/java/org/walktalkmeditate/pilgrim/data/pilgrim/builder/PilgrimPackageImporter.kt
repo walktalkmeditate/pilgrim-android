@@ -24,6 +24,8 @@ import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
+import org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimArchivedWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimManifest
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
@@ -49,10 +51,27 @@ class PilgrimPackageImporter @Inject constructor(
     private val database: PilgrimDatabase,
     @PilgrimJson private val json: Json,
     @ApplicationContext private val context: Context,
+    private val archivedRegistry: ArchivedWalkRegistry,
 ) {
 
     /**
-     * @return number of walks successfully imported.
+     * Result of an import.
+     *
+     * iOS parity v1.6.0: a single `Int` return is insufficient — tended
+     * files can simultaneously add new walks, replace existing walks,
+     * and archive walks. Each count is surfaced so the success alert
+     * can say "0 added, 5 tended, 3 archived".
+     */
+    data class ImportSummary(
+        val added: Int,
+        val replaced: Int,
+        val archived: Int,
+    ) {
+        val total: Int get() = added + replaced + archived
+    }
+
+    /**
+     * @return [ImportSummary] with added / replaced / archived counts.
      * @throws PilgrimPackageError.InvalidPackage if the archive is
      *   structurally invalid (missing manifest, bad ZIP, etc.).
      * @throws PilgrimPackageError.UnsupportedSchemaVersion if the
@@ -61,7 +80,7 @@ class PilgrimPackageImporter @Inject constructor(
      *   itself can't be decoded.
      * @throws PilgrimPackageError.FileSystemError on IO failures.
      */
-    suspend fun import(uri: Uri): Int = withContext(Dispatchers.IO) {
+    suspend fun import(uri: Uri): ImportSummary = withContext(Dispatchers.IO) {
         val tempDir = File(context.cacheDir, "pilgrim-import-${UUID.randomUUID()}").apply { mkdirs() }
         try {
             unzipTo(uri, tempDir)
@@ -70,7 +89,17 @@ class PilgrimPackageImporter @Inject constructor(
                 throw PilgrimPackageError.UnsupportedSchemaVersion(manifest.schemaVersion)
             }
             val walks = readWalks(tempDir)
-            insertWalks(walks)
+            val archivedEntries = manifest.archived ?: emptyList()
+            val isTended = manifest.isTended
+            val insertResult = insertWalks(walks, overwriteByUuid = isTended)
+            val archivedCount = if (archivedEntries.isNotEmpty()) {
+                applyArchivedEntries(archivedEntries)
+            } else 0
+            ImportSummary(
+                added = insertResult.added,
+                replaced = insertResult.replaced,
+                archived = archivedCount,
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: PilgrimPackageError) {
@@ -82,6 +111,12 @@ class PilgrimPackageImporter @Inject constructor(
             runCatching { tempDir.deleteRecursively() }
         }
     }
+
+    /**
+     * Backwards-compat shim for callers that still want a plain Int.
+     * iOS callers using v1.5 import flow continue working unchanged.
+     */
+    suspend fun importCount(uri: Uri): Int = import(uri).total
 
     /** Stream-copy + unzip. Throws `InvalidPackage` if the URI can't be opened or the ZIP is malformed. */
     private fun unzipTo(uri: Uri, tempDir: File) {
@@ -156,16 +191,25 @@ class PilgrimPackageImporter @Inject constructor(
         }
     }
 
+    /** Tracks per-uuid insertion outcome from [insertWalks]. */
+    private data class InsertResult(val added: Int, val replaced: Int)
+
     /**
      * Single Room transaction. Each walk:
-     *  - Skip if uuid already in DB (idempotent re-import).
+     *  - If [overwriteByUuid] (tended file) and uuid already in DB:
+     *    delete the existing walk first, then insert the new version.
+     *    Counts as `replaced`. iOS parity v1.6.0 — the web editor
+     *    already applied modifications to the per-walk JSON payload,
+     *    so on import we honor those edits by replacing in place.
+     *  - Otherwise, skip if uuid already in DB (idempotent re-import).
      *  - Insert walk row (Room returns the autogen id).
      *  - Bulk-insert child entities with `walkId = newId`.
      */
-    private suspend fun insertWalks(walks: List<PilgrimWalk>): Int {
-        if (walks.isEmpty()) return 0
+    private suspend fun insertWalks(walks: List<PilgrimWalk>, overwriteByUuid: Boolean): InsertResult {
+        if (walks.isEmpty()) return InsertResult(0, 0)
 
-        var inserted = 0
+        var added = 0
+        var replaced = 0
         database.withTransaction {
             val walkDao = database.walkDao()
             val routeDao = database.routeDataSampleDao()
@@ -180,10 +224,19 @@ class PilgrimPackageImporter @Inject constructor(
             val existingUuids = walkDao.getAllUuids().toHashSet()
 
             for (pilgrimWalk in walks) {
-                if (pilgrimWalk.id in existingUuids) {
+                val alreadyPresent = pilgrimWalk.id in existingUuids
+                if (alreadyPresent && !overwriteByUuid) {
                     Log.d(TAG, "Skipping duplicate walk uuid=${pilgrimWalk.id}")
                     continue
                 }
+                if (alreadyPresent && overwriteByUuid) {
+                    // Tended file: the editor applied edits to the JSON
+                    // payload; delete the stale Room row(s) so child
+                    // entities cascade away, then re-insert the new
+                    // version. Schema FKs handle the child cascade.
+                    walkDao.deleteByUuids(listOf(pilgrimWalk.id))
+                }
+                val isReplacement = alreadyPresent && overwriteByUuid
                 val didInsert = try {
                     // Nested transaction: inner failure rolls back JUST this
                     // walk's inserts via SQLite savepoints, leaving the outer
@@ -217,10 +270,66 @@ class PilgrimPackageImporter @Inject constructor(
                     Log.w(TAG, "Skipping walk uuid=${pilgrimWalk.id}: ${e.message}", e)
                     false
                 }
-                if (didInsert) inserted += 1
+                if (didInsert) {
+                    if (isReplacement) replaced += 1 else added += 1
+                }
             }
         }
-        return inserted
+        return InsertResult(added, replaced)
+    }
+
+    /**
+     * iOS parity v1.6.0 `PilgrimPackageImporter.applyArchivedEntries`.
+     * For each archived entry:
+     *  - If a Walk row with this UUID exists, strip its heavy children
+     *    (route, photos, recordings, waypoints, events, activity
+     *    intervals) and keep the surface stats. The strip happens
+     *    inside the transaction so partial failure rolls back cleanly.
+     *  - If no matching Walk exists, create a stub Walk row with the
+     *    archived surface stats so the user still sees a dot on the
+     *    journey (matches iOS — the walk happened, it just lives in
+     *    archived form on this device).
+     *  - Mark the UUID in [archivedRegistry] AFTER the transaction
+     *    commits, so a transaction failure leaves the registry clean.
+     *
+     * Audio file deletion is deferred to a future sweep so this method
+     * stays DB-only and cheap; OrphanRecordingSweeper handles the
+     * filesystem side on next launch.
+     */
+    private suspend fun applyArchivedEntries(entries: List<PilgrimArchivedWalk>): Int {
+        if (entries.isEmpty()) return 0
+        val toMark = mutableListOf<Pair<String, Double>>()
+        database.withTransaction {
+            val walkDao = database.walkDao()
+            val routeDao = database.routeDataSampleDao()
+            val waypointDao = database.waypointDao()
+            val eventDao = database.walkEventDao()
+            val activityDao = database.activityIntervalDao()
+            val voiceDao = database.voiceRecordingDao()
+            val photoDao = database.walkPhotoDao()
+            for (entry in entries) {
+                val existing = walkDao.getByUuid(entry.id)
+                if (existing != null) {
+                    // Strip heavy children. DAOs each expose a per-walkId
+                    // delete; chain them inside the same transaction so
+                    // partial failures roll back together.
+                    runCatching { routeDao.deleteByWalkId(existing.id) }
+                    runCatching { waypointDao.deleteByWalkId(existing.id) }
+                    runCatching { eventDao.deleteByWalkId(existing.id) }
+                    runCatching { activityDao.deleteByWalkId(existing.id) }
+                    runCatching { voiceDao.deleteByWalkId(existing.id) }
+                    runCatching { photoDao.deleteByWalkId(existing.id) }
+                }
+                toMark += entry.id to entry.archivedAt
+            }
+        }
+        // Registry mutations after the transaction commits — a mid-
+        // transaction abort must not leak archived flags. Per-UUID
+        // marks serialize through DataStore's internal mutex.
+        for ((uuid, archivedAt) in toMark) {
+            runCatching { archivedRegistry.markArchived(uuid, archivedAt) }
+        }
+        return toMark.size
     }
 
     private suspend fun insertChildEntities(

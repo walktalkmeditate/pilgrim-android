@@ -13,4 +13,7 @@ interface WalkEventDao {
 
     @Query("SELECT * FROM walk_events WHERE walk_id = :walkId ORDER BY timestamp ASC")
     suspend fun getForWalk(walkId: Long): List<WalkEvent>
+
+    @Query("DELETE FROM walk_events WHERE walk_id = :walkId")
+    suspend fun deleteByWalkId(walkId: Long): Int
 }

@@ -54,4 +54,7 @@ interface VoiceRecordingDao {
      */
     @Query("UPDATE voice_recordings SET transcription = :transcription WHERE id = :id")
     suspend fun updateTranscription(id: Long, transcription: String?)
+
+    @Query("DELETE FROM voice_recordings WHERE walk_id = :walkId")
+    suspend fun deleteByWalkId(walkId: Long): Int
 }
