@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -217,6 +218,18 @@ fun WelcomeScreen(
                 style = pilgrimType.displayMedium,
                 color = pilgrimColors.fog,
                 textAlign = TextAlign.Center,
+                // iOS parity: WelcomeView uses `.minimumScaleFactor(0.7)`
+                // so a long quote shrinks to fit its two explicit lines
+                // instead of soft-wrapping a word ("...thousand miles"
+                // breaking after "miles"). maxLines = 2 honors the
+                // single `\n` in the resource; autoSize shrinks the
+                // glyphs down to ~70% before it would ever wrap.
+                maxLines = 2,
+                autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                    minFontSize = pilgrimType.displayMedium.fontSize * 0.7f,
+                    maxFontSize = pilgrimType.displayMedium.fontSize,
+                    stepSize = 0.5.sp,
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer { alpha = quoteAnim },
@@ -233,7 +246,7 @@ fun WelcomeScreen(
                     .fillMaxWidth()
                     .graphicsLayer { alpha = quoteAnim * 0.85f },
             )
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(16.dp))
             val buttonAnim by animateFloatAsState(
                 targetValue = if (showButton.value) 1f else 0f,
                 animationSpec = tween(durationMillis = 1500),
@@ -321,8 +334,13 @@ private fun AmbientYellowDrift() {
 @Composable
 private fun Footprints(opacities: List<Float>) {
     val printColor = pilgrimColors.ink.copy(alpha = 0.18f)
+    // 7 prints kept compact (18×28 + 2dp gaps ≈ 208dp) so the trail +
+    // breath cue + Begin + privacy promise all fit above the gesture
+    // inset on tall + short devices alike. iOS lets the VStack flex;
+    // Android needs the explicit budget since the privacy line is the
+    // last child and would otherwise clip off-screen.
     Column(
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         opacities.forEachIndexed { index, opacity ->
@@ -340,7 +358,7 @@ private fun Footprints(opacities: List<Float>) {
             )
             Box(
                 modifier = Modifier
-                    .size(width = 22.dp, height = 36.dp)
+                    .size(width = 18.dp, height = 28.dp)
                     .graphicsLayer {
                         alpha = targetAlpha
                         scaleX = (if (isLeft) -1f else 1f) * targetScale
@@ -358,26 +376,14 @@ private fun Footprints(opacities: List<Float>) {
 }
 
 private fun DrawScope.drawFootprint(color: Color) {
-    // Stylized footprint — pad + toe. Matches iOS FootprintShape outline.
-    val w = size.width
-    val h = size.height
-    val pad = Path().apply {
-        moveTo(w * 0.50f, h * 0.92f)
-        cubicTo(w * 0.10f, h * 0.78f, w * 0.05f, h * 0.40f, w * 0.30f, h * 0.30f)
-        cubicTo(w * 0.55f, h * 0.20f, w * 0.95f, h * 0.42f, w * 0.95f, h * 0.62f)
-        cubicTo(w * 0.95f, h * 0.82f, w * 0.65f, h * 1.00f, w * 0.50f, h * 0.92f)
-        close()
-    }
-    drawPath(pad, color)
-    val toe = Path().apply {
-        addOval(
-            androidx.compose.ui.geometry.Rect(
-                offset = Offset(w * 0.34f, h * 0.04f),
-                size = Size(width = w * 0.32f, height = h * 0.20f),
-            ),
-        )
-    }
-    drawPath(toe, color)
+    // Reuse the canonical 10-ellipse footprint silhouette (heel +
+    // outer edge + ball + 5 toes) shared with the About screen's
+    // footprint trail — same shape iOS uses for both surfaces.
+    drawPath(
+        org.walktalkmeditate.pilgrim.ui.settings.about.FootprintShape
+            .path(size.width, size.height),
+        color,
+    )
 }
 
 @HiltViewModel
