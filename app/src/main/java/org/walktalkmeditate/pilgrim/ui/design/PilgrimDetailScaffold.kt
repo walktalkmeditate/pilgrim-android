@@ -4,8 +4,6 @@ package org.walktalkmeditate.pilgrim.ui.design
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -15,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -62,7 +61,8 @@ fun PilgrimDetailScaffold(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            // iOS uses a chevron back, not a Material arrow.
+                            painter = painterResource(R.drawable.ic_sf_chevron_left),
                             contentDescription = backContentDescription,
                             tint = pilgrimColors.ink,
                         )

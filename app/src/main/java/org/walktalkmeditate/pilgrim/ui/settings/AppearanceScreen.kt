@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.Brightness6
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -32,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -156,7 +156,7 @@ private fun AppearanceRow(
         if (selected) {
             Spacer(Modifier.width(8.dp))
             Icon(
-                imageVector = Icons.Filled.Check,
+                painter = painterResource(R.drawable.ic_sf_checkmark),
                 contentDescription = null,
                 tint = pilgrimColors.stone,
                 modifier = Modifier.size(20.dp),

@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,8 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -280,18 +281,25 @@ fun SettingNavRow(
             )
             Spacer(Modifier.width(8.dp))
         }
-        Icon(
-            imageVector = if (external) {
-                Icons.AutoMirrored.Filled.OpenInNew
-            } else {
-                Icons.AutoMirrored.Filled.KeyboardArrowRight
-            },
-            contentDescription = null,
-            tint = pilgrimColors.fog,
-            modifier = Modifier
-                .size(16.dp)
-                .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG),
-        )
+        val trailingModifier = Modifier
+            .size(16.dp)
+            .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG)
+        if (external) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                contentDescription = null,
+                tint = pilgrimColors.fog,
+                modifier = trailingModifier,
+            )
+        } else {
+            Icon(
+                // iOS disclosure is a chevron, not a Material arrow.
+                painter = painterResource(R.drawable.ic_sf_chevron_right),
+                contentDescription = null,
+                tint = pilgrimColors.fog,
+                modifier = trailingModifier,
+            )
+        }
     }
 }
 
