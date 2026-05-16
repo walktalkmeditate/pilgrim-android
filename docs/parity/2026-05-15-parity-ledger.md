@@ -34,7 +34,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | setup.welcome.entrance | Scenes/Setup/Welcome/WelcomeView.swift | Welcome ritual full sequence | ui/onboarding/WelcomeScreen.kt | L/D/C | anim | wiped | L:close-the-gap (motion-pending); D/C:unverified |
 | setup.welcome.reduce-motion | Scenes/Setup/Welcome/WelcomeAnimationState.swift | Welcome, reduce-motion terminal frame | WelcomeScreen reduce-motion path | L/D/C | — | none | unverified |
 | setup.breath.transition | Scenes/Setup/BreathTransitionView.swift | Welcome→Permissions breath transition | (verify Android equivalent) | L/D/C | anim | none | unverified |
-| setup.permissions.initial | Scenes/Setup/Permissions/PermissionsView.swift | Permissions, nothing granted | ui/onboarding/PermissionsScreen.kt | L/D/C | — | none | unverified |
+| setup.permissions.initial | Scenes/Setup/Permissions/PermissionsView.swift | Permissions, nothing granted | ui/onboarding/PermissionsScreen.kt | L/D/C | — | wiped | L:close-the-gap (see detail); D/C:unverified |
 | setup.permissions.partial | Scenes/Setup/Permissions/PermissionsView.swift | Location coarse-only / needs-settings degraded | PermissionsScreen degraded states | L/D/C | — | none | unverified |
 | setup.permissions.granted | Scenes/Setup/Permissions/PermissionsView.swift | All granted (auto-advance) | PermissionsScreen complete | L/D/C | — | none | unverified |
 | **Path tab** ||||||||
@@ -44,7 +44,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | path.wander.recovery-banner | Scenes/Home/WalkStartView.swift | Recovery banner (stale-walk swipe) | WalkStartScreen RecoveryBanner | L/D/C | anim | recovered walk | unverified |
 | path.wander.vignette | Views/CelestialVignetteView.swift | Pre-walk celestial vignette (no weather) | ui/walk/WalkVignette.kt | L/D/C | — | none | stale (U1 over-listed; see detail) |
 | **Journal tab** ||||||||
-| journal.home.empty | Scenes/Home/HomeView.swift | No finished walks | ui/home/HomeScreen.kt empty | L/D/C | — | none | unverified |
+| journal.home.empty | Scenes/Home/HomeView.swift | No finished walks | ui/home/HomeScreen.kt empty | L/D/C | — | wiped | android-captured; ios-pending (idb onboarding flaky) |
 | journal.home.loading | Scenes/Home/HomeView.swift | Loading | HomeScreen loading | L/D/C | — | none | unverified |
 | journal.inkscroll.populated | Scenes/Home/InkScrollView.swift | Calligraphy path + dots + scenery | ui/home/scroll + HomeScreen | L/D/C | anim | ≥20 walks | unverified |
 | journal.inkscroll.lunar | Scenes/Home/InkScrollView+LunarMarkers.swift | Lunar markers on path | ui/home lunar markers | L/D/C | — | ≥20 walks | unverified |
@@ -249,7 +249,20 @@ These are the **same friction class as seed-gated rows**: they need a scripted s
 - **setup.launch.loading — L `close-the-gap` (motion-pending)** (fresh blinded reviewer). evidence: `evidence/setup.launch.loading__L__{ios,android}.png`. observed-diff: **Android cold-launch shows a black background + generic white concentric-ring spinner; iOS shows a warm parchment field + faint centered brushstroke "p" mark + cue "Take a breath. We're right with you."** Fundamental brand/background/messaging divergence (not a motion artifact). Also: fresh-install first-run was very slow (~40s black-spinner before Welcome) — secondary perf concern. **Disposition needed (A5/U7):** implement a branded Android launch screen (parchment + "p" + cue; Android-12 SplashScreen theming + branded loading composable) — close-the-gap, non-trivial impl.
 - **setup.welcome.entrance — L `close-the-gap`** (fresh blinded reviewer; **motion now captured** — emulator `screenrecord` → `evidence/motion/setup.welcome.entrance__L__android.mp4` (first-ever Android U6 artifact) + iOS `.mov`; the close-the-gap verdict stands regardless of motion). Clean emulator re-capture (1080×2400) at `evidence/setup.welcome.entrance__L__android.png`. observed-diff: **logo treatment — Android "p" tile renders a lighter serif "p" with a thin partial brush ring; iOS renders a heavier ink-filled brushstroke "p" filling the tile.** Quote copy, footprint trail, "Take a breath" line, full-width "Begin", privacy footer all correspond (Android footer wraps 2 lines = nav-inset/width, secondary). **Disposition:** verify whether Android `WelcomeScreen` uses a different/wrong logo asset vs the brushstroke `pilgrimLogo` (capturer code-check) before fixing — flagged close-the-gap.
 - **setup.permissions.initial:** iOS captured (`evidence/setup.permissions.initial__L__ios.png` — "Prepare for the journey" + 3 cards: walk/route, hear/voice [optional], count/steps [optional], each "Continue"); **Android pairing blocked** this pass by device nav thrash (flaky taps strayed into Android system Settings). Android capture deferred.
+- **setup.permissions.initial — L `close-the-gap`** (fresh blinded reviewer, emulator). evidence: `evidence/setup.permissions.initial__L__{ios,android}.png`. Itemized (large rework — NOT inline; U7/A5 disposition):
+  1. **Pervasive copy drift** — headline ("Prepare for the journey" vs "A few doors to open"), subtitle, and ALL card titles/descriptions differ. iOS copy is localized (`LS["Permissions.*"]`), so parity needs a canonical-copy decision, not a verbatim swap.
+  2. **iOS microphone card ("To hear your thoughts", optional) dropped on Android** — Android requests mic at first voice-record (runtime) instead of in onboarding. Deliberate-vs-gap → disposition.
+  3. **"(optional)" badges** present on iOS optional cards; absent on Android.
+  4. **Per-card button** "Open" (Android) vs "Continue/Grant" (iOS); **proceed button** "Continue" (Android, bottom, gated on location+notification) vs iOS "Next".
+  5. **Android notification card** ("A quiet notification", POST_NOTIFICATIONS) — Android-13+ OS-required, no iOS analogue → `re-justify` (platform-necessary; keep, dated reason: foreground-service walk notification).
 - **setup.welcome.reduce-motion / setup.breath.transition / setup.permissions.partial+granted:** not captured — extra state (OS reduce-motion, transient, partial grants); deferred to a focused onboarding state-setup pass.
+
+### journal.home.empty + setup.permissions.granted (emulator batch, 2026-05-16)
+- **journal.home.empty:** Android captured clean on emulator (`evidence/journal.home.empty__L__android.png` — "Pilgrim Log" + single calligraphy "Begin" node, goshuin FAB). **iOS pairing pending** — `idb` does not reliably advance the iOS Welcome→main onboarding (tap flakiness; perms pre-granted via `simctl privacy` so Permissions auto-advances, but Welcome's Begin needs a reliable tap). Same friction class as the OnePlus-side blocks, now isolated to iOS-sim multi-step nav. Verdict deferred pending the iOS still.
+- **setup.permissions.granted:** Android captured (`evidence/setup.permissions.granted__L__android.png` — all 3 cards "Granted" + enabled "Continue"). iOS auto-advances on all-granted (no granted screen) — that iOS-auto-advance vs Android-explicit-Continue divergence is already itemized under `setup.permissions.initial` detail #4.
+
+### Emulator batch outcome (2026-05-16)
+The emulator fully delivers the **Android** side of state-preconditioned rows (clean wipe → onboarding → permissions(CLI-granted) → main → empty Journal, plus first-ever U6 motion). The remaining friction is **iOS-sim `idb`** for multi-step onboarding nav (Welcome Begin advance unreliable). Net: Android state-row capture is unblocked and fast; iOS state-row pairing needs a more reliable sim-drive than idb (e.g. XCUITest, or pre-granting + a launch arg that bypasses Welcome) — a tooling gap to resolve before the onboarding/live-walk pairs can be completed paired.
 
 ## U5 completion reality (status, 2026-05-16)
 
