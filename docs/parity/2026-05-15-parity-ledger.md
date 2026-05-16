@@ -46,7 +46,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | **Journal tab** ||||||||
 | journal.home.empty | Scenes/Home/HomeView.swift | No finished walks | ui/home/HomeScreen.kt empty | L/D/C | — | wiped | android-captured; ios-pending (idb onboarding flaky) |
 | journal.home.loading | Scenes/Home/HomeView.swift | Loading | HomeScreen loading | L/D/C | — | none | unverified |
-| journal.inkscroll.populated | Scenes/Home/InkScrollView.swift | Calligraphy path + dots + scenery | ui/home/scroll + HomeScreen | L/D/C | anim | ≥20 walks | unverified |
+| journal.inkscroll.populated | Scenes/Home/InkScrollView.swift | Calligraphy path + dots + scenery | ui/home/scroll + HomeScreen | L/D/C | anim | ≥20 walks | L:close-the-gap (motion-pending; structure match); D/C:unverified |
 | journal.inkscroll.lunar | Scenes/Home/InkScrollView+LunarMarkers.swift | Lunar markers on path | ui/home lunar markers | L/D/C | — | ≥20 walks | unverified |
 | journal.inkscroll.milestone | Scenes/Home/MilestoneMarkerView.swift | Milestone marker (dawn halo) | ui/home/markers milestone | L/D/C | — | milestone walk | unverified |
 | journal.dot.standard | Scenes/Home/WalkDotView.swift | Standard walk dot (favicon/arcs/halo) | ui/home/dot/WalkDot.kt | L/D/C | anim | ≥1 walk | unverified |
@@ -100,7 +100,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | share.webview | Scenes/WalkShare/WalkShareView.swift | Share webview (worker) | ui/walk/share webview | L/D/C | — | finished walk | unverified |
 | **Goshuin** ||||||||
 | goshuin.empty | Scenes/Goshuin/GoshuinView.swift | No seals | ui/goshuin/GoshuinScreen.kt empty | L/D/C | — | none | unverified |
-| goshuin.populated | Scenes/Goshuin/GoshuinView.swift | Seal grid + stats header | GoshuinScreen loaded | L/D/C | — | ≥1 walk | unverified |
+| goshuin.populated | Scenes/Goshuin/GoshuinView.swift | Seal grid + stats header | GoshuinScreen loaded | L/D/C | — | ≥1 walk | L:close-the-gap (see detail); D/C:unverified |
 | goshuin.milestone | Scenes/Goshuin/GoshuinMilestones.swift | Milestone seal (halo + label) | GoshuinScreen milestone cell | L/D/C | — | milestone walk | unverified |
 | goshuin.archived-ghost | Scenes/Goshuin/GoshuinPageView.swift | Archived seal ghost (excluded from grid) | GoshuinViewModel archived filter | L/D/C | — | archived walk | unverified |
 | goshuin.statsheader | Scenes/Settings/PracticeSummaryHeader.swift (pattern) | Stats header (walks·dist·med, incl archived) | GoshuinScreen GoshuinStatsHeader | L/D/C | — | ≥1 walk + archived | unverified |
@@ -263,6 +263,15 @@ These are the **same friction class as seed-gated rows**: they need a scripted s
 
 ### Emulator batch outcome (2026-05-16)
 The emulator fully delivers the **Android** side of state-preconditioned rows (clean wipe → onboarding → permissions(CLI-granted) → main → empty Journal, plus first-ever U6 motion). The remaining friction is **iOS-sim `idb`** for multi-step onboarding nav (Welcome Begin advance unreliable). Net: Android state-row capture is unblocked and fast; iOS state-row pairing needs a more reliable sim-drive than idb (e.g. XCUITest, or pre-granting + a launch arg that bypasses Welcome) — a tooling gap to resolve before the onboarding/live-walk pairs can be completed paired.
+
+### Seed-gated sweep (emulator clean-seed ↔ iOS --demo-mode; data counts differ by design — judged structurally)
+- **journal.inkscroll.populated — L `close-the-gap` (motion-pending)** (fresh blinded reviewer, 2026-05-16). evidence: `evidence/journal.inkscroll.populated__L__{ios,android}.png`. **Structure MATCHES** (calligraphy thread, per-walk dots+glow rings, per-dot distance labels, month markers, scenery torii/moon/shrine, goshuin FAB all correspond). observed-diff: (a) **header pluralization** — iOS literal `"<n> walks · <m> months"` (shows "1 months", never singularized); Android `<plurals home_journey_months>` pluralizes ("1 month"). (b) minor tone: iOS distance line muted-sage vs Android amber/gold; "Pilgrim Log" heavier standalone on Android; per-dot label sage vs grey. **U7 disposition (A5):** (a) is match-iOS-literal vs keep-Android-correct-grammar (`re-justify` Android improvement) — NOT inline-fixed (deliberate-regression decision). (b) likely Pilgrim theme nuance — capturer code-check vs accept. anim → motion still pending.
+
+- **goshuin.populated — L `close-the-gap`** (fresh blinded reviewer, 2026-05-16). evidence: `evidence/goshuin.populated__L__{ios,android}.png`. Seal renders (concentric rings + label + distance) structurally match. 3 structural feature gaps (large — NOT inline; U7/A5):
+  1. **Presentation model**: iOS = modal sheet (`NavigationStack` + toolbar **"Done"** dismiss); Android = pushed screen + leading **back chevron**.
+  2. **iOS filterBar** ("All / Transformative / Peaceful / Extraordinary" category chips) — **absent on Android**. Android instead shows a `GoshuinStatsHeader` (walks·dist·med pills) that iOS `GoshuinView` does NOT have (that header is the separate `goshuin.statsheader` row's subject — iOS sources stats from the PracticeSummaryHeader pattern, not GoshuinView; Android placed it in Goshuin).
+  3. **iOS "Share Goshuin"** bottom button (→ share sheet) — **absent on Android** (relates to `goshuin.share-render` row, already flagged "NO Android equivalent — gap").
+  Disposition: filterBar + share are missing features; presentation model is a structural choice — A5/U7 (build filter+share+sheet-presentation vs re-justify the simplified Android goshuin).
 
 ## Seed re-baseline RESOLVED (2026-05-16, emulator)
 
