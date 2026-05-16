@@ -115,7 +115,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | settings.permissions | Scenes/Settings/SettingsCards/PermissionsCard.swift | Permissions card | ui/settings/permissions | L/D/C | — | none | unverified |
 | settings.data | Scenes/Settings/SettingsCards/DataCard.swift | Data card | ui/settings/data DataCard | L/D/C | — | none | unverified |
 | settings.connect | Scenes/Settings/SettingsCards/ConnectCard.swift | Connect card | ui/settings ConnectCard | L/D/C | — | none | unverified |
-| settings.sound | Scenes/Settings/SoundSettingsView.swift | Sound settings (bells/soundscapes/breath) | ui/settings/sounds | L/D/C | — | none | unverified |
+| settings.sound | Scenes/Settings/SoundSettingsView.swift | Sound settings (bells/soundscapes/breath) | ui/settings/sounds | L/D/C | — | none | L:close-the-gap (2 fixed; storageSection deferred); D/C:unverified |
 | settings.bellpicker | Scenes/Settings/SoundSettingsView.swift | Bell picker sheet (per-id preview) | ui/settings/sounds/BellPickerSheet.kt | L/D/C | — | bells downloaded | unverified |
 | settings.voiceguide | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide settings (download/delete) | ui/settings/voiceguide | L/D/C | — | none | unverified |
 | settings.voiceguide.picker | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide pack picker + progress | ui/settings/voiceguide picker | L/D/C | — | none | unverified |
@@ -213,6 +213,13 @@ Both `settings.appearance` and `settings.about` flagged the same chrome divergen
 iOS uses SF Symbols; Android used Material icons. Hit `settings.appearance`, `settings.feedback` (+ recurs everywhere with iconography). **U7 disposition (2026-05-15, A5/user): high-impact subset only** — hand-author ~10 SF-matching vector approximations (NOT Apple path data — SF Symbols are licensed), migrate the high-frequency call sites; remaining icons stay Material as a blanket dated `re-justify`.
 
 Progress (2026-05-15): shared vector drawables `ic_sf_chevron_left/right`, `ic_sf_checkmark` hand-authored (stroke, round caps, 24dp). Migrated: `PilgrimDetailScaffold` back (chevron.left — fans to all 10 detail screens), `SettingNavRow` disclosure (chevron.right — fans to every settings/data/recordings/connect nav row), `AppearanceScreen` selection check. Compiles; `SettingsCardStyleTest` green (testTag survived imageVector→painter); on-device verified (thin SF chevrons render across all nav rows, visibly closer to iOS than Material's heavier arrow). Batch 2 (2026-05-16): added `ic_sf_arrow_up_right`, `ic_sf_pencil`, `ic_sf_trash`. Migrated `SettingNavRow` external (arrow.up.right — fans to every external nav row), `VoiceRecordingsSection` edit (pencil), `PromptListSheet` delete (trash). Compiles; PromptListSheet/SettingsCardStyle/VoiceRecordings tests green (testTag+contentDescription survived); on-device verified ("Rate Pilgrim" shows clean SF diagonal arrow vs old Material box-arrow). **Remaining subset glyphs** (doc.on.doc, waveform/slash, mountain.2, sparkles) + their call-site migrations are follow-on; all other icons remain Material under the blanket re-justify.
+
+### settings.sound
+- **L — `close-the-gap`** (fresh blinded reviewer, 2026-05-16). evidence: `evidence/settings.sound__L__{ios,android}.png`. 3 sub-divergences:
+  1. ~~No back affordance / non-centered title (Android embedded no-topBar vs iOS pushed view w/ nav back)~~ — **FIXED**: converted `SoundSettingsScreen` to `PilgrimDetailScaffold` (centered "Sounds" title + SF back chevron, `onBack` was already plumbed); dropped the in-list title Text + dead Scaffold/WindowInsets/TextAlign imports. On-device verified.
+  2. **iOS `storageSection`** (downloaded bell/soundscape storage-management section) absent on Android — **deferred**: larger feature surface (download/disk mgmt UI); dated `re-justify` candidate or its own close-the-gap unit. U7/A5 disposition.
+  3. ~~Android master "Sounds" toggle had a subtitle iOS lacks~~ — **FIXED**: `description = ""` (iOS `mainToggleSection` toggle has no subtitle); the `settings_sounds_description` string stays (still used by `AtmosphereCard`'s Sounds nav row, which iOS *does* subtitle). On-device verified. SoundSettings tests green.
+  - Section set/order (Walk → Meditation Start/End/Soundscape/Breath, Volume) otherwise corresponds; selected bell/soundscape values differ by device state (not a divergence). D/C pending.
 
 ## Gate summary (computed at U7)
 
