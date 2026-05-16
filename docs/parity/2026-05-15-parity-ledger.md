@@ -288,10 +288,62 @@ The seed-equivalence methodology blocker (flagged at `settings.root`, deferred p
 - **Structurally blocked from full completion here:** the remaining no-seed rows are **state-preconditioned** (live-walk, voiceguide-on, overlays, onboarding sub-states, journal-empty) AND the test devices fight scripted state-setup — OnePlus ColorOS blocks `pm clear`/`run-as rm`/`screenrecord` (worked around via `adb uninstall`), and iOS-sim `idb` has scroll-coord drift + can't reach alert/sheet layers. Each state-preconditioned row's paired capture is an expensive, flaky, multi-step setup; doing all of them × L/D/C × motion in one pass is multi-session and partly device-limited.
 - **Net:** U5's navigable scope is swept; the remainder needs dedicated per-state batches (a live-walk pass, an onboarding-substate pass) and several findings are now close-the-gap items needing implementation + A5 disposition, not just capture. Recommend: triage the accumulated close-the-gaps (U7) and run targeted state batches rather than treating "U5 done" as a single linear sweep.
 
+## U7 Triage + Gate (2026-05-16, A5)
+
+Rationale is now attached (governing context: `CLAUDE.md` "100% parity with pilgrim-ios" + the dated A5 decisions made this session). `close` = fix to match iOS; `re-justify: reason (date)` = ships as a dated divergence. U7 only adjudicates — remediation is downstream `ce-plan`/`ce-work`.
+
+### Decisions (rows with a verdict)
+
+| row | verdict | triage decision (2026-05-16) |
+|---|---|---|
+| path.wander.idle | close-the-gap | **close — remediated**: pre-walk celestial pill removed + iOS staggered entrance ported (fixed in code). Re-capture D/C+motion to flip → match. |
+| settings.root (hemisphere row) | close-the-gap | **close — remediated**: manual Hemisphere row removed (match iOS auto-detect). Done; D/C re-capture pending. |
+| walk.options.idle | close-the-gap | **close — remediated**: placeholder subtitle removed. Residual ModalBottomSheet header-align = **re-justify: sheet header is a Compose ModalBottomSheet idiom, low-value to fight (2026-05-16)**. |
+| walk.intention.sheet | close-the-gap | **close — remediated**: rebuilt as bottom sheet + Suggested/Recent + iOS copy. Voice dictation = **re-justify: iOS-only IntentionVoiceRecorder, deferred this milestone, parallels deferred whispers/auto-play (2026-05-16)**. |
+| settings.sound | close-the-gap | **close — remediated**: scaffold chrome + master-toggle subtitle fixed. iOS `storageSection` (download/disk mgmt) = **close — deferred remediation** (own ce-plan unit). |
+| settings.feedback | close-the-gap | **close — remediated**: device-info preview line added. Category icon drift = **re-justify: SF-vs-Material, high-impact-subset-only icon policy (A5 2026-05-16)**. |
+| settings.data-detail | close-the-gap | **close — remediated**: Journey rows → chevron, Edit subtitle removed, footer copy → iOS. Export/Import action-vs-nav chevron = **close — deferred** (needs a no-chevron SettingNavRow variant). |
+| setup.launch.loading | close-the-gap | **close**: Android black+generic-spinner → build a branded parchment+"p"+cue launch screen (Android-12 SplashScreen theming + loading composable). |
+| setup.welcome.entrance | close-the-gap | **close**: logo treatment — capturer to verify Android `WelcomeScreen` logo asset vs iOS brushstroke `pilgrimLogo`, align. |
+| setup.permissions.initial | close-the-gap | **close**: align headline/subtitle/card copy + restore mic card + "(optional)" badges + button labels to iOS. Notification card = **re-justify: Android-13 POST_NOTIFICATIONS is OS-required for the walk foreground-service notification; no iOS analogue (2026-05-16)**. |
+| journal.inkscroll.populated | close-the-gap | **close**: header pluralization → match iOS literal `"<n> walks · <m> months"` (no singular form — parity over Android grammar, per 100%-parity bar). Distance/title tone = capturer theme-check then align. |
+| settings.appearance | close-the-gap | **close**: items 1/2/4 (grouped-card vs separate, 3 reworded descriptions, title chrome) → align to iOS. Item 3 icons = **re-justify: high-impact-subset-only icon policy (A5 2026-05-16)**. |
+| settings.about | close-the-gap | **close**: remove the Android-only `TreeScenery` above the hero logo; align logo tile treatment to iOS plain parchment "p". |
+| goshuin.populated | close-the-gap | **close**: build the iOS filter bar (All/Transformative/Peaceful/Extraordinary) + "Share Goshuin" + modal-sheet presentation; the Android-only `GoshuinStatsHeader`-in-Goshuin = **re-justify: iOS sources stats from PracticeSummaryHeader pattern; Android consolidates into Goshuin — acceptable (2026-05-16)**. |
+| (summary.loaded) summary.map.no-token | close-the-gap | **re-justify: no Mapbox token in the debug build → "Map unavailable" fallback; R6 documented native substitution, ships with this dated reason (2026-05-16)**. |
+| path.together.comingsoon | L:match | match (L). D/C modes still `unverified` → row not fully verified. |
+| path.seek.comingsoon | L:match | match (L). D/C still `unverified`. |
+| path.wander.vignette | stale | `stale` — never blocks (iOS `WalkStartView` never had a pre-walk vignette; U1 over-listed). |
+| settings.voiceguide / .picker | gate:match | gate logic match (code-verified); inner screens `unverified` (Voice-Guide-ON state precond). |
+
+### Gate result (R8)
+
+**NOT PASSABLE.** Blocking categories:
+
+- **`unverified` (dominant blocker):** the large majority of the 86 rows × {L,D,C} (+motion for `anim`) were never captured — D/C appearance modes for every captured row, and all deep/state-preconditioned rows (`walk.*` live-walk, `sealreveal.*`, most `summary.*`, `overlay.*`, `journal.dot/turningbanner`, `settings.*` detail D/C, `prompts.*`). Root cause: iOS-sim deep-state nav is infra-limited (idb multi-step unreliable; `pilgrim-ios` is the frozen reference, can't be instrumented). Not adjudication-blocked — capture-infra-blocked.
+- **open `close` (remediation pending):** setup.launch.loading, setup.welcome.entrance, setup.permissions.initial, journal.inkscroll.populated, settings.appearance (1/2/4), settings.about, goshuin.populated, settings.sound (storageSection), settings.data-detail (export/import affordance). Plus the "remediated" rows need D/C+motion re-capture to flip to `match`.
+- **undated re-justify:** none — all re-justify decisions above are dated 2026-05-16.
+
+`stale`: path.wander.vignette (non-blocking).
+
+### Downstream ce-plan clusters (`close` rows, surface-grouped)
+
+| Cluster | Member rows → ce-plan input (row id · observed-diff · iOS Swift ref · decision) |
+|---|---|
+| **Onboarding chrome** | setup.launch.loading (branded splash), setup.welcome.entrance (logo asset), setup.permissions.initial (copy + mic card + badges + button labels) |
+| **Journal/Goshuin parity** | journal.inkscroll.populated (header literal pluralization + tone), goshuin.populated (filter bar + Share + sheet presentation) |
+| **Settings copy/structure** | settings.appearance (grouped-card + descriptions + title chrome), settings.about (remove TreeScenery + logo tile), settings.sound (storageSection), settings.data-detail (Export/Import no-chevron action-row variant) |
+| **Icon system** (re-justify umbrella) | high-impact subset already shipped (chevrons/check/arrow/pencil/trash); remaining glyphs + all non-subset icons = blanket dated re-justify — no ce-plan unit |
+| **Deferred features (re-justify)** | walk.intention voice dictation, setup.permissions notification card, summary.map.no-token, options-sheet header — dated re-justify, ship as-is |
+| **Capture-infra** (not a parity fix — enables the rest) | iOS-sim deep-state driver (XCUITest target or app deep-link launch args) — prerequisite to clearing the `unverified` blocker |
+
 ## Gate summary (computed at U7)
 
-- Total rows: 86 · `unverified`: 86 · `match`: 0 · `close-the-gap`: 0 · `re-justify`: 0 · `stale`: 0
-- **Ship gate: NOT PASSABLE** — 86 unverified rows (R8). Gate recomputed in `docs/parity/gate.md` after U5/U6/U7.
+Computed 2026-05-16 (U7 triage pass). Effective row verdicts (86 rows; L-mode where captured, D/C still unverified on captured rows):
+
+- Total rows: **86** · `unverified`: **~64** (never-captured: D/C of captured rows + all deep/state/iOS-infra-blocked rows) · `match` (L, partial): **2** (path.together/seek.comingsoon — D/C unverified) · `close-the-gap`/`close` open: **~9** (onboarding ×3, inkscroll, appearance, about, goshuin, sound-storageSection, data-export-affordance) · `close` remediated-pending-reverify: **7** (path.wander.idle, settings.root, walk.options.idle, walk.intention.sheet, settings.sound, settings.feedback, settings.data-detail) · `re-justify` (dated 2026-05-16): **6** (voice dictation, notification card, map-no-token, icon-subset, options-header, goshuin-statsheader) · `stale`: **1** (path.wander.vignette)
+- **Ship gate: NOT PASSABLE.** Blockers (per `docs/parity/gate.md` R8): dominant = `unverified` (~64, capture-infra-blocked: iOS-sim deep-state nav, not adjudication); plus ~9 open `close` awaiting remediation + 7 remediated rows awaiting D/C+motion re-capture to flip → `match`. Zero undated re-justify. Full per-row decisions + ce-plan clusters in **§ U7 Triage + Gate (2026-05-16)** above.
+- Path to PASS: (1) resolve iOS-sim deep-state capture infra (XCUITest/deep-link) → clear `unverified`; (2) execute the ce-plan clusters for the ~9 open `close` rows; (3) re-capture the 7 remediated rows (D/C+motion) → `match`.
 
 ## Notes
 
