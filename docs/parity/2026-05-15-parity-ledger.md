@@ -42,7 +42,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | path.together.comingsoon | Scenes/Home/WalkStartView.swift | Together mode "coming soon" | WalkStartScreen Together | L/D/C | — | none | L:match; D/C:unverified |
 | path.seek.comingsoon | Scenes/Home/WalkStartView.swift | Seek mode "coming soon" | WalkStartScreen Seek | L/D/C | — | none | L:match; D/C:unverified |
 | path.wander.recovery-banner | Scenes/Home/WalkStartView.swift | Recovery banner (stale-walk swipe) | WalkStartScreen RecoveryBanner | L/D/C | anim | recovered walk | unverified |
-| path.wander.vignette | Views/CelestialVignetteView.swift | Pre-walk celestial vignette (no weather) | ui/walk/WalkVignette.kt | L/D/C | — | none | unverified |
+| path.wander.vignette | Views/CelestialVignetteView.swift | Pre-walk celestial vignette (no weather) | ui/walk/WalkVignette.kt | L/D/C | — | none | stale (U1 over-listed; see detail) |
 | **Journal tab** ||||||||
 | journal.home.empty | Scenes/Home/HomeView.swift | No finished walks | ui/home/HomeScreen.kt empty | L/D/C | — | none | unverified |
 | journal.home.loading | Scenes/Home/HomeView.swift | Loading | HomeScreen loading | L/D/C | — | none | unverified |
@@ -117,8 +117,8 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | settings.connect | Scenes/Settings/SettingsCards/ConnectCard.swift | Connect card | ui/settings ConnectCard | L/D/C | — | none | unverified |
 | settings.sound | Scenes/Settings/SoundSettingsView.swift | Sound settings (bells/soundscapes/breath) | ui/settings/sounds | L/D/C | — | none | L:close-the-gap (2 fixed; storageSection deferred); D/C:unverified |
 | settings.bellpicker | Scenes/Settings/SoundSettingsView.swift | Bell picker sheet (per-id preview) | ui/settings/sounds/BellPickerSheet.kt | L/D/C | — | bells downloaded | unverified |
-| settings.voiceguide | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide settings (download/delete) | ui/settings/voiceguide | L/D/C | — | none | unverified |
-| settings.voiceguide.picker | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide pack picker + progress | ui/settings/voiceguide picker | L/D/C | — | none | unverified |
+| settings.voiceguide | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide settings (download/delete) | ui/settings/voiceguide | L/D/C | — | VoiceGuide ON | gate:match; screen:unverified (state-precond) |
+| settings.voiceguide.picker | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide pack picker + progress | ui/settings/voiceguide picker | L/D/C | — | VoiceGuide ON | gate:match; screen:unverified (state-precond) |
 | settings.recordings | Scenes/Settings/RecordingsListView.swift | Recordings list (swipe actions) | ui/recordings/RecordingsListScreen.kt | L/D/C | — | walks w/ recordings | unverified |
 | settings.data-detail | Scenes/Settings/DataSettingsView.swift | Data settings (export/import/journey rows) | ui/settings/data DataSettingsScreen | L/D/C | — | none | L:close-the-gap (3 fixed; export/import affordance deferred); D/C:unverified |
 | settings.export-confirm | Scenes/Settings/ExportConfirmationSheet.swift | Export confirmation sheet | ui/settings/data ExportConfirmationSheet | L/D/C | — | ≥1 walk | unverified |
@@ -228,6 +228,22 @@ Progress (2026-05-15): shared vector drawables `ic_sf_chevron_left/right`, `ic_s
   3. ~~"Edit My Journey" extra subtitle~~ — **FIXED**: removed `detail=`; dead `settings_data_edit_journey_subtitle` string deleted. Verified.
   4. ~~Journey footer copy drift~~ — **FIXED**: `data_journey_footer` → iOS wording verbatim ("View renders your walks at view.pilgrimapp.org. Edit opens edit.pilgrimapp.org for in-browser editing. Your walk data is not uploaded; the JSON is injected into the browser via the JS bridge."). Verified.
   - Scaffold chrome (centered "Data" + SF back) already correct. Compiles; DataSettings tests green. D/C pending.
+
+### settings.voiceguide / settings.voiceguide.picker
+- **Gate — `match`** (capturer code-verified, 2026-05-16). The "Guide Packs" entry row is gated behind `voiceGuideEnabled`: iOS `VoiceCard.swift:24` `if voiceGuideEnabled { NavigationLink{VoiceGuideSettingsView()} }` + `.animation(.easeInOut(0.2), value: voiceGuideEnabled)`; Android `VoiceCard.kt:78` `AnimatedVisibility(visible = state.voiceGuideEnabled, tween(200))`. Identical gate logic + timing — MATCH (same class as the zodiac/celestial gate parity).
+- **Inner screens — `unverified` (state-precondition):** reaching `VoiceGuideSettingsView` / pack picker requires **Voice Guide ENABLED** runtime state (not seed-encodable; a manual recipe). Their chrome is iOS-parity by construction (both already on `PilgrimDetailScaffold` from the systemic conversion). Pixel capture deferred to a state-setup pass.
+
+## Capture-scope reality — U5 remaining rows are state-preconditioned (cross-cutting)
+
+The pure-navigable no-seed rows are essentially swept (path modes, intention, options, feedback, sound, data-detail, appearance, about, settings card stack). The **remaining U5 no-seed rows almost all carry a runtime STATE precondition**, not just navigation:
+- `setup.*` (launch/welcome/breath/permissions) → app must be **wiped to pre-onboarding**.
+- `journal.home.empty` / `.loading` → **no finished walks** (wiped).
+- `settings.voiceguide*` → **Voice Guide enabled**.
+- `walk.*` (waypoint/whisper/stone/turning/active/etc.) → **live walk in progress** (+ unlocks).
+- `overlay.*` → specific runtime states (nearby whisper, streak, constellation mode).
+- `path.wander.vignette` → premise now **stale** (pre-walk vignette removed both platforms per the resolved celestial-pill disposition) — reconciliation: mark `stale` (iOS `WalkStartView` never had it; the U1 enumeration over-listed it).
+
+These are the **same friction class as seed-gated rows**: they need a scripted state-setup pass, made expensive by iOS-sim nav/tap flakiness (`idb` scroll-coord drift, alert/sheet layers idb can't reach). "Finish U5" therefore reduces to: a wiped-baseline onboarding pass + a live-walk pass + small state toggles — best run as dedicated state-setup batches (mirrors the deferred clean-seed-baseline decision), not per-row inline. Substantive logic for several state-gated rows is code-verifiable now (gates, chrome) even when pixels aren't.
 
 ## Gate summary (computed at U7)
 
