@@ -264,6 +264,12 @@ These are the **same friction class as seed-gated rows**: they need a scripted s
 ### Emulator batch outcome (2026-05-16)
 The emulator fully delivers the **Android** side of state-preconditioned rows (clean wipe → onboarding → permissions(CLI-granted) → main → empty Journal, plus first-ever U6 motion). The remaining friction is **iOS-sim `idb`** for multi-step onboarding nav (Welcome Begin advance unreliable). Net: Android state-row capture is unblocked and fast; iOS state-row pairing needs a more reliable sim-drive than idb (e.g. XCUITest, or pre-granting + a launch arg that bypasses Welcome) — a tooling gap to resolve before the onboarding/live-walk pairs can be completed paired.
 
+## Seed re-baseline RESOLVED (2026-05-16, emulator)
+
+The seed-equivalence methodology blocker (flagged at `settings.root`, deferred per A5) is **resolved on the Android side**. Emulator `pm clear` (0 walks) → import `parity-seed.pilgrim` → **"69 walks imported"** = exactly the seed manifest (16 walks + 53 archived), **zero pre-existing contamination** (vs the old OnePlus 23→39 contaminated import that made seed-gated rows untrustworthy). Recipe: `pm clear` → `adb push parity-seed.pilgrim /sdcard/Download/` → onboarding (reliable emu taps) → CLI-grant perms → Settings→Data→Import Data→SAF roots drawer→Downloads→`parity-seed.pilgrim` → "69 walks imported". `journal.inkscroll.populated` captured on this trustworthy state (`evidence/journal.inkscroll.populated__L__android.png` — "16 walks · 42.5 km", rich InkScroll: dots/distance-labels/torii/moon/lunar-marker/archived-ghost/mountains/FAB). All Android seed-gated rows (journal populated/dot/expandcard, goshuin populated/archived, summary.*, practice-header) are now capturable trustworthily from this state.
+
+**iOS pairing for seed-gated rows:** iOS needs the equivalent clean-seed state. iOS `--demo-mode` seeds NON-identical demo data (can't use for seed-gated). Path: iOS clean (uninstall+reinstall) → real `parity-seed.pilgrim` import via the proven `simctl openurl file://… → Files Save → idb taps → Pilgrim Settings→Data→Import` dance (verified earlier: "16 added, 53 archived") — onboarding-skip needed first (idb-flaky; XCUITest or an onboarding-skip launch arg would make this reliable). Until iOS is re-seeded clean, seed-gated rows are **Android-trustworthy-captured / iOS-pairing-pending**.
+
 ## U5 completion reality (status, 2026-05-16)
 
 "U5 completely done" is **not achievable as a single continuous pass** on the current test rigs. Honest breakdown:
