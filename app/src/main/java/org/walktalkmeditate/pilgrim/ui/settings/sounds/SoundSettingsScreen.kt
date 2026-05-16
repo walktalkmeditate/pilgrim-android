@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -34,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,6 +39,7 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.ui.settings.CardHeader
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.settings.SettingNavRow
 import org.walktalkmeditate.pilgrim.ui.settings.SettingToggle
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
@@ -96,9 +94,9 @@ fun SoundSettingsScreen(
 
     val listState = rememberLazyListState()
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-        containerColor = pilgrimColors.parchment,
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.settings_sounds_title),
+        onBack = onBack,
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -108,18 +106,6 @@ fun SoundSettingsScreen(
             contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
-                Text(
-                    text = stringResource(R.string.settings_sounds_title),
-                    style = pilgrimType.heading,
-                    color = pilgrimColors.ink,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 16.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
-
             item {
                 MainToggleSection(
                     soundsEnabled = soundsEnabled,
@@ -256,7 +242,8 @@ private fun MainToggleSection(
     ) {
         SettingToggle(
             label = stringResource(R.string.settings_sounds_master_label),
-            description = stringResource(R.string.settings_sounds_description),
+            // iOS mainToggleSection's "Sounds" toggle has no subtitle.
+            description = "",
             checked = soundsEnabled,
             onCheckedChange = onSetSoundsEnabled,
         )
