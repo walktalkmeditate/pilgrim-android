@@ -29,6 +29,19 @@ xcrun simctl io <udid> screenshot evidence/<row-id>__<mode>__ios.png
 xcrun simctl ui <udid> appearance dark|light   # appearance cross-cut (constellation = in-app Settings→Appearance)
 ```
 
+## Android capture target — EMULATOR (2026-05-16)
+
+**The OnePlus (CPH2655 / ColorOS) is OEM-restricted and is NOT the Android capture target for state-preconditioned or motion rows.** It blocks `pm clear`, `run-as rm` (files recreated), and `screenrecord` — making clean wipes (onboarding / journal-empty), U6 motion, and scripted state-setup impossible/flaky. Keep the OnePlus only for real-device long-walk reliability QA (Phase N, out of U5/U6 scope).
+
+**Use the `pilgrim_parity` AVD** (Pixel 6, API 35, `google_apis/arm64-v8a` — native on Apple-Silicon host, boots ~12s):
+```
+export PATH="$HOME/Library/Android/sdk/emulator:$HOME/Library/Android/sdk/platform-tools:$PATH"
+emulator -avd pilgrim_parity -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -no-window -port 5560 &
+adb -s emulator-5560 wait-for-device   # then poll getprop sys.boot_completed == 1
+adb -s emulator-5560 install -r -d app/build/outputs/apk/debug/app-debug.apk
+```
+Verified on the emulator (all blocked on OnePlus): `pm clear org.walktalkmeditate.pilgrim.debug` → Success (clean wipe → onboarding/journal-empty states); `screenrecord` → writes mp4 (U6 motion for every `anim` row); mock GPS via `adb -s emulator-5560 emu geo fix <lon> <lat>` (scriptable live-walk `walk.*` states). Always target `adb -s emulator-5560` (the OnePlus stays connected too). Resolution/density differs from the OnePlus — fine: blinded review judges layout/structure/copy/iconography, not device-identical pixels. Mixed-device prior evidence is acceptable; re-capture state-preconditioned rows on the emulator.
+
 ## Prerequisites
 
 1. `parity-seed.pilgrim` built + round-trip-equivalence-checked on both platforms (`docs/parity/fixtures/README-seed.md`).
