@@ -236,7 +236,9 @@ fun DataSettingsScreen(
                     SettingNavRow(
                         label = stringResource(R.string.data_action_journey),
                         modifier = Modifier.fillMaxWidth(),
-                        external = true,
+                        // iOS pushes an in-app WebView → chevron, not an
+                        // external-link arrow.
+                        external = false,
                         onClick = { onAction(SettingsAction.OpenJourneyViewer) },
                     )
                     // iOS v1.6.0 — sibling Edit My Journey row pointing
@@ -247,9 +249,8 @@ fun DataSettingsScreen(
                     // back through the importer's tended-mode path.
                     SettingNavRow(
                         label = stringResource(R.string.settings_data_edit_journey_row),
-                        detail = stringResource(R.string.settings_data_edit_journey_subtitle),
                         modifier = Modifier.fillMaxWidth(),
-                        external = true,
+                        external = false,
                         onClick = { onAction(SettingsAction.OpenJourneyEditor) },
                     )
                 }

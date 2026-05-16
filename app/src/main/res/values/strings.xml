@@ -673,7 +673,7 @@
     <string name="data_action_import">Import Data</string>
     <string name="data_walks_footer">Export creates a .pilgrim archive with all your walks, transcriptions, and settings. Import restores walks from a .pilgrim file.</string>
     <string name="data_action_journey">View My Journey</string>
-    <string name="data_journey_footer">Opens view.pilgrimapp.org and renders all your walks in the browser. Your data stays on your device — nothing is uploaded.</string>
+    <string name="data_journey_footer">View renders your walks at view.pilgrimapp.org. Edit opens edit.pilgrimapp.org for in-browser editing. Your walk data is not uploaded; the JSON is injected into the browser via the JS bridge.</string>
     <string name="data_section_audio_header">Audio</string>
     <string name="data_action_export_recordings">Export Recordings</string>
     <string name="data_audio_footer">Exports all voice recording audio files as a zip archive. These are not included in the data export.</string>
@@ -735,7 +735,6 @@
     <string name="journey_editor_title">Edit My Journey</string>
     <string name="journey_editor_loading">Preparing your journey for editing…</string>
     <string name="settings_data_edit_journey_row">Edit My Journey</string>
-    <string name="settings_data_edit_journey_subtitle">Tend your journey at edit.pilgrimapp.org</string>
 
     <plurals name="export_confirmation_walk_count">
         <item quantity="one">1 walk</item>
