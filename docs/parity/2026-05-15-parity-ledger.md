@@ -300,6 +300,14 @@ Proven end-to-end on **path.wander.idle D**: iOS `simctl` dark + Android `cmd ui
 
 This converts the large D/C-of-single-depth fraction of the ~64 `unverified` from infra-blocked → mechanical (turnkey recipe above). Remaining genuinely-blocked: deep/state rows (live-walk, sealreveal, deep summary) needing iOS multi-step nav. New cluster: **Logo treatment** — Android logo tile/asset diverges from iOS brushstroke `pilgrimLogo`, pronounced in dark (welcome.entrance + path.wander.idle.D) → one ce-plan unit.
 
+## Logo-treatment cluster — INVESTIGATED, downgraded (2026-05-16)
+
+Capturer root-cause check (not a blinded review — code/asset evidence):
+- **Assets byte-identical to iOS:** iOS `pilgrimLogo.png` 323766 B == Android `drawable-nodpi/ic_pilgrim_logo.png` 323766 B; iOS `pilgrimLogo-dark.png` 1328017 B == Android `drawable-night-nodpi/ic_pilgrim_logo.png` 1328017 B. Asset port is exact.
+- **Render envelope math-equivalent:** iOS `PilgrimLogoView.swift:39-43` `Image.resizable().aspectRatio(.fit).frame(size).clipShape(RoundedRectangle(cornerRadius: size*0.18, style:.continuous))`; Android `PilgrimLogo.kt` `Image(...).size(size).clip(RoundedCornerShape(percent=18))` (18% of the square = `size*0.18`) + default `ContentScale.Fit`. Same glyph, same radius, same fit.
+- **Only real delta:** iOS uses `.continuous` (Apple squircle) corners; Compose `RoundedCornerShape` is circular. Sub-pixel; Compose has no built-in continuous-corner primitive. **Decision: `re-justify` — corner-curve primitive parity is negligible visual delta, not worth a custom squircle shape (2026-05-16).**
+- The blinded "Android lighter serif p / washed-out" (welcome.entrance, path.wander.idle.D) is therefore **not a code defect** — most likely a welcome-entrance MID-ANIMATION capture frame (logo still fading/scaling in). **Action: re-capture welcome.entrance at the SETTLED state to confirm; expected → match.** Logo-treatment removed from the close ce-plan clusters; folded into the corner-curve `re-justify`.
+
 ## U7 Triage + Gate (2026-05-16, A5)
 
 Rationale is now attached (governing context: `CLAUDE.md` "100% parity with pilgrim-ios" + the dated A5 decisions made this session). `close` = fix to match iOS; `re-justify: reason (date)` = ships as a dated divergence. U7 only adjudicates — remediation is downstream `ce-plan`/`ce-work`.
