@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,9 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Brightness4
@@ -29,7 +25,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -62,21 +57,26 @@ fun AppearanceScreen(
         onBack = onBack,
         modifier = modifier,
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            items(MODES) { entry ->
-                AppearanceRow(
-                    icon = entry.icon,
-                    label = stringResource(entry.labelRes),
-                    description = stringResource(entry.descriptionRes),
-                    selected = current == entry.mode,
-                    onClick = { viewModel.setAppearanceMode(entry.mode) },
-                )
+            // iOS AppearanceView: one grouped card, rows separated by
+            // internal hairline dividers (not separate cards).
+            Column(modifier = Modifier.fillMaxWidth().settingsCard()) {
+                MODES.forEachIndexed { index, entry ->
+                    if (index > 0) SettingsDivider()
+                    AppearanceRow(
+                        icon = entry.icon,
+                        label = stringResource(entry.labelRes),
+                        description = stringResource(entry.descriptionRes),
+                        selected = current == entry.mode,
+                        onClick = { viewModel.setAppearanceMode(entry.mode) },
+                    )
+                }
             }
         }
     }
@@ -127,8 +127,6 @@ private fun AppearanceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(pilgrimColors.parchmentSecondary)
             .clickable(role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

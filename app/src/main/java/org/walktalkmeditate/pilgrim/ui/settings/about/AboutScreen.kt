@@ -136,14 +136,6 @@ fun AboutScreen(
 
 @Composable
 private fun HeroSection(onLogoTap: () -> Unit = {}) {
-    val nowMs = remember { System.currentTimeMillis() }
-    val today = remember { LocalDate.now() }
-    val tintColor = SeasonalColorEngine.applySeasonalShift(
-        base = pilgrimColors.moss,
-        intensity = SeasonalColorEngine.Intensity.Full,
-        date = today,
-        hemisphere = org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
-    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -151,16 +143,6 @@ private fun HeroSection(onLogoTap: () -> Unit = {}) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Animated tree — sized to journal scenery range (20-36 dp).
-        // Reduce-Motion aware via the shared sceneryTimeSeconds()
-        // driver inside TreeScenery.
-        Box(modifier = Modifier.size(36.dp)) {
-            TreeScenery(
-                sizeDp = 36.dp,
-                tintColor = tintColor,
-                walkDateMs = nowMs,
-            )
-        }
         PilgrimLogo(
             size = 80.dp,
             breathing = true,
