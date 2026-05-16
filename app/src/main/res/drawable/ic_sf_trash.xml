@@ -1,0 +1,14 @@
+<!-- Hand-authored approximation of SF Symbol trash.
+     NOT derived from Apple asset data (SF Symbols are licensed). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4,6.5 L20,6.5 M9.5,6.5 L9.5,4.5 L14.5,4.5 L14.5,6.5 M6.5,6.5 L7.5,20 L16.5,20 L17.5,6.5 M10,10 L10.4,16.5 M14,10 L13.6,16.5" />
+</vector>
