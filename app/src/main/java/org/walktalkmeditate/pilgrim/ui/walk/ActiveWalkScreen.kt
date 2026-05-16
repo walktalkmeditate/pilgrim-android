@@ -119,6 +119,7 @@ fun ActiveWalkScreen(
     val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
+    val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
@@ -655,9 +656,16 @@ fun ActiveWalkScreen(
             )
         }
         if (showPreWalkIntention) {
-            IntentionSettingDialog(
+            val suggestions = remember(preWalkIntentionResetKey) {
+                viewModel.intentionSuggestions()
+            }
+            IntentionSettingSheet(
                 initial = preWalkIntention,
+                recents = recentIntentions,
+                suggestions = suggestions,
                 onSave = { text ->
+                    // iOS ordering: history.add BEFORE the commit.
+                    viewModel.rememberIntention(text)
                     preWalkIntention = text.takeIf { it.isNotBlank() }
                     showPreWalkIntention = false
                     preWalkIntentionResetKey++
@@ -676,10 +684,18 @@ fun ActiveWalkScreen(
         // exist for the auto path (commit goes straight to the Walk
         // row).
         if (showAutoIntention) {
-            IntentionSettingDialog(
+            val autoSuggestions = remember(showAutoIntention) {
+                viewModel.intentionSuggestions()
+            }
+            IntentionSettingSheet(
                 initial = null,
+                recents = recentIntentions,
+                suggestions = autoSuggestions,
                 onSave = { text ->
-                    if (text.isNotBlank()) viewModel.setIntention(text)
+                    if (text.isNotBlank()) {
+                        viewModel.rememberIntention(text)
+                        viewModel.setIntention(text)
+                    }
                     showAutoIntention = false
                 },
                 onDismiss = { showAutoIntention = false },

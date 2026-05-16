@@ -112,6 +112,8 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer,
     private val stonePlayer:
         org.walktalkmeditate.pilgrim.data.cairn.StonePlayer,
+    private val intentionHistory:
+        org.walktalkmeditate.pilgrim.data.intention.IntentionHistoryRepository,
 ) : ViewModel() {
 
     /**
@@ -646,6 +648,29 @@ class WalkViewModel @Inject constructor(
             intentionRefreshTick.update { it + 1L }
         }
     }
+
+    /** Recent intentions (MRU-first) for the intention sheet's Recent list. */
+    val recentIntentions: StateFlow<List<String>> = intentionHistory.intentions
+
+    /** iOS `IntentionHistoryStore.add` — call BEFORE committing onSet. */
+    fun rememberIntention(text: String) {
+        viewModelScope.launch { intentionHistory.add(text) }
+    }
+
+    /**
+     * Celestial intention suggestions, gated on celestial-awareness like
+     * iOS (`IntentionSettingView` only shows the section when the pref
+     * is on). Empty when off — the sheet then hides the section.
+     */
+    fun intentionSuggestions(): List<String> =
+        if (!practicePreferences.celestialAwarenessEnabled.value) {
+            emptyList()
+        } else {
+            IntentionSuggestions.celestial(
+                atEpochMillis = System.currentTimeMillis(),
+                system = practicePreferences.zodiacSystem.value,
+            )
+        }
 
     /**
      * Toggle recording on/off. Dispatches to IO because
