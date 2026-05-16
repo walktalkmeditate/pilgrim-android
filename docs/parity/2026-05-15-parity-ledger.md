@@ -120,7 +120,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | settings.voiceguide | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide settings (download/delete) | ui/settings/voiceguide | L/D/C | — | none | unverified |
 | settings.voiceguide.picker | Scenes/Settings/VoiceGuideSettingsView.swift | Voice guide pack picker + progress | ui/settings/voiceguide picker | L/D/C | — | none | unverified |
 | settings.recordings | Scenes/Settings/RecordingsListView.swift | Recordings list (swipe actions) | ui/recordings/RecordingsListScreen.kt | L/D/C | — | walks w/ recordings | unverified |
-| settings.data-detail | Scenes/Settings/DataSettingsView.swift | Data settings (export/import/journey rows) | ui/settings/data DataSettingsScreen | L/D/C | — | none | unverified |
+| settings.data-detail | Scenes/Settings/DataSettingsView.swift | Data settings (export/import/journey rows) | ui/settings/data DataSettingsScreen | L/D/C | — | none | L:close-the-gap (3 fixed; export/import affordance deferred); D/C:unverified |
 | settings.export-confirm | Scenes/Settings/ExportConfirmationSheet.swift | Export confirmation sheet | ui/settings/data ExportConfirmationSheet | L/D/C | — | ≥1 walk | unverified |
 | settings.journey-viewer | Scenes/Settings/JourneyViewerView.swift | Journey viewer webview | ui/settings/data JourneyViewerScreen | L/D/C | — | ≥1 walk | unverified |
 | settings.journey-editor | Scenes/Settings/JourneyEditorView.swift | Edit My Journey webview | ui/settings/data JourneyEditorScreen | L/D/C | — | ≥1 walk | unverified |
@@ -220,6 +220,14 @@ Progress (2026-05-15): shared vector drawables `ic_sf_chevron_left/right`, `ic_s
   2. **iOS `storageSection`** (downloaded bell/soundscape storage-management section) absent on Android — **deferred**: larger feature surface (download/disk mgmt UI); dated `re-justify` candidate or its own close-the-gap unit. U7/A5 disposition.
   3. ~~Android master "Sounds" toggle had a subtitle iOS lacks~~ — **FIXED**: `description = ""` (iOS `mainToggleSection` toggle has no subtitle); the `settings_sounds_description` string stays (still used by `AtmosphereCard`'s Sounds nav row, which iOS *does* subtitle). On-device verified. SoundSettings tests green.
   - Section set/order (Walk → Meditation Start/End/Soundscape/Breath, Volume) otherwise corresponds; selected bell/soundscape values differ by device state (not a divergence). D/C pending.
+
+### settings.data-detail
+- **L — `close-the-gap`** (fresh blinded reviewer, 2026-05-16; iOS shot top-of-screen only — Audio/recordings section out of scope, both platforms have it). evidence: `evidence/settings.data-detail__L__{ios,android}.png`. 4 sub-divergences:
+  1. **Export My Data / Import Data affordance** — iOS = bare action Buttons (no trailing glyph); Android = `SettingNavRow` w/ chevron. **Deferred**: needs a no-chevron action-row variant of `SettingNavRow` (component change). U7/A5.
+  2. ~~View/Edit My Journey trailing glyph (iOS chevron-push vs Android ↗ external)~~ — **FIXED**: `external = false` on both Journey rows (iOS pushes an in-app WebView → chevron). On-device verified.
+  3. ~~"Edit My Journey" extra subtitle~~ — **FIXED**: removed `detail=`; dead `settings_data_edit_journey_subtitle` string deleted. Verified.
+  4. ~~Journey footer copy drift~~ — **FIXED**: `data_journey_footer` → iOS wording verbatim ("View renders your walks at view.pilgrimapp.org. Edit opens edit.pilgrimapp.org for in-browser editing. Your walk data is not uploaded; the JSON is injected into the browser via the JS bridge."). Verified.
+  - Scaffold chrome (centered "Data" + SF back) already correct. Compiles; DataSettings tests green. D/C pending.
 
 ## Gate summary (computed at U7)
 
