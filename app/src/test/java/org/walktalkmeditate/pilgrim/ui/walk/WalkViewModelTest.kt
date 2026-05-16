@@ -188,6 +188,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
     }
 
@@ -432,6 +433,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
 
         controller.startWalk(intention = null)
@@ -476,6 +478,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
 
         controller.startWalk(intention = null)
@@ -593,6 +596,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -632,6 +636,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -699,6 +704,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -887,6 +893,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
     }
 
@@ -912,6 +919,7 @@ class WalkViewModelTest {
             proximityService = org.walktalkmeditate.pilgrim.data.proximity.FakeProximityDetectionService(),
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
+            intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)

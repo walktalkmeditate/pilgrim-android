@@ -68,7 +68,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | walk.active.sparkline | Scenes/WalkSummary/PaceSparklineView.swift | Live pace sparkline | (verify Android equivalent) | L/D/C | anim | live walk >10 pace pts | unverified |
 | walk.options.idle | Scenes/ActiveWalk/WalkOptionsSheet.swift | Options sheet, pre-walk (intention only, leaf icon) | ui/walk/WalkOptionsSheet.kt | L/D/C | — | none | L:close-the-gap→resolved (header-align residual); D/C:unverified |
 | walk.options.inwalk | Scenes/ActiveWalk/WalkOptionsSheet.swift | Options in-walk (waypoint/whisper/stone) | WalkOptionsSheet in-walk | L/D/C | — | live walk | unverified |
-| walk.intention.sheet | Scenes/ActiveWalk/IntentionSettingView.swift | Intention setting sheet | ui/walk/IntentionSettingDialog.kt | L/D/C | — | none | L:close-the-gap (copy fixed; structural/feature gaps need disposition); D/C:unverified |
+| walk.intention.sheet | Scenes/ActiveWalk/IntentionSettingView.swift | Intention setting sheet | ui/walk/IntentionSettingSheet.kt | L/D/C | — | none | L:close-the-gap→resolved (voice deferred re-justify); D/C:unverified |
 | walk.waypoint.sheet | Scenes/ActiveWalk/WaypointMarkingSheet.swift | Waypoint marking | ui/walk/WaypointMarkingSheet.kt | L/D/C | — | live walk | unverified |
 | walk.whisper.sheet | Scenes/ActiveWalk/WhisperPlacementSheet.swift | Whisper placement (category picker) | ui/walk/WhisperPlacementSheet.kt | L/D/C | — | live walk, unlocked | unverified |
 | walk.stone.sheet | Scenes/ActiveWalk/StonePlacementSheet.swift | Stone placement | ui/walk/StonePlacementSheet.kt | L/D/C | — | live walk, unlocked | unverified |
@@ -206,7 +206,7 @@ Both `settings.appearance` and `settings.about` flagged the same chrome divergen
   4. **"Recent" intentions list** — iOS only; Android absent.
   5. ~~Header copy "Set Intention" vs "Set Your Intention"~~ — **FIXED** (string → "Set Your Intention"; test updated; on-device verified).
   6. ~~Placeholder "A line for this walk…" vs "What purpose guides this walk?"~~ — **FIXED** (string → iOS wording; `IntentionSettingDialogTest` locator updated; green; on-device verified).
-  - **U7 disposition needed (A5/user):** items 1 (sheet-vs-dialog) + 3 + 4 = close-the-gap (buildable); item 2 (voice dictation) likely `re-justify` deferred-feature (parallels the deferred whispers/auto-play pattern). Not fixed inline (presentation paradigm + voice subsystem + Suggested/Recent data+UX too large for a sweep-inline fix). D/C pending.
+  - **U7 disposition (2026-05-15, A5/user) — REBUILT:** items 1+3+4 = close-the-gap, RESOLVED. Dialog→`ModalBottomSheet` (`IntentionSettingSheet.kt`, clones `WaypointMarkingSheet`); added Suggested (celestial, gated on celestial-awareness like iOS) + Recent (new `IntentionHistoryRepository`, DataStore key `IntentionHistory` verbatim for .pilgrim parity, MRU/dedupe/cap-5) chip sections, both hidden when field non-empty; `celestialIntentionSuggestions()` ported verbatim. Item **2 (voice dictation) = dated re-justify**, deferred this milestone (iOS-only `IntentionVoiceRecorder`; parallels deferred whispers/auto-play). 3 units shipped (#36 repo+8-test, #37 suggestions+5-test, #38 sheet); Robolectric risk mitigated by splitting `IntentionSheetContent` from the sheet shell — 9-case content test + all WalkViewModel tests green; on-device verified (bottom sheet, Suggested chips render real celestial output, no voice). D/C pending.
 
 ## Gate summary (computed at U7)
 

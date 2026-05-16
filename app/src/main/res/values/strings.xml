@@ -473,6 +473,8 @@
     <string name="walk_options_intention_placeholder">What purpose guides this walk?</string>
     <string name="walk_options_intention_save">Set</string>
     <string name="walk_options_intention_cancel">Cancel</string>
+    <string name="walk_options_intention_suggested">Suggested</string>
+    <string name="walk_options_intention_recent">Recent</string>
     <string name="walk_options_waypoint_title">Drop Waypoint</string>
     <string name="walk_options_waypoint_count_none">None marked</string>
     <plurals name="walk_options_waypoint_count">
