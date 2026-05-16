@@ -38,7 +38,7 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | setup.permissions.partial | Scenes/Setup/Permissions/PermissionsView.swift | Location coarse-only / needs-settings degraded | PermissionsScreen degraded states | L/D/C | — | none | unverified |
 | setup.permissions.granted | Scenes/Setup/Permissions/PermissionsView.swift | All granted (auto-advance) | PermissionsScreen complete | L/D/C | — | none | unverified |
 | **Path tab** ||||||||
-| path.wander.idle | Scenes/Home/WalkStartView.swift | Wander mode, idle, moon glyph | ui/path/WalkStartScreen.kt | L/D/C | anim | none | L:close-the-gap; D/C/rm:unverified (see detail) |
+| path.wander.idle | Scenes/Home/WalkStartView.swift | Wander mode, idle, moon glyph | ui/path/WalkStartScreen.kt | L/D/C | anim | none | L:close-the-gap(remediated); D:close-the-gap(logo-dark); C/rm:unverified |
 | path.together.comingsoon | Scenes/Home/WalkStartView.swift | Together mode "coming soon" | WalkStartScreen Together | L/D/C | — | none | L:match; D/C:unverified |
 | path.seek.comingsoon | Scenes/Home/WalkStartView.swift | Seek mode "coming soon" | WalkStartScreen Seek | L/D/C | — | none | L:match; D/C:unverified |
 | path.wander.recovery-banner | Scenes/Home/WalkStartView.swift | Recovery banner (stale-walk swipe) | WalkStartScreen RecoveryBanner | L/D/C | anim | recovered walk | unverified |
@@ -287,6 +287,18 @@ The seed-equivalence methodology blocker (flagged at `settings.root`, deferred p
 - **Done / completable & done:** all pure-navigable no-seed rows (path modes, intention, options, feedback, sound, data-detail, appearance, about, settings card stack) captured+verdicted+(mostly)fixed; code-verifiable gates/chrome for state-gated rows (voiceguide gate, etc.) verified; 2 onboarding rows verdicted from a clean-wipe pass.
 - **Structurally blocked from full completion here:** the remaining no-seed rows are **state-preconditioned** (live-walk, voiceguide-on, overlays, onboarding sub-states, journal-empty) AND the test devices fight scripted state-setup — OnePlus ColorOS blocks `pm clear`/`run-as rm`/`screenrecord` (worked around via `adb uninstall`), and iOS-sim `idb` has scroll-coord drift + can't reach alert/sheet layers. Each state-preconditioned row's paired capture is an expensive, flaky, multi-step setup; doing all of them × L/D/C × motion in one pass is multi-session and partly device-limited.
 - **Net:** U5's navigable scope is swept; the remainder needs dedicated per-state batches (a live-walk pass, an onboarding-substate pass) and several findings are now close-the-gap items needing implementation + A5 disposition, not just capture. Recommend: triage the accumulated close-the-gaps (U7) and run targeted state batches rather than treating "U5 done" as a single linear sweep.
+
+## Appearance cross-cut method PROVEN (2026-05-16) — clears the D/C subset of unverified
+
+The `unverified` D/C modes of every **single-depth** captured row are NOT iOS-deep-nav-blocked. Appearance is a **global toggle**, no idb deep-nav:
+- iOS Dark: `xcrun simctl ui <udid> appearance dark` (app honors system dark — verified). Light: `… appearance light`.
+- Android Dark: `adb -s emulator-5560 shell cmd uimode night yes` / `no`.
+- Constellation: in-app **Settings→Appearance→Constellation** — single-depth nav (reliable both platforms).
+- Then navigate the single-depth screen FRESH (Path/Settings tab — reliable; relaunch restores stale deep state so don't rely on it) → screenshot D/C both → blinded per-mode review.
+
+Proven end-to-end on **path.wander.idle D**: iOS `simctl` dark + Android `cmd uimode` + Path-tab nav → paired → blinded review → verdict. **D — `close-the-gap`** (evidence `evidence/path.wander.idle__D__{ios,android}.png`): Android logo tile washed-out/lighter vs iOS deep-navy dark treatment; selector/quote/moon slightly lower contrast. Joins the **logo-treatment cluster** (also `setup.welcome.entrance` L). Incidental dark evidence also banked: `goshuin.populated__D__ios.png`, `summary.loaded__D__android.png`.
+
+This converts the large D/C-of-single-depth fraction of the ~64 `unverified` from infra-blocked → mechanical (turnkey recipe above). Remaining genuinely-blocked: deep/state rows (live-walk, sealreveal, deep summary) needing iOS multi-step nav. New cluster: **Logo treatment** — Android logo tile/asset diverges from iOS brushstroke `pilgrimLogo`, pronounced in dark (welcome.entrance + path.wander.idle.D) → one ce-plan unit.
 
 ## U7 Triage + Gate (2026-05-16, A5)
 
