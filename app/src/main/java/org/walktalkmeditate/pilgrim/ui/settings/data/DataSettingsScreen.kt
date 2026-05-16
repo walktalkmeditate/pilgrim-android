@@ -209,6 +209,9 @@ fun DataSettingsScreen(
                         SettingNavRow(
                             label = stringResource(R.string.data_action_export),
                             modifier = Modifier.fillMaxWidth(),
+                            // iOS Export/Import are bare action Buttons,
+                            // no trailing chevron.
+                            showTrailing = false,
                             onClick = { viewModel.requestPilgrimExport() },
                         )
                     }
@@ -220,6 +223,7 @@ fun DataSettingsScreen(
                         SettingNavRow(
                             label = stringResource(R.string.data_action_import),
                             modifier = Modifier.fillMaxWidth(),
+                            showTrailing = false,
                             onClick = {
                                 importPickerLauncher.launch(
                                     arrayOf("application/zip", "application/octet-stream", "*/*"),

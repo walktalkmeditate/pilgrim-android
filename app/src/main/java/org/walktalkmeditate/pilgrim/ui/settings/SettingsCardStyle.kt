@@ -235,6 +235,9 @@ fun SettingNavRow(
     detail: String? = null,
     leadingIcon: ImageVector? = null,
     external: Boolean = false,
+    // iOS renders some rows as bare action buttons (no trailing
+    // glyph) — e.g. Export/Import in Data settings. false = no chevron.
+    showTrailing: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
@@ -279,25 +282,27 @@ fun SettingNavRow(
             )
             Spacer(Modifier.width(8.dp))
         }
-        val trailingModifier = Modifier
-            .size(16.dp)
-            .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG)
-        if (external) {
-            Icon(
-                // iOS external links use arrow.up.right, not a box-arrow.
-                painter = painterResource(R.drawable.ic_sf_arrow_up_right),
-                contentDescription = null,
-                tint = pilgrimColors.fog,
-                modifier = trailingModifier,
-            )
-        } else {
-            Icon(
-                // iOS disclosure is a chevron, not a Material arrow.
-                painter = painterResource(R.drawable.ic_sf_chevron_right),
-                contentDescription = null,
-                tint = pilgrimColors.fog,
-                modifier = trailingModifier,
-            )
+        if (showTrailing) {
+            val trailingModifier = Modifier
+                .size(16.dp)
+                .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG)
+            if (external) {
+                Icon(
+                    // iOS external links use arrow.up.right, not a box-arrow.
+                    painter = painterResource(R.drawable.ic_sf_arrow_up_right),
+                    contentDescription = null,
+                    tint = pilgrimColors.fog,
+                    modifier = trailingModifier,
+                )
+            } else {
+                Icon(
+                    // iOS disclosure is a chevron, not a Material arrow.
+                    painter = painterResource(R.drawable.ic_sf_chevron_right),
+                    contentDescription = null,
+                    tint = pilgrimColors.fog,
+                    modifier = trailingModifier,
+                )
+            }
         }
     }
 }
