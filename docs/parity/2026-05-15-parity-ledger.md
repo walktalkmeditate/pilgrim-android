@@ -30,8 +30,8 @@ Row id = `<area>.<screen>.<state>`. `iOS ref` is repo-relative under `../pilgrim
 | id | iOS ref | screen / state | android route/surface | appearance | anim | seed req | verdict |
 |---|---|---|---|---|---|---|---|
 | **Setup** ||||||||
-| setup.launch.loading | Scenes/Root/LaunchLoadingView.swift | Launch loading (breathing mark + cue) | MainActivity splash path | L/D/C | anim | none | unverified |
-| setup.welcome.entrance | Scenes/Setup/Welcome/WelcomeView.swift | Welcome ritual full sequence | ui/onboarding/WelcomeScreen.kt | L/D/C | anim | none | unverified |
+| setup.launch.loading | Scenes/Root/LaunchLoadingView.swift | Launch loading (breathing mark + cue) | MainActivity splash path | L/D/C | anim | wiped | L:close-the-gap (motion-pending); D/C:unverified |
+| setup.welcome.entrance | Scenes/Setup/Welcome/WelcomeView.swift | Welcome ritual full sequence | ui/onboarding/WelcomeScreen.kt | L/D/C | anim | wiped | L:close-the-gap (motion-pending); D/C:unverified |
 | setup.welcome.reduce-motion | Scenes/Setup/Welcome/WelcomeAnimationState.swift | Welcome, reduce-motion terminal frame | WelcomeScreen reduce-motion path | L/D/C | — | none | unverified |
 | setup.breath.transition | Scenes/Setup/BreathTransitionView.swift | Welcome→Permissions breath transition | (verify Android equivalent) | L/D/C | anim | none | unverified |
 | setup.permissions.initial | Scenes/Setup/Permissions/PermissionsView.swift | Permissions, nothing granted | ui/onboarding/PermissionsScreen.kt | L/D/C | — | none | unverified |
@@ -244,6 +244,19 @@ The pure-navigable no-seed rows are essentially swept (path modes, intention, op
 - `path.wander.vignette` → premise now **stale** (pre-walk vignette removed both platforms per the resolved celestial-pill disposition) — reconciliation: mark `stale` (iOS `WalkStartView` never had it; the U1 enumeration over-listed it).
 
 These are the **same friction class as seed-gated rows**: they need a scripted state-setup pass, made expensive by iOS-sim nav/tap flakiness (`idb` scroll-coord drift, alert/sheet layers idb can't reach). "Finish U5" therefore reduces to: a wiped-baseline onboarding pass + a live-walk pass + small state toggles — best run as dedicated state-setup batches (mirrors the deferred clean-seed-baseline decision), not per-row inline. Substantive logic for several state-gated rows is code-verifiable now (gates, chrome) even when pixels aren't.
+
+### Onboarding pass (2026-05-16 — both platforms clean-wiped: iOS uninstall+reinstall, Android `adb uninstall`+reinstall since OnePlus OEM blocks `pm clear`/`run-as rm`)
+- **setup.launch.loading — L `close-the-gap` (motion-pending)** (fresh blinded reviewer). evidence: `evidence/setup.launch.loading__L__{ios,android}.png`. observed-diff: **Android cold-launch shows a black background + generic white concentric-ring spinner; iOS shows a warm parchment field + faint centered brushstroke "p" mark + cue "Take a breath. We're right with you."** Fundamental brand/background/messaging divergence (not a motion artifact). Also: fresh-install first-run was very slow (~40s black-spinner before Welcome) — secondary perf concern. **Disposition needed (A5/U7):** implement a branded Android launch screen (parchment + "p" + cue; Android-12 SplashScreen theming + branded loading composable) — close-the-gap, non-trivial impl.
+- **setup.welcome.entrance — L `close-the-gap` (motion-pending)** (fresh blinded reviewer). evidence: `evidence/setup.welcome.entrance__L__{ios,android}.png`. observed-diff: **logo treatment — Android "p" tile renders a lighter serif "p" with a thin partial brush ring; iOS renders a heavier ink-filled brushstroke "p" filling the tile.** Quote copy, footprint trail, "Take a breath" line, full-width "Begin", privacy footer all correspond (Android footer wraps 2 lines = nav-inset/width, secondary). **Disposition:** verify whether Android `WelcomeScreen` uses a different/wrong logo asset vs the brushstroke `pilgrimLogo` (capturer code-check) before fixing — flagged close-the-gap.
+- **setup.permissions.initial:** iOS captured (`evidence/setup.permissions.initial__L__ios.png` — "Prepare for the journey" + 3 cards: walk/route, hear/voice [optional], count/steps [optional], each "Continue"); **Android pairing blocked** this pass by device nav thrash (flaky taps strayed into Android system Settings). Android capture deferred.
+- **setup.welcome.reduce-motion / setup.breath.transition / setup.permissions.partial+granted:** not captured — extra state (OS reduce-motion, transient, partial grants); deferred to a focused onboarding state-setup pass.
+
+## U5 completion reality (status, 2026-05-16)
+
+"U5 completely done" is **not achievable as a single continuous pass** on the current test rigs. Honest breakdown:
+- **Done / completable & done:** all pure-navigable no-seed rows (path modes, intention, options, feedback, sound, data-detail, appearance, about, settings card stack) captured+verdicted+(mostly)fixed; code-verifiable gates/chrome for state-gated rows (voiceguide gate, etc.) verified; 2 onboarding rows verdicted from a clean-wipe pass.
+- **Structurally blocked from full completion here:** the remaining no-seed rows are **state-preconditioned** (live-walk, voiceguide-on, overlays, onboarding sub-states, journal-empty) AND the test devices fight scripted state-setup — OnePlus ColorOS blocks `pm clear`/`run-as rm`/`screenrecord` (worked around via `adb uninstall`), and iOS-sim `idb` has scroll-coord drift + can't reach alert/sheet layers. Each state-preconditioned row's paired capture is an expensive, flaky, multi-step setup; doing all of them × L/D/C × motion in one pass is multi-session and partly device-limited.
+- **Net:** U5's navigable scope is swept; the remainder needs dedicated per-state batches (a live-walk pass, an onboarding-substate pass) and several findings are now close-the-gap items needing implementation + A5 disposition, not just capture. Recommend: triage the accumulated close-the-gaps (U7) and run targeted state batches rather than treating "U5 done" as a single linear sweep.
 
 ## Gate summary (computed at U7)
 
