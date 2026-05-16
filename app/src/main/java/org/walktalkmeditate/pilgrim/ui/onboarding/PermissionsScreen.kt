@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -69,6 +70,7 @@ fun PermissionsScreen(
         )
     }
     var notificationGranted by remember { mutableStateOf(PermissionChecks.isNotificationGranted(context)) }
+    var microphoneGranted by remember { mutableStateOf(PermissionChecks.isMicrophoneGranted(context)) }
     var activityGranted by remember { mutableStateOf(PermissionChecks.isActivityRecognitionGranted(context)) }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -88,6 +90,7 @@ fun PermissionsScreen(
                     else -> locationStatus
                 }
                 notificationGranted = PermissionChecks.isNotificationGranted(context)
+                microphoneGranted = PermissionChecks.isMicrophoneGranted(context)
                 activityGranted = PermissionChecks.isActivityRecognitionGranted(context)
             }
         }
@@ -122,6 +125,10 @@ fun PermissionsScreen(
     val notificationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted -> notificationGranted = granted }
+
+    val microphoneLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted -> microphoneGranted = granted }
 
     val activityLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -159,6 +166,16 @@ fun PermissionsScreen(
                 )
             },
             onOpenSettings = { context.startActivity(AppSettings.openDetailsIntent(context)) },
+        )
+        Spacer(Modifier.height(PilgrimSpacing.normal))
+
+        // iOS PermissionsView order: Location → Microphone → Motion.
+        PermissionCard(
+            title = stringResource(R.string.permission_microphone_title),
+            rationale = stringResource(R.string.permission_microphone_rationale),
+            granted = microphoneGranted,
+            optional = true,
+            onRequest = { microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         )
         Spacer(Modifier.height(PilgrimSpacing.normal))
 
@@ -215,7 +232,11 @@ private fun LocationPermissionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = pilgrimColors.parchmentSecondary,
+            containerColor = if (status == LocationStatus.Granted) {
+                pilgrimColors.moss.copy(alpha = 0.1f)
+            } else {
+                pilgrimColors.parchmentSecondary
+            },
             contentColor = pilgrimColors.ink,
         ),
     ) {
@@ -261,12 +282,28 @@ private fun PermissionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = pilgrimColors.parchmentSecondary,
+            // iOS: granted cards tint moss @ 0.1, else parchmentSecondary.
+            containerColor = if (granted) {
+                pilgrimColors.moss.copy(alpha = 0.1f)
+            } else {
+                pilgrimColors.parchmentSecondary
+            },
             contentColor = pilgrimColors.ink,
         ),
     ) {
         Column(modifier = Modifier.padding(PilgrimSpacing.normal)) {
-            Text(text = title, style = pilgrimType.heading)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = title, style = pilgrimType.heading)
+                if (optional) {
+                    Spacer(Modifier.width(PilgrimSpacing.small))
+                    // iOS: "(optional)" beside the title for non-required.
+                    Text(
+                        text = stringResource(R.string.permissions_optional),
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog,
+                    )
+                }
+            }
             Spacer(Modifier.height(PilgrimSpacing.small))
             Text(
                 text = rationale,

@@ -20,20 +20,28 @@
     <string name="walk_notification_action_end_meditation">End</string>
     <string name="walk_notification_lock_screen_title">Walk in progress</string>
 
-    <string name="onboarding_title">A few doors to open</string>
-    <string name="onboarding_subtitle">Pilgrim needs a small set of permissions before you walk. Nothing you grant leaves this device.</string>
+    <!-- iOS Permissions.* (Base.lproj/Localizable.strings) verbatim. -->
+    <string name="onboarding_title">Prepare for the journey</string>
+    <string name="onboarding_subtitle">Pilgrim walks best with these</string>
 
-    <string name="permission_location_title">Your place in the world</string>
-    <string name="permission_location_rationale">To draw the path your feet trace, Pilgrim reads the device\'s precise location while a walk is in progress. Your coordinates stay on this device — no account, no cloud.</string>
+    <string name="permission_location_title">To walk with you</string>
+    <string name="permission_location_rationale">Track your route, distance, and pace</string>
 
+    <string name="permission_microphone_title">To hear your thoughts</string>
+    <string name="permission_microphone_rationale">Capture voice reflections along the way</string>
+
+    <!-- Android-only (POST_NOTIFICATIONS, Android-13+ OS requirement for
+         the walk foreground-service notification — no iOS analogue;
+         dated re-justify per U7 triage 2026-05-16). -->
     <string name="permission_notification_title">A quiet notification</string>
     <string name="permission_notification_rationale">Android needs to see an ongoing notification to keep the walk recording reliably when the screen is off. It shows your time and distance.</string>
 
-    <string name="permission_activity_title">Footsteps</string>
-    <string name="permission_activity_rationale">If you\'d like Pilgrim to count your steps, it reads the device\'s motion sensor. This is optional — skip it and the walk still works.</string>
+    <string name="permission_activity_title">To count your steps</string>
+    <string name="permission_activity_rationale">Measure steps as you move</string>
 
-    <string name="permissions_grant">Open</string>
-    <string name="permissions_continue">Continue</string>
+    <string name="permissions_optional">(optional)</string>
+    <string name="permissions_grant">Continue</string>
+    <string name="permissions_continue">Next</string>
     <string name="permissions_granted_label">Granted</string>
     <string name="permissions_open_settings">Open settings</string>
 
