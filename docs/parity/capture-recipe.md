@@ -40,7 +40,9 @@ emulator -avd pilgrim_parity -no-snapshot -no-audio -no-boot-anim -gpu swiftshad
 adb -s emulator-5560 wait-for-device   # then poll getprop sys.boot_completed == 1
 adb -s emulator-5560 install -r -d app/build/outputs/apk/debug/app-debug.apk
 ```
-Verified on the emulator (all blocked on OnePlus): `pm clear org.walktalkmeditate.pilgrim.debug` → Success (clean wipe → onboarding/journal-empty states); `screenrecord` → writes mp4 (U6 motion for every `anim` row); mock GPS via `adb -s emulator-5560 emu geo fix <lon> <lat>` (scriptable live-walk `walk.*` states). Always target `adb -s emulator-5560` (the OnePlus stays connected too). Resolution/density differs from the OnePlus — fine: blinded review judges layout/structure/copy/iconography, not device-identical pixels. Mixed-device prior evidence is acceptable; re-capture state-preconditioned rows on the emulator.
+Verified on the emulator (all blocked on OnePlus): `pm clear org.walktalkmeditate.pilgrim.debug` → Success (clean wipe → onboarding/journal-empty states); `screenrecord /sdcard/x.mp4` → writes mp4, `pkill -INT screenrecord` then `adb pull` (U6 motion for every `anim` row — proven on `setup.welcome.entrance`, the first-ever Android motion artifact); mock GPS via `adb -s emulator-5560 emu geo fix <lon> <lat>` (scriptable live-walk `walk.*` states).
+
+**Gotcha:** immediately after `pm clear`, `monkey -c LAUNCHER` silently fails to start the app — use the explicit alias component instead: `adb -s emulator-5560 shell am start -n org.walktalkmeditate.pilgrim.debug/org.walktalkmeditate.pilgrim.IconDefault`. Always target `adb -s emulator-5560` (the OnePlus stays connected too). Resolution/density differs from the OnePlus — fine: blinded review judges layout/structure/copy/iconography, not device-identical pixels. Mixed-device prior evidence is acceptable; re-capture state-preconditioned rows on the emulator.
 
 ## Prerequisites
 
