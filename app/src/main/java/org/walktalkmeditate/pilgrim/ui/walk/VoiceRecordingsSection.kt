@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
@@ -35,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
@@ -404,7 +404,7 @@ private fun EditableTranscription(
                 // with the new Show more / Show less toggle). 32x32
                 // tap targets matching iOS sizing.
                 Icon(
-                    imageVector = Icons.Outlined.Edit,
+                    painter = painterResource(R.drawable.ic_sf_pencil),
                     contentDescription = stringResource(
                         R.string.recording_action_edit_cd,
                     ),

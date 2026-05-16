@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -286,7 +284,8 @@ fun SettingNavRow(
             .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG)
         if (external) {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                // iOS external links use arrow.up.right, not a box-arrow.
+                painter = painterResource(R.drawable.ic_sf_arrow_up_right),
                 contentDescription = null,
                 tint = pilgrimColors.fog,
                 modifier = trailingModifier,
