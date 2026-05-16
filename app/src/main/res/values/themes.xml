@@ -5,4 +5,12 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <!-- Launch theme: parchment canvas (not OS-default black) so
+         cold-start matches iOS LaunchLoadingView's parchment field.
+         Pre-API-31 = windowBackground fallback; API-31+ adds the
+         branded SplashScreen attrs in values-v31/themes.xml. -->
+    <style name="Theme.Pilgrim.Splash" parent="Theme.Pilgrim">
+        <item name="android:windowBackground">@color/parchment</item>
+    </style>
 </resources>
