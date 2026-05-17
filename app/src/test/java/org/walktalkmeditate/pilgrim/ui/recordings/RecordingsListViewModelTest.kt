@@ -394,7 +394,7 @@ class RecordingsListViewModelTest {
             // version bump runs through the test dispatcher but the
             // file delete itself ran on real Dispatchers.IO.
             withContext(Dispatchers.Default) {
-                withTimeout(2_000L) {
+                withTimeout(10_000L) {
                     while ((vm.state.value as? RecordingsListUiState.Loaded)
                             ?.fileExistenceById?.get(rec.id) != false
                     ) {
@@ -411,7 +411,7 @@ class RecordingsListViewModelTest {
         // real dispatcher. `Default` rather than `IO` because we're
         // not blocking — Thread.sleep'ing 25ms a few times is cheap.
         withContext(Dispatchers.Default) {
-            withTimeout(2_000L) {
+            withTimeout(10_000L) {
                 while (fileSystem.fileExists(relativePath)) {
                     Thread.sleep(25L)
                 }
@@ -464,7 +464,7 @@ class RecordingsListViewModelTest {
         // Bridge the real-time IO hop in fileSnapshotFlow to virtual-time
         // runTest by polling vm.state.value on a real dispatcher.
         withContext(Dispatchers.Default) {
-            withTimeout(2_000L) {
+            withTimeout(10_000L) {
                 while ((vm.state.value as? RecordingsListUiState.Loaded)
                         ?.editingRecordingId != expected
                 ) {

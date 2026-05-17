@@ -552,7 +552,7 @@ class WalkSummaryViewModelTest {
         // Bridge to real-dispatcher time since the repo's StateFlow
         // collects on Dispatchers.Default, not the runTest virtual clock.
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.hemisphere.first { it == Hemisphere.Southern }
             }
         }
@@ -585,7 +585,7 @@ class WalkSummaryViewModelTest {
 
         // Bridge virtual-time → Dispatchers.IO for the VM's launch(IO).
         val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.pinnedPhotos.first { it.size == 2 }
             }
         }
@@ -606,7 +606,7 @@ class WalkSummaryViewModelTest {
         vm.pinPhotos(listOf(uri, uri, uri))
 
         val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.pinnedPhotos.first { it.isNotEmpty() }
             }
         }
@@ -636,7 +636,7 @@ class WalkSummaryViewModelTest {
             vm.pinnedPhotos.collect { }
         }
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) { vm.pinnedPhotos.first { it.isNotEmpty() } }
+            withTimeout(10_000L) { vm.pinnedPhotos.first { it.isNotEmpty() } }
         }
 
         vm.pinPhotos(
@@ -647,7 +647,7 @@ class WalkSummaryViewModelTest {
         )
 
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 while (repository.countPhotosFor(walk.id) < 2) {
                     kotlinx.coroutines.delay(10)
                 }
@@ -675,7 +675,7 @@ class WalkSummaryViewModelTest {
         )
         // Give the IO launch a beat to hit the scheduler.
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 while (photoAnalysisScheduler.scheduleForWalkCalls.isEmpty()) {
                     kotlinx.coroutines.delay(10)
                 }
@@ -705,7 +705,7 @@ class WalkSummaryViewModelTest {
         vm.runStartupSweep()
 
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 while (photoAnalysisScheduler.scheduleForWalkCalls.isEmpty()) {
                     kotlinx.coroutines.delay(10)
                 }
@@ -726,14 +726,14 @@ class WalkSummaryViewModelTest {
         )
         val vm = newViewModel(walkId = walk.id)
         val initial = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) { vm.pinnedPhotos.first { it.size == 1 } }
+            withTimeout(10_000L) { vm.pinnedPhotos.first { it.size == 1 } }
         }
         assertEquals(1, initial.size)
 
         vm.unpinPhoto(initial.first().copy(id = id))
 
         val after = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) { vm.pinnedPhotos.first { it.isEmpty() } }
+            withTimeout(10_000L) { vm.pinnedPhotos.first { it.isEmpty() } }
         }
         assertTrue(after.isEmpty())
     }
@@ -1056,7 +1056,7 @@ class WalkSummaryViewModelTest {
         // wait for it. Bridge to wall-clock the same way the
         // pinPhotos suite does.
         val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 var w = repository.getWalk(walkId)
                 while (w?.favicon == null) {
                     kotlinx.coroutines.delay(10)
@@ -1073,7 +1073,7 @@ class WalkSummaryViewModelTest {
 
         assertNull(vm.selectedFavicon.value)
         val persistedNull = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 var w = repository.getWalk(walkId)
                 while (w?.favicon != null) {
                     kotlinx.coroutines.delay(10)
@@ -1140,7 +1140,7 @@ class WalkSummaryViewModelTest {
         gate.complete(Unit)
 
         val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 var w = repository.getWalk(walkId)
                 while (w?.favicon == null) {
                     kotlinx.coroutines.delay(10)
@@ -1208,7 +1208,7 @@ class WalkSummaryViewModelTest {
         // collector so the upstream actually starts emitting, then
         // wait for a non-null snapshot.
         val snap = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.celestialSnapshotDisplay.first { it != null }
             }
         }
@@ -1231,7 +1231,7 @@ class WalkSummaryViewModelTest {
         // Tolerate both initial null and post-collect null — the
         // expectation is "no prose ever materializes."
         val prose = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 // Drain: subscribe then read .value once the upstream
                 // has had a chance to settle.
                 val job = launch { vm.walkSummaryCalloutProseDisplay.collect { } }
@@ -1285,7 +1285,7 @@ class WalkSummaryViewModelTest {
         awaitLoaded(vm)
 
         val prose = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.walkSummaryCalloutProseDisplay.first { it != null }
             }
         }

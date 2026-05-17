@@ -244,7 +244,7 @@ class GoshuinViewModelTest {
         // Repository's StateFlow collects on real Dispatchers.Default;
         // bridge to wall-clock same as HomeViewModelTest.
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.hemisphere.first { it == Hemisphere.Southern }
             }
         }

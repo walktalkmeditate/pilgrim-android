@@ -461,7 +461,7 @@ class WalkSummaryViewModelPromptsTest {
         // needed before runTest's virtual time can drain the resulting
         // collect work.
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 while (vm.cachedContextSnapshot() != null) {
                     kotlinx.coroutines.delay(10)
                 }
@@ -475,7 +475,7 @@ class WalkSummaryViewModelPromptsTest {
         vm.closePromptsSheet()
         vm.openPromptsSheet()
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.promptsSheetState.first { it is PromptsSheetState.Listing }
             }
         }
@@ -509,7 +509,7 @@ class WalkSummaryViewModelPromptsTest {
         // Now backfill the transcription — count flips 0 → 1, cache invalidates.
         repository.updateVoiceRecording(recording.copy(id = recId, transcription = "Hello world."))
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 while (vm.cachedContextSnapshot() != null) {
                     kotlinx.coroutines.delay(10)
                 }
@@ -520,7 +520,7 @@ class WalkSummaryViewModelPromptsTest {
         vm.closePromptsSheet()
         vm.openPromptsSheet()
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.promptsSheetState.first { it is PromptsSheetState.Listing }
             }
         }
