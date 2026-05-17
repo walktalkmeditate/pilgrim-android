@@ -423,6 +423,22 @@ class WalkViewModel @Inject constructor(
             initialValue = emptyList(),
         )
 
+    /**
+     * Recent walking pace (min/km, newest last; non-positive while
+     * standing) for the ambient live sparkline. Port of iOS
+     * `ActiveWalkViewModel.paceHistory` — derived from the same route
+     * sample stream rather than maintained incrementally; mapping the
+     * full sample list then capping to the last 60 yields the identical
+     * window iOS produces by appending one entry per new sample.
+     */
+    val paceHistory: StateFlow<List<Double>> = routePoints
+        .map { points -> livePaceHistory(points.map { it.speedMetersPerSecond }) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
+
     // ---- Voice recording (Stage 2-C) ----
 
     private val _voiceRecorderState = MutableStateFlow<VoiceRecorderUiState>(VoiceRecorderUiState.Idle)
