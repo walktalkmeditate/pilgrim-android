@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -86,6 +87,7 @@ fun SoundSettingsScreen(
     val availableBells by viewModel.availableBells.collectAsStateWithLifecycle()
     val availableSoundscapes by viewModel.availableSoundscapes.collectAsStateWithLifecycle()
     val totalDiskUsageBytes by viewModel.totalDiskUsageBytes.collectAsStateWithLifecycle()
+    val downloadInProgress by viewModel.downloadInProgress.collectAsStateWithLifecycle()
 
     // Active picker target. `rememberSaveable` so a rotation while
     // a sheet is open doesn't dismiss the user's in-progress pick.
@@ -188,6 +190,7 @@ fun SoundSettingsScreen(
                         // `manifestService.manifest?.assets.count`.
                         soundscapeCount = availableBells.size + availableSoundscapes.size,
                         totalDiskUsageBytes = totalDiskUsageBytes,
+                        downloadInProgress = downloadInProgress,
                         onClearAll = viewModel::clearAllDownloads,
                     )
                 }
@@ -448,6 +451,7 @@ private fun VolumeRow(
 private fun StorageSection(
     soundscapeCount: Int,
     totalDiskUsageBytes: Long,
+    downloadInProgress: Boolean,
     onClearAll: () -> Unit,
 ) {
     val sizeMb = totalDiskUsageBytes / 1_000_000.0
@@ -462,6 +466,30 @@ private fun StorageSection(
             title = stringResource(R.string.settings_section_storage),
             subtitle = "",
         )
+        // iOS storageSection: `if downloadManager.isDownloading { HStack {
+        // ProgressView(value:) + "Downloading..." } }`. Android single-
+        // file soundscape downloads carry no byte fraction, so an
+        // indeterminate bar is the honest equivalent of iOS's
+        // determinate ProgressView with an aggregate fraction.
+        if (downloadInProgress) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LinearProgressIndicator(
+                    color = pilgrimColors.stone,
+                    trackColor = pilgrimColors.parchmentTertiary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(SOUNDS_DOWNLOAD_PROGRESS_TAG),
+                )
+                Text(
+                    text = stringResource(R.string.settings_storage_downloading),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                )
+            }
+        }
         Row {
             Text(
                 text = stringResource(R.string.settings_storage_count_format, soundscapeCount),
@@ -528,6 +556,7 @@ internal const val SOUNDS_WALK_SECTION_TAG = "SoundSettings.walk"
 internal const val SOUNDS_MEDITATION_SECTION_TAG = "SoundSettings.meditation"
 internal const val SOUNDS_VOLUME_SECTION_TAG = "SoundSettings.volume"
 internal const val SOUNDS_STORAGE_SECTION_TAG = "SoundSettings.storage"
+internal const val SOUNDS_DOWNLOAD_PROGRESS_TAG = "SoundSettings.downloadProgress"
 internal const val SOUNDS_BELL_VOLUME_SLIDER_TAG = "SoundSettings.bellVolume"
 internal const val SOUNDS_SOUNDSCAPE_VOLUME_SLIDER_TAG = "SoundSettings.soundscapeVolume"
 internal const val SOUNDS_CLEAR_ALL_BUTTON_TAG = "SoundSettings.clearAll"
