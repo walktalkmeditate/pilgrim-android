@@ -54,6 +54,9 @@ mapbox.token
 
 .kaijutsu/
 
-# Parity motion-capture videos are large regenerable artifacts —
-# keep PNG frames + small clips as durable evidence, not raw .mov.
-docs/parity/evidence/motion/*.mov
+# Parity capture evidence (screenshots, frame dirs, motion videos) are
+# large regenerable artifacts that bloat the repo and break GitHub's
+# file-size limits. The durable record is the textual findings in
+# docs/parity/*.md; raw captures stay local-only. The .pilgrim seed
+# fixture (docs/parity/fixtures/) IS tracked — it's the test input.
+docs/parity/evidence/
