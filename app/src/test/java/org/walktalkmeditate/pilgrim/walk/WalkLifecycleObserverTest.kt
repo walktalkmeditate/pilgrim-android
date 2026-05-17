@@ -13,7 +13,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -54,6 +56,7 @@ class WalkLifecycleObserverTest {
     private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var fakeAudioCapture: FakeAudioCapture
     private lateinit var stateFlow: MutableStateFlow<WalkState>
+    private lateinit var observedFlow: CountingStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
     private lateinit var observer: WalkLifecycleObserver
     private val testClock = object : Clock {
@@ -84,6 +87,7 @@ class WalkLifecycleObserverTest {
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, testClock)
 
         stateFlow = MutableStateFlow(WalkState.Idle)
+        observedFlow = CountingStateFlow(stateFlow)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val sweeper = OrphanRecordingSweeper(
             context = context,
@@ -91,18 +95,29 @@ class WalkLifecycleObserverTest {
             transcriptionScheduler = FakeTranscriptionScheduler(),
         )
         observer = WalkLifecycleObserver(
-            walkState = stateFlow,
+            walkState = observedFlow,
             scope = observerScope,
             voiceRecorder = voiceRecorder,
             repository = repository,
             orphanSweeper = sweeper,
         )
-        // Same async-collector-attach hazard as WalkFinalizationObserverTest:
-        // the observer's `init { scope.launch { walkState.collect } }`
-        // attaches on Dispatchers.IO. Sleep so the collector certainly
-        // attaches and consumes the initial Idle value before the test
-        // mutates state.
-        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
+        // The observer's `init { scope.launch { walkState.collect } }`
+        // subscribes asynchronously on Dispatchers.IO and swallows its
+        // FIRST collected value unconditionally (the firstEmission latch
+        // — at app start that's the cold-process Idle no-op). If a test
+        // mutates stateFlow.value before the collector has consumed that
+        // first value, StateFlow conflation collapses the real
+        // transition into emission #1 and the latch eats it — side
+        // effects never fire. The old blind Thread.sleep flaked on
+        // saturated CI runners. CountingStateFlow.processed increments
+        // only after the collector returns from handling a value, so
+        // awaiting >= 1 is an exact handshake: the initial Idle has been
+        // consumed and the latch is spent before the test mutates state.
+        runBlocking {
+            withTimeout(COLLECTOR_SUBSCRIBE_TIMEOUT_MS) {
+                observedFlow.processed.first { it >= 1 }
+            }
+        }
     }
 
     @After
@@ -250,7 +265,11 @@ class WalkLifecycleObserverTest {
     }
 
     private companion object {
-        const val COLLECTOR_ATTACH_WAIT_MS = 300L
+        // Failsafe upper bound for the deterministic firstEmission
+        // handshake (observedFlow.processed >= 1); it returns the
+        // instant the collector consumes the initial Idle, so this only
+        // bites on a wedged runner (a real bug — should fail).
+        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 5_000L
         // 5s upper bound so slow CI runners under heavy load have
         // headroom; the polling loops above exit as soon as the
         // observer reacts, so on fast machines this never matters.
