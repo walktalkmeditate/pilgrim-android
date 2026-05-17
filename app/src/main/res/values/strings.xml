@@ -576,6 +576,7 @@
     <string name="settings_storage_count_format">%1$d sounds</string>
     <string name="settings_storage_size_format">%1$.1f MB</string>
     <string name="settings_storage_clear_all">Clear all downloads</string>
+    <string name="settings_storage_downloading">Downloading...</string>
     <string name="settings_bell_picker_title">Choose bell</string>
     <string name="settings_bell_picker_none">None</string>
     <string name="settings_breath_rhythm_picker_title">Choose breath rhythm</string>
