@@ -53,3 +53,7 @@ mapbox.token
 .claude/
 
 .kaijutsu/
+
+# Parity motion-capture videos are large regenerable artifacts —
+# keep PNG frames + small clips as durable evidence, not raw .mov.
+docs/parity/evidence/motion/*.mov
