@@ -65,6 +65,7 @@ val LocalAppHazeState = compositionLocalOf { HazeState() }
 object Routes {
     const val WELCOME = "welcome"
     const val PERMISSIONS = "permissions"
+    const val BREATH = "breath"
     const val PATH = "path"
     const val HOME = "home"
     const val ACTIVE_WALK = "active_walk"
@@ -173,11 +174,22 @@ fun PilgrimNavHost(
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 onComplete = {
-                    navController.navigate(Routes.PATH) {
+                    navController.navigate(Routes.BREATH) {
                         popUpTo(Routes.PERMISSIONS) { inclusive = true }
                     }
                 },
                 viewModel = permissionsViewModel,
+            )
+        }
+        // iOS parity `SetupCoordinatorView.swift` — a single breath beat
+        // between granting permissions and entering the app.
+        composable(Routes.BREATH) {
+            org.walktalkmeditate.pilgrim.ui.onboarding.BreathTransitionScreen(
+                onComplete = {
+                    navController.navigate(Routes.PATH) {
+                        popUpTo(Routes.BREATH) { inclusive = true }
+                    }
+                },
             )
         }
         composable(Routes.PATH) {
