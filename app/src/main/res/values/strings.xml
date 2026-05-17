@@ -63,6 +63,13 @@
     <string name="goshuin_title">Goshuin</string>
     <string name="goshuin_empty_caption">Your goshuin will fill as you walk</string>
     <string name="goshuin_back_content_description">Back</string>
+    <string name="goshuin_filter_all">All</string>
+    <string name="goshuin_share_action">Share Goshuin</string>
+    <string name="goshuin_share_title">My Goshuin</string>
+    <string name="goshuin_share_tagline">Every walk is a small pilgrimage.</string>
+    <string name="goshuin_share_provenance">pilgrimapp.org</string>
+    <string name="goshuin_share_chooser_title">Share Goshuin</string>
+    <string name="goshuin_share_no_chooser">No app available to share the image</string>
     <string name="home_recording_count">%1$d voice notes</string>
     <string name="home_recording_count_singular">1 voice note</string>
     <string name="home_relative_just_now">Just now</string>
