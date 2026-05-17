@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 
 import androidx.compose.runtime.Immutable
 import java.time.LocalDate
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 
 /**
@@ -39,4 +40,19 @@ data class GoshuinSeal(
      * of [shortDateLabel].
      */
     val milestone: GoshuinMilestone? = null,
+    /**
+     * v1.6.0 iOS-parity: the walk's mood tag (`Walk.favicon`), used by
+     * [GoshuinScreen]'s filter bar (All / Transformative / Peaceful /
+     * Extraordinary) and the favicon tint circle in
+     * [GoshuinShareRenderer]. `null` = untagged (always shown under
+     * "All"). Mirrors iOS `GoshuinView.filteredWalks` /
+     * `GoshuinShareRenderer.tintColor(for:)`.
+     */
+    val favicon: WalkFavicon? = null,
+    /** Walk UUID — share-renderer milestone map key. */
+    val uuid: String = "",
+    /** GPS distance in meters — share header stats + per-seal tint. */
+    val distanceMeters: Double = 0.0,
+    /** Walk start epoch millis — share seal-selection ordering + season. */
+    val startMillis: Long = 0L,
 )

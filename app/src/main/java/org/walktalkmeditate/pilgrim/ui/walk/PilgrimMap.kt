@@ -3,6 +3,9 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -96,6 +99,31 @@ internal fun PilgrimMap(
     proximityPins: List<ProximityPinFilter.Pin> = emptyList(),
     onProximityPinTap: (ProximityPinFilter.Pin) -> Unit = {},
 ) {
+    // Mapbox's `MapView(context, initOptions)` constructor throws
+    // `MapboxConfigurationException` synchronously when no access
+    // token is configured (empty string counts as "no token"). The
+    // earlier comment claiming "empty token is accepted, placeholder
+    // handles it" was wrong — the throw happens at View construction,
+    // long before any tile load, so it crashed every Walk Summary on
+    // a token-less build (the default contributor / CI experience).
+    // Short-circuit to a static parchment fallback when the token is
+    // blank. iOS parity intent: contributors without Mapbox tokens
+    // see a quiet placeholder, not a crash.
+    if (org.walktalkmeditate.pilgrim.BuildConfig.MAPBOX_ACCESS_TOKEN.isBlank()) {
+        Box(
+            modifier = modifier.background(
+                org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.parchmentSecondary,
+            ),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+            Text(
+                text = "Map unavailable",
+                style = org.walktalkmeditate.pilgrim.ui.theme.pilgrimType.caption,
+                color = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.fog,
+            )
+        }
+        return
+    }
     val darkMode = LocalPilgrimDarkTheme.current
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
     // Pilgrim stone palette, light-mode + dark-mode — see ui/theme/Color.kt.
@@ -549,7 +577,7 @@ internal fun PilgrimMap(
                         renderedWalkAnnotations.forEach { annoMgr.delete(it) }
                     }
                     renderedWalkAnnotations = walkAnnotations.map { ann ->
-                        val bitmap = when (ann.kind) {
+                        val bitmap = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
                                 bitmaps.getValue("startEnd")
@@ -558,8 +586,32 @@ internal fun PilgrimMap(
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
                             is WalkMapAnnotationKind.Photo ->
-                                photoPinBitmaps[ann.kind.walkPhotoId]
+                                photoPinBitmaps[k.walkPhotoId]
                                     ?: bitmaps.getValue("photo")
+                            is WalkMapAnnotationKind.Waypoint ->
+                                // Reuse the meditation pin until a
+                                // dedicated waypoint icon ships; iOS
+                                // renders these with a flag glyph.
+                                bitmaps.getValue("meditation")
+                            is WalkMapAnnotationKind.Whisper ->
+                                // Render with the proximity-style soft
+                                // colored circle. Generated per-pin so
+                                // the category color reads correctly.
+                                createProximityPinBitmap(
+                                    color = androidx.compose.ui.graphics.Color(k.categoryColor),
+                                    sizeDp = WHISPER_PIN_SIZE_DP,
+                                    darkMode = darkMode,
+                                )
+                            is WalkMapAnnotationKind.Cairn ->
+                                createProximityPinBitmap(
+                                    color = if (darkMode) {
+                                        androidx.compose.ui.graphics.Color(0xFF95A888)
+                                    } else {
+                                        androidx.compose.ui.graphics.Color(0xFF7A8B6F)
+                                    },
+                                    sizeDp = CAIRN_PIN_BASE_DP + (k.tier - 1).coerceAtLeast(0),
+                                    darkMode = darkMode,
+                                )
                         }
                         annoMgr.create(
                             PointAnnotationOptions()

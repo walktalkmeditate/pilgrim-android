@@ -33,7 +33,6 @@ import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 @Composable
 fun AtmosphereCard(
     currentMode: AppearanceMode,
-    onSelectMode: (AppearanceMode) -> Unit,
     soundsEnabled: Boolean,
     onSetSoundsEnabled: (Boolean) -> Unit,
     onAction: (SettingsAction) -> Unit,
@@ -58,21 +57,23 @@ fun AtmosphereCard(
         // List<Pair<String, AppearanceMode>> so SingleChoiceSegmentedButtonRow
         // doesn't see a freshly-allocated List on every PilgrimTheme
         // recompose (which would force re-measure of the segmented row).
-        val autoLabel = stringResource(R.string.settings_appearance_auto)
-        val lightLabel = stringResource(R.string.settings_appearance_light)
-        val darkLabel = stringResource(R.string.settings_appearance_dark)
-        val options = remember(autoLabel, lightLabel, darkLabel) {
-            listOf(
-                autoLabel to AppearanceMode.System,
-                lightLabel to AppearanceMode.Light,
-                darkLabel to AppearanceMode.Dark,
-            )
+        // iOS v1.6.0 added Constellation as a 4th appearance mode. Four
+        // labels won't fit single-line in the 220dp-capped segmented
+        // row, so this card surfaces a nav row to the AppearanceScreen
+        // detail view (matching iOS's converted NavigationLink pattern).
+        // The currently-selected mode shows as trailing detail caption.
+        val modeLabel = when (currentMode) {
+            AppearanceMode.System -> stringResource(R.string.settings_appearance_auto)
+            AppearanceMode.Light -> stringResource(R.string.settings_appearance_light)
+            AppearanceMode.Dark -> stringResource(R.string.settings_appearance_dark)
+            AppearanceMode.Constellation ->
+                stringResource(R.string.settings_appearance_constellation)
         }
-        SettingPicker(
+        SettingNavRow(
             label = stringResource(R.string.settings_appearance_label),
-            options = options,
-            selected = currentMode,
-            onSelect = onSelectMode,
+            detail = modeLabel,
+            onClick = { onAction(SettingsAction.OpenAppearance) },
+            modifier = Modifier.fillMaxWidth(),
         )
         SettingsDivider()
         SettingToggle(

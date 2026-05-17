@@ -26,4 +26,5 @@
     <cache-path name="recordings_export" path="recordings_export/" />
     <cache-path name="pilgrim_export" path="pilgrim_export/" />
     <cache-path name="seals_cache" path="seals/" />
+    <cache-path name="journey_editor_saves" path="journey-editor-saves/" />
 </paths>

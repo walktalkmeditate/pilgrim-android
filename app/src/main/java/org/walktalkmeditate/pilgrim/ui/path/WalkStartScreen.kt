@@ -6,6 +6,9 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -31,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -170,6 +174,36 @@ fun WalkStartScreen(
     val isLargeText = LocalConfiguration.current.fontScale > 1.3f
     val logoSize: Dp = if (isLargeText) 60.dp else 100.dp
 
+    // Staggered entrance: logo (immediate) → quote (+400ms) → moon
+    // (+600ms), each a 500ms decelerate fade; logo also scales 0.95→1.0.
+    // reduceMotion shows all three at once (defaults true → no animation).
+    val showLogo = remember { mutableStateOf(reduceMotion) }
+    val showQuote = remember { mutableStateOf(reduceMotion) }
+    val showMoon = remember { mutableStateOf(reduceMotion) }
+    LaunchedEffect(reduceMotion) {
+        if (reduceMotion) return@LaunchedEffect
+        showLogo.value = true
+        kotlinx.coroutines.delay(400)
+        showQuote.value = true
+        kotlinx.coroutines.delay(200)
+        showMoon.value = true
+    }
+    val logoAnim by animateFloatAsState(
+        targetValue = if (showLogo.value) 1f else 0f,
+        animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
+        label = "entrance-logo",
+    )
+    val quoteAnim by animateFloatAsState(
+        targetValue = if (showQuote.value) 1f else 0f,
+        animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
+        label = "entrance-quote",
+    )
+    val moonAnim by animateFloatAsState(
+        targetValue = if (showMoon.value) 1f else 0f,
+        animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
+        label = "entrance-moon",
+    )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -216,7 +250,16 @@ fun WalkStartScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                BreathingLogo(size = logoSize, pulseActive = pulseActive)
+                Box(
+                    modifier = Modifier.graphicsLayer {
+                        alpha = logoAnim
+                        val s = 0.95f + 0.05f * logoAnim
+                        scaleX = s
+                        scaleY = s
+                    },
+                ) {
+                    BreathingLogo(size = logoSize, pulseActive = pulseActive)
+                }
                 Spacer(Modifier.height(PilgrimSpacing.big))
                 Text(
                     text = currentQuote,
@@ -229,9 +272,14 @@ fun WalkStartScreen(
                     color = pilgrimColors.fog,
                     textAlign = TextAlign.Center,
                     maxLines = 4,
+                    modifier = Modifier.graphicsLayer { alpha = quoteAnim },
                 )
                 Spacer(Modifier.height(PilgrimSpacing.big))
-                MoonPhaseGlyph(phase = lunarPhase, size = 44.dp)
+                MoonPhaseGlyph(
+                    phase = lunarPhase,
+                    size = 44.dp,
+                    modifier = Modifier.graphicsLayer { alpha = moonAnim },
+                )
             }
             ModeSelector(
                 selectedMode = selectedMode,

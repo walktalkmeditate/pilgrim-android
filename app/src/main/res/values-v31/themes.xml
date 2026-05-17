@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API-31+ branded SplashScreen: parchment field + the pilgrim "p"
+         mark, mirroring iOS LaunchLoadingView. @color/parchment
+         night-resolves via values-night/colors.xml. -->
+    <style name="Theme.Pilgrim.Splash" parent="Theme.Pilgrim">
+        <item name="android:windowBackground">@color/parchment</item>
+        <item name="android:windowSplashScreenBackground">@color/parchment</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_pilgrim_logo</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/parchment</item>
+    </style>
+</resources>

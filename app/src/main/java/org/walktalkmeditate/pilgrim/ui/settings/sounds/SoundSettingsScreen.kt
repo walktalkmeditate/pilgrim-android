@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,8 +19,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -34,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,6 +40,7 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.ui.settings.CardHeader
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.settings.SettingNavRow
 import org.walktalkmeditate.pilgrim.ui.settings.SettingToggle
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
@@ -88,6 +87,7 @@ fun SoundSettingsScreen(
     val availableBells by viewModel.availableBells.collectAsStateWithLifecycle()
     val availableSoundscapes by viewModel.availableSoundscapes.collectAsStateWithLifecycle()
     val totalDiskUsageBytes by viewModel.totalDiskUsageBytes.collectAsStateWithLifecycle()
+    val downloadInProgress by viewModel.downloadInProgress.collectAsStateWithLifecycle()
 
     // Active picker target. `rememberSaveable` so a rotation while
     // a sheet is open doesn't dismiss the user's in-progress pick.
@@ -96,9 +96,9 @@ fun SoundSettingsScreen(
 
     val listState = rememberLazyListState()
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-        containerColor = pilgrimColors.parchment,
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.settings_sounds_title),
+        onBack = onBack,
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -108,18 +108,6 @@ fun SoundSettingsScreen(
             contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
-                Text(
-                    text = stringResource(R.string.settings_sounds_title),
-                    style = pilgrimType.heading,
-                    color = pilgrimColors.ink,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 16.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
-
             item {
                 MainToggleSection(
                     soundsEnabled = soundsEnabled,
@@ -202,6 +190,7 @@ fun SoundSettingsScreen(
                         // `manifestService.manifest?.assets.count`.
                         soundscapeCount = availableBells.size + availableSoundscapes.size,
                         totalDiskUsageBytes = totalDiskUsageBytes,
+                        downloadInProgress = downloadInProgress,
                         onClearAll = viewModel::clearAllDownloads,
                     )
                 }
@@ -256,7 +245,8 @@ private fun MainToggleSection(
     ) {
         SettingToggle(
             label = stringResource(R.string.settings_sounds_master_label),
-            description = stringResource(R.string.settings_sounds_description),
+            // iOS mainToggleSection's "Sounds" toggle has no subtitle.
+            description = "",
             checked = soundsEnabled,
             onCheckedChange = onSetSoundsEnabled,
         )
@@ -461,6 +451,7 @@ private fun VolumeRow(
 private fun StorageSection(
     soundscapeCount: Int,
     totalDiskUsageBytes: Long,
+    downloadInProgress: Boolean,
     onClearAll: () -> Unit,
 ) {
     val sizeMb = totalDiskUsageBytes / 1_000_000.0
@@ -475,6 +466,30 @@ private fun StorageSection(
             title = stringResource(R.string.settings_section_storage),
             subtitle = "",
         )
+        // iOS storageSection: `if downloadManager.isDownloading { HStack {
+        // ProgressView(value:) + "Downloading..." } }`. Android single-
+        // file soundscape downloads carry no byte fraction, so an
+        // indeterminate bar is the honest equivalent of iOS's
+        // determinate ProgressView with an aggregate fraction.
+        if (downloadInProgress) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LinearProgressIndicator(
+                    color = pilgrimColors.stone,
+                    trackColor = pilgrimColors.parchmentTertiary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(SOUNDS_DOWNLOAD_PROGRESS_TAG),
+                )
+                Text(
+                    text = stringResource(R.string.settings_storage_downloading),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                )
+            }
+        }
         Row {
             Text(
                 text = stringResource(R.string.settings_storage_count_format, soundscapeCount),
@@ -541,6 +556,7 @@ internal const val SOUNDS_WALK_SECTION_TAG = "SoundSettings.walk"
 internal const val SOUNDS_MEDITATION_SECTION_TAG = "SoundSettings.meditation"
 internal const val SOUNDS_VOLUME_SECTION_TAG = "SoundSettings.volume"
 internal const val SOUNDS_STORAGE_SECTION_TAG = "SoundSettings.storage"
+internal const val SOUNDS_DOWNLOAD_PROGRESS_TAG = "SoundSettings.downloadProgress"
 internal const val SOUNDS_BELL_VOLUME_SLIDER_TAG = "SoundSettings.bellVolume"
 internal const val SOUNDS_SOUNDSCAPE_VOLUME_SLIDER_TAG = "SoundSettings.soundscapeVolume"
 internal const val SOUNDS_CLEAR_ALL_BUTTON_TAG = "SoundSettings.clearAll"

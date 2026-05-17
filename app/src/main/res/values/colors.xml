@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light parchment canvas (matches pilgrimColors.parchment /
+         MainActivity system-bar scrim). Dark variant in values-night. -->
+    <color name="parchment">#FFF5F0E8</color>
+</resources>

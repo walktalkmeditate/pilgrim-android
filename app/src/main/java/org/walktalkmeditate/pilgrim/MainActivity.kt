@@ -8,15 +8,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.onboarding.OnboardingPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBellHapticEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
@@ -41,6 +45,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var walkController: WalkController
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
     @Inject lateinit var appearancePreferences: AppearancePreferencesRepository
+    @Inject lateinit var onboardingPreferences: OnboardingPreferencesRepository
     @Inject lateinit var soundsPreferences: SoundsPreferencesRepository
     @Inject lateinit var voicePreferences:
         org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
@@ -121,6 +126,8 @@ class MainActivity : ComponentActivity() {
                     // status/nav-bar padding) and would have produced bottom-
                     // bar gaps above the gesture inset.
                     val deepLink by pendingDeepLink
+                    val welcomeCompleted by onboardingPreferences
+                        .welcomeCompleted.collectAsStateWithLifecycle()
                     PilgrimNavHost(
                         pendingDeepLink = deepLink,
                         onDeepLinkConsumed = {
@@ -136,6 +143,7 @@ class MainActivity : ComponentActivity() {
                             }
                             setIntent(cleared)
                         },
+                        welcomeCompleted = welcomeCompleted,
                     )
                 }
             }

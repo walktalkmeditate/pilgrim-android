@@ -18,7 +18,7 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageImporter
  */
 interface PilgrimPackageGateway {
     suspend fun build(includePhotos: Boolean): PilgrimPackageBuildResult
-    suspend fun import(uri: Uri): Int
+    suspend fun import(uri: Uri): PilgrimPackageImporter.ImportSummary
 }
 
 @Singleton
@@ -29,6 +29,6 @@ class DefaultPilgrimPackageGateway @Inject constructor(
     override suspend fun build(includePhotos: Boolean): PilgrimPackageBuildResult =
         builder.build(includePhotos = includePhotos)
 
-    override suspend fun import(uri: Uri): Int =
+    override suspend fun import(uri: Uri): PilgrimPackageImporter.ImportSummary =
         importer.import(uri)
 }

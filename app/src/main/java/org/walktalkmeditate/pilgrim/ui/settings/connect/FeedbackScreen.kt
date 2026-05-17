@@ -20,23 +20,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.EmojiNature
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,10 +47,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.feedback.FeedbackCategory
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedbackScreen(
     onBack: () -> Unit,
@@ -71,37 +65,17 @@ fun FeedbackScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.feedback_principal_title),
-                        style = pilgrimType.heading,
-                        color = pilgrimColors.ink,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.feedback_back_content_description),
-                            tint = pilgrimColors.ink,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = pilgrimColors.parchment,
-                ),
-            )
-        },
-        containerColor = pilgrimColors.parchment,
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.feedback_principal_title),
+        onBack = onBack,
+        backContentDescription = stringResource(R.string.feedback_back_content_description),
     ) { padding ->
         if (state.showConfirmation) {
             ConfirmationOverlay(modifier = Modifier.fillMaxSize().padding(padding))
         } else {
             FormContent(
                 state = state,
+                deviceInfo = viewModel.deviceInfo,
                 onSelectCategory = viewModel::selectCategory,
                 onUpdateMessage = viewModel::updateMessage,
                 onToggleDeviceInfo = viewModel::toggleIncludeDeviceInfo,
@@ -115,6 +89,7 @@ fun FeedbackScreen(
 @Composable
 private fun FormContent(
     state: FeedbackUiState,
+    deviceInfo: String,
     onSelectCategory: (FeedbackCategory) -> Unit,
     onUpdateMessage: (String) -> Unit,
     onToggleDeviceInfo: (Boolean) -> Unit,
@@ -183,6 +158,18 @@ private fun FormContent(
                     uncheckedThumbColor = pilgrimColors.fog,
                     uncheckedTrackColor = pilgrimColors.parchmentTertiary,
                 ),
+            )
+        }
+
+        // iOS parity: `if includeDeviceInfo { Text(deviceInfoPreview) }`
+        // — the exact string that will be attached, shown muted under
+        // the toggle so the user sees what is transmitted.
+        if (state.includeDeviceInfo) {
+            Text(
+                text = deviceInfo,
+                style = pilgrimType.caption,
+                color = pilgrimColors.fog,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
 

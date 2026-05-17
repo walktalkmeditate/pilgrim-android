@@ -63,6 +63,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 val LocalAppHazeState = compositionLocalOf { HazeState() }
 
 object Routes {
+    const val WELCOME = "welcome"
     const val PERMISSIONS = "permissions"
     const val PATH = "path"
     const val HOME = "home"
@@ -86,7 +87,9 @@ object Routes {
     const val RECORDINGS_LIST = "recordings"
     const val DATA_SETTINGS = "data_settings"
     const val JOURNEY_VIEWER = "journey_viewer"
+    const val JOURNEY_EDITOR = "journey_editor"
     const val ABOUT = "about"
+    const val APPEARANCE = "appearance"
 
     private const val WALK_SHARE_PREFIX = "walk_share"
     const val WALK_SHARE_PATTERN = "$WALK_SHARE_PREFIX/{${org.walktalkmeditate.pilgrim.ui.walk.share.WalkShareViewModel.ARG_WALK_ID}}"
@@ -124,6 +127,15 @@ fun PilgrimNavHost(
     permissionsViewModel: PermissionsViewModel = hiltViewModel(),
     pendingDeepLink: org.walktalkmeditate.pilgrim.widget.DeepLinkTarget? = null,
     onDeepLinkConsumed: () -> Unit = {},
+    /**
+     * iOS parity v1.6.0 Welcome ritual. When `false`, the start
+     * destination is [Routes.WELCOME] so first-launch users see the
+     * breathing-logo + footprints + privacy-promise sequence before
+     * the Permissions prompt. Subsequent launches read `true` and skip
+     * straight to PERMISSIONS (which itself skips to PATH if the
+     * required perms are already granted).
+     */
+    welcomeCompleted: Boolean = true,
 ) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
@@ -144,11 +156,20 @@ fun PilgrimNavHost(
         // (Path's Wander button, etc.) to clear the pill footprint.
         NavHost(
             navController = navController,
-            startDestination = Routes.PERMISSIONS,
+            startDestination = if (welcomeCompleted) Routes.PERMISSIONS else Routes.WELCOME,
             modifier = Modifier
                 .fillMaxSize()
                 .hazeSource(appHazeState),
         ) {
+        composable(Routes.WELCOME) {
+            org.walktalkmeditate.pilgrim.ui.onboarding.WelcomeScreen(
+                onBegin = {
+                    navController.navigate(Routes.PERMISSIONS) {
+                        popUpTo(Routes.WELCOME) { inclusive = true }
+                    }
+                },
+            )
+        }
         composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 onComplete = {
@@ -261,8 +282,18 @@ fun PilgrimNavHost(
                 onBack = { navController.popBackStack() },
             )
         }
+        composable(Routes.JOURNEY_EDITOR) {
+            org.walktalkmeditate.pilgrim.ui.settings.data.JourneyEditorScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
         composable(Routes.ABOUT) {
             org.walktalkmeditate.pilgrim.ui.settings.about.AboutScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.APPEARANCE) {
+            org.walktalkmeditate.pilgrim.ui.settings.AppearanceScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -456,6 +487,26 @@ fun PilgrimNavHost(
         }
         }
 
+        // iOS parity v1.6.0: constellation overlay painted on top of
+        // every screen — stars + nebulae + cosmic gradient render when
+        // AppearanceMode == Constellation. Nebulae are SUPPRESSED on
+        // Active Walk + Walk Summary + Meditation (and Walk Share) so
+        // the purple/blue clouds don't clash with the dense Mapbox map
+        // and warm parchmentSecondary cards. Stars + cosmic gradient
+        // still render there.
+        val noNebulaeRoutes = remember {
+            setOf(Routes.ACTIVE_WALK, Routes.MEDITATION)
+        }
+        val nebulaeOn = when {
+            currentRoute == null -> true
+            currentRoute in noNebulaeRoutes -> false
+            currentRoute.startsWith("walk_summary") -> false
+            currentRoute.startsWith("walk_share") -> false
+            else -> true
+        }
+        org.walktalkmeditate.pilgrim.ui.design
+            .ConstellationDecoration(includesNebulae = nebulaeOn)
+
         // Pill overlays the screen content at BottomCenter — content
         // extends edge-to-edge behind the pill so the area around the
         // pill is whatever the screen renders (parchment canvas, journal
@@ -610,5 +661,9 @@ private fun handleSettingsAction(
             navController.navigate(Routes.ABOUT) { launchSingleTop = true }
         SettingsAction.OpenJourneyViewer ->
             navController.navigate(Routes.JOURNEY_VIEWER) { launchSingleTop = true }
+        SettingsAction.OpenJourneyEditor ->
+            navController.navigate(Routes.JOURNEY_EDITOR) { launchSingleTop = true }
+        SettingsAction.OpenAppearance ->
+            navController.navigate(Routes.APPEARANCE) { launchSingleTop = true }
     }
 }

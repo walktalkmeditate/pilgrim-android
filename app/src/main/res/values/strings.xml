@@ -20,20 +20,28 @@
     <string name="walk_notification_action_end_meditation">End</string>
     <string name="walk_notification_lock_screen_title">Walk in progress</string>
 
-    <string name="onboarding_title">A few doors to open</string>
-    <string name="onboarding_subtitle">Pilgrim needs a small set of permissions before you walk. Nothing you grant leaves this device.</string>
+    <!-- iOS Permissions.* (Base.lproj/Localizable.strings) verbatim. -->
+    <string name="onboarding_title">Prepare for the journey</string>
+    <string name="onboarding_subtitle">Pilgrim walks best with these</string>
 
-    <string name="permission_location_title">Your place in the world</string>
-    <string name="permission_location_rationale">To draw the path your feet trace, Pilgrim reads the device\'s precise location while a walk is in progress. Your coordinates stay on this device — no account, no cloud.</string>
+    <string name="permission_location_title">To walk with you</string>
+    <string name="permission_location_rationale">Track your route, distance, and pace</string>
 
+    <string name="permission_microphone_title">To hear your thoughts</string>
+    <string name="permission_microphone_rationale">Capture voice reflections along the way</string>
+
+    <!-- Android-only (POST_NOTIFICATIONS, Android-13+ OS requirement for
+         the walk foreground-service notification — no iOS analogue;
+         dated re-justify per U7 triage 2026-05-16). -->
     <string name="permission_notification_title">A quiet notification</string>
     <string name="permission_notification_rationale">Android needs to see an ongoing notification to keep the walk recording reliably when the screen is off. It shows your time and distance.</string>
 
-    <string name="permission_activity_title">Footsteps</string>
-    <string name="permission_activity_rationale">If you\'d like Pilgrim to count your steps, it reads the device\'s motion sensor. This is optional — skip it and the walk still works.</string>
+    <string name="permission_activity_title">To count your steps</string>
+    <string name="permission_activity_rationale">Measure steps as you move</string>
 
-    <string name="permissions_grant">Open</string>
-    <string name="permissions_continue">Continue</string>
+    <string name="permissions_optional">(optional)</string>
+    <string name="permissions_grant">Continue</string>
+    <string name="permissions_continue">Next</string>
     <string name="permissions_granted_label">Granted</string>
     <string name="permissions_open_settings">Open settings</string>
 
@@ -55,6 +63,13 @@
     <string name="goshuin_title">Goshuin</string>
     <string name="goshuin_empty_caption">Your goshuin will fill as you walk</string>
     <string name="goshuin_back_content_description">Back</string>
+    <string name="goshuin_filter_all">All</string>
+    <string name="goshuin_share_action">Share Goshuin</string>
+    <string name="goshuin_share_title">My Goshuin</string>
+    <string name="goshuin_share_tagline">Every walk is a small pilgrimage.</string>
+    <string name="goshuin_share_provenance">pilgrimapp.org</string>
+    <string name="goshuin_share_chooser_title">Share Goshuin</string>
+    <string name="goshuin_share_no_chooser">No app available to share the image</string>
     <string name="home_recording_count">%1$d voice notes</string>
     <string name="home_recording_count_singular">1 voice note</string>
     <string name="home_relative_just_now">Just now</string>
@@ -68,12 +83,15 @@
     <string name="home_journey_talked">%1$s talked</string>
     <string name="home_journey_meditated">%1$s meditated</string>
     <string name="home_journey_subtitle_walks">%1$s · %2$s</string>
+    <!-- iOS InkScrollView uses literal "<n> walks · <m> months" — never
+         singularized. Both quantities use the plural-word form to match
+         iOS verbatim while keeping the locale-substitution seam. -->
     <plurals name="home_journey_walks_count">
-        <item quantity="one">1 walk</item>
+        <item quantity="one">%1$d walks</item>
         <item quantity="other">%1$d walks</item>
     </plurals>
     <plurals name="home_journey_months">
-        <item quantity="one">1 month</item>
+        <item quantity="one">%1$d months</item>
         <item quantity="other">%1$d months</item>
     </plurals>
     <plurals name="home_journey_walks_with_talk">
@@ -193,6 +211,12 @@
     <string name="settings_appearance_auto">Auto</string>
     <string name="settings_appearance_light">Light</string>
     <string name="settings_appearance_dark">Dark</string>
+    <string name="settings_appearance_constellation">Constellation</string>
+    <string name="settings_appearance_screen_title">Appearance</string>
+    <string name="settings_appearance_auto_description">Match the system setting</string>
+    <string name="settings_appearance_light_description">Parchment background, ink text</string>
+    <string name="settings_appearance_dark_description">Easy on the eyes for evening walks</string>
+    <string name="settings_appearance_constellation_description">A quiet night sky, with drifting stars</string>
     <string name="settings_sounds_label">Sounds</string>
     <string name="settings_sounds_description">Bells, voice guides, haptics, and ambient soundscapes</string>
 
@@ -261,6 +285,7 @@
     <string name="recording_transcription_expand">Show more</string>
     <string name="recording_action_retranscribe_cd">Retranscribe</string>
     <string name="recording_action_edit_done">Done</string>
+    <string name="recording_action_edit_cd">Edit transcription</string>
     <string name="recordings_transcription_editor_description">Transcription editor</string>
 
     <!-- Stage 10-D RecordingsListScreen — top-level + section + dialogs -->
@@ -462,11 +487,12 @@
     <!-- Stage 9.5-C: WalkOptionsSheet (in-walk options modal) -->
     <string name="walk_options_title">Options</string>
     <string name="walk_options_intention_title">Set Intention</string>
-    <string name="walk_options_intention_pre_walk_unset">A line for this walk</string>
-    <string name="walk_options_intention_dialog_title">Set Intention</string>
-    <string name="walk_options_intention_placeholder">A line for this walk&#8230;</string>
+    <string name="walk_options_intention_dialog_title">Set Your Intention</string>
+    <string name="walk_options_intention_placeholder">What purpose guides this walk?</string>
     <string name="walk_options_intention_save">Set</string>
     <string name="walk_options_intention_cancel">Cancel</string>
+    <string name="walk_options_intention_suggested">Suggested</string>
+    <string name="walk_options_intention_recent">Recent</string>
     <string name="walk_options_waypoint_title">Drop Waypoint</string>
     <string name="walk_options_waypoint_count_none">None marked</string>
     <plurals name="walk_options_waypoint_count">
@@ -557,6 +583,7 @@
     <string name="settings_storage_count_format">%1$d sounds</string>
     <string name="settings_storage_size_format">%1$.1f MB</string>
     <string name="settings_storage_clear_all">Clear all downloads</string>
+    <string name="settings_storage_downloading">Downloading...</string>
     <string name="settings_bell_picker_title">Choose bell</string>
     <string name="settings_bell_picker_none">None</string>
     <string name="settings_breath_rhythm_picker_title">Choose breath rhythm</string>
@@ -665,7 +692,7 @@
     <string name="data_action_import">Import Data</string>
     <string name="data_walks_footer">Export creates a .pilgrim archive with all your walks, transcriptions, and settings. Import restores walks from a .pilgrim file.</string>
     <string name="data_action_journey">View My Journey</string>
-    <string name="data_journey_footer">Opens view.pilgrimapp.org and renders all your walks in the browser. Your data stays on your device — nothing is uploaded.</string>
+    <string name="data_journey_footer">View renders your walks at view.pilgrimapp.org. Edit opens edit.pilgrimapp.org for in-browser editing. Your walk data is not uploaded; the JSON is injected into the browser via the JS bridge.</string>
     <string name="data_section_audio_header">Audio</string>
     <string name="data_action_export_recordings">Export Recordings</string>
     <string name="data_audio_footer">Exports all voice recording audio files as a zip archive. These are not included in the data export.</string>
@@ -721,6 +748,12 @@
     <string name="journey_viewer_back">Back</string>
     <string name="journey_viewer_loading">Preparing your journey…</string>
     <string name="journey_viewer_no_walks">No walks yet. Take a walk first.</string>
+    <!-- iOS v1.6.0 — mid-walk audio shortcuts in WalkOptionsSheet -->
+
+    <!-- iOS v1.6.0 — Edit My Journey webview pointing at edit.pilgrimapp.org -->
+    <string name="journey_editor_title">Edit My Journey</string>
+    <string name="journey_editor_loading">Preparing your journey for editing…</string>
+    <string name="settings_data_edit_journey_row">Edit My Journey</string>
 
     <plurals name="export_confirmation_walk_count">
         <item quantity="one">1 walk</item>
@@ -844,4 +877,31 @@
     <string name="journal_expand_pill_meditate">meditate</string>
     <string name="journal_expand_view_details">View details</string>
     <string name="journal_expand_dismiss_a11y">Close walk details</string>
+
+    <!-- About → Data Sources (iOS v1.6.0 parity AboutView.swift Data Sources section).
+         iOS lists Apple WeatherKit attribution per the WeatherKit Legal terms.
+         Android uses Open-Meteo (CC-BY 4.0); attribution is similarly mandatory. -->
+    <string name="about_data_sources_header">DATA SOURCES</string>
+    <string name="about_data_sources_body">Weather conditions and temperature recorded with each walk are fetched at the start of the walk from Open-Meteo, a free open-data weather service.</string>
+    <string name="about_data_sources_weather_link">Open-Meteo — Attribution &amp; terms</string>
+
+    <!-- Welcome screen (iOS v1.6.0 parity Setup/Welcome/WelcomeView.swift) -->
+    <string name="welcome_begin_button">Begin</string>
+    <string name="welcome_begin_a11y">Begin your journey</string>
+    <string name="welcome_breath_cue">Take a breath. We’re right with you.</string>
+    <string name="welcome_privacy_promise">No accounts. Your recordings stay private and on your device.</string>
+    <string name="welcome_quote_1">Every journey begins\nwith a single step</string>
+    <string name="welcome_quote_2">The path is made\nby walking</string>
+    <string name="welcome_quote_3">Not all who wander\nare lost</string>
+    <string name="welcome_quote_4">Solvitur ambulando —\nit is solved by walking</string>
+    <string name="welcome_quote_5">Walk as if you are kissing\nthe earth with your feet</string>
+    <string name="welcome_quote_6">The journey of a thousand miles\nbegins beneath your feet</string>
+    <string-array name="welcome_quote_pool">
+        <item>@string/welcome_quote_1</item>
+        <item>@string/welcome_quote_2</item>
+        <item>@string/welcome_quote_3</item>
+        <item>@string/welcome_quote_4</item>
+        <item>@string/welcome_quote_5</item>
+        <item>@string/welcome_quote_6</item>
+    </string-array>
 </resources>

@@ -6,17 +6,23 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
+import org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -38,6 +44,7 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
  * republished whenever the file store fires an invalidation
  * (delete / clear-all paths emit on `invalidations`).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SoundSettingsViewModel @Inject constructor(
     private val soundsPreferences: SoundsPreferencesRepository,
@@ -68,6 +75,42 @@ class SoundSettingsViewModel @Inject constructor(
     val availableSoundscapes: StateFlow<List<AudioAsset>> = manifestService.assets
         .map { catalog -> catalog.filter { it.type == AudioAssetType.SOUNDSCAPE } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * True while any soundscape asset has an in-flight download
+     * (Enqueued or Running). Mirrors iOS `storageSection`'s
+     * `if downloadManager.isDownloading { ProgressView + "Downloading..." }`.
+     *
+     * iOS exposes a single global `AudioDownloadManager.isDownloading`
+     * + aggregate `downloadProgress` fraction. Android downloads are
+     * per-asset WorkManager jobs with no byte-level fraction for a
+     * single-file soundscape, so we surface a boolean activity flag
+     * and the screen renders an indeterminate bar (honest equivalent
+     * of a determinate `ProgressView(value:)` with no real fraction).
+     *
+     * Derived off the already-injected [downloadScheduler] (no extra
+     * dependency): fan the soundscape catalog out into per-asset
+     * `observe()` flows, OR-reduce their states. `onStart { emit(null) }`
+     * keeps `combine` live before any work exists for an asset.
+     */
+    val downloadInProgress: StateFlow<Boolean> = availableSoundscapes
+        .flatMapLatest { scapes ->
+            if (scapes.isEmpty()) {
+                flowOf(false)
+            } else {
+                combine(
+                    scapes.map { asset ->
+                        downloadScheduler.observe(asset.id).onStart { emit(null) }
+                    },
+                ) { progresses ->
+                    progresses.any {
+                        it?.state == DownloadProgress.State.Enqueued ||
+                            it?.state == DownloadProgress.State.Running
+                    }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private val _totalDiskUsageBytes = MutableStateFlow(0L)
     /**
@@ -154,15 +197,18 @@ class SoundSettingsViewModel @Inject constructor(
     }
 
     /**
-     * Plays the bell-row preview from the picker sheet. [BellPlayer] is
-     * currently single-asset (bundled `R.raw.bell`) so the asset id is
-     * informational only; once per-id bell downloads land, this can
-     * route to the matching file. iOS plays the asset via
-     * `SoundManagement.previewBell(id:)`.
+     * Plays the bell-row preview from the picker sheet. Routes the
+     * user-picked asset id through [BellPlaying.play] so
+     * [org.walktalkmeditate.pilgrim.audio.BellFileResolver] resolves
+     * the downloaded asset file; if the file isn't on disk yet,
+     * BellPlayer rings the bundled `R.raw.bell` fallback so the user
+     * still hears something. iOS parity `SoundManagement.previewBell(id:)`.
+     *
+     * Previously this passed NO id, so every row previewed the bundled
+     * bell and all options sounded identical.
      */
-    @Suppress("UNUSED_PARAMETER")
     fun previewBell(asset: AudioAsset) {
-        bellPlayer.play(scale = 1.0f, withHaptic = false)
+        bellPlayer.play(bellId = asset.id, scale = 1.0f, withHaptic = false)
     }
 
     fun setSelectedSoundscapeId(value: String?) {

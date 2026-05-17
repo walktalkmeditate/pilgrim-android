@@ -154,16 +154,54 @@ fun pilgrimSeasonalColors(
     )
 }
 
+/**
+ * Constellation mode replaces the parchment palette with a starlit indigo
+ * + lavender scheme matching pilgrim-podcast's `.constellation` CSS. Five
+ * tokens are pinned to fixed values; the rest (moss, rust, dawn, fog,
+ * turning*) fall through to the seasonal-shifted palette so accent colors
+ * still feel time-aware against the indigo bg.
+ *
+ * Matches iOS `SeasonalColorEngine.constellationOverride(named:)@v1.6.0`:
+ *
+ * | Token              | sRGB hex   | Role                       |
+ * | ------------------ | ---------- | -------------------------- |
+ * | parchment          | #0A0A12    | App canvas (indigo near-black) |
+ * | parchmentSecondary | #141228    | Card / sheet bg            |
+ * | parchmentTertiary  | #1A1834    | Elevated surface           |
+ * | stone              | #C8C0FF    | Primary accent / brand     |
+ * | ink                | #E8E0FF    | Body text / content        |
+ *
+ * Called from [pilgrimSeasonalColors] when `mode.isConstellation` so the
+ * five tokens BYPASS hue/saturation/brightness shifts entirely (per iOS
+ * `constellationOverride` early-return).
+ */
+fun pilgrimConstellationOverride(base: PilgrimColors): PilgrimColors = base.copy(
+    parchment = Color(0xFF0A0A12),
+    parchmentSecondary = Color(0xFF141228),
+    parchmentTertiary = Color(0xFF1A1834),
+    stone = Color(0xFFC8C0FF),
+    ink = Color(0xFFE8E0FF),
+)
+
 val LocalPilgrimColors = staticCompositionLocalOf { pilgrimLightColors() }
 
 /**
  * Tracks PilgrimTheme's resolved dark/light flag, which combines system
- * dark mode with the user's AppearanceMode preference (System/Light/Dark).
- * Read this instead of `isSystemInDarkTheme()` directly when picking
- * theme-coupled assets (e.g. Mapbox style URI) — otherwise the asset
- * disagrees with the rest of the UI when AppearanceMode overrides system.
+ * dark mode with the user's AppearanceMode preference (System/Light/Dark/
+ * Constellation). Read this instead of `isSystemInDarkTheme()` directly
+ * when picking theme-coupled assets (e.g. Mapbox style URI) — otherwise
+ * the asset disagrees with the rest of the UI when AppearanceMode
+ * overrides system.
  */
 val LocalPilgrimDarkTheme = staticCompositionLocalOf { false }
+
+/**
+ * True when [AppearanceMode.Constellation] is active. Read by surfaces
+ * that need to suppress decorative non-constellation patina (Goshuin
+ * card swap, etc.) and by the constellation overlay's host points so
+ * they render only when needed.
+ */
+val LocalIsConstellation = staticCompositionLocalOf { false }
 
 val pilgrimColors: PilgrimColors
     @Composable

@@ -10,16 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,10 +26,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JourneyViewerScreen(
     onBack: () -> Unit,
@@ -59,31 +51,10 @@ fun JourneyViewerScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.journey_viewer_title),
-                        style = pilgrimType.heading,
-                        color = pilgrimColors.ink,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.journey_viewer_back),
-                            tint = pilgrimColors.ink,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = pilgrimColors.parchment,
-                ),
-            )
-        },
-        containerColor = pilgrimColors.parchment,
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.journey_viewer_title),
+        onBack = onBack,
+        backContentDescription = stringResource(R.string.journey_viewer_back),
     ) { padding ->
         Box(
             modifier = Modifier

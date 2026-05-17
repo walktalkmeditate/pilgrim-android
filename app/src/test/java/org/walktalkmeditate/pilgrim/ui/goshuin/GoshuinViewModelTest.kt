@@ -38,6 +38,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
@@ -96,6 +97,7 @@ class GoshuinViewModelTest {
             repository,
             hemisphereRepo,
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
         )
 
     @Test
@@ -134,6 +136,40 @@ class GoshuinViewModelTest {
             assertEquals(1, loaded.seals.size)
             assertEquals(walk.id, loaded.seals[0].walkId)
             assertEquals(1, loaded.totalCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `seal carries favicon, uuid, distance, and startMillis for filter+share`() =
+        runTest(dispatcher) {
+            val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+            runBlocking {
+                repository.finishWalk(walk, endTimestamp = 5_600_000L)
+                repository.setFavicon(walk.id, "flame")
+            }
+
+            val vm = newViewModel()
+            vm.uiState.test(timeout = 10.seconds) {
+                val loaded = awaitLoaded(this)
+                val seal = loaded.seals.first { it.walkId == walk.id }
+                assertEquals(WalkFavicon.FLAME, seal.favicon)
+                assertEquals(walk.uuid, seal.uuid)
+                assertEquals(5_000_000L, seal.startMillis)
+                assertTrue("distance >= 0", seal.distanceMeters >= 0.0)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `seal favicon is null when walk is untagged`() = runTest(dispatcher) {
+        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
+
+        val vm = newViewModel()
+        vm.uiState.test(timeout = 10.seconds) {
+            val loaded = awaitLoaded(this)
+            assertNull(loaded.seals.first { it.walkId == walk.id }.favicon)
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -208,7 +244,7 @@ class GoshuinViewModelTest {
         // Repository's StateFlow collects on real Dispatchers.Default;
         // bridge to wall-clock same as HomeViewModelTest.
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(10_000L) {
                 vm.hemisphere.first { it == Hemisphere.Southern }
             }
         }

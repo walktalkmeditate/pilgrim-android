@@ -87,4 +87,7 @@ interface WalkPhotoDao {
             "ORDER BY pinned_at ASC, id ASC",
     )
     suspend fun getPendingAnalysisForWalk(walkId: Long): List<WalkPhoto>
+
+    @Query("DELETE FROM walk_photos WHERE walk_id = :walkId")
+    suspend fun deleteByWalkId(walkId: Long): Int
 }

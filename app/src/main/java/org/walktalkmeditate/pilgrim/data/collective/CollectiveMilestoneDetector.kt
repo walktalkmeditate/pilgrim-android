@@ -31,6 +31,23 @@ class CollectiveMilestoneDetector @Inject constructor(
 
     override suspend fun check(totalWalks: Int) {
         try {
+            // iOS v1.6.0 fresh-install / upgrader fix: the first
+            // post-flip fetch on any device fast-forwards lastSeen to
+            // the highest already-crossed sacred number AND flips
+            // `hasInitializedCollectiveMilestones` to true, suppressing
+            // the bell. Without this, a fresh install where the global
+            // total is far past 108 would fire the 108 milestone for a
+            // user who never participated in reaching it.
+            val initialized = storage.firstReadyHasInitializedCollectiveMilestones()
+            if (!initialized) {
+                val ceiling = CollectiveMilestone.SACRED_NUMBERS
+                    .lastOrNull { totalWalks >= it }
+                if (ceiling != null) {
+                    storage.setLastSeenCollectiveWalks(ceiling)
+                }
+                storage.setHasInitializedCollectiveMilestones(true)
+                return
+            }
             val lastSeen = storage.firstReadyLastSeenCollectiveWalks()
             for (number in CollectiveMilestone.SACRED_NUMBERS) {
                 if (totalWalks >= number && lastSeen < number) {
@@ -98,4 +115,6 @@ interface MilestoneSurface {
 interface MilestoneStorage {
     suspend fun firstReadyLastSeenCollectiveWalks(): Int
     suspend fun setLastSeenCollectiveWalks(value: Int)
+    suspend fun firstReadyHasInitializedCollectiveMilestones(): Boolean
+    suspend fun setHasInitializedCollectiveMilestones(value: Boolean)
 }

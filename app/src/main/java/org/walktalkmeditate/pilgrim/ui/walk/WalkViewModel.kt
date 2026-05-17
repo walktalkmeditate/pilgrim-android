@@ -112,6 +112,8 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer,
     private val stonePlayer:
         org.walktalkmeditate.pilgrim.data.cairn.StonePlayer,
+    private val intentionHistory:
+        org.walktalkmeditate.pilgrim.data.intention.IntentionHistoryRepository,
 ) : ViewModel() {
 
     /**
@@ -144,6 +146,19 @@ class WalkViewModel @Inject constructor(
      */
     private val _activeCelestialGreeting = MutableStateFlow<String?>(null)
     val activeCelestialGreeting: StateFlow<String?> = _activeCelestialGreeting.asStateFlow()
+
+    /**
+     * Structured celestial snapshot for the active walk — drives the
+     * map-corner CelestialVignette (planetary-hour planet symbol + moon
+     * sign glyph). Distinct from [activeCelestialGreeting] (the prose
+     * line). Computed alongside the greeting at walk start; cleared on
+     * the terminal transition. iOS parity `CelestialVignetteView`.
+     */
+    private val _activeCelestialSnapshot =
+        MutableStateFlow<org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot?>(null)
+    val activeCelestialSnapshot:
+        StateFlow<org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot?> =
+        _activeCelestialSnapshot.asStateFlow()
 
     /**
      * iOS parity `ActiveWalkViewModel.swift:44-46@db4196e` — per-walk
@@ -293,6 +308,14 @@ class WalkViewModel @Inject constructor(
      * `ActiveWalkView.swift:374`).
      */
     val beginWithIntention: StateFlow<Boolean> = practicePreferences.beginWithIntention
+
+    /**
+     * Gates the map-corner CelestialVignette — iOS only shows the
+     * planetary-hour / moon-sign pill when the user has opted into
+     * celestial awareness (`UserPreferences.celestialAwarenessEnabled`).
+     */
+    val celestialAwarenessEnabled: StateFlow<Boolean> =
+        practicePreferences.celestialAwarenessEnabled
 
     /**
      * Id of a walk that was auto-finalized by `WalkTrackingService.onTaskRemoved`
@@ -626,6 +649,29 @@ class WalkViewModel @Inject constructor(
         }
     }
 
+    /** Recent intentions (MRU-first) for the intention sheet's Recent list. */
+    val recentIntentions: StateFlow<List<String>> = intentionHistory.intentions
+
+    /** iOS `IntentionHistoryStore.add` — call BEFORE committing onSet. */
+    fun rememberIntention(text: String) {
+        viewModelScope.launch { intentionHistory.add(text) }
+    }
+
+    /**
+     * Celestial intention suggestions, gated on celestial-awareness like
+     * iOS (`IntentionSettingView` only shows the section when the pref
+     * is on). Empty when off — the sheet then hides the section.
+     */
+    fun intentionSuggestions(): List<String> =
+        if (!practicePreferences.celestialAwarenessEnabled.value) {
+            emptyList()
+        } else {
+            IntentionSuggestions.celestial(
+                atEpochMillis = System.currentTimeMillis(),
+                system = practicePreferences.zodiacSystem.value,
+            )
+        }
+
     /**
      * Toggle recording on/off. Dispatches to IO because
      * VoiceRecorder.stop() blocks on doneLatch (~100 ms) while the
@@ -778,6 +824,7 @@ class WalkViewModel @Inject constructor(
                     weatherJob?.cancel()
                     _activeWeather.value = null
                     _activeCelestialGreeting.value = null
+                    _activeCelestialSnapshot.value = null
                     // iOS parity `ActiveWalkViewModel.swift:44-46@db4196e`
                     // — caps reset at VM init (new walk). On Android the
                     // VM is scoped to NavBackStackEntry which persists
@@ -955,6 +1002,7 @@ class WalkViewModel @Inject constructor(
                     )
                 _activeCelestialGreeting.value =
                     celestialGreetingText(snapshot, context.resources)
+                _activeCelestialSnapshot.value = snapshot
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {

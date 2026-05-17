@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -188,7 +189,7 @@ internal fun PromptListSheetContent(
                             modifier = Modifier.testTag(PROMPT_LIST_DELETE_BUTTON_TAG),
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Delete,
+                                painter = painterResource(R.drawable.ic_sf_trash),
                                 contentDescription = stringResource(
                                     R.string.custom_prompt_delete,
                                 ),

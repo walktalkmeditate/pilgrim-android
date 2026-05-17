@@ -45,6 +45,13 @@ class CollectiveMilestoneDetectorTest {
             produceFile = { java.io.File(context.filesDir, "datastore/$uniqueName.preferences_pb") },
         )
         cacheStore = CollectiveCacheStore(dataStore, json)
+        // iOS v1.6.0 introduced a fresh-install fast-forward branch that
+        // skips ALL milestone firing on the first check after install.
+        // These tests exercise the steady-state firing logic, so flip the
+        // flag here to opt out of the fast-forward.
+        kotlinx.coroutines.runBlocking {
+            cacheStore.setHasInitializedCollectiveMilestones(true)
+        }
         detector = CollectiveMilestoneDetector(cacheStore)
     }
 
@@ -89,12 +96,40 @@ class CollectiveMilestoneDetectorTest {
     }
 
     @Test
+    fun freshInstallFastForwardsAndSuppressesBell() = runTest {
+        // Wipe the init flag set in @Before so this test exercises the
+        // fresh-install branch.
+        cacheStore.setHasInitializedCollectiveMilestones(false)
+        val freshDetector = CollectiveMilestoneDetector(cacheStore)
+        // Global total is already past three sacred numbers
+        // (108, 1080, 2160 — but NOT 10000).
+        freshDetector.check(2_500)
+        assertNull(
+            "Fresh install must NOT fire a milestone for a crossing the user wasn't part of.",
+            freshDetector.milestone.value,
+        )
+        assertEquals(
+            "lastSeen should fast-forward to the highest crossed sacred number.",
+            2_160,
+            cacheStore.firstReadyLastSeenCollectiveWalks(),
+        )
+        // Subsequent checks resume normal firing.
+        freshDetector.check(11_000)
+        assertEquals(10_000, freshDetector.milestone.value?.number)
+    }
+
+    @Test
     fun setLastSeenThrowingDoesNotPropagateToCheck() = runTest {
         val throwingStore = object : MilestoneStorage {
             override suspend fun firstReadyLastSeenCollectiveWalks(): Int = 0
             override suspend fun setLastSeenCollectiveWalks(value: Int) {
                 error("boom")
             }
+            // Initialized = true so the throwing test doesn't get
+            // short-circuited by the fresh-install branch (which would
+            // write the init flag and never reach setLastSeen).
+            override suspend fun firstReadyHasInitializedCollectiveMilestones(): Boolean = true
+            override suspend fun setHasInitializedCollectiveMilestones(value: Boolean) {}
         }
         val throwingDetector = CollectiveMilestoneDetector(throwingStore)
         // Must not throw — log + swallow expected.

@@ -126,8 +126,7 @@ class SettingsViewModelSoundsTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,
-        )
+            bellPlayer = NoopBellPlayer,        )
         assertEquals(false, vm.soundsEnabled.first())
     }
 
@@ -144,8 +143,7 @@ class SettingsViewModelSoundsTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,
-        )
+            bellPlayer = NoopBellPlayer,        )
         assertEquals(true, vm.soundsEnabled.first())
         vm.setSoundsEnabled(false)
         assertEquals(false, vm.soundsEnabled.first { it == false })
@@ -166,8 +164,7 @@ class SettingsViewModelSoundsTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,
-        )
+            bellPlayer = NoopBellPlayer,        )
         // Calling the setter must NOT throw — runCatching inside the
         // VM swallows the IOException and logs it.
         vm.setSoundsEnabled(false)

@@ -3,9 +3,11 @@ package org.walktalkmeditate.pilgrim.ui.home.dot
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -57,16 +59,67 @@ fun WalkDot(
     contentDescription: String,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * iOS v1.6.0 — archived walks render as a thin hollow fog ring
+     * (`stroke(Color.fog.opacity(0.5), lineWidth: 1)`) instead of the
+     * full layered dot. Suppresses ripple / halo / favicon / activity
+     * arcs / specular / shared-ring decoration so the released walk
+     * reads as a quiet placeholder, not a live entry.
+     */
+    isArchived: Boolean = false,
+    /**
+     * iOS v1.6.0 — long-press on a dot triggers the same expand-card
+     * overlay iOS shows via `previewSnapshot` + `previewPosition` state
+     * in InkScrollView. On Android we route the long-press through
+     * the same `onTap` handler so the existing ExpandCardSheet appears
+     * — gesture parity with no need for a separate transient preview
+     * surface that would duplicate the same content.
+     */
+    onLongPress: (() -> Unit)? = null,
 ) {
     val haloSizeDp = sizeDp * HALO_SCALE
     val activityRingSizeDp = sizeDp + ACTIVITY_RING_OFFSET_DP
     val sharedRingSizeDp = sizeDp + SHARED_RING_OFFSET_DP
+    if (isArchived) {
+        // Hollow ring at the dot's nominal size — matches iOS
+        // `WalkDotView.archivedRing` (1 px stroke, fog @ 50%).
+        Box(
+            modifier = modifier
+                .size(sizeDp.dp)
+                .graphicsLayer { alpha = opacity }
+                .semantics { this.contentDescription = contentDescription }
+                .pointerInput(onTap, onLongPress) {
+                    detectTapGestures(
+                        onTap = { onTap() },
+                        onLongPress = { (onLongPress ?: onTap)() },
+                    )
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            val ringColor = pilgrimColors.fog.copy(alpha = 0.5f)
+            Canvas(Modifier.size(sizeDp.dp)) {
+                val r = size.minDimension / 2f - 0.5f
+                drawCircle(
+                    color = ringColor,
+                    radius = r,
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    style = Stroke(width = 1.dp.toPx()),
+                )
+            }
+        }
+        return
+    }
     Box(
         modifier = modifier
             .size(haloSizeDp.dp)
             .graphicsLayer { alpha = opacity }
             .semantics { this.contentDescription = contentDescription }
-            .clickable(onClick = onTap),
+            .pointerInput(onTap, onLongPress) {
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onLongPress = { (onLongPress ?: onTap)() },
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
         // 1. Ripple — newest only.

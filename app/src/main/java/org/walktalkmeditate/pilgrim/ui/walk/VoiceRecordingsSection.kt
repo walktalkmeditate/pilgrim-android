@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
@@ -312,7 +313,8 @@ private fun EditableTranscription(
     var editText by rememberSaveable(recordingId) { mutableStateOf(text) }
     var expanded by rememberSaveable(recordingId, text) { mutableStateOf(false) }
     val needsExpansion = transcriptionNeedsExpansion(text)
-    val maxLines = if (!needsExpansion || expanded || isEditing) Int.MAX_VALUE else 4
+    // iOS v1.6.0 — 7-line clamp matches the expansion threshold.
+    val maxLines = if (!needsExpansion || expanded || isEditing) Int.MAX_VALUE else 7
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -370,10 +372,6 @@ private fun EditableTranscription(
                     maxLines = maxLines,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            editText = text
-                            isEditing = true
-                        }
                         .padding(8.dp),
                 )
                 if (needsExpansion) {
@@ -395,9 +393,31 @@ private fun EditableTranscription(
         }
         if (!isEditing) {
             Column(
-                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+                // iOS v1.6.0 ups the icon-cluster spacing from
+                // 8 to 12 dp so the three buttons don't visually
+                // collide on small screens.
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // iOS v1.6.0 — pencil-icon Edit button replaces the
+                // hidden tap-to-edit gesture (the body-tap conflicted
+                // with the new Show more / Show less toggle). 32x32
+                // tap targets matching iOS sizing.
+                Icon(
+                    painter = painterResource(R.drawable.ic_sf_pencil),
+                    contentDescription = stringResource(
+                        R.string.recording_action_edit_cd,
+                    ),
+                    tint = pilgrimColors.fog,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable {
+                            editText = text
+                            isEditing = true
+                        }
+                        .padding(8.dp),
+                )
                 Icon(
                     imageVector = Icons.Outlined.ContentCopy,
                     contentDescription = stringResource(
@@ -405,10 +425,10 @@ private fun EditableTranscription(
                     ),
                     tint = pilgrimColors.fog,
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(16.dp))
                         .clickable { clipboard.setText(AnnotatedString(text)) }
-                        .padding(6.dp),
+                        .padding(8.dp),
                 )
                 Icon(
                     imageVector = Icons.Outlined.Refresh,
@@ -417,10 +437,10 @@ private fun EditableTranscription(
                     ),
                     tint = pilgrimColors.fog,
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(16.dp))
                         .clickable(onClick = onRetranscribe)
-                        .padding(6.dp),
+                        .padding(8.dp),
                 )
             }
         }

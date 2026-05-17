@@ -134,8 +134,7 @@ class SettingsViewModelPracticeTest {
         walkRepository = walkRepository,
         voiceRecordingFileSystem = voiceFs,
         milestoneSurface = NoopMilestoneSurface,
-        bellPlayer = NoopBellPlayer,
-    )
+        bellPlayer = NoopBellPlayer,    )
 
     @Test
     fun `beginWithIntention reflects repo value`() = runBlocking {

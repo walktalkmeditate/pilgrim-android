@@ -117,17 +117,46 @@ class SoundSettingsViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun newVm(): SoundSettingsViewModel = SoundSettingsViewModel(
+    private fun newVm(
+        scheduler: org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler =
+            NoOpScheduler,
+    ): SoundSettingsViewModel = SoundSettingsViewModel(
         soundsPreferences = soundsRepo,
         soundscapeSelection = selectionRepo,
         manifestService = manifestService,
         fileStore = fileStore,
-        downloadScheduler = NoOpScheduler,
+        downloadScheduler = scheduler,
         bellPlayer = NoOpBellPlayer,
     )
 
+    /** Reports every observed asset as RUNNING — drives downloadInProgress true. */
+    private object RunningScheduler :
+        org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadScheduler {
+        override fun enqueue(assetId: String) = Unit
+        override fun retry(assetId: String) = Unit
+        override fun cancel(assetId: String) = Unit
+        override fun observe(assetId: String) =
+            kotlinx.coroutines.flow.flowOf<
+                org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress?,
+                >(
+                org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress(
+                    state = org.walktalkmeditate.pilgrim.data.audio.download
+                        .DownloadProgress.State.Running,
+                    completed = 0,
+                    total = 0,
+                ),
+            )
+    }
+
     private object NoOpBellPlayer : org.walktalkmeditate.pilgrim.audio.BellPlaying {
+        /** Records the bellId of the most recent routed play() call. */
+        var lastBellId: String? = null
+        var lastBellIdCalls = 0
         override fun play() = Unit
+        override fun play(bellId: String?, scale: Float, withHaptic: Boolean) {
+            lastBellId = bellId
+            lastBellIdCalls += 1
+        }
     }
 
     /**
@@ -151,6 +180,21 @@ class SoundSettingsViewModelTest {
         val bells = vm.availableBells.first { it.isNotEmpty() }
         assertEquals(2, bells.size)
         assertTrue(bells.all { it.type == AudioAssetType.BELL })
+    }
+
+    @Test
+    fun `previewBell routes the asset id to the bell player`() = runTest {
+        NoOpBellPlayer.lastBellId = null
+        NoOpBellPlayer.lastBellIdCalls = 0
+        val vm = newVm()
+        val bells = vm.availableBells.first { it.isNotEmpty() }
+        val target = bells.last()
+        vm.previewBell(target)
+        // Regression guard: previewBell used to call play() with NO id,
+        // so every bell row previewed the bundled fallback and all
+        // sounded identical. It MUST route the picked asset id.
+        assertEquals(1, NoOpBellPlayer.lastBellIdCalls)
+        assertEquals(target.id, NoOpBellPlayer.lastBellId)
     }
 
     @Test
@@ -260,6 +304,22 @@ class SoundSettingsViewModelTest {
         // After clearAll, the file is gone and totalDiskUsageBytes drops to 0.
         vm.totalDiskUsageBytes.first { it == 0L }
         assertEquals(false, f.exists())
+    }
+
+    @Test
+    fun `downloadInProgress is false when no soundscape download is active`() = runTest {
+        val vm = newVm()
+        // Ensure the soundscape catalog has loaded so the combine has
+        // an asset to fan out over (NoOpScheduler emits null → not
+        // downloading).
+        vm.availableSoundscapes.first { it.isNotEmpty() }
+        assertEquals(false, vm.downloadInProgress.first())
+    }
+
+    @Test
+    fun `downloadInProgress is true while a soundscape download is running`() = runTest {
+        val vm = newVm(scheduler = RunningScheduler)
+        assertEquals(true, vm.downloadInProgress.first { it })
     }
 
     private fun bellAsset(id: String, displayName: String): AudioAsset = AudioAsset(

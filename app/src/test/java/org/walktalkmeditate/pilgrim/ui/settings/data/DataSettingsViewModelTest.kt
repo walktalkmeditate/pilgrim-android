@@ -230,10 +230,12 @@ private class FakePilgrimPackageGateway(
     private val buildResult: () -> PilgrimPackageBuildResult = {
         error("build not stubbed for this test")
     },
-    private val importResult: () -> Int = { error("import not stubbed for this test") },
+    private val importResult: () -> org.walktalkmeditate.pilgrim.data.pilgrim.builder
+        .PilgrimPackageImporter.ImportSummary = { error("import not stubbed for this test") },
 ) : PilgrimPackageGateway {
     override suspend fun build(includePhotos: Boolean): PilgrimPackageBuildResult = buildResult()
-    override suspend fun import(uri: Uri): Int = importResult()
+    override suspend fun import(uri: Uri): org.walktalkmeditate.pilgrim.data.pilgrim.builder
+        .PilgrimPackageImporter.ImportSummary = importResult()
 }
 
 private class FakeRecordingsExporterGateway(
@@ -269,4 +271,5 @@ private class FakeWalkPhotoDao(
         analyzedAt: Long,
     ) = TODO("not used")
     override suspend fun getPendingAnalysisForWalk(walkId: Long): List<WalkPhoto> = TODO("not used")
+    override suspend fun deleteByWalkId(walkId: Long): Int = TODO("not used")
 }

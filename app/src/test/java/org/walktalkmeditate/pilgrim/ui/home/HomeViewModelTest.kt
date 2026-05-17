@@ -123,6 +123,7 @@ class HomeViewModelTest {
             unitsPreferences = units,
             cachedShareStore = cachedShareStore,
             practicePreferences = FakePracticePreferencesRepository(),
+            archivedRegistry = org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
             defaultDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         ).also { vm = it }
@@ -215,7 +216,7 @@ class HomeViewModelTest {
         assertEquals(Hemisphere.Northern, v.hemisphere.value)
         hemisphereRepo.setOverride(Hemisphere.Southern)
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(HEMISPHERE_OBSERVE_TIMEOUT_MS) {
                 v.hemisphere.first { it == Hemisphere.Southern }
             }
         }
@@ -233,7 +234,7 @@ class HomeViewModelTest {
 
         val v = newViewModel()
         val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(3_000L) {
+            withTimeout(HEMISPHERE_OBSERVE_TIMEOUT_MS) {
                 v.hemisphere.first { it == Hemisphere.Southern }
             }
         }
@@ -252,6 +253,19 @@ class HomeViewModelTest {
     }
 
     private val hemisphereStoreName: String = "home-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
+
+    private companion object {
+        // Failsafe bound for observing the repository-backed hemisphere
+        // StateFlow flip. v.hemisphere proxies HemisphereRepository's
+        // `stateIn(WhileSubscribed)` over `dataStore.data`: `.first`
+        // cold-starts that share, which does a real DataStore disk read
+        // to pick up setOverride()'s `dataStore.edit`. The collector
+        // exits the instant it sees Southern, so this bound only bites
+        // on a true hang — 3 s flaked on saturated CI runners where the
+        // cold-start + disk read genuinely took longer. 10 s matches the
+        // turbine `timeout = 10.seconds` convention used elsewhere here.
+        const val HEMISPHERE_OBSERVE_TIMEOUT_MS = 10_000L
+    }
 }
 
 private class FakeHomeClock(initial: Long) : Clock {

@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
+import org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -49,6 +51,7 @@ class GoshuinViewModel @Inject constructor(
     private val repository: WalkRepository,
     hemisphereRepository: HemisphereRepository,
     unitsPreferences: UnitsPreferencesRepository,
+    private val archivedRegistry: ArchivedWalkRegistry,
 ) : ViewModel() {
 
     /**
@@ -61,8 +64,16 @@ class GoshuinViewModel @Inject constructor(
 
     val uiState: StateFlow<GoshuinUiState> = repository.observeAllWalks()
         .map { walks ->
-            val finished = walks
-                .filter { it.endTimestamp != null }
+            // iOS parity v1.6.0: archived walks are filtered from
+            // `selectSeals` candidates so they don't receive individual
+            // seals in the Goshuin share renderer. computeStats
+            // continues to receive the unfiltered walks array so
+            // archived walks still count toward the total-stats header
+            // line.
+            val archivedSnapshot = archivedRegistry.snapshot()
+            val allFinished = walks.filter { it.endTimestamp != null }
+            val finished = allFinished
+                .filterNot { it.uuid in archivedSnapshot }
                 .sortedWith(
                     compareByDescending<Walk> { it.endTimestamp }
                         .thenByDescending { it.id },
@@ -104,7 +115,19 @@ class GoshuinViewModel @Inject constructor(
                         ),
                     )
                 }
-                GoshuinUiState.Loaded(seals = seals, totalCount = seals.size)
+                // iOS v1.6.0 stats header — totals include archived
+                // walks (their surface stats survived the strip).
+                val totalDistance = allFinished.sumOf { walk ->
+                    walk.distanceMeters ?: distances[walk.id] ?: 0.0
+                }
+                val totalMeditation = allFinished.sumOf { it.meditationSeconds ?: 0L }
+                GoshuinUiState.Loaded(
+                    seals = seals,
+                    totalCount = seals.size,
+                    totalIncludingArchived = allFinished.size,
+                    totalDistanceMeters = totalDistance,
+                    totalMeditationSeconds = totalMeditation,
+                )
             }
         }
         .stateIn(
@@ -167,6 +190,10 @@ class GoshuinViewModel @Inject constructor(
             walkDate = walkDate,
             shortDateLabel = shortDateFormatter.format(walkDate),
             milestone = milestone,
+            favicon = WalkFavicon.fromRawValue(walk.favicon),
+            uuid = walk.uuid,
+            distanceMeters = distance,
+            startMillis = walk.startTimestamp,
         )
     }
 

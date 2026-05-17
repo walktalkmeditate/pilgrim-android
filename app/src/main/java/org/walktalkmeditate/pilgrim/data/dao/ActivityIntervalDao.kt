@@ -16,4 +16,7 @@ interface ActivityIntervalDao {
 
     @Query("SELECT * FROM activity_intervals WHERE walk_id = :walkId ORDER BY start_timestamp ASC")
     suspend fun getForWalk(walkId: Long): List<ActivityInterval>
+
+    @Query("DELETE FROM activity_intervals WHERE walk_id = :walkId")
+    suspend fun deleteByWalkId(walkId: Long): Int
 }

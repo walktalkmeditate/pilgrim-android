@@ -53,3 +53,23 @@ mapbox.token
 .claude/
 
 .kaijutsu/
+
+# Parity capture evidence (screenshots, frame dirs, motion videos) are
+# large regenerable artifacts that bloat the repo and break GitHub's
+# file-size limits. The durable record is the textual findings in
+# docs/parity/*.md; raw captures stay local-only. The .pilgrim seed
+# fixture (docs/parity/fixtures/) IS tracked — it's the test input.
+docs/parity/evidence/
+
+# Parity verification scaffolding is local working tooling, not a
+# repo deliverable. The durable record is docs/parity/2026-05-15-parity-ledger.md
+# (the parity truth artifact) + docs/parity/gate.md (the ship rule) +
+# docs/parity/fixtures/ (the .pilgrim test input) — those stay tracked.
+# Everything else (superseded intermediate audits, capture how-to,
+# review-protocol scaffolding) is regenerable working scratch.
+docs/parity/*-audit.md
+docs/parity/*-audit-v2.md
+docs/parity/*-triage.md
+docs/parity/capture-recipe.md
+docs/parity/review-protocol.md
+docs/parity/README-parity-ledger.md

@@ -15,9 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,8 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -236,6 +235,9 @@ fun SettingNavRow(
     detail: String? = null,
     leadingIcon: ImageVector? = null,
     external: Boolean = false,
+    // iOS renders some rows as bare action buttons (no trailing
+    // glyph) — e.g. Export/Import in Data settings. false = no chevron.
+    showTrailing: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
@@ -280,18 +282,28 @@ fun SettingNavRow(
             )
             Spacer(Modifier.width(8.dp))
         }
-        Icon(
-            imageVector = if (external) {
-                Icons.AutoMirrored.Filled.OpenInNew
-            } else {
-                Icons.AutoMirrored.Filled.KeyboardArrowRight
-            },
-            contentDescription = null,
-            tint = pilgrimColors.fog,
-            modifier = Modifier
+        if (showTrailing) {
+            val trailingModifier = Modifier
                 .size(16.dp)
-                .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG),
-        )
+                .testTag(if (external) NAV_ROW_EXTERNAL_ICON_TAG else NAV_ROW_CHEVRON_ICON_TAG)
+            if (external) {
+                Icon(
+                    // iOS external links use arrow.up.right, not a box-arrow.
+                    painter = painterResource(R.drawable.ic_sf_arrow_up_right),
+                    contentDescription = null,
+                    tint = pilgrimColors.fog,
+                    modifier = trailingModifier,
+                )
+            } else {
+                Icon(
+                    // iOS disclosure is a chevron, not a Material arrow.
+                    painter = painterResource(R.drawable.ic_sf_chevron_right),
+                    contentDescription = null,
+                    tint = pilgrimColors.fog,
+                    modifier = trailingModifier,
+                )
+            }
+        }
     }
 }
 

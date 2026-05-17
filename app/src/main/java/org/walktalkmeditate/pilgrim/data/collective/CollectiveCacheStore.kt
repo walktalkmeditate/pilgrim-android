@@ -72,6 +72,13 @@ class CollectiveCacheStore @Inject constructor(
         dataStore.edit { it[KEY_LAST_SEEN_COLLECTIVE_WALKS] = value }
     }
 
+    override suspend fun firstReadyHasInitializedCollectiveMilestones(): Boolean =
+        dataStore.data.map { it[KEY_HAS_INITIALIZED_MILESTONES] ?: false }.first()
+
+    override suspend fun setHasInitializedCollectiveMilestones(value: Boolean) {
+        dataStore.edit { it[KEY_HAS_INITIALIZED_MILESTONES] = value }
+    }
+
     suspend fun mutatePending(
         mutate: (CollectiveCounterDelta) -> CollectiveCounterDelta,
     ): CollectiveCounterDelta {
@@ -115,5 +122,11 @@ class CollectiveCacheStore @Inject constructor(
         val KEY_OPT_IN = booleanPreferencesKey("opt_in")
         val KEY_PENDING_JSON = stringPreferencesKey("pending_delta_json")
         val KEY_LAST_SEEN_COLLECTIVE_WALKS = intPreferencesKey("lastSeenCollectiveWalks")
+        // iOS v1.6.0 — first post-flip fetch must fast-forward
+        // lastSeenCollectiveWalks past the already-crossed milestones
+        // so a fresh install / upgrader doesn't see the lowest unfired
+        // sacred-number celebration as a "first visit" milestone.
+        val KEY_HAS_INITIALIZED_MILESTONES =
+            booleanPreferencesKey("hasInitializedCollectiveMilestones")
     }
 }

@@ -78,7 +78,10 @@ internal fun TranscriptionDisplay(
 
     var expanded by rememberSaveable(text) { mutableStateOf(false) }
     val needsExpansion = transcriptionNeedsExpansion(text)
-    val maxLines = if (!needsExpansion || expanded) Int.MAX_VALUE else 4
+    // iOS v1.6.0 VoiceRecordingRow uses a 7-line clamp matching the
+    // expansion threshold (lines > 7 OR chars > 280). Below 7, the
+    // expand affordance never appears.
+    val maxLines = if (!needsExpansion || expanded) Int.MAX_VALUE else 7
 
     Column(
         modifier = modifier

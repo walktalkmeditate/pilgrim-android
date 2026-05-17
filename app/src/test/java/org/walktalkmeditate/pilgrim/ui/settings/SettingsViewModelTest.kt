@@ -139,8 +139,7 @@ class SettingsViewModelTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = milestoneSurface,
-            bellPlayer = bellPlayer,
-        )
+            bellPlayer = bellPlayer,        )
     }
 
     @After
@@ -329,8 +328,7 @@ class SettingsViewModelTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = FakeMilestoneSurface(),
-            bellPlayer = mutedBell,
-        )
+            bellPlayer = mutedBell,        )
         mutedVm.onMilestoneShown(CollectiveMilestone.forNumber(108))
         assertEquals(emptyList<Float>(), mutedBell.scaleCalls)
     }

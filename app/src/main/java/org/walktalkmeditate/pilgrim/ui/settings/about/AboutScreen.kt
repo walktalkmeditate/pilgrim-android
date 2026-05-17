@@ -25,7 +25,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -34,13 +33,8 @@ import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -70,6 +64,7 @@ import java.util.Locale
 import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.home.scenery.TreeScenery
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -77,7 +72,6 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.util.CustomTabs
 import org.walktalkmeditate.pilgrim.ui.util.PlayStore
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(
     onBack: () -> Unit,
@@ -91,31 +85,10 @@ fun AboutScreen(
     var showIconDialog by androidx.compose.runtime.saveable
         .rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.about_title),
-                        style = pilgrimType.heading,
-                        color = pilgrimColors.ink,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.about_back_content_description),
-                            tint = pilgrimColors.ink,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = pilgrimColors.parchment,
-                ),
-            )
-        },
-        containerColor = pilgrimColors.parchment,
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.about_title),
+        onBack = onBack,
+        backContentDescription = stringResource(R.string.about_back_content_description),
     ) { padding ->
         Column(
             modifier = Modifier
@@ -151,6 +124,8 @@ fun AboutScreen(
             }
             OpenSourceSection()
             SectionDivider()
+            DataSourcesSection()
+            SectionDivider()
             MottoSection()
             SeasonalVignetteSection()
             VersionSection()
@@ -161,14 +136,6 @@ fun AboutScreen(
 
 @Composable
 private fun HeroSection(onLogoTap: () -> Unit = {}) {
-    val nowMs = remember { System.currentTimeMillis() }
-    val today = remember { LocalDate.now() }
-    val tintColor = SeasonalColorEngine.applySeasonalShift(
-        base = pilgrimColors.moss,
-        intensity = SeasonalColorEngine.Intensity.Full,
-        date = today,
-        hemisphere = org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern,
-    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -176,16 +143,6 @@ private fun HeroSection(onLogoTap: () -> Unit = {}) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Animated tree — sized to journal scenery range (20-36 dp).
-        // Reduce-Motion aware via the shared sceneryTimeSeconds()
-        // driver inside TreeScenery.
-        Box(modifier = Modifier.size(36.dp)) {
-            TreeScenery(
-                sizeDp = 36.dp,
-                tintColor = tintColor,
-                walkDateMs = nowMs,
-            )
-        }
         PilgrimLogo(
             size = 80.dp,
             breathing = true,
@@ -368,6 +325,47 @@ private fun FootprintTrailSection() {
                 )
             }
         }
+    }
+}
+
+/**
+ * iOS parity v1.6.0 — About section listing the third-party data
+ * sources backing per-walk telemetry. iOS uses WeatherKit and
+ * attributes Apple Weather; Android uses Open-Meteo (CC-BY 4.0) and
+ * surfaces a link to their attribution terms.
+ */
+@Composable
+private fun DataSourcesSection() {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.about_data_sources_header),
+            style = pilgrimType.caption.copy(letterSpacing = 2.sp),
+            color = pilgrimColors.stone.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            text = stringResource(R.string.about_data_sources_body),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Spacer(Modifier.height(8.dp))
+        OpenSourceLinkRow(
+            icon = Icons.Filled.Public,
+            label = stringResource(R.string.about_data_sources_weather_link),
+            external = false,
+            onClick = {
+                CustomTabs.launch(
+                    context,
+                    Uri.parse("https://open-meteo.com/en/license"),
+                )
+            },
+        )
     }
 }
 

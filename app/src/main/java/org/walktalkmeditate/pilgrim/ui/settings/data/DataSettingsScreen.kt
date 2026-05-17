@@ -16,18 +16,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +36,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
 import org.walktalkmeditate.pilgrim.ui.settings.SettingNavRow
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.settingsCard
@@ -193,32 +187,11 @@ fun DataSettingsScreen(
     val isPilgrimExportBuilding = pilgrimExportState is PilgrimExportState.Building
     val isPilgrimImporting = pilgrimImportState is PilgrimImportState.Importing
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.data_screen_title),
-                        style = pilgrimType.heading,
-                        color = pilgrimColors.ink,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.data_back_content_description),
-                            tint = pilgrimColors.ink,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = pilgrimColors.parchment,
-                ),
-            )
-        },
+    PilgrimDetailScaffold(
+        title = stringResource(R.string.data_screen_title),
+        onBack = onBack,
+        backContentDescription = stringResource(R.string.data_back_content_description),
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = pilgrimColors.parchment,
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -236,6 +209,9 @@ fun DataSettingsScreen(
                         SettingNavRow(
                             label = stringResource(R.string.data_action_export),
                             modifier = Modifier.fillMaxWidth(),
+                            // iOS Export/Import are bare action Buttons,
+                            // no trailing chevron.
+                            showTrailing = false,
                             onClick = { viewModel.requestPilgrimExport() },
                         )
                     }
@@ -247,6 +223,7 @@ fun DataSettingsScreen(
                         SettingNavRow(
                             label = stringResource(R.string.data_action_import),
                             modifier = Modifier.fillMaxWidth(),
+                            showTrailing = false,
                             onClick = {
                                 importPickerLauncher.launch(
                                     arrayOf("application/zip", "application/octet-stream", "*/*"),
@@ -263,8 +240,22 @@ fun DataSettingsScreen(
                     SettingNavRow(
                         label = stringResource(R.string.data_action_journey),
                         modifier = Modifier.fillMaxWidth(),
-                        external = true,
+                        // iOS pushes an in-app WebView → chevron, not an
+                        // external-link arrow.
+                        external = false,
                         onClick = { onAction(SettingsAction.OpenJourneyViewer) },
+                    )
+                    // iOS v1.6.0 — sibling Edit My Journey row pointing
+                    // at edit.pilgrimapp.org via the JourneyEditor
+                    // WebView. The web editor lets the user rewrite
+                    // intentions / reflections / transcriptions and
+                    // archive walks; the edited .pilgrim is round-tripped
+                    // back through the importer's tended-mode path.
+                    SettingNavRow(
+                        label = stringResource(R.string.settings_data_edit_journey_row),
+                        modifier = Modifier.fillMaxWidth(),
+                        external = false,
+                        onClick = { onAction(SettingsAction.OpenJourneyEditor) },
                     )
                 }
             }
