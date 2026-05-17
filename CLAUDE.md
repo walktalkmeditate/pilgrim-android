@@ -12,14 +12,14 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 
 ## Parity scope (frozen)
 
-**Parity target: pilgrim-ios v1.5.0** (`db4196e`, 2026-05-04). Anything iOS shipped AT OR BEFORE that tag is in-scope for Android port. Anything iOS ships AFTER v1.5.0 is OUT OF SCOPE for the time being — do not auto-pull new iOS work into the Android backlog without explicit user instruction.
+**Parity target: pilgrim-ios v1.6.0** (`fcd22553`, 2026-05-13). Anything iOS shipped AT OR BEFORE that tag is in-scope for Android port. Anything iOS ships AFTER v1.6.0 is OUT OF SCOPE for the time being — do not auto-pull new iOS work into the Android backlog without explicit user instruction.
 
 To diff iOS for in-scope work that hasn't landed on Android yet:
 ```bash
-cd ../pilgrim-ios && git log --oneline v1.5.0
+cd ../pilgrim-ios && git log --oneline v1.6.0
 ```
 
-Comparing to a future iOS HEAD past v1.5.0 is fine for context, but parity work targets v1.5.0 only.
+Comparing to a future iOS HEAD past v1.6.0 is fine for context, but parity work targets v1.6.0 only.
 
 ## Architecture
 
