@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
@@ -189,6 +190,10 @@ class GoshuinViewModel @Inject constructor(
             walkDate = walkDate,
             shortDateLabel = shortDateFormatter.format(walkDate),
             milestone = milestone,
+            favicon = WalkFavicon.fromRawValue(walk.favicon),
+            uuid = walk.uuid,
+            distanceMeters = distance,
+            startMillis = walk.startTimestamp,
         )
     }
 

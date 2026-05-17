@@ -20,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
@@ -193,5 +194,87 @@ class GoshuinScreenTest {
         }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("First Walk").assertIsDisplayed()
+    }
+
+    @Test fun `Loaded shows filter bar chips and Share button`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    GoshuinScreenContent(
+                        uiState = GoshuinUiState.Loaded(
+                            seals = listOf(seal(1L), seal(2L)),
+                            totalCount = 2,
+                        ),
+                        hemisphere = Hemisphere.Northern,
+                        onBack = {},
+                        onSealTap = {},
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("All").assertIsDisplayed()
+        composeRule.onNodeWithText("Transformative").assertIsDisplayed()
+        composeRule.onNodeWithText("Peaceful").assertIsDisplayed()
+        composeRule.onNodeWithText("Extraordinary").assertIsDisplayed()
+        composeRule.onNodeWithText("Share Goshuin").assertIsDisplayed()
+    }
+
+    @Test fun `filter chip filters the grid by favicon`() {
+        val flame = seal(1L).copy(
+            shortDateLabel = "Flame-row",
+            favicon = WalkFavicon.FLAME,
+        )
+        val leaf = seal(2L).copy(
+            shortDateLabel = "Leaf-row",
+            favicon = WalkFavicon.LEAF,
+        )
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    GoshuinScreenContent(
+                        uiState = GoshuinUiState.Loaded(
+                            seals = listOf(flame, leaf),
+                            totalCount = 2,
+                        ),
+                        hemisphere = Hemisphere.Northern,
+                        onBack = {},
+                        onSealTap = {},
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Flame-row").assertIsDisplayed()
+        composeRule.onNodeWithText("Leaf-row").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Peaceful").performClick()
+        composeRule.waitForIdle()
+        // Leaf == Peaceful stays; Flame row filtered out.
+        composeRule.onNodeWithText("Leaf-row").assertIsDisplayed()
+        composeRule.onNodeWithText("Flame-row").assertDoesNotExist()
+    }
+
+    @Test fun `Share button click fires onShareGoshuin with filtered seals`() {
+        var shared: List<GoshuinSeal>? = null
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 800.dp)) {
+                    GoshuinScreenContent(
+                        uiState = GoshuinUiState.Loaded(
+                            seals = listOf(seal(1L), seal(2L)),
+                            totalCount = 2,
+                        ),
+                        hemisphere = Hemisphere.Northern,
+                        onBack = {},
+                        onSealTap = {},
+                        onShareGoshuin = { shared = it },
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Share Goshuin").performClick()
+        assertEquals(2, shared?.size)
     }
 }

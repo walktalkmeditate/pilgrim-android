@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.goshuin
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +21,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,24 +31,38 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealRenderer
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
+import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiShareIntentFactory
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SealShareBitmapWriter
 
 private val CELL_SEAL_SIZE = 140.dp
 private val CELL_FRAME_SIZE = 148.dp
@@ -81,11 +100,57 @@ fun GoshuinScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
+    val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val isImperial = distanceUnits == UnitSystem.Imperial
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isSharing by remember { mutableStateOf(false) }
+    val chooserTitle = stringResource(R.string.goshuin_share_chooser_title)
+    val noChooserMsg = stringResource(R.string.goshuin_share_no_chooser)
+
     GoshuinScreenContent(
         uiState = uiState,
         hemisphere = hemisphere,
+        isImperial = isImperial,
+        isSharing = isSharing,
         onBack = onBack,
         onSealTap = onSealTap,
+        // iOS `renderShareImage()`: render filtered seals → temp file →
+        // share sheet. Android: 1080×1920 bitmap → FileProvider cache
+        // → ACTION_SEND chooser. Mirrors WalkSummaryScreen's proven
+        // seal-share pipeline (Default render, IO write, chooser).
+        onShareGoshuin = { selected ->
+            if (!isSharing && selected.isNotEmpty()) {
+                isSharing = true
+                val total = (uiState as? GoshuinUiState.Loaded)
+                    ?.totalIncludingArchived ?: selected.size
+                scope.launch {
+                    try {
+                        val bmp = withContext(Dispatchers.Default) {
+                            GoshuinShareRenderer.render(context, selected, total, isImperial)
+                        }
+                        val file = SealShareBitmapWriter.writeToCache(
+                            bmp, "collection", context,
+                        )
+                        val intent = EtegamiShareIntentFactory.buildFromFile(
+                            context, file, chooserTitle,
+                        )
+                        try {
+                            context.startActivity(intent)
+                        } catch (_: android.content.ActivityNotFoundException) {
+                            Toast.makeText(context, noChooserMsg, Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        android.util.Log.w("GoshuinScreen", "goshuin share failed", t)
+                    } finally {
+                        isSharing = false
+                    }
+                }
+            }
+        },
     )
 }
 
@@ -99,9 +164,16 @@ internal fun GoshuinScreenContent(
     hemisphere: Hemisphere,
     onBack: () -> Unit,
     onSealTap: (Long) -> Unit,
+    isImperial: Boolean = false,
+    isSharing: Boolean = false,
+    onShareGoshuin: (List<GoshuinSeal>) -> Unit = {},
 ) {
     val totalCount = (uiState as? GoshuinUiState.Loaded)?.totalCount ?: 0
     val patinaAlpha = patinaAlphaFor(totalCount)
+
+    // iOS `@State activeFilter: WalkFavicon?` — null = "All".
+    // rememberSaveable so a rotation mid-browse keeps the filter.
+    var activeFilter by rememberSaveable { mutableStateOf<WalkFavicon?>(null) }
 
     Box(
         modifier = Modifier
@@ -133,13 +205,139 @@ internal fun GoshuinScreenContent(
                         totalMeditationSeconds = uiState.totalMeditationSeconds,
                     )
                     Spacer(Modifier.height(PilgrimSpacing.small))
+                    GoshuinFilterBar(
+                        activeFilter = activeFilter,
+                        onSelect = { activeFilter = it },
+                    )
+                    // iOS `filteredWalks` — null filter = all seals.
+                    val filtered = if (activeFilter == null) {
+                        uiState.seals
+                    } else {
+                        uiState.seals.filter { it.favicon == activeFilter }
+                    }
                     GoshuinGrid(
-                        seals = uiState.seals,
+                        seals = filtered,
                         hemisphere = hemisphere,
                         onSealTap = onSealTap,
+                        modifier = Modifier.weight(1f),
+                    )
+                    GoshuinShareButton(
+                        visible = filtered.isNotEmpty(),
+                        isSharing = isSharing,
+                        onClick = { onShareGoshuin(filtered) },
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * iOS `GoshuinView.filterBar`: a horizontally-scrolling row of
+ * category chips — "All" plus one per [WalkFavicon]. The active chip
+ * gets a stone/15 rounded background + stone text; inactive chips are
+ * transparent with fog text. iOS animates the swap with
+ * `easeInOut(0.2)`; here the grid recomposition is the visible change.
+ */
+@Composable
+private fun GoshuinFilterBar(
+    activeFilter: WalkFavicon?,
+    onSelect: (WalkFavicon?) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(
+                horizontal = PilgrimSpacing.normal,
+                vertical = PilgrimSpacing.small,
+            ),
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+    ) {
+        GoshuinFilterChip(
+            label = stringResource(R.string.goshuin_filter_all),
+            icon = null,
+            isActive = activeFilter == null,
+            onClick = { onSelect(null) },
+        )
+        WalkFavicon.entries.forEach { fav ->
+            GoshuinFilterChip(
+                label = stringResource(fav.labelRes),
+                icon = fav.icon,
+                isActive = activeFilter == fav,
+                onClick = { onSelect(fav) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun GoshuinFilterChip(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
+    isActive: Boolean,
+    onClick: () -> Unit,
+) {
+    val fg = if (isActive) pilgrimColors.stone else pilgrimColors.fog
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (isActive) {
+                    pilgrimColors.stone.copy(alpha = 0.15f)
+                } else {
+                    Color.Transparent
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = PilgrimSpacing.small, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Text(text = label, style = pilgrimType.caption, color = fg)
+    }
+}
+
+/**
+ * iOS `GoshuinView.shareButton`: a plain full-width stone text button
+ * ("Share Goshuin"). iOS uses `opacity(pages.isEmpty ? 0 : 1)`; here
+ * we omit it entirely when there are no seals (a hidden-but-present
+ * 0-opacity tappable target is worse on Android).
+ */
+@Composable
+private fun GoshuinShareButton(
+    visible: Boolean,
+    isSharing: Boolean,
+    onClick: () -> Unit,
+) {
+    if (!visible) return
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !isSharing, onClick = onClick)
+            .padding(PilgrimSpacing.normal),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (isSharing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = pilgrimColors.stone,
+            )
+        } else {
+            Text(
+                text = stringResource(R.string.goshuin_share_action),
+                style = pilgrimType.button,
+                color = pilgrimColors.stone,
+            )
         }
     }
 }
@@ -277,12 +475,13 @@ private fun GoshuinGrid(
     seals: List<GoshuinSeal>,
     hemisphere: Hemisphere,
     onSealTap: (Long) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         state = gridState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(
             start = PilgrimSpacing.normal,
             end = PilgrimSpacing.normal,
