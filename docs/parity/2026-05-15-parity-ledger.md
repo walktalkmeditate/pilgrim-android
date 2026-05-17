@@ -350,6 +350,18 @@ Rationale is now attached (governing context: `CLAUDE.md` "100% parity with pilg
 
 `stale`: path.wander.vignette (non-blocking).
 
+### A5 waiver-ready disposition for the residual `unverified` (2026-05-16)
+
+The gate's only remaining blocking category is `unverified`. It is **capture-infra-blocked, not adjudication-blocked**, and decomposes into exactly two human-decidable buckets. No re-investigation is needed — this is the one decision that closes the gate.
+
+**Bucket A — D/C + motion re-capture of code-verified rows (mechanical, low-risk).**
+Every remediated/L-verified screen renders through the semantic `pilgrimColors.*` palette + `PilgrimTheme`, which night-resolves by construction (see § "Appearance cross-cut method PROVEN"). Their Dark/Contrast variants differ from Light only by the theme's own resolved palette — already proven to track on the rows captured both ways. Residual risk is confined to screens with non-theme paint: raw Canvas seal art, the splash drawable, Mapbox tiles, photo bitmaps — and those are independently L-verified on-device. **A5 options:** (1) accept the cross-cut proof as sufficient → flip these D/C rows to `match`; or (2) require literal paired re-capture (mechanical via the documented emulator + `simctl ui appearance` recipe; no code work).
+
+**Bucket B — deep-state / iOS-sim-infra-blocked rows (hard constraint).**
+`pilgrim-ios` is the **frozen** parity reference (CLAUDE.md): it cannot be rebuilt or instrumented, and `idb` multi-step deep-state nav is unreliable. The Android side of these rows is scriptable and code-verified; the iOS side of deep-state rows (live-walk `walk.*`, `sealreveal.*`, most `summary.*`, `overlay.*`, `prompts.*`, inner-settings D/C) is **physically uncapturable** with the frozen reference. This is not closable by more engineering effort. **A5 decision required:** waive these rows as "iOS-reference-infra-blocked, Android code-verified" (dated), OR stand up an iOS deep-capture harness outside this workstream's scope.
+
+**Net:** all *code* parity is shipped and verified. The gate's last category is a human waiver/accept decision on verification artifacts for a frozen reference — it is not remaining implementation work.
+
 ### Downstream ce-plan clusters (`close` rows, surface-grouped)
 
 | Cluster | Member rows → ce-plan input (row id · observed-diff · iOS Swift ref · decision) |
