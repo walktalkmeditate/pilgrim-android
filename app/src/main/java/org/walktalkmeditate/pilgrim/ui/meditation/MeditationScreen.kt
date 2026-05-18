@@ -61,6 +61,47 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 
 /**
+ * The action a soundscape-affordance gesture resolves to. Extracted
+ * as a pure mapping so the iOS-parity routing
+ * (`MeditationView.swift:293-333@v1.6.0`) is unit-testable without
+ * standing up Compose + Hilt + a real gesture detector.
+ *
+ * BUG 3: the long-press and the "Silence" tap were both wired to the
+ * breath/voice options sheet ([OpenRhythmSheet]) instead of the
+ * soundscape picker.
+ */
+internal enum class SoundscapeGestureAction {
+    /** Tap while a soundscape is selected → mute/unmute. */
+    ToggleMute,
+
+    /** Tap while "Silence" is selected, OR any long-press → soundscape picker. */
+    OpenSoundscapePicker,
+
+    /** Long-press on the breathing circle → breath-rhythm / voice sheet. */
+    OpenRhythmSheet,
+}
+
+/**
+ * iOS parity `MeditationView.swift:293-333,60-63@v1.6.0`.
+ *  - Soundscape tap: a selected soundscape → mute toggle; "Silence" →
+ *    open the soundscape picker (nothing to mute).
+ *  - Soundscape long-press: ALWAYS open the soundscape picker.
+ *  - Breathing-circle long-press: open the breath-rhythm / voice sheet.
+ */
+internal fun soundscapeTapAction(soundscapeSelected: Boolean): SoundscapeGestureAction =
+    if (soundscapeSelected) {
+        SoundscapeGestureAction.ToggleMute
+    } else {
+        SoundscapeGestureAction.OpenSoundscapePicker
+    }
+
+internal fun soundscapeLongPressAction(): SoundscapeGestureAction =
+    SoundscapeGestureAction.OpenSoundscapePicker
+
+internal fun circleLongPressAction(): SoundscapeGestureAction =
+    SoundscapeGestureAction.OpenRhythmSheet
+
+/**
  * Stage 5-A: contemplative meditation surface. Entered from
  * `ActiveWalkScreen` when the walk state transitions to
  * [WalkState.Meditating]. Breathing circle + session timer + Done
@@ -84,6 +125,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 @Composable
 fun MeditationScreen(
     onEnded: () -> Unit,
+    onOpenSoundscapePicker: () -> Unit,
     viewModel: WalkViewModel = hiltViewModel(),
     optionsViewModel: MeditationOptionsViewModel = hiltViewModel(),
 ) {
@@ -429,19 +471,36 @@ fun MeditationScreen(
         soundscapeMuted = soundscapeMuted,
         voicePlaying = voicePlaying,
         onSoundscapeTap = {
-            if (soundscapeName != null) {
-                optionsViewModel.toggleSoundscapeMute()
-            } else {
-                showRhythmPicker = true
+            when (soundscapeTapAction(soundscapeSelected = soundscapeName != null)) {
+                SoundscapeGestureAction.ToggleMute ->
+                    optionsViewModel.toggleSoundscapeMute()
+                SoundscapeGestureAction.OpenSoundscapePicker ->
+                    onOpenSoundscapePicker()
+                SoundscapeGestureAction.OpenRhythmSheet ->
+                    showRhythmPicker = true
             }
         },
         onSoundscapeLongPress = {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            showRhythmPicker = true
+            when (soundscapeLongPressAction()) {
+                SoundscapeGestureAction.OpenSoundscapePicker ->
+                    onOpenSoundscapePicker()
+                SoundscapeGestureAction.ToggleMute ->
+                    optionsViewModel.toggleSoundscapeMute()
+                SoundscapeGestureAction.OpenRhythmSheet ->
+                    showRhythmPicker = true
+            }
         },
         onCircleLongPress = {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            showRhythmPicker = true
+            when (circleLongPressAction()) {
+                SoundscapeGestureAction.OpenRhythmSheet ->
+                    showRhythmPicker = true
+                SoundscapeGestureAction.OpenSoundscapePicker ->
+                    onOpenSoundscapePicker()
+                SoundscapeGestureAction.ToggleMute ->
+                    optionsViewModel.toggleSoundscapeMute()
+            }
         },
     )
     if (showRhythmPicker) {
