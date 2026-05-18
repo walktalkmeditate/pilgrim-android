@@ -12,6 +12,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
+import org.walktalkmeditate.pilgrim.domain.WalkState
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -24,6 +26,32 @@ class WalkOptionsSheetTest {
         composeRule.setContent {
             WalkOptionsSheet(
                 canSetIntention = true,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+            )
+        }
+        composeRule.onNodeWithText("Set Intention").assertIsDisplayed()
+        composeRule.onNodeWithText("Drop Waypoint").assertDoesNotExist()
+    }
+
+    @Test
+    fun `pre-walk Finished state still renders the Set Intention row (BUG 1)`() {
+        // iOS parity WalkOptionsSheet.swift:46 — after a walk finishes
+        // the @Singleton controller stays Finished until the next
+        // startWalk(). Opening options to set an intention for the NEXT
+        // walk must still show the row. Drive canSetIntention through
+        // the production predicate so the sheet + predicate stay in sync.
+        val finished = WalkState.Finished(
+            WalkAccumulator(walkId = 1L, startedAt = 1_000L),
+            endedAt = 5_000L,
+        )
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = canSetIntentionForState(finished),
                 intention = null,
                 onSetIntention = {},
                 waypointCount = 0,

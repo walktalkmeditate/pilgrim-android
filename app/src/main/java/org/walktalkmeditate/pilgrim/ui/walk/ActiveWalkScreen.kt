@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -108,6 +109,56 @@ internal fun shouldAutoPromptIntention(
     walkState is WalkState.Active &&
     beginWithIntention &&
     intention == null
+
+/**
+ * iOS parity `WalkOptionsSheet.swift:46` — the Set Intention row is
+ * shown when `!isRecording` (= `!isInProgress`), true for the pre-walk
+ * Idle state AND the post-summary Finished state the @Singleton
+ * controller remains in until the next `startWalk()`. The earlier
+ * `is WalkState.Idle` check left the options sheet empty on the common
+ * Done → Wander-again path (state is Finished, not Idle).
+ */
+internal fun canSetIntentionForState(walkState: WalkState): Boolean =
+    !walkState.isInProgress
+
+/**
+ * Whether the `LaunchedEffect(navWalkState::class)` block should
+ * force-dismiss the in-walk sheets (options / waypoint / whisper /
+ * stone / turning card). True only when a walk WAS in progress
+ * (`hasSeenInProgress`) and the state is now NOT an active-walk state —
+ * i.e., the walk is leaving Active/Paused for Finished / Discard /
+ * Meditate. On a steady pre-walk surface (Idle, or the post-summary
+ * Finished the @Singleton stays in) the user can legitimately open the
+ * options sheet, so this must return false there. Mirrors the
+ * onDiscarded / onFinished `hasSeenInProgress` latch.
+ */
+internal fun shouldForceDismissInWalkSheets(
+    walkState: WalkState,
+    hasSeenInProgress: Boolean,
+): Boolean = hasSeenInProgress &&
+    walkState !is WalkState.Active &&
+    walkState !is WalkState.Paused
+
+/**
+ * iOS parity `MainCoordinatorView.cancelWalk()` — Leave does state
+ * cleanup (`discardWalk`) AND direct dismissal (`onDiscarded`),
+ * UNCONDITIONALLY, regardless of the current walk state.
+ *
+ * The `LaunchedEffect` Idle-observer branch is gated on a
+ * `hasSeenInProgress` latch so it only fires the discard-nav on the
+ * in-walk path. On the pre-walk surface (Idle, or the post-summary
+ * Finished the @Singleton controller stays in) the walk was never in
+ * progress, so relying solely on that branch left Leave doing nothing.
+ * Calling `onDiscarded()` here is safe to double-invoke: it resolves to
+ * `popBackStack(PATH, inclusive = false)` which is idempotent.
+ */
+internal fun performLeaveWalk(
+    discardWalk: () -> Unit,
+    onDiscarded: () -> Unit,
+) {
+    discardWalk()
+    onDiscarded()
+}
 
 @Composable
 fun ActiveWalkScreen(
@@ -337,18 +388,25 @@ fun ActiveWalkScreen(
             }
             hasSeenInProgress.value = true
         }
-        if (state !is WalkState.Active && state !is WalkState.Paused) {
+        if (shouldForceDismissInWalkSheets(state, hasSeenInProgress.value)) {
+            // Gate on `hasSeenInProgress` (mirrors the onDiscarded /
+            // onFinished latch below): only force-dismiss the in-walk
+            // sheets when a walk WAS in progress and is now LEAVING that
+            // state (Finish / Discard / Meditate). On a steady pre-walk
+            // surface — Idle, or the post-summary Finished state the
+            // @Singleton controller stays in until the next startWalk()
+            // — the user can legitimately open the options sheet (Set
+            // Intention). Without the latch this branch fired on every
+            // pre-walk composition and nuked the freshly-opened sheet,
+            // making the options sheet appear empty / flicker shut.
+            //
+            // Same rationale as before: the watermark + ritual card are
+            // tied to the active-walk surface. Whisper + stone sheets
+            // follow the same rule — they must NOT survive a walk-ending
+            // transition since their onPlace callbacks fire
+            // viewModel.placeX on a now-Finished walk.
             showOptions = false
             showWaypointMarking = false
-            // Same rationale: the watermark + ritual card are tied to
-            // the active-walk surface. A Meditating / Finished / Idle
-            // transition pulls the user elsewhere; a re-emerging sheet
-            // on return (Stage 4-C launchSingleTop + back-nav pattern)
-            // would surprise. Whisper + stone sheets follow the same
-            // rule — and crucially must NOT survive a walk-ending
-            // transition (Finish / Discard) since their onPlace
-            // callbacks fire viewModel.placeX which would attempt to
-            // place on an Idle/Finished walk.
             showTurningCard = false
             showWhisperSheet = false
             showStoneSheet = false
@@ -539,7 +597,12 @@ fun ActiveWalkScreen(
             LeaveWalkDialog(
                 onConfirm = {
                     showLeaveConfirm = false
-                    viewModel.discardWalk()
+                    // iOS parity `MainCoordinatorView.cancelWalk()` — see
+                    // [performLeaveWalk] kdoc.
+                    performLeaveWalk(
+                        discardWalk = viewModel::discardWalk,
+                        onDiscarded = onDiscarded,
+                    )
                 },
                 onDismiss = { showLeaveConfirm = false },
             )
@@ -559,12 +622,14 @@ fun ActiveWalkScreen(
                 ?: (navWalkState as? WalkState.Paused)?.walk
             WalkOptionsSheet(
                 // Per-state row visibility:
-                //  - Idle: only Set Intention. Waypoints can't be dropped
-                //    before a walk row exists.
+                //  - Pre-walk (Idle OR Finished): only Set Intention.
+                //    Waypoints can't be dropped before a walk row exists.
                 //  - Active|Paused (with GPS fix): only Drop Waypoint.
                 //    Intention is committed at startWalk; not editable
                 //    once a walk is in progress.
-                canSetIntention = navWalkState is WalkState.Idle,
+                // iOS parity `WalkOptionsSheet.swift:46` — see
+                // [canSetIntentionForState] kdoc.
+                canSetIntention = canSetIntentionForState(navWalkState),
                 intention = preWalkIntention,
                 onSetIntention = {
                     showOptions = false
@@ -864,10 +929,17 @@ private fun OverlayCircleButton(
         modifier = Modifier
             .size(36.dp)
             .clip(CircleShape)
-            // Compose has no `.ultraThinMaterial`. parchment-secondary at
-            // ~70% alpha reads as a soft translucent disc against either
-            // light- or dark-mode map tiles.
-            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.7f))
+            // iOS uses `.ultraThinMaterial` — a content-adaptive
+            // translucent frost that does NOT flip with the app
+            // palette. Compose has no equivalent, and the previous
+            // `parchmentSecondary` token is constellation-pinned (flat
+            // indigo #141228 in the constellation appearance), which
+            // turned the disc into an opaque dark blob over the map.
+            // A FIXED low-alpha white reads as frost over the dark
+            // Mapbox tiles in every appearance without being sourced
+            // from any palette-overridden token. The icon tint stays
+            // `pilgrimColors.ink` (iOS-correct — flips lavender).
+            .background(Color.White.copy(alpha = 0.12f))
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
