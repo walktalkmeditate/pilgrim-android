@@ -794,6 +794,19 @@
     <string name="weather_wind">Windy</string>
     <string name="weather_haze">Hazy</string>
 
+    <!-- Manual-QA B2: collapsible weather/celestial vignette pills.
+         Wind descriptor mirrors iOS WeatherService.windDescription
+         verbatim. A11y label/hint mirror iOS
+         WeatherVignetteView / CelestialVignetteView. -->
+    <string name="wind_calm">calm</string>
+    <string name="wind_gentle_breeze">gentle breeze</string>
+    <string name="wind_moderate">moderate wind</string>
+    <string name="wind_strong">strong wind</string>
+    <string name="wind_very_strong">very strong wind</string>
+    <string name="weather_vignette_a11y_label">Weather: %1$s, %2$s</string>
+    <string name="weather_vignette_a11y_hint">Double tap to expand weather details</string>
+    <string name="celestial_vignette_a11y_hint">Double tap to expand celestial details</string>
+
     <!-- Stage 12-D: locale-resolution marker. values/ is the English source;
          values-fr/ overrides for the fr locale to verify the values-XX/
          directory pattern works. iOS is also English-only (Base.lproj +
