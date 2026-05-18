@@ -3,10 +3,14 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,7 +33,9 @@ import kotlinx.coroutines.launch
  * unit-tested; the [SpeechRecognizer] wiring is thin platform glue.
  */
 
-internal const val INTENTION_VOICE_MAX_SECONDS = 30
+private const val INTENTION_VOICE_MAX_SECONDS = 30
+
+private const val FINALIZE_WATCHDOG_MS = 2_000L
 
 /** Port of iOS `formatCountdown` (`IntentionSettingView.swift:337`). */
 internal fun formatIntentionCountdown(secondsRemaining: Int): String =
@@ -93,7 +99,22 @@ class IntentionVoiceController(
 
     private var recognizer: SpeechRecognizer? = null
     private var countdownJob: Job? = null
+    private var watchdogJob: Job? = null
     private var lastPartial: String = ""
+
+    /**
+     * Single terminal latch. The OEM recognition service can race the
+     * countdown / watchdog: a late `onResults` after a tick-to-zero, or
+     * an `onError` after `stopListening`. Only the FIRST finalize path
+     * delivers [onTranscript] + emits Finished; the rest no-op so the
+     * spoken intention can't be delivered twice (or clobbered by a
+     * trailing empty result).
+     */
+    private val finalized = AtomicBoolean(false)
+
+    private val audioManager: AudioManager?
+        get() = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private var focusRequest: AudioFocusRequest? = null
 
     val isAvailable: Boolean
         get() = SpeechRecognizer.isRecognitionAvailable(context)
@@ -111,7 +132,9 @@ class IntentionVoiceController(
             emit(IntentionVoiceEvent.Denied)
             return
         }
+        finalized.set(false)
         lastPartial = ""
+        requestFocus()
         val sr = SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = sr
         sr.setRecognitionListener(listener)
@@ -136,11 +159,25 @@ class IntentionVoiceController(
 
     /** "Done" tap — stop capture, keep whatever was recognized. */
     fun stopAndFinalize() {
+        countdownJob?.cancel()
         recognizer?.stopListening()
+        // Some OEM recognition services never call back after
+        // stopListening() — arm a short watchdog so the mic releases
+        // promptly. Latch-guarded: a real onResults/onError in the
+        // interim still wins and cancels this job.
+        watchdogJob?.cancel()
+        watchdogJob = scope.launch {
+            delay(FINALIZE_WATCHDOG_MS)
+            if (!finalized.get() && _state.value is IntentionVoiceState.Listening) {
+                finalizeWithLastPartial()
+            }
+        }
     }
 
     fun cancel() {
         countdownJob?.cancel()
+        watchdogJob?.cancel()
+        abandonFocus()
         recognizer?.cancel()
         recognizer?.destroy()
         recognizer = null
@@ -149,24 +186,60 @@ class IntentionVoiceController(
 
     fun release() {
         countdownJob?.cancel()
-        recognizer?.destroy()
-        recognizer = null
-    }
-
-    private fun finalizeWithLastPartial() {
-        if (lastPartial.isNotBlank()) onTranscript(cappedIntention(lastPartial, maxChars))
+        watchdogJob?.cancel()
+        abandonFocus()
         recognizer?.cancel()
         recognizer?.destroy()
         recognizer = null
     }
 
-    private fun deliver(text: String?) {
+    private fun finalizeWithLastPartial() {
+        if (!finalized.compareAndSet(false, true)) return
         countdownJob?.cancel()
-        val clean = text?.trim().orEmpty()
-        if (clean.isNotBlank()) onTranscript(cappedIntention(clean, maxChars))
+        watchdogJob?.cancel()
+        if (lastPartial.isNotBlank()) onTranscript(cappedIntention(lastPartial, maxChars))
+        abandonFocus()
+        recognizer?.cancel()
         recognizer?.destroy()
         recognizer = null
         emit(IntentionVoiceEvent.Finished)
+    }
+
+    private fun deliver(text: String?) {
+        if (!finalized.compareAndSet(false, true)) return
+        countdownJob?.cancel()
+        watchdogJob?.cancel()
+        val clean = text?.trim().orEmpty()
+        // iOS always transcribes the recorded audio; an empty
+        // endpointed onResults must not silently lose a spoken
+        // intention when partials did arrive — fall back to them.
+        val resolved = clean.ifBlank { lastPartial.trim() }
+        if (resolved.isNotBlank()) onTranscript(cappedIntention(resolved, maxChars))
+        abandonFocus()
+        recognizer?.destroy()
+        recognizer = null
+        emit(IntentionVoiceEvent.Finished)
+    }
+
+    private fun requestFocus() {
+        val am = audioManager ?: return
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(attrs)
+            .setWillPauseWhenDucked(false)
+            .setAcceptsDelayedFocusGain(false)
+            .build()
+        focusRequest = request
+        am.requestAudioFocus(request)
+    }
+
+    private fun abandonFocus() {
+        val req = focusRequest ?: return
+        focusRequest = null
+        audioManager?.abandonAudioFocusRequest(req)
     }
 
     private val listener = object : RecognitionListener {
@@ -179,7 +252,16 @@ class IntentionVoiceController(
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onError(error: Int) {
+            // First terminal path wins (a late onResults after an error
+            // must not double-deliver). Any non-permission error —
+            // including ERROR_RECOGNIZER_BUSY — deterministically tears
+            // down the recognizer and returns to Idle: no stuck
+            // Listening.
+            if (!finalized.compareAndSet(false, true)) return
             countdownJob?.cancel()
+            watchdogJob?.cancel()
+            abandonFocus()
+            recognizer?.cancel()
             recognizer?.destroy()
             recognizer = null
             val denied = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS

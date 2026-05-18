@@ -41,6 +41,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -155,7 +160,7 @@ internal fun IntentionSheetContent(
     LaunchedEffect(voiceTranscript) {
         val t = voiceTranscript
         if (t != null) {
-            text = t.take(WalkController.MAX_INTENTION_CHARS)
+            text = t
             onVoiceTranscriptConsumed()
         }
     }
@@ -201,14 +206,24 @@ internal fun IntentionSheetContent(
                     text = formatIntentionCountdown(vs.secondsRemaining),
                     style = pilgrimType.caption,
                     color = pilgrimColors.fog.copy(alpha = 0.5f),
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
-                AudioWaveformView(level = vs.level, modifier = Modifier.weight(1f))
+                AudioWaveformView(
+                    level = vs.level,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clearAndSetSemantics {},
+                )
                 TextButton(onClick = onStopVoice) {
                     Text(stringResource(R.string.walk_options_intention_voice_done))
                 }
             } else {
                 val denied = vs is IntentionVoiceState.MicDenied
-                TextButton(onClick = onStartVoice) {
+                val voiceA11y = stringResource(R.string.walk_options_intention_voice_a11y)
+                TextButton(
+                    onClick = onStartVoice,
+                    modifier = Modifier.semantics { contentDescription = voiceA11y },
+                ) {
                     Text(
                         stringResource(
                             if (denied) {
