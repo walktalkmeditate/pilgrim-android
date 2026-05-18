@@ -71,6 +71,33 @@ fun interface BellFileResolver {
     fun resolve(bellId: String): File?
 }
 
+/**
+ * Resolves the duration (ms) of the *meditation-start* bell so the
+ * soundscape orchestrator can hold its ambient loop until the bell's
+ * attack + tail finish ringing, instead of stomping it after a fixed
+ * 800ms.
+ *
+ * iOS parity `SoundManagement.swift:68-78` — `onMeditationStart()`
+ * computes `max(0.5, bellPlayer.currentDuration)` before starting the
+ * soundscape. Bells are user-downloadable, so a fixed value is wrong:
+ * a longer downloaded bell would be cut short by the soundscape.
+ *
+ * The default binding (see `AudioModule.provideBellDurationResolver`)
+ * builds + prepares a short-lived [MediaPlayer] purely to read
+ * `getDuration()`, then releases it. On any failure (resource missing,
+ * codec error, no duration) it falls back to [BUNDLED_BELL_MS] — the
+ * bundled `R.raw.bell` is ~3.0s.
+ */
+fun interface BellDurationResolver {
+    /** Duration in ms of the currently-selected meditation-start bell. */
+    fun meditationStartBellDurationMs(): Long
+
+    companion object {
+        /** Bundled `R.raw.bell` asset length (~3.0s). */
+        const val BUNDLED_BELL_MS = 3_000L
+    }
+}
+
 @Singleton
 class BellPlayer @Inject constructor(
     @ApplicationContext private val context: Context,

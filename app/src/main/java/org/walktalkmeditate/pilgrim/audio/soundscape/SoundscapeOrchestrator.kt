@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.BellDurationResolver
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
@@ -31,11 +32,16 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
  * on entry and a `stop()` on exit. The player's `REPEAT_MODE_ONE`
  * keeps the loop alive for as long as Meditating is the state.
  *
- * **Start delay.** On Meditating entry we wait ~800ms before calling
- * `play()`. The meditation start bell (Stage 5-B's
- * `MeditationBellObserver`) fires synchronously on the same transition;
- * starting the ambient loop in the same frame would step on the
- * bell's attack. An 800ms head start gives the bell room to breathe.
+ * **Start delay.** On Meditating entry we hold the ambient loop until
+ * the meditation-start bell (Stage 5-B's `MeditationBellObserver`,
+ * which fires synchronously on the same transition) has finished
+ * ringing. iOS parity `SoundManagement.swift:68-78` waits
+ * `max(0.5s, bellDuration)` — a fixed 800ms was wrong because bells
+ * are user-downloadable and a longer bell would be cut short by the
+ * soundscape. The duration is resolved via [BellDurationResolver]
+ * (default impl prepares the selected bell to read its real length;
+ * falls back to ~3.0s for the bundled bell). The delay is
+ * `max(BELL_DELAY_FLOOR_MS, resolvedBellDurationMs)`.
  *
  * **Cold-start / restore paths.** Unlike the bell observer — which
  * suppresses the bell on `Idle → Meditating` restore paths to avoid
@@ -71,6 +77,7 @@ class SoundscapeOrchestrator @Inject constructor(
     private val fileStore: SoundscapeFileStore,
     private val player: SoundscapePlayer,
     private val soundsPreferences: SoundsPreferencesRepository,
+    private val bellDurationResolver: BellDurationResolver,
     @SoundscapePlaybackScope private val scope: CoroutineScope,
 ) {
     fun start() {
@@ -187,7 +194,12 @@ class SoundscapeOrchestrator @Inject constructor(
     private suspend fun runSessionLoop() {
         var retryBudget = 1
         try {
-            delay(START_DELAY_MS)
+            // iOS parity `SoundManagement.swift:68-78` —
+            // max(0.5s, actualBellDuration). Bells are user-downloadable
+            // so resolve the live duration; never start the ambient loop
+            // before the meditation-start bell has finished ringing.
+            val bellMs = bellDurationResolver.meditationStartBellDurationMs()
+            delay(maxOf(BELL_DELAY_FLOOR_MS, bellMs))
             if (!attemptPlay()) return
             // Suspend on `player.state` for the rest of the session.
             // `collect` runs until `playJob.cancel()` fires (from the
@@ -269,7 +281,14 @@ class SoundscapeOrchestrator @Inject constructor(
 
     private companion object {
         const val TAG = "SoundscapeOrch"
-        const val START_DELAY_MS = 800L
+
+        /**
+         * iOS parity `SoundManagement.swift:69` — `max(0.5, ...)`. Floor
+         * the bell-aware delay so a bell shorter than 500ms (or a
+         * "None" selection that resolves to a tiny value) still leaves
+         * a beat of silence before the ambient loop starts.
+         */
+        const val BELL_DELAY_FLOOR_MS = 500L
         const val RETRY_DELAY_MS = 250L
     }
 }
