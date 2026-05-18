@@ -25,6 +25,17 @@ interface SoundscapePlayer {
     fun stop()
 
     /**
+     * Stop playback for a mid-meditation soundscape swap WITHOUT
+     * abandoning audio focus. iOS parity SoundscapePlayer.swift:30-33
+     * — a crossfade keeps the audio session active; only a true exit
+     * (`stop`) deactivates it. Abandoning focus on every swap would
+     * preempt the voice guide's `GAIN_TRANSIENT_MAY_DUCK` request and
+     * silence the guide (BUG A2). The next [play] reuses the held
+     * focus.
+     */
+    fun stopForSwap()
+
+    /**
      * Set the playback volume in [0.0, 1.0]. Applies live without
      * restarting playback. Implementations clamp out-of-range values.
      * Safe to call from any thread holding a reference; safe to call

@@ -148,7 +148,12 @@ class SoundscapeOrchestrator @Inject constructor(
                         if (needsSwap) {
                             playJob?.cancel()
                             playJob = null
-                            safeStopPlayer()
+                            // iOS parity SoundscapePlayer.swift:30-33 — a
+                            // mid-meditation swap crossfades to the new
+                            // asset WITHOUT re-arming audio focus. Use the
+                            // focus-preserving swap stop so the voice
+                            // guide's focus isn't preempted (BUG A2).
+                            safeStopPlayerForSwap()
                         }
                         // `isActive != true` catches (1) first-ever-null,
                         // (2) cancelled, and (3) completed-but-not-null.
@@ -276,6 +281,21 @@ class SoundscapeOrchestrator @Inject constructor(
         val asset = manifestService.asset(id) ?: return null
         if (asset.type != AudioAssetType.SOUNDSCAPE) return null
         return if (fileStore.isAvailable(asset)) asset else null
+    }
+
+    /**
+     * Swap-path stop: keeps audio focus held so the in-flight voice
+     * guide isn't preempted. iOS parity SoundscapePlayer.swift:30-33
+     * (crossfade does not deactivate the audio session). BUG A2.
+     */
+    private fun safeStopPlayerForSwap() {
+        try {
+            player.stopForSwap()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "player.stopForSwap failed", t)
+        }
     }
 
     private fun safeStopPlayer() {

@@ -641,10 +641,15 @@ class SoundscapeOrchestratorTest {
         // User swaps soundscape selection mid-session.
         selectedAssetId.value = "forest"
         runCurrent()
-        // Old job cancelled + player stopped.
+        // Old job cancelled + player stopped via the focus-preserving
+        // swap stop (BUG A2 — keeps the voice guide's focus alive).
         assertTrue(
-            "expected stop on swap, got stopCount=${capturingPlayer.stopCount}",
-            capturingPlayer.stopCount >= 1,
+            "expected stopForSwap on swap, got stopForSwapCount=${capturingPlayer.stopForSwapCount}",
+            capturingPlayer.stopForSwapCount >= 1,
+        )
+        assertEquals(
+            "swap must not call the focus-abandoning stop()",
+            0, capturingPlayer.stopCount,
         )
         // New job plays the new file immediately — a swap is a
         // crossfade with no bell-duration start delay (BUG A1).
@@ -708,6 +713,55 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `mid-meditation swap stops via stopForSwap (keeps focus) not stop (BUG A2)`() = runTest {
+        // iOS parity SoundscapePlayer.swift:30-33 — a crossfade keeps
+        // the audio session active; only a true exit deactivates it.
+        // The swap path must call stopForSwap() (focus-preserving) so
+        // the in-flight voice guide isn't preempted. A true exit
+        // (Meditating → Active) must still call stop() (focus-abandoning).
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        // Swap mid-meditation: focus-preserving stop only.
+        selectedAssetId.value = "forest"
+        runCurrent()
+        assertEquals(
+            "swap must call stopForSwap exactly once",
+            1, capturingPlayer.stopForSwapCount,
+        )
+        assertEquals(
+            "swap must NOT call the focus-abandoning stop() — that " +
+                "preempts the voice guide (got stopCount=${capturingPlayer.stopCount})",
+            0, capturingPlayer.stopCount,
+        )
+
+        // True exit (Meditating → Active) must abandon focus via stop().
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        assertTrue(
+            "exit must call the focus-abandoning stop(), got ${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        s.cancel()
+    }
+
     @Test fun `flipping soundscape volume mid-session updates player without restarting`() = runTest {
         val a = asset("rain")
         seedManifest(listOf(a))
@@ -756,6 +810,7 @@ class SoundscapeOrchestratorTest {
         override val state: StateFlow<SoundscapePlayer.State> = _state.asStateFlow()
         private val played = CopyOnWriteArrayList<File>()
         @Volatile var stopCount: Int = 0
+        @Volatile var stopForSwapCount: Int = 0
         @Volatile var lastVolume: Float = Float.NaN
         @Volatile var setVolumeCount: Int = 0
         val playCount: Int get() = played.size
@@ -768,6 +823,11 @@ class SoundscapeOrchestratorTest {
 
         override fun stop() {
             stopCount += 1
+            _state.value = SoundscapePlayer.State.Idle
+        }
+
+        override fun stopForSwap() {
+            stopForSwapCount += 1
             _state.value = SoundscapePlayer.State.Idle
         }
 
