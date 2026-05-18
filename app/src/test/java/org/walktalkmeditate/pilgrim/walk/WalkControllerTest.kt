@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import app.cash.turbine.test
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -118,6 +119,58 @@ class WalkControllerTest {
         val persisted = repository.getWalk(walk.id)
         assertEquals(5_000L, persisted?.endTimestamp)
         assertTrue(controller.state.value is WalkState.Finished)
+    }
+
+    @Test
+    fun `finishWalk from in-progress emits a WalkEnd bell trigger`() = runTest {
+        controller.startWalk()
+        clock.advanceTo(5_000L)
+        controller.bellTriggers.test {
+            controller.finishWalk()
+            assertEquals(BellTrigger.WalkEnd, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `discardWalk from in-progress emits a WalkEnd bell trigger (BUG B4)`() = runTest {
+        // iOS parity ActiveWalkViewModel.swift:243 — cancel() rings the
+        // same walk-end bell as the finish path via
+        // soundManagement.onWalkEnd().
+        controller.startWalk()
+        clock.advanceTo(5_000L)
+        controller.bellTriggers.test {
+            controller.discardWalk()
+            assertEquals(BellTrigger.WalkEnd, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(
+            "discard must leave the controller Idle",
+            controller.state.value is WalkState.Idle,
+        )
+    }
+
+    @Test
+    fun `discardWalk from Idle does NOT emit a bell trigger (BUG B4 guard)`() = runTest {
+        // The pre-walk "Leave" path: discard is a no-op from Idle, so
+        // it must NOT ring a stray walk-end bell.
+        controller.bellTriggers.test {
+            controller.discardWalk()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `discardWalk from Finished does NOT emit a bell trigger (BUG B4 guard)`() = runTest {
+        controller.startWalk()
+        clock.advanceTo(2_000L)
+        controller.finishWalk()
+        controller.bellTriggers.test {
+            controller.discardWalk()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     @Test
