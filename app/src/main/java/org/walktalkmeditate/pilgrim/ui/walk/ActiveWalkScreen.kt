@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -795,31 +796,6 @@ fun ActiveWalkScreen(
                 onDismiss = { showTurningCard = false },
             )
         }
-        // iOS parity `ActiveWalkView.swift:461-473` — ambient live pace
-        // sparkline, reserved 24dp slot just above the minimized stats
-        // sheet, shown only once enough moving samples exist (>10
-        // positive), opacity-faded, hidden from accessibility (purely
-        // decorative trend).
-        val hasEnoughPaceSamples = remember(paceHistory) {
-            paceHistory.count { it > 0.0 } > 10
-        }
-        AnimatedVisibility(
-            visible = sheetState == SheetState.Minimized && hasEnoughPaceSamples,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs)
-                .clearAndSetSemantics {},
-        ) {
-            LivePaceSparkline(
-                values = paceHistory,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PilgrimSpacing.big)
-                    .height(24.dp),
-            )
-        }
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
@@ -859,6 +835,16 @@ fun ActiveWalkScreen(
             onDismissError = viewModel::dismissRecorderError,
             onFinish = viewModel::finishWalk,
             peekHintTrigger = peekHintTrigger.value,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+        // iOS parity `ActiveWalkView.swift:120-146` — the ambient
+        // overlay (sparkline) is positioned ABOVE the minimized sheet.
+        // Declared AFTER WalkStatsSheet so it paints on top of the
+        // minimized sheet chrome (z-order: later sibling wins). The
+        // bottom padding clears the minimized sheet's height.
+        AmbientPaceSparkline(
+            paceHistory = paceHistory,
+            sheetState = sheetState,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         // iOS parity `ProximityNotificationView.swift@db4196e` — placement
@@ -1070,6 +1056,48 @@ private fun TurningRitualSheet(
                 horizontal = PilgrimSpacing.normal,
                 vertical = PilgrimSpacing.big,
             ),
+        )
+    }
+}
+
+internal const val AMBIENT_SPARKLINE_TAG = "ambient-pace-sparkline"
+
+/**
+ * iOS parity `ActiveWalkView.swift:461-473@v1.6.0` — ambient live
+ * pace sparkline. Reserved slot just above the minimized stats
+ * sheet, shown only once enough moving samples exist (>10 positive),
+ * opacity-faded, hidden from accessibility (purely decorative trend).
+ *
+ * Rendered as a LATER sibling than [WalkStatsSheet] in the screen's
+ * BottomCenter Box so it paints ABOVE the minimized sheet chrome
+ * (manual-QA B2 batch fix: it was previously declared first and the
+ * sheet occluded it). The bottom padding clears the ~70dp minimized
+ * sheet.
+ */
+@Composable
+internal fun AmbientPaceSparkline(
+    paceHistory: List<Double>,
+    sheetState: SheetState,
+    modifier: Modifier = Modifier,
+) {
+    val hasEnoughPaceSamples = remember(paceHistory) {
+        paceHistory.count { it > 0.0 } > 10
+    }
+    AnimatedVisibility(
+        visible = sheetState == SheetState.Minimized && hasEnoughPaceSamples,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+            .padding(bottom = SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs)
+            .clearAndSetSemantics {},
+    ) {
+        LivePaceSparkline(
+            values = paceHistory,
+            modifier = Modifier
+                .testTag(AMBIENT_SPARKLINE_TAG)
+                .fillMaxWidth()
+                .padding(horizontal = PilgrimSpacing.big)
+                .height(24.dp),
         )
     }
 }
