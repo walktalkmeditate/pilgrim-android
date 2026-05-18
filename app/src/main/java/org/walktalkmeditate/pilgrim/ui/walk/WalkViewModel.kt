@@ -115,6 +115,8 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.cairn.StonePlayer,
     private val intentionHistory:
         org.walktalkmeditate.pilgrim.data.intention.IntentionHistoryRepository,
+    private val voiceGuidePauseController:
+        org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePauseController,
 ) : ViewModel() {
 
     /**
@@ -388,6 +390,37 @@ class WalkViewModel @Inject constructor(
      * always hot) bypasses the stale-cache trap.
      */
     val walkState: StateFlow<WalkState> = controller.state
+
+    /**
+     * iOS parity `ActiveWalkViewModel.voiceGuidePackName` /
+     * `voiceGuideManagement.isPaused` (`ActiveWalkView.swift:433-443`).
+     * Direct passthrough of the @Singleton orchestrator's hot
+     * `MutableStateFlow.asStateFlow()` flows — no `WhileSubscribed`
+     * re-wrapping (Stage 5-G stale-cache trap: a re-wrapped flow that
+     * loses subscribers during a long composition pause would freeze
+     * the indicator at a stale value). [voiceGuidePackName] is non-null
+     * only while a guide scheduler is running, gating the in-walk
+     * play/pause control's visibility. [isVoiceGuidePaused] drives the
+     * play-vs-pause icon.
+     */
+    val voiceGuidePackName: StateFlow<String?> = voiceGuidePauseController.activePackName
+    val isVoiceGuidePaused: StateFlow<Boolean> = voiceGuidePauseController.isPaused
+
+    /**
+     * Toggle the in-walk voice guide between paused and resumed. iOS
+     * parity `ActiveWalkView.swift:436-441` — the bottom-left audio
+     * indicator flips `voiceGuideManagement.pauseGuide()` /
+     * `resumeGuide()`. Non-suspend: the orchestrator's pause/resume
+     * are synchronous flag flips (+ a player stop on pause), safe from
+     * the Compose click handler.
+     */
+    fun toggleVoiceGuidePause() {
+        if (voiceGuidePauseController.isPaused.value) {
+            voiceGuidePauseController.resume()
+        } else {
+            voiceGuidePauseController.pause()
+        }
+    }
 
     /**
      * Live polyline for the Active Walk map. Observes Room's route

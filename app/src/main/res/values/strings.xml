@@ -807,6 +807,11 @@
     <string name="weather_vignette_a11y_hint">Double tap to expand weather details</string>
     <string name="celestial_vignette_a11y_hint">Double tap to expand celestial details</string>
 
+    <!-- Manual-QA B3: in-walk voice-guide play/pause control.
+         iOS ActiveWalkView.swift:433-443 (play.circle / pause.circle). -->
+    <string name="voice_guide_pause_a11y">Pause voice guide</string>
+    <string name="voice_guide_resume_a11y">Resume voice guide</string>
+
     <!-- Stage 12-D: locale-resolution marker. values/ is the English source;
          values-fr/ overrides for the fr locale to verify the values-XX/
          directory pattern works. iOS is also English-only (Base.lproj +
