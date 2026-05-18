@@ -218,7 +218,6 @@ internal fun IntentionSheetContent(
                     Text(stringResource(R.string.walk_options_intention_voice_done))
                 }
             } else {
-                val denied = vs is IntentionVoiceState.MicDenied
                 val voiceA11y = stringResource(R.string.walk_options_intention_voice_a11y)
                 TextButton(
                     onClick = onStartVoice,
@@ -226,10 +225,14 @@ internal fun IntentionSheetContent(
                 ) {
                     Text(
                         stringResource(
-                            if (denied) {
-                                R.string.walk_options_intention_voice_denied
-                            } else {
-                                R.string.walk_options_intention_voice
+                            when (vs) {
+                                is IntentionVoiceState.MicDenied ->
+                                    R.string.walk_options_intention_voice_denied
+                                // A transient/busy recognizer error —
+                                // tapping retries (onStartVoice).
+                                is IntentionVoiceState.TransientError ->
+                                    R.string.walk_options_intention_voice_retry
+                                else -> R.string.walk_options_intention_voice
                             },
                         ),
                     )

@@ -49,6 +49,7 @@ sealed interface IntentionVoiceState {
     data object Idle : IntentionVoiceState
     data class Listening(val level: Float, val secondsRemaining: Int) : IntentionVoiceState
     data object MicDenied : IntentionVoiceState
+    data object TransientError : IntentionVoiceState
 }
 
 internal sealed interface IntentionVoiceEvent {
@@ -56,13 +57,15 @@ internal sealed interface IntentionVoiceEvent {
     data class Rms(val level: Float) : IntentionVoiceEvent
     data object Tick : IntentionVoiceEvent
     data object Denied : IntentionVoiceEvent
+    data object TransientError : IntentionVoiceEvent
     data object Finished : IntentionVoiceEvent
 }
 
 /**
- * Pure transition. Started → 30 s listening; Rms updates the clamped
- * level; Tick decrements the countdown and ends at 0; Denied/Finished
- * return to Idle.
+ * Pure transition. Started → 30 s listening (a retry from any terminal
+ * state, including TransientError); Rms updates the clamped level; Tick
+ * decrements the countdown and ends at 0; Denied → MicDenied;
+ * TransientError → a recoverable error label; Finished → Idle.
  */
 internal fun reduceIntentionVoice(
     state: IntentionVoiceState,
@@ -70,6 +73,7 @@ internal fun reduceIntentionVoice(
 ): IntentionVoiceState = when (event) {
     IntentionVoiceEvent.Started -> IntentionVoiceState.Listening(0f, INTENTION_VOICE_MAX_SECONDS)
     IntentionVoiceEvent.Denied -> IntentionVoiceState.MicDenied
+    IntentionVoiceEvent.TransientError -> IntentionVoiceState.TransientError
     IntentionVoiceEvent.Finished -> IntentionVoiceState.Idle
     is IntentionVoiceEvent.Rms ->
         (state as? IntentionVoiceState.Listening)
@@ -255,8 +259,9 @@ class IntentionVoiceController(
             // First terminal path wins (a late onResults after an error
             // must not double-deliver). Any non-permission error —
             // including ERROR_RECOGNIZER_BUSY — deterministically tears
-            // down the recognizer and returns to Idle: no stuck
-            // Listening.
+            // down the recognizer and surfaces a recoverable "Try
+            // again" label (not a silent return to Idle): no stuck
+            // Listening, but the user sees that nothing was captured.
             if (!finalized.compareAndSet(false, true)) return
             countdownJob?.cancel()
             watchdogJob?.cancel()
@@ -265,7 +270,7 @@ class IntentionVoiceController(
             recognizer?.destroy()
             recognizer = null
             val denied = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
-            emit(if (denied) IntentionVoiceEvent.Denied else IntentionVoiceEvent.Finished)
+            emit(if (denied) IntentionVoiceEvent.Denied else IntentionVoiceEvent.TransientError)
         }
         override fun onResults(results: Bundle?) {
             deliver(

@@ -10,10 +10,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -24,6 +27,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
@@ -93,12 +100,39 @@ fun BreathTransitionScreen(onComplete: () -> Unit) {
     val breathMs = plan.breathMs.toInt()
     val currentOnComplete by rememberUpdatedState(onComplete)
     val view = LocalView.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val parchment = pilgrimColors.parchment
     val a11yLabel = stringResource(R.string.breath_transition_a11y)
 
     // Absorb back during the beat — iOS SetupCoordinator presents this
     // modally with no dismiss; a stray back press must not skip it.
     BackHandler {}
+
+    // Completion must fire exactly once, and not be lost if the timeline
+    // ends while the app is backgrounded (below STARTED). A backgrounded
+    // finish parks in pendingComplete and is replayed on ON_RESUME; the
+    // AtomicBoolean keeps it single-shot across both paths.
+    val done = remember { AtomicBoolean(false) }
+    var pendingComplete by remember { mutableStateOf(false) }
+    val finish = {
+        if (!done.get()) {
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                if (done.compareAndSet(false, true)) currentOnComplete()
+            } else {
+                pendingComplete = true
+            }
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && pendingComplete && !done.get()) {
+                finish()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val logoAlpha = remember { Animatable(if (reduceMotion) 1f else 0f) }
     val logoScale = remember { Animatable(if (reduceMotion) 1f else 0.9f) }
@@ -107,7 +141,7 @@ fun BreathTransitionScreen(onComplete: () -> Unit) {
     LaunchedEffect(Unit) {
         if (plan.reduceMotion) {
             delay(plan.completeAtMs)
-            currentOnComplete()
+            finish()
             return@LaunchedEffect
         }
         launch { logoAlpha.animateTo(1f, tween(FADE_IN_MS, easing = EaseInOut)) }
@@ -122,7 +156,7 @@ fun BreathTransitionScreen(onComplete: () -> Unit) {
         launch { logoAlpha.animateTo(0f, tween(breathMs, easing = EaseInOut)) }
         launch { warmthAlpha.animateTo(0f, tween(breathMs, easing = EaseInOut)) }
         delay(plan.completeAtMs - plan.exhaleStartMs)
-        currentOnComplete()
+        finish()
     }
 
     Box(

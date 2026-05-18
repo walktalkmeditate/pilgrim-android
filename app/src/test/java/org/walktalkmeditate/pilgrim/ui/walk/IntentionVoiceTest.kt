@@ -82,4 +82,30 @@ class IntentionVoiceTest {
             ),
         )
     }
+
+    @Test
+    fun `transient error moves to the recoverable error state from any state`() {
+        assertEquals(
+            IntentionVoiceState.TransientError,
+            reduceIntentionVoice(
+                IntentionVoiceState.Listening(0f, 10),
+                IntentionVoiceEvent.TransientError,
+            ),
+        )
+        assertEquals(
+            IntentionVoiceState.TransientError,
+            reduceIntentionVoice(IntentionVoiceState.Idle, IntentionVoiceEvent.TransientError),
+        )
+    }
+
+    @Test
+    fun `started from a transient error retries into listening`() {
+        assertEquals(
+            IntentionVoiceState.Listening(0f, 30),
+            reduceIntentionVoice(
+                IntentionVoiceState.TransientError,
+                IntentionVoiceEvent.Started,
+            ),
+        )
+    }
 }

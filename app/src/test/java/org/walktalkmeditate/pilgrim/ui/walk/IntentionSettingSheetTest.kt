@@ -185,6 +185,22 @@ class IntentionSettingSheetTest {
     }
 
     @Test
+    fun `transient-error state surfaces the retry label and tapping it restarts voice`() {
+        var started = 0
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null, recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                voiceState = IntentionVoiceState.TransientError,
+                onStartVoice = { started++ },
+            )
+        }
+        composeRule.onNodeWithText("Try again").assertIsDisplayed()
+        composeRule.onNodeWithText("Try again").performClick()
+        assertEquals(1, started)
+    }
+
+    @Test
     fun `a finished transcript fills the field updates the counter and is consumed once`() {
         var consumed = 0
         composeRule.setContent {

@@ -212,7 +212,7 @@ class IntentionVoiceControllerTest {
     }
 
     @Test
-    fun `non-permission error tears down to Idle with no stuck Listening`() = runTest {
+    fun `non-permission error surfaces TransientError and destroys the recognizer`() = runTest {
         val c = controller(this)
         c.start()
         runCurrent()
@@ -222,10 +222,11 @@ class IntentionVoiceControllerTest {
         shadowOf(sr).triggerOnError(SpeechRecognizer.ERROR_RECOGNIZER_BUSY)
         runCurrent()
 
-        assertEquals(IntentionVoiceState.Idle, c.state.value)
+        assertEquals(IntentionVoiceState.TransientError, c.state.value)
         assertTrue(shadowOf(sr).isDestroyed)
 
-        // A trailing onResults after the error must not deliver.
+        // A trailing onResults after the error must not deliver
+        // (latch-safe — the error path already closed the latch).
         var delivered = false
         c.onTranscript = { delivered = true }
         shadowOf(sr).triggerOnResults(resultsBundle("ignored"))
