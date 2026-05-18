@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.onboarding
 
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -19,9 +20,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.settings.about.PilgrimLogo
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimMotion
@@ -38,6 +43,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
  */
 internal data class BreathTransitionPlan(
     val reduceMotion: Boolean,
+    val breathMs: Long,
     val inhaleStartMs: Long,
     val hapticAtMs: Long,
     val exhaleStartMs: Long,
@@ -51,6 +57,7 @@ internal fun breathTransitionPlan(
     if (reduceMotion) {
         return BreathTransitionPlan(
             reduceMotion = true,
+            breathMs = breathMs,
             inhaleStartMs = 0L,
             hapticAtMs = 0L,
             exhaleStartMs = 0L,
@@ -61,6 +68,7 @@ internal fun breathTransitionPlan(
     val exhaleStart = inhaleStart + breathMs + EXHALE_GAP_MS
     return BreathTransitionPlan(
         reduceMotion = false,
+        breathMs = breathMs,
         inhaleStartMs = inhaleStart,
         hapticAtMs = inhaleStart + breathMs,
         exhaleStartMs = exhaleStart,
@@ -82,10 +90,15 @@ private const val FADE_IN_MS = 1_000
 fun BreathTransitionScreen(onComplete: () -> Unit) {
     val reduceMotion = LocalReduceMotion.current
     val plan = remember(reduceMotion) { breathTransitionPlan(reduceMotion) }
-    val breathMs = PilgrimMotion.BREATH_MS
+    val breathMs = plan.breathMs.toInt()
     val currentOnComplete by rememberUpdatedState(onComplete)
     val view = LocalView.current
     val parchment = pilgrimColors.parchment
+    val a11yLabel = stringResource(R.string.breath_transition_a11y)
+
+    // Absorb back during the beat — iOS SetupCoordinator presents this
+    // modally with no dismiss; a stray back press must not skip it.
+    BackHandler {}
 
     val logoAlpha = remember { Animatable(if (reduceMotion) 1f else 0f) }
     val logoScale = remember { Animatable(if (reduceMotion) 1f else 0.9f) }
@@ -115,6 +128,7 @@ fun BreathTransitionScreen(onComplete: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .semantics { contentDescription = a11yLabel }
             .background(parchment)
             .drawBehind {
                 drawRect(Color.Yellow.copy(alpha = warmthAlpha.value))

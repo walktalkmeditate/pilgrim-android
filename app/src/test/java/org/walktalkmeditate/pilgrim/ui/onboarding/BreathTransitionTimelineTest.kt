@@ -27,6 +27,7 @@ class BreathTransitionTimelineTest {
     @Test
     fun `full sequence keyframes at the iOS 1_2s breath cadence`() {
         val p = breathTransitionPlan(reduceMotion = false, breathMs = 1_200L)
+        assertEquals(1_200L, p.breathMs)
         assertEquals(1_200L, p.inhaleStartMs)
         assertEquals(2_400L, p.hapticAtMs)   // inhaleStart + breath
         assertEquals(2_700L, p.exhaleStartMs) // inhaleStart + breath + 300
@@ -36,9 +37,15 @@ class BreathTransitionTimelineTest {
     @Test
     fun `keyframes scale with the breath duration`() {
         val p = breathTransitionPlan(reduceMotion = false, breathMs = 1_000L)
+        assertEquals(1_000L, p.breathMs)
         assertEquals(1_200L, p.inhaleStartMs) // inhaleStart is fixed (iOS 1.2s)
         assertEquals(2_200L, p.hapticAtMs)
         assertEquals(2_500L, p.exhaleStartMs)
         assertEquals(3_500L, p.completeAtMs)
+    }
+
+    @Test
+    fun `plan carries the input breath duration even in reduce motion`() {
+        assertEquals(1_200L, breathTransitionPlan(reduceMotion = true, breathMs = 1_200L).breathMs)
     }
 }
