@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 import androidx.compose.runtime.Immutable
 import kotlin.math.max
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.ui.walk.PACE_SPEED_THRESHOLD_MPS
 
 @Immutable
 internal data class PaceSparklinePoint(
@@ -28,7 +29,7 @@ internal fun computePaceSparklinePoints(
     walkEndMs: Long,
 ): List<PaceSparklinePoint> {
     val filtered = samples
-        .filter { (it.speedMetersPerSecond ?: 0f) > SPEED_THRESHOLD_MPS }
+        .filter { (it.speedMetersPerSecond ?: 0f) > PACE_SPEED_THRESHOLD_MPS }
         .sortedBy { it.timestamp }
     if (filtered.size < 3) return emptyList()
 
@@ -59,6 +60,5 @@ internal fun computePaceSparklinePoints(
     }
 }
 
-private const val SPEED_THRESHOLD_MPS = 0.3f
 private const val TARGET_BUCKETS = 50
 private const val Y_FILL_FRACTION = 0.85f

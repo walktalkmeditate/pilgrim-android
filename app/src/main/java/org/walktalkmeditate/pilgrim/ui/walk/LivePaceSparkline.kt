@@ -3,12 +3,14 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -22,8 +24,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
  * trend line of recent walking pace.
  */
 
-private const val PACE_SPEED_THRESHOLD_MPS = 0.3f
-private const val PACE_HISTORY_CAP = 60
+internal const val PACE_SPEED_THRESHOLD_MPS = 0.3f
+internal const val PACE_HISTORY_CAP = 60
 private const val PACE_RANGE_FLOOR = 0.5
 
 /**
@@ -75,21 +77,25 @@ fun LivePaceSparkline(
     modifier: Modifier = Modifier,
 ) {
     val strokeColor = pilgrimColors.stone.copy(alpha = 0.4f)
+    val path = remember { Path() }
+    val density = LocalDensity.current
+    val stroke = remember(density) {
+        Stroke(
+            width = with(density) { 1.5.dp.toPx() },
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round,
+        )
+    }
     Canvas(modifier = modifier) {
         val points = livePaceSparklineOffsets(values, size.width, size.height)
         if (points.size <= 1) return@Canvas
-        val path = Path().apply {
-            moveTo(points.first().x, points.first().y)
-            for (p in points.drop(1)) lineTo(p.x, p.y)
-        }
+        path.rewind()
+        path.moveTo(points.first().x, points.first().y)
+        for (p in points.drop(1)) path.lineTo(p.x, p.y)
         drawPath(
             path = path,
             color = strokeColor,
-            style = Stroke(
-                width = 1.5.dp.toPx(),
-                cap = StrokeCap.Round,
-                join = StrokeJoin.Round,
-            ),
+            style = stroke,
         )
     }
 }

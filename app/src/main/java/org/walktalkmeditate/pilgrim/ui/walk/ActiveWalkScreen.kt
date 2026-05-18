@@ -735,9 +735,11 @@ fun ActiveWalkScreen(
         // sheet, shown only once enough moving samples exist (>10
         // positive), opacity-faded, hidden from accessibility (purely
         // decorative trend).
+        val hasEnoughPaceSamples = remember(paceHistory) {
+            paceHistory.count { it > 0.0 } > 10
+        }
         AnimatedVisibility(
-            visible = sheetState == SheetState.Minimized &&
-                paceHistory.count { it > 0.0 } > 10,
+            visible = sheetState == SheetState.Minimized && hasEnoughPaceSamples,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier

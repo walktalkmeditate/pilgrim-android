@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -432,7 +433,16 @@ class WalkViewModel @Inject constructor(
      * window iOS produces by appending one entry per new sample.
      */
     val paceHistory: StateFlow<List<Double>> = routePoints
-        .map { points -> livePaceHistory(points.map { it.speedMetersPerSecond }) }
+        .map { points ->
+            // Bound BEFORE mapping: routePoints grows by one per GPS fix
+            // on a 45-90 min walk, so mapping the full list every fix is
+            // O(n) churn for a fixed-size sparkline. Take only the last
+            // PACE_HISTORY_CAP speeds; livePaceHistory's own tail-cap
+            // then leaves the output identical to mapping the whole list.
+            val recent = points.takeLast(PACE_HISTORY_CAP).map { it.speedMetersPerSecond }
+            livePaceHistory(recent)
+        }
+        .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
