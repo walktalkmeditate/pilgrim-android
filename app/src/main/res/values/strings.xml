@@ -715,6 +715,7 @@
     <string name="about_app_icon_title">App Icon</string>
     <string name="about_app_icon_use_guide">Use as app icon</string>
     <string name="about_app_icon_use_dark">Use dark icon</string>
+    <string name="about_app_icon_use_constellation">Use constellation icon</string>
     <string name="about_app_icon_reset">Reset to default</string>
     <string name="about_app_icon_cancel">Cancel</string>
     <string name="about_hero_body">Walking is how we think, process, and return to ourselves. Pilgrim is a quiet companion for the path — no leaderboards, no metrics, just you and the walk.</string>

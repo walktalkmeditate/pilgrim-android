@@ -77,4 +77,24 @@ class IconSwitcherTest {
         val freshInstance = IconSwitcher(context)
         assertEquals(IconVariant.River, freshInstance.persistedTarget())
     }
+
+    @Test
+    fun constellation_variant_exists_and_switches() {
+        val constellation = IconVariant.entries.firstOrNull {
+            it.name == "Constellation"
+        }
+        assertEquals(IconVariant.Constellation, constellation)
+        assertEquals("IconConstellation", IconVariant.Constellation.aliasName)
+        // Not a voice-guide pack — must not map from any guide id.
+        assertFalse(
+            IconVariant.entries.any {
+                IconVariant.forGuideId(it.name.lowercase()) == IconVariant.Constellation
+            },
+        )
+
+        switcher.switchTo(IconVariant.Constellation)
+
+        assertTrue(isEnabled(IconVariant.Constellation))
+        assertEquals(IconVariant.Constellation, switcher.persistedTarget())
+    }
 }

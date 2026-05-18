@@ -121,10 +121,11 @@ open class IconSwitcher @Inject constructor(
 }
 
 /**
- * The 9 alternate launcher icons. iOS-parity `AppIconDefault` /
- * `AppIconDark` plus 7 voice-guide-themed variants. The `aliasName`
- * field MUST match the AndroidManifest `<activity-alias android:name>`
- * value (unqualified — IconSwitcher prepends the package).
+ * The launcher icon variants. iOS-parity `AppIconDefault` /
+ * `AppIconDark` / `AppIconConstellation` plus 7 voice-guide-themed
+ * variants. The `aliasName` field MUST match the AndroidManifest
+ * `<activity-alias android:name>` value (unqualified — IconSwitcher
+ * prepends the package).
  */
 enum class IconVariant(val aliasName: String) {
     // Reviewer-flagged: `aliasName` is the UN-dotted short name. The
@@ -141,7 +142,8 @@ enum class IconVariant(val aliasName: String) {
     Ember("IconEmber"),
     River("IconRiver"),
     Sage("IconSage"),
-    Stone("IconStone");
+    Stone("IconStone"),
+    Constellation("IconConstellation");
 
     companion object {
         /**
