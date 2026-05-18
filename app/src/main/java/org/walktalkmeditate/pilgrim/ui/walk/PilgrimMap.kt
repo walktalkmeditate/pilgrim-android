@@ -328,8 +328,11 @@ internal fun PilgrimMap(
         view.mapboxMap.loadStyle(styleUri) {
             polylineManager = view.annotations.createPolylineAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
+                .also(::allowIconOverlap)
             annotationManager = view.annotations.createPointAnnotationManager()
+                .also(::allowIconOverlap)
             proximityManager = view.annotations.createPointAnnotationManager().apply {
+                allowIconOverlap(this)
                 addClickListener { annotation ->
                     val pin = proximityPinIndex[annotation.textField.orEmpty()]
                     if (pin != null) {
@@ -868,6 +871,24 @@ internal fun createPuckBitmap(stoneArgb: Int): Bitmap {
  */
 internal fun buildStonePuck(bitmap: Bitmap): LocationPuck2D =
     LocationPuck2D(topImage = ImageHolder.from(bitmap))
+
+/**
+ * iOS parity `PilgrimMapView.swift:389@v1.6.0` —
+ * `pointManager.iconAllowOverlap = true`. Mapbox's default symbol
+ * collision engine culls any icon that overlaps another symbol; a
+ * waypoint dropped at the user's exact location collides with the
+ * live location puck and is silently never drawn. Setting
+ * `iconAllowOverlap` + `iconIgnorePlacement` opts every pin out of
+ * collision so dropped waypoints / proximity pins always render.
+ *
+ * Extracted so the real Mapbox property-setter path is exercised by a
+ * Robolectric test (CLAUDE.md platform-object-builder rule) rather
+ * than only on-device.
+ */
+internal fun allowIconOverlap(manager: PointAnnotationManager) {
+    manager.iconAllowOverlap = true
+    manager.iconIgnorePlacement = true
+}
 
 private const val PUCK_SIZE_DP = 22
 private const val WHISPER_PIN_SIZE_DP = 14
