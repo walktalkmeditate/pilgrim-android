@@ -5,9 +5,13 @@ import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -128,6 +132,7 @@ fun ActiveWalkScreen(
     val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
     val intention by viewModel.intention.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val paceHistory by viewModel.paceHistory.collectAsStateWithLifecycle()
     val beginWithIntention by viewModel.beginWithIntention.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
     // WhileSubscribed-cached uiState. After a meditation > 5s, ui freezes
@@ -723,6 +728,31 @@ fun ActiveWalkScreen(
             TurningRitualSheet(
                 turning = activeTurning,
                 onDismiss = { showTurningCard = false },
+            )
+        }
+        // iOS parity `ActiveWalkView.swift:461-473` — ambient live pace
+        // sparkline, reserved 24dp slot just above the minimized stats
+        // sheet, shown only once enough moving samples exist (>10
+        // positive), opacity-faded, hidden from accessibility (purely
+        // decorative trend).
+        val hasEnoughPaceSamples = remember(paceHistory) {
+            paceHistory.count { it > 0.0 } > 10
+        }
+        AnimatedVisibility(
+            visible = sheetState == SheetState.Minimized && hasEnoughPaceSamples,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs)
+                .clearAndSetSemantics {},
+        ) {
+            LivePaceSparkline(
+                values = paceHistory,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PilgrimSpacing.big)
+                    .height(24.dp),
             )
         }
         WalkStatsSheet(

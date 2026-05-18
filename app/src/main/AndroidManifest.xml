@@ -40,6 +40,14 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Android 11+ package visibility: required to bind the platform
+         speech recognizer for voice intention dictation. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".PilgrimApp"
         android:allowBackup="true"

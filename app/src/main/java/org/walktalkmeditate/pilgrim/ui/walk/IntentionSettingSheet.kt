@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,17 +26,29 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -64,8 +80,34 @@ fun IntentionSettingSheet(
     resetKey: Int = 0,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val controller = remember {
+        IntentionVoiceController(
+            context = context.applicationContext,
+            scope = scope,
+            maxChars = WalkController.MAX_INTENTION_CHARS,
+        )
+    }
+    var transcript by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(controller) {
+        controller.onTranscript = { transcript = it }
+        onDispose { controller.release() }
+    }
+    val voiceState by controller.state.collectAsState()
+
+    // rememberLauncherForActivityResult keys its DisposableEffect on
+    // contract reference identity — keep the contract stable (Stage 7-A).
+    val micContract = remember { ActivityResultContracts.RequestPermission() }
+    val micLauncher = rememberLauncherForActivityResult(micContract) { granted ->
+        if (granted) controller.start() else controller.markDenied()
+    }
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            controller.cancel()
+            onDismiss()
+        },
         sheetState = sheetState,
         containerColor = pilgrimColors.parchment,
     ) {
@@ -76,6 +118,17 @@ fun IntentionSettingSheet(
             onSave = onSave,
             onDismiss = onDismiss,
             resetKey = resetKey,
+            voiceState = voiceState,
+            voiceTranscript = transcript,
+            onStartVoice = {
+                val granted = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECORD_AUDIO,
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) controller.start() else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            },
+            onStopVoice = controller::stopAndFinalize,
+            onVoiceTranscriptConsumed = { transcript = null },
         )
     }
 }
@@ -89,6 +142,11 @@ internal fun IntentionSheetContent(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
     resetKey: Int = 0,
+    voiceState: IntentionVoiceState = IntentionVoiceState.Idle,
+    voiceTranscript: String? = null,
+    onStartVoice: () -> Unit = {},
+    onStopVoice: () -> Unit = {},
+    onVoiceTranscriptConsumed: () -> Unit = {},
 ) {
     // Key on (initial, resetKey): (a) external `initial` change on
     // reopen overrides a stale Saver; (b) parent-bumped resetKey
@@ -96,6 +154,16 @@ internal fun IntentionSheetContent(
     // SaveableStateRegistry outlives the conditional render).
     // Rotation within one open session still round-trips via Bundle.
     var text by rememberSaveable(initial, resetKey) { mutableStateOf(initial.orEmpty()) }
+
+    // iOS parity `IntentionSettingView.swift:60-63` — a finished
+    // transcription overwrites the field (already capped upstream).
+    LaunchedEffect(voiceTranscript) {
+        val t = voiceTranscript
+        if (t != null) {
+            text = t
+            onVoiceTranscriptConsumed()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -117,20 +185,68 @@ internal fun IntentionSheetContent(
             maxLines = 3,
             modifier = Modifier.fillMaxWidth(),
         )
-        Text(
+        // iOS parity `IntentionSettingView.swift:90-115, 230-261` — a
+        // Voice dictation control sharing the row with the char counter;
+        // while listening it becomes a countdown + level meter + Done.
+        val counter = stringResource(
+            R.string.walk_waypoint_count_chars,
             // Locale.US digits so non-ASCII-numeral locales still render
             // ASCII (Stage 5-A regression pattern).
-            text = stringResource(
-                R.string.walk_waypoint_count_chars,
-                String.format(Locale.US, "%d", text.length),
-                String.format(Locale.US, "%d", WalkController.MAX_INTENTION_CHARS),
-            ),
-            style = pilgrimType.caption,
-            // iOS parity `IntentionSettingView.swift:113` — static fog 0.5.
-            color = pilgrimColors.fog.copy(alpha = 0.5f),
-            textAlign = TextAlign.End,
-            modifier = Modifier.fillMaxWidth(),
+            String.format(Locale.US, "%d", text.length),
+            String.format(Locale.US, "%d", WalkController.MAX_INTENTION_CHARS),
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+        ) {
+            val vs = voiceState
+            if (vs is IntentionVoiceState.Listening) {
+                Text(
+                    text = formatIntentionCountdown(vs.secondsRemaining),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog.copy(alpha = 0.5f),
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                AudioWaveformView(
+                    level = vs.level,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clearAndSetSemantics {},
+                )
+                TextButton(onClick = onStopVoice) {
+                    Text(stringResource(R.string.walk_options_intention_voice_done))
+                }
+            } else {
+                val voiceA11y = stringResource(R.string.walk_options_intention_voice_a11y)
+                TextButton(
+                    onClick = onStartVoice,
+                    modifier = Modifier.semantics { contentDescription = voiceA11y },
+                ) {
+                    Text(
+                        stringResource(
+                            when (vs) {
+                                is IntentionVoiceState.MicDenied ->
+                                    R.string.walk_options_intention_voice_denied
+                                // A transient/busy recognizer error —
+                                // tapping retries (onStartVoice).
+                                is IntentionVoiceState.TransientError ->
+                                    R.string.walk_options_intention_voice_retry
+                                else -> R.string.walk_options_intention_voice
+                            },
+                        ),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = counter,
+                    style = pilgrimType.caption,
+                    // iOS parity `IntentionSettingView.swift:113` — static fog 0.5.
+                    color = pilgrimColors.fog.copy(alpha = 0.5f),
+                    textAlign = TextAlign.End,
+                )
+            }
+        }
 
         // iOS shows Suggested/Recent only while the field is empty.
         if (text.isEmpty()) {

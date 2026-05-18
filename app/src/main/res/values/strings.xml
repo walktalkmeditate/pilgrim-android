@@ -45,6 +45,8 @@
     <string name="permissions_granted_label">Granted</string>
     <string name="permissions_open_settings">Open settings</string>
 
+    <string name="breath_transition_a11y">Loading</string>
+
     <string name="permission_location_coarse_only">Pilgrim needs precise location to draw your path — approximate location won\'t be enough. Open settings to switch to Precise.</string>
     <string name="permission_location_needs_settings">Location is blocked. Open settings and enable precise location for Pilgrim to continue.</string>
 
@@ -493,6 +495,11 @@
     <string name="walk_options_intention_cancel">Cancel</string>
     <string name="walk_options_intention_suggested">Suggested</string>
     <string name="walk_options_intention_recent">Recent</string>
+    <string name="walk_options_intention_voice">Voice</string>
+    <string name="walk_options_intention_voice_a11y">Start voice dictation</string>
+    <string name="walk_options_intention_voice_denied">Mic access needed</string>
+    <string name="walk_options_intention_voice_retry">Try again</string>
+    <string name="walk_options_intention_voice_done">Done</string>
     <string name="walk_options_waypoint_title">Drop Waypoint</string>
     <string name="walk_options_waypoint_count_none">None marked</string>
     <plurals name="walk_options_waypoint_count">
