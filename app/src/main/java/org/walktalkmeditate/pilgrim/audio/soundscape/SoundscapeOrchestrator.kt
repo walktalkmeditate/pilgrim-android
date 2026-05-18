@@ -159,7 +159,13 @@ class SoundscapeOrchestrator @Inject constructor(
                         // soundscape selected). Stage 5-E lesson.
                         if (playJob?.isActive != true) {
                             spawnedAssetId = assetId
-                            playJob = scope.launch { runSessionLoop() }
+                            // iOS parity SoundManagement.swift:68-78 — the
+                            // bell-duration delay scopes to meditation-start
+                            // ONLY (onMeditationStart). A mid-meditation
+                            // swap (SoundscapePlayer.swift:30-33 crossfade)
+                            // plays immediately. needsSwap=true → no delay.
+                            val applyStartDelay = !needsSwap
+                            playJob = scope.launch { runSessionLoop(applyStartDelay) }
                         }
                     }
                     is WalkState.Active,
@@ -191,15 +197,23 @@ class SoundscapeOrchestrator @Inject constructor(
      * state transition, `scope.launch` is cancelled and the
      * `CancellationException` unwinds through the `collect`.
      */
-    private suspend fun runSessionLoop() {
+    private suspend fun runSessionLoop(applyStartDelay: Boolean) {
         var retryBudget = 1
         try {
             // iOS parity `SoundManagement.swift:68-78` —
             // max(0.5s, actualBellDuration). Bells are user-downloadable
             // so resolve the live duration; never start the ambient loop
             // before the meditation-start bell has finished ringing.
-            val bellMs = bellDurationResolver.meditationStartBellDurationMs()
-            delay(maxOf(BELL_DELAY_FLOOR_MS, bellMs))
+            //
+            // Scoped to meditation-start ONLY (`applyStartDelay`). A
+            // mid-meditation soundscape swap must play immediately —
+            // iOS's crossfade (SoundscapePlayer.swift:30-33) has no
+            // start delay; applying it on swap would leave multi-second
+            // silence on every track change (BUG A1 regression).
+            if (applyStartDelay) {
+                val bellMs = bellDurationResolver.meditationStartBellDurationMs()
+                delay(maxOf(BELL_DELAY_FLOOR_MS, bellMs))
+            }
             if (!attemptPlay()) return
             // Suspend on `player.state` for the rest of the session.
             // `collect` runs until `playJob.cancel()` fires (from the

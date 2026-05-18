@@ -646,13 +646,64 @@ class SoundscapeOrchestratorTest {
             "expected stop on swap, got stopCount=${capturingPlayer.stopCount}",
             capturingPlayer.stopCount >= 1,
         )
-        // New job runs through start delay then plays new file.
-        advanceTimeBy(1_000)
+        // New job plays the new file immediately — a swap is a
+        // crossfade with no bell-duration start delay (BUG A1).
         runCurrent()
         assertEquals("expected re-spawn with new asset", 2, capturingPlayer.playCount)
         assertTrue(
             "expected new file path, was=${capturingPlayer.lastPlayedFile} (was=$firstPlayedFile)",
             capturingPlayer.lastPlayedFile != firstPlayedFile,
+        )
+        s.cancel()
+    }
+
+    @Test fun `first-start waits the bell duration but a mid-meditation swap plays immediately (BUG A1)`() = runTest {
+        // iOS parity SoundManagement.swift:68-78 (bell delay scoped to
+        // onMeditationStart only) + SoundscapePlayer.swift:30-33 (a
+        // swap crossfades immediately, no start delay). The batch-1
+        // regression applied the bell-duration delay on EVERY spawn
+        // including swaps → multi-second silence on every track change.
+        bellDurationMs = 4_000L
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        ).start()
+        runCurrent()
+
+        // First start: the 4.0s bell-duration delay applies. No play
+        // before the bell finishes.
+        advanceTimeBy(3_999)
+        runCurrent()
+        assertEquals(
+            "first start must wait the full bell duration",
+            0, capturingPlayer.playCount,
+        )
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals("first start plays after bell", 1, capturingPlayer.playCount)
+
+        // Mid-meditation swap: meditation is NOT exited. The swap must
+        // play immediately — NOT wait another 4.0s. Use runCurrent
+        // (not advanceUntilIdle — the player.state observer loop is
+        // perpetual). Zero virtual time elapses between the swap and
+        // this assertion.
+        selectedAssetId.value = "forest"
+        runCurrent()
+        assertEquals(
+            "a swap must NOT wait the bell duration — it plays immediately " +
+                "(got playCount=${capturingPlayer.playCount} with no time elapsed)",
+            2, capturingPlayer.playCount,
         )
         s.cancel()
     }
