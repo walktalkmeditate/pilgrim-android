@@ -85,4 +85,4 @@ The hardest part of this app is surviving a 45-90 minute walk with screen off, b
 
 ## Phasing — current state
 
-Phases 0-13 shipped (Stage 13-XZ merged 2026-05-04, PR #83). Walk Summary parity complete. Remaining work is iOS-v1.5.0 parity gaps + Phase N future items (Health Connect, App Actions, screenshot tests). See the port plan + autopilot memory entries for stage-level history.
+Phases 0-13 shipped (Stage 13-XZ merged 2026-05-04, PR #83). Walk Summary parity complete. Remaining work is iOS-v1.6.0 parity gaps + Phase N future items (Health Connect, App Actions, screenshot tests). See the port plan + autopilot memory entries for stage-level history.
