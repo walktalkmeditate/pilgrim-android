@@ -715,6 +715,7 @@
     <string name="about_app_icon_title">App Icon</string>
     <string name="about_app_icon_use_guide">Use as app icon</string>
     <string name="about_app_icon_use_dark">Use dark icon</string>
+    <string name="about_app_icon_use_constellation">Use constellation icon</string>
     <string name="about_app_icon_reset">Reset to default</string>
     <string name="about_app_icon_cancel">Cancel</string>
     <string name="about_hero_body">Walking is how we think, process, and return to ourselves. Pilgrim is a quiet companion for the path — no leaderboards, no metrics, just you and the walk.</string>
@@ -793,6 +794,24 @@
     <string name="weather_fog">Foggy</string>
     <string name="weather_wind">Windy</string>
     <string name="weather_haze">Hazy</string>
+
+    <!-- Manual-QA B2: collapsible weather/celestial vignette pills.
+         Wind descriptor mirrors iOS WeatherService.windDescription
+         verbatim. A11y label/hint mirror iOS
+         WeatherVignetteView / CelestialVignetteView. -->
+    <string name="wind_calm">calm</string>
+    <string name="wind_gentle_breeze">gentle breeze</string>
+    <string name="wind_moderate">moderate wind</string>
+    <string name="wind_strong">strong wind</string>
+    <string name="wind_very_strong">very strong wind</string>
+    <string name="weather_vignette_a11y_label">Weather: %1$s, %2$s</string>
+    <string name="weather_vignette_a11y_hint">Double tap to expand weather details</string>
+    <string name="celestial_vignette_a11y_hint">Double tap to expand celestial details</string>
+
+    <!-- Manual-QA B3: in-walk voice-guide play/pause control.
+         iOS ActiveWalkView.swift:433-443 (play.circle / pause.circle). -->
+    <string name="voice_guide_pause_a11y">Pause voice guide</string>
+    <string name="voice_guide_resume_a11y">Resume voice guide</string>
 
     <!-- Stage 12-D: locale-resolution marker. values/ is the English source;
          values-fr/ overrides for the fr locale to verify the values-XX/

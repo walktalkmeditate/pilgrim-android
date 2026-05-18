@@ -34,16 +34,24 @@ import kotlinx.coroutines.flow.asStateFlow
  * ness depends on the audio file having appropriate loop metadata
  * (audio-engineering fix, not app-code fix).
  *
- * Audio focus: standalone `AudioFocusRequest(AUDIOFOCUS_GAIN)` —
- * long-term ownership. When voice-guide fires
- * `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, the OS sends
- * `LOSS_TRANSIENT_CAN_DUCK` to our listener. **We manually lower
- * the player's volume** to [DUCK_VOLUME]; the OS does NOT auto-duck
- * when we own focus via a standalone `AudioFocusRequest` with
- * `handleAudioFocus = false` on ExoPlayer — Stage 5-G device-QA
- * confirmed. `setWillPauseWhenDucked(false)` only controls whether
- * to PAUSE vs DUCK, not who performs the duck. Matches iOS's manual
- * volume-dip behavior (minus the fade curve, for now).
+ * Audio focus: standalone
+ * `AudioFocusRequest(AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)` —
+ * the soundscape is a continuously-duckable ambient layer, NOT an
+ * exclusive owner. `GAIN` would preempt the voice guide's own
+ * `GAIN_TRANSIENT_MAY_DUCK` and trigger its stop-on-LOSS; a swap
+ * mid-guide would silence the guide (BUG A2). Acquisition is
+ * idempotent — a mid-meditation swap reuses the held request
+ * instead of abandon+re-request (iOS parity
+ * SoundscapePlayer.swift:30-33 — crossfade keeps the session
+ * active). When voice-guide fires `GAIN_TRANSIENT_MAY_DUCK`, the OS
+ * sends `LOSS_TRANSIENT_CAN_DUCK` to our listener. **We manually
+ * lower the player's volume** to [DUCK_VOLUME]; the OS does NOT
+ * auto-duck when we own focus via a standalone `AudioFocusRequest`
+ * with `handleAudioFocus = false` on ExoPlayer — Stage 5-G
+ * device-QA confirmed. `setWillPauseWhenDucked(false)` only
+ * controls whether to PAUSE vs DUCK, not who performs the duck.
+ * Matches iOS's manual volume-dip behavior (minus the fade curve,
+ * for now).
  *
  * Focus-loss handling:
  *  - `LOSS` → stop + abandon (another app took focus permanently).
@@ -192,6 +200,18 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         }
     }
 
+    override fun stopForSwap() {
+        // Stop the current loop but DELIBERATELY do not abandonFocus():
+        // a mid-meditation swap reuses the held focus so the voice
+        // guide's GAIN_TRANSIENT_MAY_DUCK request isn't preempted
+        // (BUG A2). iOS parity SoundscapePlayer.swift:30-33 — crossfade
+        // keeps the audio session active. The next play() reuses the
+        // request via the idempotent guard in requestFocus().
+        mainHandler.post {
+            internalStop()
+        }
+    }
+
     override fun release() {
         mainHandler.post {
             val p = player
@@ -293,16 +313,27 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
     }
 
     private fun requestFocus(): Boolean {
-        // Defensive abandon: if STATE_ENDED or an error path earlier
-        // left `activeFocusRequest` non-null without abandon, any new
-        // requestFocus would leak the prior request to the OS. No-op
-        // when nothing is held. Stage 5-F review lesson.
-        abandonFocus()
+        // Idempotent acquisition: if focus is already held (e.g. a
+        // mid-meditation soundscape swap), reuse it. Abandon+re-request
+        // on every play() would preempt the voice guide's
+        // GAIN_TRANSIENT_MAY_DUCK request and silence the guide on a
+        // track swap (BUG A2). iOS parity SoundscapePlayer.swift:30-33
+        // — crossfade keeps the audio session active.
+        if (activeFocusRequest.get() != null) return true
         val sysAttrs = SystemAudioAttributes.Builder()
             .setUsage(SystemAudioAttributes.USAGE_MEDIA)
             .setContentType(SystemAudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+        // GAIN_TRANSIENT_MAY_DUCK (not GAIN): the soundscape is a
+        // continuously-duckable ambient layer under the voice guide,
+        // never an exclusive owner. GAIN would preempt the guide's
+        // own GAIN_TRANSIENT_MAY_DUCK and trigger its stop-on-LOSS
+        // (ExoPlayerVoiceGuidePlayer LOSS path). iOS parity:
+        // AudioSessionCoordinator mixWithOthers — soundscape stays
+        // ducked under the guide, never preempts it (BUG A2).
+        val request = AudioFocusRequest.Builder(
+            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+        )
             .setAudioAttributes(sysAttrs)
             .setWillPauseWhenDucked(false) // OS auto-ducks when MAY_DUCK fires
             .setAcceptsDelayedFocusGain(false)

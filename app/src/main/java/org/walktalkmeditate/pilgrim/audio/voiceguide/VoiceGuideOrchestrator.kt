@@ -11,7 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -87,9 +89,47 @@ class VoiceGuideOrchestrator @Inject constructor(
     private val soundsPreferences: SoundsPreferencesRepository,
     private val voicePreferences: VoicePreferencesRepository,
     @VoiceGuidePlaybackScope private val scope: CoroutineScope,
-) {
+) : VoiceGuidePauseController {
+    private val _isPaused = MutableStateFlow(false)
+
+    /**
+     * iOS parity `VoiceGuideManagement.isPaused` — true when the user
+     * has tapped the in-walk play/pause control to suspend the guide.
+     * Drives the ActiveWalk audio-indicator icon (play vs pause).
+     */
+    override val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    private val _activePackName = MutableStateFlow<String?>(null)
+
+    /**
+     * iOS parity `VoiceGuideManagement.packName` — the name of the
+     * pack whose scheduler is currently running, or null when no
+     * guide is active. The ActiveWalk control is only shown when this
+     * is non-null. Set when a walk scheduler spawns; cleared when the
+     * walk/meditation jobs are cancelled (Paused / Idle / Finished /
+     * master-toggle-off).
+     */
+    override val activePackName: StateFlow<String?> = _activePackName.asStateFlow()
+
     fun start() {
         scope.launch { observe() }
+    }
+
+    /**
+     * iOS parity `VoiceGuideManagement.pauseGuide()` — suspend the
+     * guide. Sets the pause flag (so no new prompt is scheduled — the
+     * scheduler's own `decide(isPaused = true)` returns null and the
+     * per-tick gate in [playOrSkip] short-circuits) and stops any
+     * in-flight prompt so the audio cuts immediately on tap.
+     */
+    override fun pause() {
+        _isPaused.value = true
+        safeStopPlayer()
+    }
+
+    /** iOS parity `VoiceGuideManagement.resumeGuide()`. */
+    override fun resume() {
+        _isPaused.value = false
     }
 
     private suspend fun observe() {
@@ -122,6 +162,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                         // mid-walk (after a Meditating exit) still
                         // honors the post-meditation silence window.
                         walkJob?.cancel(); walkJob = null
+                        _activePackName.value = null
                         safeStopPlayer()
                         return@collect
                     }
@@ -150,6 +191,14 @@ class VoiceGuideOrchestrator @Inject constructor(
                             val silenceSec =
                                 if (exitingMeditation) randomPostMeditationSilenceSec() else 0
                             exitingMeditation = false
+                            // iOS parity `VoiceGuideManagement.startGuiding`
+                            // sets `isActive = true; isPaused = false` and
+                            // `packName` resolves to the pack name. A fresh
+                            // walk scheduler must start un-paused so the
+                            // pause flag from a prior walk doesn't carry
+                            // over (iOS `stopGuiding` also resets it).
+                            _isPaused.value = false
+                            _activePackName.value = pack.name
                             walkJob = scope.launch {
                                 try {
                                     runSchedulerLoop(
@@ -179,6 +228,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                         // is only armed when a meditation scheduler
                         // actually spawned (see below).
                         meditationJob?.cancel(); meditationJob = null
+                        _activePackName.value = null
                         safeStopPlayer()
                         return@collect
                     }
@@ -196,6 +246,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                             // actually heard prompts during the
                             // session.
                             exitingMeditation = true
+                            _activePackName.value = pack.name
                             meditationJob = scope.launch {
                                 try {
                                     runSchedulerLoop(
@@ -217,6 +268,12 @@ class VoiceGuideOrchestrator @Inject constructor(
                     walkJob?.cancel(); walkJob = null
                     meditationJob?.cancel(); meditationJob = null
                     exitingMeditation = false
+                    // iOS parity `VoiceGuideManagement.stopGuiding`:
+                    // clear the active-pack name (hides the ActiveWalk
+                    // control) and reset the pause flag so the next
+                    // walk's guide starts un-paused.
+                    _activePackName.value = null
+                    _isPaused.value = false
                     safeStopPlayer()
                 }
             }
@@ -246,7 +303,17 @@ class VoiceGuideOrchestrator @Inject constructor(
 
         try {
             while (currentCoroutineContext().isActive) {
-                val prompt = sched.decide(isPaused = false, isRecordingVoice = false)
+                // iOS parity `VoiceGuideManagement.pauseGuide` →
+                // `scheduler.pause()`: while paused the scheduler
+                // schedules nothing. `decide(isPaused = true)` already
+                // returns null (VoiceGuideScheduler.decide:121), so no
+                // new prompt starts while the user has the guide
+                // paused. The in-flight prompt was stopped by
+                // `pause()`'s `safeStopPlayer()`.
+                val prompt = sched.decide(
+                    isPaused = _isPaused.value,
+                    isRecordingVoice = false,
+                )
                 if (prompt != null) playOrSkip(prompt, sched)
                 delay(TICK_INTERVAL_MS)
             }
@@ -269,6 +336,10 @@ class VoiceGuideOrchestrator @Inject constructor(
         // lands. Reading `.value` on the Eagerly StateFlow is
         // non-suspend and current. Mirrors SoundscapeOrchestrator.attemptPlay.
         if (!soundsPreferences.soundsEnabled.value || !voicePreferences.voiceGuideEnabled.value) return
+        // Same 1-frame race as above, for the user pause path: a
+        // `pause()` landing between the `decide()` non-null return and
+        // this synchronous block must not let the prompt fire.
+        if (_isPaused.value) return
         // Filesystem read here is a few `exists + length` syscalls —
         // cheap, and the orchestrator scope is `Dispatchers.Default`
         // (CPU pool), not Main, so there's no ANR risk. Avoiding a

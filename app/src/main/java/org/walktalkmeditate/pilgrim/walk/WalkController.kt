@@ -159,7 +159,18 @@ class WalkController @Inject constructor(
      */
     suspend fun discardWalk() {
         Log.i(TAG, "discardWalk invoked from state=${_state.value::class.simpleName}")
+        // iOS parity ActiveWalkViewModel.swift:243 — `cancel()` calls
+        // `soundManagement.onWalkEnd()`, which rings the same
+        // walk-end bell as the finish path (SoundManagement.swift:62-66).
+        // Capture in-progress BEFORE dispatch so the post-Discard Idle
+        // state doesn't mask it. The guard prevents a stray bell on the
+        // pre-walk "Leave" — discard is a no-op from Idle/Finished.
+        val wasInProgress = _state.value !is WalkState.Idle &&
+            _state.value !is WalkState.Finished
         dispatch(WalkAction.Discard(at = clock.now()))
+        if (wasInProgress) {
+            _bellTriggers.tryEmit(BellTrigger.WalkEnd)
+        }
     }
 
     suspend fun recordLocation(point: LocationPoint) = dispatch(WalkAction.LocationSampled(point))

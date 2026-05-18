@@ -45,6 +45,20 @@ abstract class VoiceGuideModule {
     @Singleton
     abstract fun bindVoiceGuidePlayer(impl: ExoPlayerVoiceGuidePlayer): VoiceGuidePlayer
 
+    /**
+     * Narrow the orchestrator to the play/pause control surface the
+     * Active Walk UI needs (`WalkViewModel`), so VM unit tests inject
+     * a trivial fake instead of the full manifest/file-store/player
+     * graph. Same singleton instance as [VoiceGuideOrchestrator]
+     * (Hilt resolves the concrete @Singleton, binds the interface to
+     * it).
+     */
+    @Binds
+    @Singleton
+    abstract fun bindVoiceGuidePauseController(
+        impl: org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator,
+    ): org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePauseController
+
     companion object {
         /**
          * Long-lived scope for

@@ -78,14 +78,17 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
  * Bottom-sheet overlay for the Active Walk screen. Two detents
- * ([SheetState.Minimized] / [SheetState.Expanded]); content for both is
- * always composed and switched via alpha to keep the active mic
- * recording from being torn down on a state flip.
+ * ([SheetState.Minimized] / [SheetState.Expanded]).
  *
- * The sheet's measured height is constant (~340dp regardless of state)
- * so the map's `bottomInsetDp` stays stable. Visual consequence:
- * minimized state has unused vertical space above the content. Acceptable
- * trade-off vs. SubcomposeLayout-based per-state height measurement.
+ * [SheetContentSwitcher] composes only the variant matching the
+ * current detent, so the sheet's measured height tracks that variant:
+ * the minimized row is short (~70dp), the expanded surface is taller
+ * (~340dp). The screen's `sheetInsetDp` switches between the two
+ * height constants to keep the map's `bottomInsetDp` matched to the
+ * visible sheet in either detent. Tearing down the expanded variant on
+ * collapse only re-inits ephemeral UI side-effects (the mic button's
+ * error timer + permission launcher); the recording state lives in
+ * VoiceRecorder + WalkViewModel and survives the composition swap.
  */
 @Composable
 fun WalkStatsSheet(

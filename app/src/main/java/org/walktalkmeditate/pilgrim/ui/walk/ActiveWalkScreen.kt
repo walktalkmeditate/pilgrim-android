@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.PauseCircle
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -47,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -579,6 +582,26 @@ fun ActiveWalkScreen(
                 .align(Alignment.BottomEnd)
                 .padding(end = PilgrimSpacing.normal, bottom = PilgrimSpacing.big * 7),
         )
+        // iOS parity `ActiveWalkView.swift:433-443,767-779@v1.6.0` —
+        // bottom-left voice-guide play/pause control. Shown only when a
+        // voice-guide pack scheduler is active (packName != null);
+        // toggles pause/resume. Same vertical band as the WalkVignette
+        // (BottomEnd) so the two ambient indicators sit on one row.
+        val voiceGuidePackName by viewModel.voiceGuidePackName
+            .collectAsStateWithLifecycle()
+        val isVoiceGuidePaused by viewModel.isVoiceGuidePaused
+            .collectAsStateWithLifecycle()
+        VoiceGuidePauseControl(
+            packName = voiceGuidePackName,
+            isPaused = isVoiceGuidePaused,
+            onToggle = viewModel::toggleVoiceGuidePause,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(
+                    start = PilgrimSpacing.normal,
+                    bottom = PilgrimSpacing.big * 7,
+                ),
+        )
         // iOS-parity overlay row at the top of the map: ellipsis (options)
         // top-left, X (leave walk) top-right.
         // ActiveWalkView.swift:530-567.
@@ -795,31 +818,6 @@ fun ActiveWalkScreen(
                 onDismiss = { showTurningCard = false },
             )
         }
-        // iOS parity `ActiveWalkView.swift:461-473` — ambient live pace
-        // sparkline, reserved 24dp slot just above the minimized stats
-        // sheet, shown only once enough moving samples exist (>10
-        // positive), opacity-faded, hidden from accessibility (purely
-        // decorative trend).
-        val hasEnoughPaceSamples = remember(paceHistory) {
-            paceHistory.count { it > 0.0 } > 10
-        }
-        AnimatedVisibility(
-            visible = sheetState == SheetState.Minimized && hasEnoughPaceSamples,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs)
-                .clearAndSetSemantics {},
-        ) {
-            LivePaceSparkline(
-                values = paceHistory,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PilgrimSpacing.big)
-                    .height(24.dp),
-            )
-        }
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
@@ -859,6 +857,16 @@ fun ActiveWalkScreen(
             onDismissError = viewModel::dismissRecorderError,
             onFinish = viewModel::finishWalk,
             peekHintTrigger = peekHintTrigger.value,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+        // iOS parity `ActiveWalkView.swift:120-146` — the ambient
+        // overlay (sparkline) is positioned ABOVE the minimized sheet.
+        // Declared AFTER WalkStatsSheet so it paints on top of the
+        // minimized sheet chrome (z-order: later sibling wins). The
+        // bottom padding clears the minimized sheet's height.
+        AmbientPaceSparkline(
+            paceHistory = paceHistory,
+            sheetState = sheetState,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         // iOS parity `ProximityNotificationView.swift@db4196e` — placement
@@ -923,10 +931,11 @@ private fun OverlayCircleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(36.dp)
             .clip(CircleShape)
             // iOS uses `.ultraThinMaterial` — a content-adaptive
@@ -1070,6 +1079,82 @@ private fun TurningRitualSheet(
                 horizontal = PilgrimSpacing.normal,
                 vertical = PilgrimSpacing.big,
             ),
+        )
+    }
+}
+
+internal const val VOICE_GUIDE_PAUSE_CONTROL_TAG = "voice-guide-pause-control"
+
+/**
+ * iOS parity `ActiveWalkView.swift:433-443,767-779@v1.6.0` — the
+ * bottom-left in-walk voice-guide play/pause control. Rendered ONLY
+ * when a voice-guide pack scheduler is active ([packName] != null,
+ * mirroring iOS gating on `voiceGuidePackName`). The icon flips
+ * play.circle ↔ pause.circle on [isPaused]; tapping calls [onToggle]
+ * (pause when playing, resume when paused).
+ *
+ * Extracted from the screen body so the visibility gate + icon +
+ * a11y can be Compose-tested without standing up Hilt + Mapbox
+ * (same precedent as [AmbientPaceSparkline]).
+ */
+@Composable
+internal fun VoiceGuidePauseControl(
+    packName: String?,
+    isPaused: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (packName == null) return
+    OverlayCircleButton(
+        icon = if (isPaused) Icons.Filled.PlayCircle else Icons.Filled.PauseCircle,
+        contentDescription = if (isPaused) {
+            stringResource(R.string.voice_guide_resume_a11y)
+        } else {
+            stringResource(R.string.voice_guide_pause_a11y)
+        },
+        onClick = onToggle,
+        modifier = modifier.testTag(VOICE_GUIDE_PAUSE_CONTROL_TAG),
+    )
+}
+
+internal const val AMBIENT_SPARKLINE_TAG = "ambient-pace-sparkline"
+
+/**
+ * iOS parity `ActiveWalkView.swift:461-473@v1.6.0` — ambient live
+ * pace sparkline. Reserved slot just above the minimized stats
+ * sheet, shown only once enough moving samples exist (>10 positive),
+ * opacity-faded, hidden from accessibility (purely decorative trend).
+ *
+ * Rendered as a LATER sibling than [WalkStatsSheet] in the screen's
+ * BottomCenter Box so it paints ABOVE the minimized sheet chrome
+ * (manual-QA B2 batch fix: it was previously declared first and the
+ * sheet occluded it). The bottom padding clears the ~70dp minimized
+ * sheet.
+ */
+@Composable
+internal fun AmbientPaceSparkline(
+    paceHistory: List<Double>,
+    sheetState: SheetState,
+    modifier: Modifier = Modifier,
+) {
+    val hasEnoughPaceSamples = remember(paceHistory) {
+        paceHistory.count { it > 0.0 } > 10
+    }
+    AnimatedVisibility(
+        visible = sheetState == SheetState.Minimized && hasEnoughPaceSamples,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+            .padding(bottom = SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs)
+            .clearAndSetSemantics {},
+    ) {
+        LivePaceSparkline(
+            values = paceHistory,
+            modifier = Modifier
+                .testTag(AMBIENT_SPARKLINE_TAG)
+                .fillMaxWidth()
+                .padding(horizontal = PilgrimSpacing.big)
+                .height(24.dp),
         )
     }
 }

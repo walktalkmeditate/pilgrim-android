@@ -658,16 +658,15 @@ fun HomeScreen(
                 animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
                 targetOffsetY = { it },
             ) + androidx.compose.animation.fadeOut(),
-            // Lift just above the floating pill nav with a small
-            // breathing margin. User feedback (2026-05-14): modal
-            // should still cover the Goshuin FAB on the right — the
-            // FAB is a one-tap-away alt; while the preview is up the
-            // user is focused on the row's stats, not the FAB.
-            // zIndex(2f) forces the modal in front of the FAB despite
-            // declaration order (FAB block below in the same Box).
+            // iOS InkScrollView.swift:45,317-322@v1.6.0 — the dismiss
+            // backdrop spans the full viewport so a tap anywhere
+            // outside the card closes it. The 88.dp lift above the
+            // floating pill nav now lives on the inner card Box inside
+            // ExpandCardSheet. zIndex(2f) forces the modal in front of
+            // the FAB despite declaration order; the FAB block is
+            // mutually exclusive (visible only when expandedId == null).
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 88.dp)
+                .fillMaxSize()
                 .zIndex(2f),
         ) {
             renderSnap?.let { snap ->

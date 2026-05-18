@@ -10,30 +10,41 @@ import javax.inject.Singleton
 
 /**
  * iOS parity `UIApplication.setAlternateIconName(_:)` — swap the
- * launcher icon among the 9 declared `<activity-alias>` entries in
+ * launcher icon among the declared `<activity-alias>` entries in
  * AndroidManifest. Only one alias is enabled at a time; the others
  * have their component-enabled-setting flipped to DISABLED. The
  * Default alias is the cold-install state.
+ *
+ * Eviction-to-launcher bug (E2): disabling the alias that roots the
+ * live MainActivity task tears the task down even with
+ * `DONT_KILL_APP`, kicking the user back to the home screen. iOS's
+ * `setAlternateIconName` swaps in place and the user stays put
+ * (`AboutView.swift:411-417@v1.6.0`). To match that, [switchTo]
+ * enables `target`, persists it, and disables every alias EXCEPT
+ * `target` AND EXCEPT the currently-running alias. The stale running
+ * alias is reaped on the next cold start by [reconcile], called from
+ * `PilgrimApp.onCreate`. Two LAUNCHER aliases briefly coexisting is
+ * harmless — the launcher dedupes by `targetActivity`.
  *
  * Implementation notes:
  *  - `setComponentEnabledSetting` is a synchronous call but Android
  *    may delay the launcher refresh by a few hundred ms — the user
  *    sees the new icon after the next homescreen redraw, same as
  *    iOS's setAlternateIconName.
- *  - Disabling EVERY component is dangerous (no launcher entry left)
- *    so [switchTo] disables the CURRENT alias only AFTER enabling
- *    the new one. Reordering the two calls would leave the app
- *    momentarily un-launchable.
- *  - `DONT_KILL_APP` flag prevents the system from restarting the
- *    process on the toggle (otherwise the activity-host process
- *    would be killed mid-tap on the About screen).
+ *  - `DONT_KILL_APP` flag keeps the process alive on the toggle, but
+ *    it does NOT preserve the activity task when the alias rooting it
+ *    is disabled — that is exactly the bug this class works around.
  */
 @Singleton
 open class IconSwitcher @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
 
-    /** Detect which alias is currently enabled; null if none (cold start). */
+    private val prefs by lazy {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    /** Detect which alias is currently enabled; Default if none (cold start). */
     open fun currentVariant(): IconVariant {
         val pm = context.packageManager
         return IconVariant.entries.firstOrNull { variant ->
@@ -43,18 +54,45 @@ open class IconSwitcher @Inject constructor(
         } ?: IconVariant.Default
     }
 
+    /** The variant the user last asked for; Default until first switch. */
+    open fun persistedTarget(): IconVariant {
+        val raw = prefs.getString(KEY_TARGET, null) ?: return IconVariant.Default
+        return IconVariant.entries.firstOrNull { it.name == raw } ?: IconVariant.Default
+    }
+
     /**
-     * Enable [target]'s alias and disable every other alias. Idempotent
-     * — re-applying the current variant is a no-op (no state change,
-     * no launcher refresh).
+     * Enable [target]'s alias and disable every other alias EXCEPT the
+     * one rooting the live MainActivity task (`current`). Leaving
+     * `current` enabled keeps the running task alive; the stale alias
+     * is disabled on the next cold start by [reconcile]. Idempotent —
+     * re-applying the current variant is a no-op.
      */
     open fun switchTo(target: IconVariant) {
         val pm = context.packageManager
         val current = currentVariant()
+        prefs.edit().putString(KEY_TARGET, target.name).apply()
         if (current == target) return
-        // Enable target first to avoid a momentary "no launcher" gap.
         setEnabled(pm, target, true)
         for (variant in IconVariant.entries) {
+            if (variant != target && variant != current) setEnabled(pm, variant, false)
+        }
+    }
+
+    /**
+     * Cold-start reconcile: disable any still-enabled alias that is not
+     * the persisted target. Called from `PilgrimApp.onCreate`, where
+     * there is no live activity task yet, so disabling the previously
+     * running alias is safe.
+     */
+    open fun reconcile() {
+        val pm = context.packageManager
+        val target = persistedTarget()
+        setEnabled(pm, target, true)
+        for (variant in IconVariant.entries) {
+            // Disable explicitly rather than gating on the current
+            // setting: a manifest-default-enabled alias (IconDefault)
+            // reports COMPONENT_ENABLED_STATE_DEFAULT, not ENABLED, so
+            // an `== ENABLED` filter would never reap it.
             if (variant != target) setEnabled(pm, variant, false)
         }
     }
@@ -75,13 +113,19 @@ open class IconSwitcher @Inject constructor(
 
     private fun qualifiedAliasName(variant: IconVariant): String =
         "${context.packageName.removeSuffix(".debug")}.${variant.aliasName}"
+
+    private companion object {
+        const val PREFS_NAME = "icon_switcher_prefs"
+        const val KEY_TARGET = "target_variant"
+    }
 }
 
 /**
- * The 9 alternate launcher icons. iOS-parity `AppIconDefault` /
- * `AppIconDark` plus 7 voice-guide-themed variants. The `aliasName`
- * field MUST match the AndroidManifest `<activity-alias android:name>`
- * value (unqualified — IconSwitcher prepends the package).
+ * The launcher icon variants. iOS-parity `AppIconDefault` /
+ * `AppIconDark` / `AppIconConstellation` plus 7 voice-guide-themed
+ * variants. The `aliasName` field MUST match the AndroidManifest
+ * `<activity-alias android:name>` value (unqualified — IconSwitcher
+ * prepends the package).
  */
 enum class IconVariant(val aliasName: String) {
     // Reviewer-flagged: `aliasName` is the UN-dotted short name. The
@@ -98,7 +142,8 @@ enum class IconVariant(val aliasName: String) {
     Ember("IconEmber"),
     River("IconRiver"),
     Sage("IconSage"),
-    Stone("IconStone");
+    Stone("IconStone"),
+    Constellation("IconConstellation");
 
     companion object {
         /**

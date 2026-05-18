@@ -34,6 +34,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -91,6 +92,8 @@ class WalkViewModelTest {
     private lateinit var repository: WalkRepository
     private lateinit var clock: FakeClock
     private lateinit var controller: WalkController
+    private lateinit var fakeVoiceGuidePauseController:
+        org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController
     private lateinit var fakeAudioCapture: FakeAudioCapture
     private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var transcriptionScheduler: FakeTranscriptionScheduler
@@ -173,6 +176,8 @@ class WalkViewModelTest {
             milestoneChecker = NoopMilestoneChecker,
         )
         fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
+        fakeVoiceGuidePauseController =
+            org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController()
         viewModel = WalkViewModel(
             context, controller, repository, clock, voiceRecorder, FakeLocationSource(),
             org.walktalkmeditate.pilgrim.data.recovery.FakeWalkRecoveryRepository(),
@@ -189,6 +194,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = fakeVoiceGuidePauseController,
         )
     }
 
@@ -231,6 +237,27 @@ class WalkViewModelTest {
             assertTrue(awaitItem() is WalkState.Active)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `toggleVoiceGuidePause pauses then resumes via the controller`() {
+        // Manual-QA B3: the in-walk play/pause control.
+        assertFalse(viewModel.isVoiceGuidePaused.value)
+
+        viewModel.toggleVoiceGuidePause()
+        assertEquals(1, fakeVoiceGuidePauseController.pauseCount)
+        assertTrue(viewModel.isVoiceGuidePaused.value)
+
+        viewModel.toggleVoiceGuidePause()
+        assertEquals(1, fakeVoiceGuidePauseController.resumeCount)
+        assertFalse(viewModel.isVoiceGuidePaused.value)
+    }
+
+    @Test
+    fun `voiceGuidePackName passes through the controller`() {
+        assertEquals(null, viewModel.voiceGuidePackName.value)
+        fakeVoiceGuidePauseController.setActivePackName("Forest Walk")
+        assertEquals("Forest Walk", viewModel.voiceGuidePackName.value)
     }
 
     @Test
@@ -434,6 +461,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
 
         controller.startWalk(intention = null)
@@ -479,6 +507,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
 
         controller.startWalk(intention = null)
@@ -597,6 +626,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -637,6 +667,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
 
         val seen = vm.initialCameraCenter.first { it != null }
@@ -705,6 +736,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
@@ -894,6 +926,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
     }
 
@@ -920,6 +953,7 @@ class WalkViewModelTest {
             whisperPlayer = org.walktalkmeditate.pilgrim.data.whisper.FakeWhisperPlayer(),
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
+            voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
         )
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)

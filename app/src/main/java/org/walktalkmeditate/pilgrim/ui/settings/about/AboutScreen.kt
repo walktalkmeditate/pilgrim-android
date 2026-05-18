@@ -566,11 +566,14 @@ private fun formatSinceDate(stats: AboutStats): String {
 }
 
 /**
- * iOS parity `AboutView.swift:61-84@db4196e` — confirmation dialog
- * surfaced on PilgrimLogo tap. iOS exposes three conditional buttons:
+ * iOS parity `AboutView.swift:63-90@v1.6.0` — confirmation dialog
+ * surfaced on PilgrimLogo tap. iOS exposes these buttons (each hidden
+ * when its variant is already current):
  *  - "Use as app icon" — only when voice guide enabled + selected pack
  *    has a matching themed icon AND that icon is NOT already current
  *  - "Use dark icon" — when current is NOT already Dark
+ *  - "Use constellation icon" — UNCONDITIONAL (iOS offers it
+ *    regardless of appearance mode), hidden only when already current
  *  - "Reset to default" — when current is NOT already Default
  *
  * Material 3 doesn't have a `confirmationDialog`-equivalent multi-button
@@ -618,6 +621,19 @@ private fun AppIconChoiceDialog(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(stringResource(R.string.about_app_icon_use_dark))
+                    }
+                }
+                if (currentVariant != org.walktalkmeditate.pilgrim.data.launcher
+                        .IconVariant.Constellation
+                ) {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            onPick(org.walktalkmeditate.pilgrim.data.launcher
+                                .IconVariant.Constellation)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.about_app_icon_use_constellation))
                     }
                 }
                 if (currentVariant != org.walktalkmeditate.pilgrim.data.launcher

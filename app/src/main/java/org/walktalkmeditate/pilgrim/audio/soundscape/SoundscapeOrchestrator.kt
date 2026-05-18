@@ -148,7 +148,12 @@ class SoundscapeOrchestrator @Inject constructor(
                         if (needsSwap) {
                             playJob?.cancel()
                             playJob = null
-                            safeStopPlayer()
+                            // iOS parity SoundscapePlayer.swift:30-33 — a
+                            // mid-meditation swap crossfades to the new
+                            // asset WITHOUT re-arming audio focus. Use the
+                            // focus-preserving swap stop so the voice
+                            // guide's focus isn't preempted (BUG A2).
+                            safeStopPlayerForSwap()
                         }
                         // `isActive != true` catches (1) first-ever-null,
                         // (2) cancelled, and (3) completed-but-not-null.
@@ -159,7 +164,13 @@ class SoundscapeOrchestrator @Inject constructor(
                         // soundscape selected). Stage 5-E lesson.
                         if (playJob?.isActive != true) {
                             spawnedAssetId = assetId
-                            playJob = scope.launch { runSessionLoop() }
+                            // iOS parity SoundManagement.swift:68-78 — the
+                            // bell-duration delay scopes to meditation-start
+                            // ONLY (onMeditationStart). A mid-meditation
+                            // swap (SoundscapePlayer.swift:30-33 crossfade)
+                            // plays immediately. needsSwap=true → no delay.
+                            val applyStartDelay = !needsSwap
+                            playJob = scope.launch { runSessionLoop(applyStartDelay) }
                         }
                     }
                     is WalkState.Active,
@@ -191,15 +202,23 @@ class SoundscapeOrchestrator @Inject constructor(
      * state transition, `scope.launch` is cancelled and the
      * `CancellationException` unwinds through the `collect`.
      */
-    private suspend fun runSessionLoop() {
+    private suspend fun runSessionLoop(applyStartDelay: Boolean) {
         var retryBudget = 1
         try {
             // iOS parity `SoundManagement.swift:68-78` —
             // max(0.5s, actualBellDuration). Bells are user-downloadable
             // so resolve the live duration; never start the ambient loop
             // before the meditation-start bell has finished ringing.
-            val bellMs = bellDurationResolver.meditationStartBellDurationMs()
-            delay(maxOf(BELL_DELAY_FLOOR_MS, bellMs))
+            //
+            // Scoped to meditation-start ONLY (`applyStartDelay`). A
+            // mid-meditation soundscape swap must play immediately —
+            // iOS's crossfade (SoundscapePlayer.swift:30-33) has no
+            // start delay; applying it on swap would leave multi-second
+            // silence on every track change (BUG A1 regression).
+            if (applyStartDelay) {
+                val bellMs = bellDurationResolver.meditationStartBellDurationMs()
+                delay(maxOf(BELL_DELAY_FLOOR_MS, bellMs))
+            }
             if (!attemptPlay()) return
             // Suspend on `player.state` for the rest of the session.
             // `collect` runs until `playJob.cancel()` fires (from the
@@ -262,6 +281,21 @@ class SoundscapeOrchestrator @Inject constructor(
         val asset = manifestService.asset(id) ?: return null
         if (asset.type != AudioAssetType.SOUNDSCAPE) return null
         return if (fileStore.isAvailable(asset)) asset else null
+    }
+
+    /**
+     * Swap-path stop: keeps audio focus held so the in-flight voice
+     * guide isn't preempted. iOS parity SoundscapePlayer.swift:30-33
+     * (crossfade does not deactivate the audio session). BUG A2.
+     */
+    private fun safeStopPlayerForSwap() {
+        try {
+            player.stopForSwap()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "player.stopForSwap failed", t)
+        }
     }
 
     private fun safeStopPlayer() {

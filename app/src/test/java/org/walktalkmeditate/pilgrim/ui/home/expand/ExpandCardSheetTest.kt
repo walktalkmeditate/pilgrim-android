@@ -2,12 +2,18 @@
 package org.walktalkmeditate.pilgrim.ui.home.expand
 
 import android.app.Application
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -67,5 +73,54 @@ class ExpandCardSheetTest {
             assertEquals(42L, clickedId)
             assertTrue(dismissed)
         }
+    }
+
+    @Test
+    fun tapping_scrim_outside_card_dismisses() {
+        var dismissed = false
+        composeRule.setContent {
+            PilgrimTheme {
+                ExpandCardSheet(
+                    snapshot = snap,
+                    celestial = null,
+                    seasonColor = androidx.compose.ui.graphics.Color(0xFF74B495),
+                    units = UnitSystem.Metric,
+                    isShared = false,
+                    onViewDetails = {},
+                    onDismissRequest = { dismissed = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        // The card is bottom-anchored; the top of the full-size scrim
+        // is empty backdrop. A tap near the top must dismiss.
+        composeRule.onRoot().performTouchInput {
+            click(androidx.compose.ui.geometry.Offset(centerX, top + 20f))
+        }
+        composeRule.runOnIdle { assertTrue(dismissed) }
+    }
+
+    @Test
+    fun tapping_card_does_not_dismiss() {
+        var dismissed = false
+        composeRule.setContent {
+            PilgrimTheme {
+                ExpandCardSheet(
+                    snapshot = snap,
+                    celestial = null,
+                    seasonColor = androidx.compose.ui.graphics.Color(0xFF74B495),
+                    units = UnitSystem.Metric,
+                    isShared = false,
+                    onViewDetails = {},
+                    onDismissRequest = { dismissed = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        // The "walk" activity pill sits well inside the card body and
+        // has no click handler of its own; the card's absorb-clickable
+        // must swallow the tap without dismissing.
+        composeRule.onNodeWithText("walk", substring = true).performClick()
+        composeRule.runOnIdle { assertFalse(dismissed) }
     }
 }
