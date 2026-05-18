@@ -18,6 +18,7 @@ import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
+import org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
@@ -31,6 +32,16 @@ class PilgrimApp : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var orphanSweeperScheduler: OrphanSweeperScheduler
+
+    /**
+     * E2 cold-start reconcile for the launcher-icon switcher. When the
+     * user picks an icon, [IconSwitcher.switchTo] intentionally leaves
+     * the previously-running alias enabled so the live MainActivity
+     * task is not torn down (which would evict the user to the home
+     * screen). That stale alias is reaped here on the next cold start,
+     * where no activity task exists yet so disabling it is safe.
+     */
+    @Inject lateinit var iconSwitcher: IconSwitcher
 
     /**
      * First-launch defaults for bell + soundscape selections. iOS
@@ -167,6 +178,19 @@ class PilgrimApp : Application(), Configuration.Provider {
         // map tiles will fail to load; the placeholder map card handles
         // that visually until a valid token is configured.
         MapboxOptions.accessToken = BuildConfig.MAPBOX_ACCESS_TOKEN
+
+        // E2: reap any launcher alias left enabled by an in-place icon
+        // switch in a previous session. No activity task exists yet at
+        // this point, so disabling the stale alias is safe.
+        // setComponentEnabledSetting can throw SecurityException on some
+        // hardened ROMs — swallow so a fresh install still boots.
+        try {
+            iconSwitcher.reconcile()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "icon reconcile failed", t)
+        }
 
         // KEEP policy means this is a no-op after the first launch; the
         // periodic sweeper runs on its own daily cadence regardless of
