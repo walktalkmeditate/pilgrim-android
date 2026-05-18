@@ -29,9 +29,11 @@ import com.mapbox.geojson.Point
 import kotlinx.coroutines.delay
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
+import com.mapbox.maps.ImageHolder
 import com.mapbox.maps.MapInitOptions
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
+import com.mapbox.maps.plugin.LocationPuck2D
 import com.mapbox.maps.plugin.animation.MapAnimationOptions
 import com.mapbox.maps.plugin.animation.easeTo
 import com.mapbox.maps.plugin.annotation.annotations
@@ -44,7 +46,6 @@ import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
-import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
@@ -128,6 +129,14 @@ internal fun PilgrimMap(
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
     // Pilgrim stone palette, light-mode + dark-mode — see ui/theme/Color.kt.
     val lineColor = if (darkMode) 0xFFB8976E.toInt() else 0xFF8B7355.toInt()
+    // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — the user puck
+    // is the seasonal/appearance `stone` color, NOT Mapbox blue. Read
+    // it from the live theme (`pilgrimColors.stone`) rather than the
+    // hex-by-darkMode `lineColor` path so it reflects the constellation
+    // appearance override + seasonal shifts (the hardcoded hex pair
+    // above is frozen to the base palette and would not flip in
+    // constellation mode).
+    val stoneArgb = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.stone.toArgb()
     // EdgeInsets values are physical pixels; convert from a dp constant so
     // the padding looks consistent across screen densities.
     val paddingPx = with(LocalDensity.current) { FIT_PADDING_DP.dp.toPx().toDouble() }
@@ -148,6 +157,12 @@ internal fun PilgrimMap(
     var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
     val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
+    // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — custom 2D
+    // puck: stone-filled outer disc + white@0.9 inner dot. Keyed on
+    // `stoneArgb` only (the single value the draw reads) so a theme /
+    // appearance / seasonal flip rebuilds it but unrelated
+    // recompositions reuse the cached bitmap.
+    val puckBitmap = remember(stoneArgb) { createPuckBitmap(stoneArgb) }
     // Snapshot of the waypoint list that produced the current pin set, so
     // recomposition triggers that don't change waypoints (e.g. Stage 13-D's
     // segment-tap zoom changes `zoomTargetBounds` → re-fires the update
@@ -323,11 +338,16 @@ internal fun PilgrimMap(
                     } else false
                 }
             }
-            // Show Mapbox's built-in "you are here" puck on the Active
-            // Walk map only. The summary map is a post-hoc review; a live
-            // puck there would be out of place. The default 2D puck uses
-            // Mapbox's stock assets (no custom drawables needed) and
-            // orients to device bearing when available.
+            // Show the "you are here" puck on the Active Walk map only.
+            // The summary map is a post-hoc review; a live puck there
+            // would be out of place. iOS parity
+            // `PilgrimMapView.swift:231-251@v1.6.0` — the puck is a
+            // custom stone-tinted disc (NOT Mapbox blue) with a
+            // stone@0.3 pulsing ring. The actual `locationPuck` +
+            // `pulsingColor` are applied (and re-applied on theme flip)
+            // by the dedicated puck LaunchedEffect below; here we only
+            // enable the component + pulsing so the puck appears as
+            // soon as the style finishes loading.
             //
             // Tech debt: Mapbox's DefaultLocationProvider creates its own
             // FusedLocationProviderClient subscription, separate from our
@@ -345,7 +365,6 @@ internal fun PilgrimMap(
                 view.location.updateSettings {
                     enabled = true
                     pulsingEnabled = true
-                    locationPuck = createDefault2DPuck(withBearing = true)
                 }
             }
             // Opt out of Mapbox's anonymous event collection once per
@@ -390,6 +409,27 @@ internal fun PilgrimMap(
                     "fading in anyway (check MAPBOX_ACCESS_TOKEN + network)",
             )
             styleLoaded = true
+        }
+    }
+
+    // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — apply the
+    // custom stone-tinted 2D puck + stone@0.3 pulsing ring. Separate
+    // from the loadStyle effect so a constellation / seasonal
+    // appearance change that flips `stoneArgb` WITHOUT flipping
+    // `styleUri` (dark/light) still retints the puck. Re-keys on
+    // `puckBitmap` (which is `remember(stoneArgb)`-keyed) and waits for
+    // `styleLoaded` so `view.location.updateSettings` lands after the
+    // location component is initialized by the loadStyle block above.
+    LaunchedEffect(mapView, puckBitmap, followLatest, styleLoaded) {
+        if (!followLatest || !styleLoaded) return@LaunchedEffect
+        val view = mapView ?: return@LaunchedEffect
+        // Stone@0.3 — matches iOS `stoneColor.withAlphaComponent(0.3)`.
+        val pulseArgb = (stoneArgb and 0x00FFFFFF) or (0x4D shl 24)
+        view.location.updateSettings {
+            enabled = true
+            pulsingEnabled = true
+            pulsingColor = pulseArgb
+            locationPuck = buildStonePuck(puckBitmap)
         }
     }
 
@@ -782,6 +822,54 @@ private fun createProximityPinBitmap(
     return bitmap
 }
 
+/**
+ * iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — the user-location
+ * puck. A [stoneArgb]-filled outer disc with a white@0.9 inner dot
+ * (iOS insets the inner ellipse by 4 of 22 pt → ~18% of the radius).
+ * No stroke (iOS draws none). The pulsing ring (stone@0.3) is applied
+ * separately via the location-component `pulsingColor` setting.
+ *
+ * `stoneArgb` is resolved from the live theme so it tracks the
+ * constellation appearance override + seasonal shifts (unlike the
+ * frozen hex-by-darkMode `lineColor` path). Same fixed-4x density
+ * factor as [createProximityPinBitmap] for crisp rendering without a
+ * Density read in this raw-Bitmap helper.
+ */
+internal fun createPuckBitmap(stoneArgb: Int): Bitmap {
+    val sizePx = PUCK_SIZE_DP * 4
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val cx = sizePx / 2f
+    val cy = sizePx / 2f
+    val outerRadius = sizePx / 2f
+    // iOS: innerRect = rect.insetBy(4 of 22) → inner radius is
+    // (1 - 4/11) of the outer radius.
+    val innerRadius = outerRadius * (1f - 4f / 11f)
+    val outerPaint = Paint().apply {
+        isAntiAlias = true
+        color = stoneArgb
+        style = Paint.Style.FILL
+    }
+    val innerPaint = Paint().apply {
+        isAntiAlias = true
+        color = android.graphics.Color.argb(230, 255, 255, 255)
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(cx, cy, outerRadius, outerPaint)
+    canvas.drawCircle(cx, cy, innerRadius, innerPaint)
+    return bitmap
+}
+
+/**
+ * Builds the Mapbox [LocationPuck2D] from a stone-tinted bitmap.
+ * Extracted so the real `ImageHolder.from` + `LocationPuck2D`
+ * constructor path is exercised by a Robolectric test (CLAUDE.md
+ * platform-object-builder rule) rather than only on-device.
+ */
+internal fun buildStonePuck(bitmap: Bitmap): LocationPuck2D =
+    LocationPuck2D(topImage = ImageHolder.from(bitmap))
+
+private const val PUCK_SIZE_DP = 22
 private const val WHISPER_PIN_SIZE_DP = 14
 private const val CAIRN_PIN_BASE_DP = 12
 
