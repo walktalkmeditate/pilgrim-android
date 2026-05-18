@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -105,15 +106,16 @@ fun ExpandCardSheet(
     val buttonContent = pilgrimColors.parchment
     val buttonStyle = pilgrimType.annotation
 
-    // Outer Box gets a clickable that dismisses on tap-outside-the-card
-    // (iOS sheet binding has the same affordance). The card itself
-    // installs its own non-dismissing clickable so taps inside don't
-    // fall through. indication = null on both so neither shows ripple.
+    // iOS InkScrollView.swift:45,317-322@v1.6.0 — the full-viewport
+    // outer Box is the dismiss backdrop: a tap anywhere outside the
+    // card closes the sheet. The card itself installs its own
+    // non-dismissing clickable so taps inside don't fall through.
+    // indication = null on both so neither shows ripple.
     val outerInteraction = remember { MutableInteractionSource() }
     val innerInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clickable(
                 interactionSource = outerInteraction,
                 indication = null,
@@ -124,10 +126,12 @@ fun ExpandCardSheet(
         // The floating card. All corners rounded to 16dp (iOS
         // RoundedRectangle(16)); seasonColor.opacity(0.10) layered on
         // top of parchmentSecondary approximates iOS .ultraThinMaterial
-        // tinted by seasonColor.
+        // tinted by seasonColor. The 88.dp bottom lift sits the card
+        // just above the floating pill nav.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(bottom = 88.dp)
                 .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small)
                 .shadow(elevation = 8.dp, shape = RoundedCornerShape(16.dp))
                 .clip(RoundedCornerShape(16.dp))
