@@ -51,6 +51,26 @@ class ExoPlayerVoiceGuidePlayerTest {
         shadowOf(android.os.Looper.getMainLooper()).idle()
     }
 
+    /**
+     * Drains the main looper repeatedly until [condition] holds or the
+     * bounded budget is exhausted. `stop()`/`release()` post their
+     * teardown (internalStop → player.stop() → a deferred listener
+     * callback, then abandonFocus) onto the main handler; a single
+     * `idle()` pass settles this solo, but under a loaded full-suite
+     * shard the cascade can need another drain pass before the terminal
+     * State emission lands. Polling the actual post-condition (not a
+     * fixed pass count) keeps the assertion strict while removing the
+     * batch-isolation flake (ExoPlayerVoiceGuidePlayerTest passes 3/3
+     * solo; failed 1/2080 only in CI ordering).
+     */
+    private fun drainMainUntil(condition: () -> Boolean) {
+        repeat(50) {
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            if (condition()) return
+        }
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+    }
+
     @Test fun `play constructs ExoPlayer + focus request without crashing`() {
         player.play(tempFile) { }
         runMainQueueUntilIdle()
@@ -80,7 +100,7 @@ class ExoPlayerVoiceGuidePlayerTest {
         runMainQueueUntilIdle()
         val natural = fires.get()
         player.stop()
-        runMainQueueUntilIdle()
+        drainMainUntil { player.state.value is VoiceGuidePlayer.State.Idle }
         // At minimum, onFinished must have fired once — either
         // naturally (if Robolectric ran through the stub) or from
         // stop(). Never twice.
@@ -96,7 +116,7 @@ class ExoPlayerVoiceGuidePlayerTest {
         player.play(tempFile) { fires.incrementAndGet() }
         runMainQueueUntilIdle()
         player.release()
-        runMainQueueUntilIdle()
+        drainMainUntil { player.state.value is VoiceGuidePlayer.State.Idle }
         assertEquals(1, fires.get())
         assertTrue(player.state.value is VoiceGuidePlayer.State.Idle)
     }
@@ -119,7 +139,7 @@ class ExoPlayerVoiceGuidePlayerTest {
         player.release()
         runMainQueueUntilIdle()
         player.release()
-        runMainQueueUntilIdle()
+        drainMainUntil { player.state.value is VoiceGuidePlayer.State.Idle }
         assertTrue(player.state.value is VoiceGuidePlayer.State.Idle)
     }
 }
