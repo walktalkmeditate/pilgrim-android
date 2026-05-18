@@ -17,14 +17,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -214,13 +211,18 @@ class HomeViewModelTest {
     fun `hemisphere StateFlow proxies repository`() = runTest(dispatcher) {
         val v = newViewModel()
         assertEquals(Hemisphere.Northern, v.hemisphere.value)
-        hemisphereRepo.setOverride(Hemisphere.Southern)
-        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(HEMISPHERE_OBSERVE_TIMEOUT_MS) {
-                v.hemisphere.first { it == Hemisphere.Southern }
-            }
+        // Subscribe via Turbine BEFORE the override write so the
+        // WhileSubscribed proxy is hot up-front: the flip then arrives
+        // as a normal emission instead of a cold-start DataStore read
+        // racing a wall-clock bound (the documented
+        // ci-realtime-withtimeout flake family). Determinism comes from
+        // subscribe-before-mutate ordering; the timeout is pure failsafe.
+        v.hemisphere.test(timeout = HEMISPHERE_OBSERVE_TIMEOUT) {
+            assertEquals(Hemisphere.Northern, awaitItem())
+            hemisphereRepo.setOverride(Hemisphere.Southern)
+            awaitHemisphere(Hemisphere.Southern)
+            cancelAndIgnoreRemainingEvents()
         }
-        assertEquals(Hemisphere.Southern, observed)
     }
 
     @Test
@@ -233,12 +235,18 @@ class HomeViewModelTest {
         hemisphereRepo.refreshFromLocationIfNeeded()
 
         val v = newViewModel()
-        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(HEMISPHERE_OBSERVE_TIMEOUT_MS) {
-                v.hemisphere.first { it == Hemisphere.Southern }
-            }
+        v.hemisphere.test(timeout = HEMISPHERE_OBSERVE_TIMEOUT) {
+            awaitHemisphere(Hemisphere.Southern)
+            cancelAndIgnoreRemainingEvents()
         }
-        assertEquals(Hemisphere.Southern, observed)
+    }
+
+    private suspend fun app.cash.turbine.ReceiveTurbine<Hemisphere>.awaitHemisphere(
+        target: Hemisphere,
+    ) {
+        var value = awaitItem()
+        while (value != target) value = awaitItem()
+        assertEquals(target, value)
     }
 
     private suspend fun awaitLoaded(
@@ -255,16 +263,13 @@ class HomeViewModelTest {
     private val hemisphereStoreName: String = "home-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
 
     private companion object {
-        // Failsafe bound for observing the repository-backed hemisphere
-        // StateFlow flip. v.hemisphere proxies HemisphereRepository's
-        // `stateIn(WhileSubscribed)` over `dataStore.data`: `.first`
-        // cold-starts that share, which does a real DataStore disk read
-        // to pick up setOverride()'s `dataStore.edit`. The collector
-        // exits the instant it sees Southern, so this bound only bites
-        // on a true hang — 3 s flaked on saturated CI runners where the
-        // cold-start + disk read genuinely took longer. 10 s matches the
-        // turbine `timeout = 10.seconds` convention used elsewhere here.
-        const val HEMISPHERE_OBSERVE_TIMEOUT_MS = 10_000L
+        // Pure failsafe for the hemisphere-flip Turbine await. The test
+        // subscribes before mutating so the WhileSubscribed proxy is
+        // already hot — the flip is a normal emission, not a cold-start
+        // DataStore read racing this bound. Generous because it never
+        // bites on a healthy run (the await returns the instant Southern
+        // emits); only a true hang reaches it.
+        val HEMISPHERE_OBSERVE_TIMEOUT = 15.seconds
     }
 }
 

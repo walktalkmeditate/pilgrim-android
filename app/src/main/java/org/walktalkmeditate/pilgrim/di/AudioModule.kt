@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.di
 
 import android.content.Context
 import android.media.AudioManager
+import android.media.MediaPlayer
+import android.util.Log
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -15,8 +17,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.AudioCapture
 import org.walktalkmeditate.pilgrim.audio.AudioRecordCapture
+import org.walktalkmeditate.pilgrim.audio.BellDurationResolver
 import org.walktalkmeditate.pilgrim.audio.BellFileResolver
 import org.walktalkmeditate.pilgrim.audio.BellPlayer
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
@@ -24,6 +28,7 @@ import org.walktalkmeditate.pilgrim.audio.MeditationBellScope
 import org.walktalkmeditate.pilgrim.audio.MeditationObservedWalkState
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.walk.BellTrigger
@@ -104,6 +109,51 @@ abstract class AudioModule {
             val asset = manifestService.assets.value
                 .firstOrNull { it.id == id && it.type == AudioAssetType.BELL }
             asset?.let { fileStore.fileFor(it) }?.takeIf { it.exists() }
+        }
+
+        /**
+         * iOS parity `SoundManagement.swift:68-78` — resolve the
+         * meditation-start bell's real duration so the soundscape
+         * orchestrator doesn't cut a long (user-downloaded) bell short.
+         *
+         * Builds a short-lived [MediaPlayer], prepares it against the
+         * selected bell (downloaded asset via [BellFileResolver], else
+         * the bundled `R.raw.bell`), reads `getDuration()`, releases.
+         * Any failure (no id, codec error, unknown duration) falls back
+         * to [BellDurationResolver.BUNDLED_BELL_MS].
+         */
+        @Provides
+        @Singleton
+        fun provideBellDurationResolver(
+            @ApplicationContext context: Context,
+            soundsPreferences: SoundsPreferencesRepository,
+            bellFileResolver: BellFileResolver,
+        ): BellDurationResolver = BellDurationResolver {
+            val bellId = soundsPreferences.meditationStartBellId.value
+            val assetFile = bellId?.let(bellFileResolver::resolve)
+            val player = MediaPlayer()
+            try {
+                if (assetFile != null) {
+                    player.setDataSource(assetFile.absolutePath)
+                    player.prepare()
+                } else {
+                    context.resources.openRawResourceFd(R.raw.bell)?.use { afd ->
+                        player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        player.prepare()
+                    } ?: return@BellDurationResolver BellDurationResolver.BUNDLED_BELL_MS
+                }
+                val durationMs = player.duration.toLong()
+                if (durationMs > 0L) durationMs else BellDurationResolver.BUNDLED_BELL_MS
+            } catch (t: Throwable) {
+                Log.w("BellDurationResolver", "failed to resolve bell duration", t)
+                BellDurationResolver.BUNDLED_BELL_MS
+            } finally {
+                try {
+                    player.release()
+                } catch (t: Throwable) {
+                    Log.w("BellDurationResolver", "MediaPlayer release failed", t)
+                }
+            }
         }
     }
 }

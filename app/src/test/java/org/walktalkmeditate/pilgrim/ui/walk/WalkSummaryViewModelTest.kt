@@ -512,12 +512,15 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
-    fun `celestialAwarenessEnabled = false suppresses lightReadingDisplay`() = runTest(dispatcher) {
-        // Stage 10-C: the underlying lightReading is ALWAYS computed
-        // (so the toggle is observable while the summary is open) but
-        // the VM exposes a separate `lightReadingDisplay` flow that
-        // gates on `celestialAwarenessEnabled`. The screen renders
-        // from this flow, not from `summary.lightReading`.
+    fun `lightReadingDisplay is NOT gated on celestialAwarenessEnabled (BUG 7)`() = runTest(dispatcher) {
+        // iOS parity `WalkSummaryView.swift:86,129-131@v1.6.0` — Light
+        // Reading is shown when `lightReading != nil &&
+        // hasRevealedLightReading`. It is NOT gated on
+        // `celestialAwarenessEnabled` (only the celestial snapshot row
+        // + milestone seasonal branch are). The previous AND-gate on
+        // that pref (default OFF) made the card never reveal even after
+        // the walk was shared — the manual-QA BUG-7 finding. With the
+        // pref OFF the display flow must still emit the reading.
         val walk = repository.startWalk(startTimestamp = 5_000_000L)
         repository.recordLocation(
             RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 48.8566, longitude = 2.3522),
@@ -532,10 +535,55 @@ class WalkSummaryViewModelTest {
         )
 
         vm.lightReadingDisplay.test(timeout = 10.seconds) {
-            // The display flow seeds with null (initialValue) and
-            // stays null because the gate is OFF.
-            assertNull(
-                "celestialAwarenessEnabled = false should suppress lightReadingDisplay",
+            // Seeds with null (initialValue), then emits the reading
+            // once the state resolves to Loaded — pref is OFF but the
+            // reading is no longer suppressed.
+            var item = awaitItem()
+            while (item == null) item = awaitItem()
+            assertNotNull(
+                "Light Reading must be exposed regardless of celestialAwarenessEnabled",
+                item,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `Light Reading card visible after markCurrentWalkShared with celestial pref OFF (BUG 7)`() = runTest(dispatcher) {
+        // The screen gates the card on `hasRevealedLightReading &&
+        // lightReadingDisplay != null` (iOS-parity). With the celestial
+        // pref OFF, sharing the walk must flip the reveal latch AND
+        // leave the reading non-null so the card actually appears.
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = 48.8566, longitude = 2.3522),
+        )
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(
+            walkId = walk.id,
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
+                initialCelestialAwarenessEnabled = false,
+            ),
+        )
+
+        // Reading is exposed even with the pref OFF. Collect via
+        // Turbine (active subscription) — reading `.value` does not
+        // drive the upstream `state` flow's Loading→Loaded resolution.
+        vm.lightReadingDisplay.test(timeout = 10.seconds) {
+            var reading = awaitItem()
+            while (reading == null) reading = awaitItem()
+            assertNotNull("Light Reading must be non-null with celestial pref OFF", reading)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        vm.hasRevealedLightReading.test {
+            assertEquals(false, awaitItem())
+            vm.markCurrentWalkShared()
+            advanceUntilIdle()
+            assertEquals(
+                "Sharing the walk must reveal the Light Reading card even with celestial pref OFF",
+                true,
                 awaitItem(),
             )
             cancelAndIgnoreRemainingEvents()

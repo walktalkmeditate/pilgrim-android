@@ -31,6 +31,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.BellDurationResolver
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
@@ -56,6 +57,15 @@ class SoundscapeOrchestratorTest {
     private lateinit var manifestService: AudioManifestService
     private lateinit var manifestScope: CoroutineScope
     private val capturingPlayer = CapturingSoundscapePlayer()
+
+    // Default to 800ms so the existing start-delay timing assertions
+    // (799 → 0 plays, +1 → 1 play) keep their meaning: with the new
+    // bell-aware delay, total = max(BELL_DELAY_FLOOR_MS=500, 800) = 800,
+    // unchanged from the old fixed START_DELAY_MS. Individual tests
+    // override `bellDurationMs` to exercise the iOS-parity
+    // max(floor, bellDuration) behavior (BUG 4).
+    @Volatile private var bellDurationMs: Long = 800L
+    private val bellDurationResolver = BellDurationResolver { bellDurationMs }
 
     private val manifestCache: File get() = File(context.filesDir, "audio_manifest.json")
     private val soundscapeRoot: File get() = File(context.filesDir, "audio/soundscape")
@@ -114,7 +124,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -133,7 +144,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -153,7 +165,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         // Before the 800ms delay elapses, no play yet.
@@ -161,6 +174,69 @@ class SoundscapeOrchestratorTest {
         runCurrent()
         assertEquals(0, capturingPlayer.playCount)
         // After the delay completes, play fires once.
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `soundscape waits for the full bell duration before playing (BUG 4)`() = runTest {
+        // iOS parity SoundManagement.swift:68-78 — a long
+        // (user-downloaded) bell must not be cut short by the ambient
+        // loop. With a 4.0s bell, play must NOT fire at 3.9s but MUST
+        // fire just after 4.0s.
+        bellDurationMs = 4_000L
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(3_999)
+        runCurrent()
+        assertEquals(
+            "soundscape must not start before the 4.0s bell finishes",
+            0, capturingPlayer.playCount,
+        )
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `bell shorter than the floor still waits BELL_DELAY_FLOOR_MS (BUG 4)`() = runTest {
+        // iOS parity SoundManagement.swift:69 — max(0.5, bellDuration).
+        // A 100ms bell (or a "None" selection resolving to ~0) must
+        // still leave 500ms of silence before the ambient loop.
+        bellDurationMs = 100L
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(499)
+        runCurrent()
+        assertEquals(
+            "floor must hold playback until 500ms even for a 100ms bell",
+            0, capturingPlayer.playCount,
+        )
         advanceTimeBy(1)
         runCurrent()
         assertEquals(1, capturingPlayer.playCount)
@@ -178,7 +254,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -210,7 +287,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         // User bails mid-delay (tap Done at ~400ms).
@@ -236,7 +314,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -259,7 +338,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -291,7 +371,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -331,7 +412,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -382,7 +464,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(2_000)
@@ -404,7 +487,7 @@ class SoundscapeOrchestratorTest {
             walkState, selectedAssetId, manifestService, fileStore,
             capturingPlayer,
             FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
-            s,
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(5_000)
@@ -427,7 +510,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, prefs, s,
+            capturingPlayer, prefs, bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -470,7 +553,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, prefs, s,
+            capturingPlayer, prefs, bellDurationResolver, s,
         ).start()
         runCurrent()
         // Sit inside the start delay (800ms in production). Don't
@@ -506,7 +589,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, prefs, s,
+            capturingPlayer, prefs, bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(2_000)
@@ -546,7 +629,8 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true), s,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)
@@ -588,7 +672,7 @@ class SoundscapeOrchestratorTest {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         SoundscapeOrchestrator(
             walkState, selectedAssetId, manifestService, fileStore,
-            capturingPlayer, prefs, s,
+            capturingPlayer, prefs, bellDurationResolver, s,
         ).start()
         runCurrent()
         advanceTimeBy(1_000)

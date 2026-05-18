@@ -409,20 +409,24 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
-     * Live-gated light reading: combines the loaded summary's stored
-     * [LightReading] with the practice preference. Toggling
-     * Celestial awareness ON/OFF in Settings flips this immediately,
-     * so the post-walk Light Reading card appears/disappears without
-     * the user navigating away and back. iOS computes the snapshot
-     * conditionally at walk-finish; we always compute it (cheap) and
-     * gate at display time so the toggle is observable.
+     * The loaded summary's stored [LightReading], projected straight
+     * off [state].
+     *
+     * iOS parity `WalkSummaryView.swift:86,129-131@v1.6.0` — Light
+     * Reading is shown when `lightReading != nil &&
+     * hasRevealedLightReading`. It is NOT gated on
+     * `celestialAwarenessEnabled`; only the celestial *snapshot* row
+     * ([celestialSnapshotDisplay]) and the milestone seasonal branch
+     * consult that pref. The earlier AND-gate on
+     * `celestialAwarenessEnabled` (default OFF) made this flow
+     * permanently null, so the card never revealed even after the
+     * walk was shared — the manual-QA BUG-7 finding. The screen still
+     * gates the card on `hasRevealedLightReading` (the
+     * shared-walk reveal latch), matching iOS.
      */
     val lightReadingDisplay: StateFlow<LightReading?> =
-        kotlinx.coroutines.flow.combine(
-            state,
-            practicePreferences.celestialAwarenessEnabled,
-        ) { s, enabled ->
-            if (s is WalkSummaryUiState.Loaded && enabled) s.summary.lightReading else null
+        state.map { s ->
+            (s as? WalkSummaryUiState.Loaded)?.summary?.lightReading
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.Eagerly,

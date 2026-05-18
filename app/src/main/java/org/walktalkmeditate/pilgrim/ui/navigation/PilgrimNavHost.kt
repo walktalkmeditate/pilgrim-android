@@ -374,6 +374,14 @@ fun PilgrimNavHost(
         }
         composable(Routes.MEDITATION) {
             MeditationScreen(
+                onOpenSoundscapePicker = {
+                    // iOS parity `MeditationView.swift:293-333` — the
+                    // soundscape affordance (tap when Silence /
+                    // long-press always) opens the soundscape picker.
+                    navController.navigate(Routes.SOUNDSCAPE_PICKER) {
+                        launchSingleTop = true
+                    }
+                },
                 onEnded = {
                     // Pop back to ActiveWalk. If the walk was finished
                     // externally (state went straight Meditating →
