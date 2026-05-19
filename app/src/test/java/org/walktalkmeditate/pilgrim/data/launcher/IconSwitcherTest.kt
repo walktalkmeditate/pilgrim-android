@@ -41,32 +41,35 @@ class IconSwitcherTest {
         enabledSetting(variant) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
 
     @Test
-    fun switchTo_keeps_running_alias_enabled_and_disables_the_rest() {
+    fun switchTo_enables_only_target_and_disables_every_other_alias() {
         switcher.switchTo(IconVariant.Dark)
 
         assertTrue("target enabled", isEnabled(IconVariant.Dark))
-        // Default is the cold-install running alias; switchTo must NOT
-        // disable it (that tears the live task down → eviction).
-        assertFalse(
-            "running alias must stay enabled",
+        // Exactly one enabled LAUNCHER alias must remain = target.
+        // Two enabled aliases sharing targetActivity make the launcher
+        // dedupe to the original and show no visible change, so the
+        // previously-enabled Default alias must be disabled too. No
+        // eviction occurs because target is enabled BEFORE Default is
+        // disabled — a valid LAUNCHER component for MainActivity exists
+        // throughout the transition.
+        assertTrue(
+            "previously-enabled alias disabled",
             isDisabled(IconVariant.Default),
         )
-        // Every alias that is neither target nor running is disabled.
         assertTrue(isDisabled(IconVariant.Breeze))
         assertTrue(isDisabled(IconVariant.Stone))
+        assertEquals(IconVariant.Dark, switcher.currentVariant())
         assertEquals(IconVariant.Dark, switcher.persistedTarget())
     }
 
     @Test
-    fun reconcile_disables_stale_non_target_aliases() {
+    fun reconcile_keeps_target_and_disables_non_target_aliases() {
         switcher.switchTo(IconVariant.Dark)
-        // Default (the previous running alias) is still enabled here.
-        assertFalse(isDisabled(IconVariant.Default))
 
         switcher.reconcile()
 
         assertTrue("target stays enabled", isEnabled(IconVariant.Dark))
-        assertTrue("stale running alias reaped", isDisabled(IconVariant.Default))
+        assertTrue(isDisabled(IconVariant.Default))
         assertEquals(IconVariant.Dark, switcher.currentVariant())
     }
 
