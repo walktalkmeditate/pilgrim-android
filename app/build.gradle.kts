@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.play.publisher)
 }
 
 val localProperties = Properties().apply {
@@ -178,6 +179,13 @@ android {
         // block CI.
         disable += "MissingTranslation"
     }
+}
+
+play {
+    serviceAccountCredentials.set(rootProject.file("play-service-account.json"))
+    defaultToAppBundles.set(true)
+    track.set("internal")
+    releaseStatus.set(com.github.triplet.gradle.androidpublisher.ReleaseStatus.COMPLETED)
 }
 
 kotlin {
