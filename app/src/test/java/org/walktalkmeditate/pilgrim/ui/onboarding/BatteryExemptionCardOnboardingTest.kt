@@ -87,7 +87,7 @@ class BatteryExemptionCardOnboardingTest {
         }
 
         composeRule.onNodeWithText("A word about sleep").assertIsDisplayed()
-        composeRule.onNodeWithText("Ask my phone").assertIsDisplayed()
+        composeRule.onNodeWithText("Allow").assertIsDisplayed()
         composeRule.onNodeWithText("Later").assertIsDisplayed()
     }
 
@@ -101,7 +101,7 @@ class BatteryExemptionCardOnboardingTest {
             }
         }
 
-        composeRule.onNodeWithText("Ask my phone").performClick()
+        composeRule.onNodeWithText("Allow").performClick()
         composeRule.waitForIdle()
 
         // Robolectric PowerManager stays not-exempt and the system
@@ -110,7 +110,7 @@ class BatteryExemptionCardOnboardingTest {
         // `asked`. Permanent suppression here is the OxygenOS
         // dying-walk regression.
         composeRule.onNodeWithText("A word about sleep").assertIsDisplayed()
-        composeRule.onNodeWithText("Ask my phone").assertIsDisplayed()
+        composeRule.onNodeWithText("Allow").assertIsDisplayed()
     }
 
     @Test

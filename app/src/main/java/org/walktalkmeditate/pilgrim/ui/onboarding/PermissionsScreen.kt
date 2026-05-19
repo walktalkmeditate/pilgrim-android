@@ -169,16 +169,10 @@ fun PermissionsScreen(
         )
         Spacer(Modifier.height(PilgrimSpacing.normal))
 
-        // iOS PermissionsView order: Location → Microphone → Motion.
-        PermissionCard(
-            title = stringResource(R.string.permission_microphone_title),
-            rationale = stringResource(R.string.permission_microphone_rationale),
-            granted = microphoneGranted,
-            optional = true,
-            onRequest = { microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO) },
-        )
-        Spacer(Modifier.height(PilgrimSpacing.normal))
-
+        // Required permissions grouped first (Location above, then the
+        // ongoing-notification), then the optional ones — required vs
+        // optional is conveyed by the "(optional)" label, not by the
+        // action style (every card uses the same "Allow" affordance).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             PermissionCard(
                 title = stringResource(R.string.permission_notification_title),
@@ -190,6 +184,15 @@ fun PermissionsScreen(
             )
             Spacer(Modifier.height(PilgrimSpacing.normal))
         }
+
+        PermissionCard(
+            title = stringResource(R.string.permission_microphone_title),
+            rationale = stringResource(R.string.permission_microphone_rationale),
+            granted = microphoneGranted,
+            optional = true,
+            onRequest = { microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+        )
+        Spacer(Modifier.height(PilgrimSpacing.normal))
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             PermissionCard(
@@ -269,10 +272,11 @@ private fun LocationPermissionCard(
                         style = pilgrimType.caption,
                         color = pilgrimColors.moss,
                     )
-                    LocationStatus.CoarseOnly, LocationStatus.NeedsSettings -> Button(onClick = onOpenSettings) {
-                        Text(stringResource(R.string.permissions_open_settings))
-                    }
-                    LocationStatus.NotRequested -> Button(onClick = onRequestPrompt) {
+                    LocationStatus.CoarseOnly, LocationStatus.NeedsSettings ->
+                        TextButton(onClick = onOpenSettings) {
+                            Text(stringResource(R.string.permissions_open_settings))
+                        }
+                    LocationStatus.NotRequested -> TextButton(onClick = onRequestPrompt) {
                         Text(stringResource(R.string.permissions_grant))
                     }
                 }
@@ -326,16 +330,17 @@ private fun PermissionCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End,
             ) {
-                when {
-                    granted -> Text(
+                // One consistent action for every card (required and
+                // optional alike) — the "(optional)" label beside the
+                // title carries the distinction, not the button weight.
+                if (granted) {
+                    Text(
                         text = stringResource(R.string.permissions_granted_label),
                         style = pilgrimType.caption,
                         color = pilgrimColors.moss,
                     )
-                    optional -> TextButton(onClick = onRequest) {
-                        Text(stringResource(R.string.permissions_grant))
-                    }
-                    else -> Button(onClick = onRequest) {
+                } else {
+                    TextButton(onClick = onRequest) {
                         Text(stringResource(R.string.permissions_grant))
                     }
                 }
