@@ -327,17 +327,12 @@ fun WalkSummaryScreen(
                         // Stage 13-B: theme-resolved per-activity polyline colors.
                         // Lives inside the Loaded branch because pilgrimColors is
                         // theme-scoped at composition.
-                        val segmentColors = RouteSegmentColors(
-                            walking = pilgrimColors.moss,
-                            talking = pilgrimColors.rust,
-                            meditating = pilgrimColors.dawn,
-                        )
-                        val walkAnnotationColors = WalkAnnotationColors(
-                            startEnd = pilgrimColors.stone,
-                            meditation = pilgrimColors.dawn,
-                            voice = pilgrimColors.rust,
-                            photo = pilgrimColors.moss,
-                        )
+                        // iOS parity: route + annotation colors are FIXED
+                        // assets, not theme-resolved — walk/talk/meditate
+                        // must look identical in light/dark/constellation
+                        // (was drifting via pilgrimColors.*).
+                        val segmentColors = RouteSegmentColors.Fixed
+                        val walkAnnotationColors = WalkAnnotationColors.Fixed
 
                         // 1. Map — Stage 13-B bumps height to 320dp + adds the
                         // radial-gradient circular mask + plumbs the reveal

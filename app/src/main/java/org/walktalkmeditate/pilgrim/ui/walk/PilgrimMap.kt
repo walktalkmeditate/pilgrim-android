@@ -46,6 +46,7 @@ import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
+import com.mapbox.maps.plugin.compass.compass
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
@@ -127,8 +128,11 @@ internal fun PilgrimMap(
     }
     val darkMode = LocalPilgrimDarkTheme.current
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
-    // Pilgrim stone palette, light-mode + dark-mode — see ui/theme/Color.kt.
-    val lineColor = if (darkMode) 0xFFB8976E.toInt() else 0xFF8B7355.toInt()
+    // iOS parity `PilgrimMapView.swift:321-329@v1.6.0` — the route line
+    // is the FIXED walking color (`UIColor.moss`), constant across
+    // light/dark/constellation. Was a darkMode-dependent stone hex pair
+    // that drifted the route color with appearance.
+    val lineColor = 0xFF7A8B6F.toInt()
     // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — the user puck
     // is the seasonal/appearance `stone` color, NOT Mapbox blue. Read
     // it from the live theme (`pilgrimColors.stone`) rather than the
@@ -377,9 +381,11 @@ internal fun PilgrimMap(
                     } else false
                 }
             }
-            // iOS reference doesn't show a scale bar on the walk map and
-            // device QA flagged the "0—150m" indicator as visually noisy.
+            // iOS parity `PilgrimMapView.swift:119-120@v1.6.0` hides BOTH
+            // the scale bar and the compass. The compass appears on zoom/
+            // rotate near the top-right X and was device-flagged as noise.
             view.scalebar.enabled = false
+            view.compass.enabled = false
             // Opt out of Mapbox's anonymous event collection once per
             // MapView instance. Pilgrim's privacy posture is
             // no-telemetry-by-default; this covers the plugin's own usage
