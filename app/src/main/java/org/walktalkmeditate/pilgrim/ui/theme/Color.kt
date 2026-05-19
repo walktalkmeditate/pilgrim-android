@@ -4,7 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.theme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -183,7 +183,18 @@ fun pilgrimConstellationOverride(base: PilgrimColors): PilgrimColors = base.copy
     ink = Color(0xFFE8E0FF),
 )
 
-val LocalPilgrimColors = staticCompositionLocalOf { pilgrimLightColors() }
+/**
+ * `compositionLocalOf` (NOT `staticCompositionLocalOf`): the appearance
+ * is runtime-switchable (Settings → Appearance → System/Light/Dark/
+ * Constellation). A static local only re-runs the currently-composing
+ * provider subtree on change, so any screen sitting on the Navigation
+ * back stack keeps the stale palette in its retained composition slots
+ * and renders with the old theme when popped back (e.g. WalkShare stuck
+ * in constellation indigo after the user flips appearance). The
+ * per-reader invalidation cost is correct and cheap here because
+ * [PilgrimColors] is `@Stable` and an appearance flip is rare.
+ */
+val LocalPilgrimColors = compositionLocalOf { pilgrimLightColors() }
 
 /**
  * Tracks PilgrimTheme's resolved dark/light flag, which combines system
@@ -193,7 +204,7 @@ val LocalPilgrimColors = staticCompositionLocalOf { pilgrimLightColors() }
  * the asset disagrees with the rest of the UI when AppearanceMode
  * overrides system.
  */
-val LocalPilgrimDarkTheme = staticCompositionLocalOf { false }
+val LocalPilgrimDarkTheme = compositionLocalOf { false }
 
 /**
  * True when [AppearanceMode.Constellation] is active. Read by surfaces
@@ -201,7 +212,7 @@ val LocalPilgrimDarkTheme = staticCompositionLocalOf { false }
  * card swap, etc.) and by the constellation overlay's host points so
  * they render only when needed.
  */
-val LocalIsConstellation = staticCompositionLocalOf { false }
+val LocalIsConstellation = compositionLocalOf { false }
 
 val pilgrimColors: PilgrimColors
     @Composable

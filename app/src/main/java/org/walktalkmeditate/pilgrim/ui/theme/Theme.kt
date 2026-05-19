@@ -36,12 +36,20 @@ fun PilgrimTheme(
 
     // Cache the PilgrimColors AND PilgrimTypography instances across
     // recompositions. Without `remember`, every PilgrimTheme recomposition
-    // would allocate fresh instances and — because LocalPilgrimColors and
-    // LocalPilgrimTypography are both staticCompositionLocalOf
-    // (reference-equality) — invalidate every consumer in the entire app
-    // tree. Key the colors `remember` on `darkTheme`, `hemisphere`,
-    // `today`, AND `constellation` so a constellation flip rebuilds the
-    // palette with the indigo override applied. iOS parity
+    // would allocate fresh instances. LocalPilgrimColors /
+    // LocalPilgrimDarkTheme / LocalIsConstellation are `compositionLocalOf`
+    // (NOT static): the appearance is runtime-switchable, and a static
+    // local would leave back-stack screens stranded on the stale palette
+    // because the static-local change only re-runs the currently-composing
+    // provider subtree — a screen retained on the Navigation back stack
+    // keeps its old-theme composition slots and renders with the wrong
+    // colors when popped back. `compositionLocalOf` invalidates every
+    // reader on an appearance flip, which is correct and cheap here:
+    // [PilgrimColors] is `@Stable` and the flip is rare. (LocalPilgrim-
+    // Typography stays static — typography has no runtime switch.) Key
+    // the colors `remember` on `darkTheme`, `hemisphere`, `today`, AND
+    // `constellation` so a constellation flip rebuilds the palette with
+    // the indigo override applied. iOS parity
     // `Color.swift@db4196e` wraps every static getter in
     // `SeasonalColorEngine.seasonalColor` so the whole app picks up
     // season-driven hue/saturation/brightness shifts; we replicate that
