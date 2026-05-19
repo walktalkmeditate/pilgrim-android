@@ -90,8 +90,19 @@ open class IconSwitcher @Inject constructor(
      * the persisted target. Called from `PilgrimApp.onCreate`, where
      * there is no live activity task yet, so disabling the previously
      * running alias is safe.
+     *
+     * No-op when the currently-enabled alias already equals the
+     * persisted target — the dominant case on every cold start AND
+     * every mid-walk OS process restart. Without this guard, reconcile
+     * fires 10 `setComponentEnabledSetting` calls and churns launcher
+     * state on every single process start (including the OS reviving a
+     * backgrounded walk's process), which is wasteful and destabilizing.
+     * The enable-target-then-disable-others sequence only runs when the
+     * two genuinely diverge (a previous in-place [switchTo] left the old
+     * alias enabled and this is the first cold start since).
      */
     open fun reconcile() {
+        if (currentVariant() == persistedTarget()) return
         val pm = context.packageManager
         val target = persistedTarget()
         setEnabled(pm, target, true)

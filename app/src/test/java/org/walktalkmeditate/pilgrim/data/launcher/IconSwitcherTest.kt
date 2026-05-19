@@ -74,6 +74,55 @@ class IconSwitcherTest {
     }
 
     @Test
+    fun reconcile_is_a_no_op_when_current_equals_persisted_target() {
+        switcher.switchTo(IconVariant.Dark)
+        // switchTo already left exactly the target enabled. Manually
+        // re-enable a non-target alias WITHOUT updating the persisted
+        // target: if reconcile churned every restart it would reap this
+        // here. The current==persisted guard must short-circuit instead,
+        // leaving the artificially-enabled alias untouched — proving the
+        // guard prevents the per-restart / mid-walk setComponentEnabled
+        // churn that force-killed long backgrounded walks.
+        val pm = context.packageManager
+        val pkg = context.packageName.removeSuffix(".debug")
+        pm.setComponentEnabledSetting(
+            ComponentName(context, "$pkg.${IconVariant.Breeze.aliasName}"),
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+
+        switcher.reconcile()
+
+        assertTrue("guard short-circuited: Breeze left as-is", isEnabled(IconVariant.Breeze))
+        assertTrue("target still enabled", isEnabled(IconVariant.Dark))
+    }
+
+    @Test
+    fun reconcile_still_reconciles_when_current_differs_from_persisted() {
+        switcher.switchTo(IconVariant.Dark)
+        // Simulate a prior in-place switchTo that left the old alias
+        // enabled: enable Default again WITHOUT touching the persisted
+        // target (still Dark). currentVariant() now reports Default
+        // (it scans in enum order, Default first), persistedTarget() is
+        // Dark — they diverge, so reconcile MUST run the full sequence.
+        val pm = context.packageManager
+        val pkg = context.packageName.removeSuffix(".debug")
+        pm.setComponentEnabledSetting(
+            ComponentName(context, "$pkg.${IconVariant.Default.aliasName}"),
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+        assertEquals(IconVariant.Default, switcher.currentVariant())
+        assertEquals(IconVariant.Dark, switcher.persistedTarget())
+
+        switcher.reconcile()
+
+        assertTrue("persisted target re-enabled", isEnabled(IconVariant.Dark))
+        assertTrue("divergent alias disabled", isDisabled(IconVariant.Default))
+        assertEquals(IconVariant.Dark, switcher.currentVariant())
+    }
+
+    @Test
     fun switchTo_persists_target_across_instances() {
         switcher.switchTo(IconVariant.River)
 
