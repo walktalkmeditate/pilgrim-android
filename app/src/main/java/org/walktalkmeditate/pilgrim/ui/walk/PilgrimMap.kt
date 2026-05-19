@@ -14,10 +14,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
@@ -43,6 +55,7 @@ import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
+import com.mapbox.maps.plugin.annotation.generated.createCircleAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
@@ -160,7 +173,9 @@ internal fun PilgrimMap(
     var renderedSegmentColors by remember { mutableStateOf<RouteSegmentColors?>(null) }
     var waypointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
-    val waypointBitmap = remember(darkMode) { createWaypointBitmap(darkMode) }
+    // iOS parity: each waypoint renders its type's glyph (leaf / eye /
+    // heart / chair / sparkles / flag / pin), not one shared solid dot.
+    val waypointBitmaps = rememberWaypointBitmaps(darkMode)
     // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — custom 2D
     // puck: stone-filled outer disc + white@0.9 inner dot. Keyed on
     // `stoneArgb` only (the single value the draw reads) so a theme /
@@ -182,6 +197,19 @@ internal fun PilgrimMap(
     // theme-resolved colors actually change. Without the gate the pins
     // would visibly flicker every time the user taps a timeline segment.
     var annotationManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    // iOS parity `PilgrimMapView.buildCircles@v1.6.0` — meditation is a
+    // duration-scaled dawn CircleAnnotation, not a fixed pin dot. Same
+    // for the post-walk summary map (was rendering a tiny static pin).
+    var meditationCircleManager by remember {
+        mutableStateOf<com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager?>(
+            null,
+        )
+    }
+    var renderedMeditationCircles by remember {
+        mutableStateOf<List<com.mapbox.maps.plugin.annotation.generated.CircleAnnotation>>(
+            emptyList(),
+        )
+    }
     var renderedWalkAnnotations by remember {
         mutableStateOf<List<PointAnnotation>>(emptyList())
     }
@@ -325,6 +353,9 @@ internal fun PilgrimMap(
         annotationManager = null
         renderedWalkAnnotations = emptyList()
         renderedWalkAnnotationsKey = null
+        meditationCircleManager?.let { view.annotations.removeAnnotationManager(it) }
+        meditationCircleManager = null
+        renderedMeditationCircles = emptyList()
         proximityManager?.let { view.annotations.removeAnnotationManager(it) }
         proximityManager = null
         renderedProximityPins = emptyList()
@@ -367,6 +398,8 @@ internal fun PilgrimMap(
                 }
             }
             polylineManager = view.annotations.createPolylineAnnotationManager()
+            // Above the route line, below the point pins (start/end/voice).
+            meditationCircleManager = view.annotations.createCircleAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
                 .also(::allowIconOverlap)
             annotationManager = view.annotations.createPointAnnotationManager()
@@ -611,7 +644,10 @@ internal fun PilgrimMap(
                     pointMgr.create(
                         PointAnnotationOptions()
                             .withPoint(Point.fromLngLat(wp.longitude, wp.latitude))
-                            .withIconImage(waypointBitmap),
+                            .withIconImage(
+                                waypointBitmaps[wp.icon]
+                                    ?: waypointBitmaps.getValue("mappin"),
+                            ),
                     )
                 }
                 renderedWaypoints = waypoints
@@ -635,7 +671,43 @@ internal fun PilgrimMap(
                     if (renderedWalkAnnotations.isNotEmpty()) {
                         renderedWalkAnnotations.forEach { annoMgr.delete(it) }
                     }
-                    renderedWalkAnnotations = walkAnnotations.map { ann ->
+                    // iOS parity `PilgrimMapView.buildCircles@v1.6.0` —
+                    // meditation renders as a duration-scaled dawn
+                    // CircleAnnotation, NOT a fixed pin dot. Build the
+                    // circles into the dedicated manager and exclude
+                    // Meditation from the point-pin pass below.
+                    meditationCircleManager?.let { medMgr ->
+                        if (renderedMeditationCircles.isNotEmpty()) {
+                            renderedMeditationCircles.forEach { medMgr.delete(it) }
+                        }
+                        val dawnArgb =
+                            (walkAnnotationColors?.meditation ?: WalkAnnotationColors.Fixed.meditation)
+                                .toArgb()
+                        renderedMeditationCircles = walkAnnotations
+                            .mapNotNull { ann ->
+                                val med = ann.kind as? WalkMapAnnotationKind.Meditation
+                                    ?: return@mapNotNull null
+                                val scale = ((med.durationMillis / 1000.0) / 600.0)
+                                    .coerceIn(0.0, 1.0)
+                                val radius = 10.0 + (24.0 - 10.0) * scale
+                                medMgr.create(
+                                    com.mapbox.maps.plugin.annotation.generated
+                                        .CircleAnnotationOptions()
+                                        .withPoint(
+                                            Point.fromLngLat(ann.longitude, ann.latitude),
+                                        )
+                                        .withCircleRadius(radius)
+                                        .withCircleColor(dawnArgb)
+                                        .withCircleOpacity(0.7)
+                                        .withCircleStrokeColor(dawnArgb)
+                                        .withCircleStrokeWidth(2.0)
+                                        .withCircleStrokeOpacity(1.0),
+                                )
+                            }
+                    }
+                    renderedWalkAnnotations = walkAnnotations
+                        .filter { it.kind !is WalkMapAnnotationKind.Meditation }
+                        .map { ann ->
                         val bitmap = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
@@ -747,6 +819,8 @@ internal fun PilgrimMap(
                 annotationManager = null
                 renderedWalkAnnotations = emptyList()
                 renderedWalkAnnotationsKey = null
+                meditationCircleManager = null
+                renderedMeditationCircles = emptyList()
                 proximityManager = null
                 renderedProximityPins = emptyList()
                 proximityPinIndex = emptyMap()
@@ -756,43 +830,73 @@ internal fun PilgrimMap(
 }
 
 /**
- * Generate the bitmap used as the icon for every waypoint annotation.
- * A `WAYPOINT_BITMAP_SIZE_PX`-sized rust circle with a thin parchment
- * stroke — visible against both light and dark Mapbox styles. Drawn
- * once per theme change (`remember(darkMode)` in the caller) and
- * reused across all waypoints in the walk.
+ * Per-waypoint-type icon bitmaps. iOS parity
+ * `WalkSummaryView.swift:887 / PilgrimAnnotation .waypoint(icon:)` —
+ * the marker shows the chip's glyph (leaf / eye / heart / chair /
+ * sparkles / flag / pin), not one shared solid dot. Each is a rust
+ * circle + thin parchment stroke with the Material glyph centered in
+ * parchment, visible against both light and dark Mapbox styles.
+ *
+ * A fixed (constant) number of `rememberVectorPainter` calls — one per
+ * known [iconKeyToVector] key — keyed into a map; an unknown / null
+ * `Waypoint.icon` falls back to the "mappin" pin bitmap at the call
+ * site. Rebuilt only on a theme (dark/light) flip.
  */
-private fun createWaypointBitmap(darkMode: Boolean): android.graphics.Bitmap {
-    val size = WAYPOINT_BITMAP_SIZE_PX
-    val bitmap = android.graphics.Bitmap.createBitmap(
-        size,
-        size,
-        android.graphics.Bitmap.Config.ARGB_8888,
-    )
-    val canvas = android.graphics.Canvas(bitmap)
-    val cx = size / 2f
-    val cy = size / 2f
+@Composable
+internal fun rememberWaypointBitmaps(darkMode: Boolean): Map<String, Bitmap> {
+    val leaf = rememberVectorPainter(iconKeyToVector("leaf"))
+    val eye = rememberVectorPainter(iconKeyToVector("eye"))
+    val heart = rememberVectorPainter(iconKeyToVector("heart"))
+    val seated = rememberVectorPainter(iconKeyToVector("figure.seated.side"))
+    val sparkles = rememberVectorPainter(iconKeyToVector("sparkles"))
+    val flag = rememberVectorPainter(iconKeyToVector("flag.fill"))
+    val pin = rememberVectorPainter(iconKeyToVector("mappin"))
+    return remember(darkMode, leaf, eye, heart, seated, sparkles, flag, pin) {
+        mapOf(
+            "leaf" to leaf,
+            "eye" to eye,
+            "heart" to heart,
+            "figure.seated.side" to seated,
+            "sparkles" to sparkles,
+            "flag.fill" to flag,
+            "mappin" to pin,
+        ).mapValues { (_, painter) -> renderWaypointGlyphBitmap(painter, darkMode) }
+    }
+}
+
+/**
+ * Draw [painter]'s glyph centered on the rust/parchment waypoint
+ * circle. Rendered at 3x [WAYPOINT_BITMAP_SIZE_PX] so the glyph stays
+ * crisp after Mapbox scales the icon image down.
+ */
+private fun renderWaypointGlyphBitmap(painter: Painter, darkMode: Boolean): Bitmap {
+    val size = WAYPOINT_BITMAP_SIZE_PX * 3
+    // Pilgrim rust + parchment tokens — see ui/theme/Color.kt. Kept in
+    // sync with [createCircleBitmap]'s parchment hex pair below.
+    val rust = if (darkMode) Color(0xFFB85F4D) else Color(0xFFA8543E)
+    val parchment = if (darkMode) Color(0xFF1A1814) else Color(0xFFF5F0E6)
+    val image = ImageBitmap(size, size)
+    val canvas = androidx.compose.ui.graphics.Canvas(image)
     val strokeWidth = size * 0.08f
-    // Pilgrim rust + parchment tokens — see ui/theme/Color.kt. Hardcoded
-    // here because Compose ColorScheme isn't reachable from this raw
-    // Bitmap helper; if the palette ever shifts, update both places.
-    val rust = if (darkMode) 0xFFB85F4D.toInt() else 0xFFA8543E.toInt()
-    val parchment = if (darkMode) 0xFF1A1814.toInt() else 0xFFF5F0E6.toInt()
-    val fill = android.graphics.Paint().apply {
-        isAntiAlias = true
-        color = rust
-        style = android.graphics.Paint.Style.FILL
+    val radius = size / 2f - strokeWidth
+    val center = Offset(size / 2f, size / 2f)
+    CanvasDrawScope().draw(
+        density = Density(1f),
+        layoutDirection = LayoutDirection.Ltr,
+        canvas = canvas,
+        size = Size(size.toFloat(), size.toFloat()),
+    ) {
+        drawCircle(rust, radius, center)
+        drawCircle(parchment, radius, center, style = Stroke(width = strokeWidth))
+        val glyph = size * 0.5f
+        val inset = (size - glyph) / 2f
+        translate(inset, inset) {
+            with(painter) {
+                draw(Size(glyph, glyph), colorFilter = ColorFilter.tint(parchment))
+            }
+        }
     }
-    val stroke = android.graphics.Paint().apply {
-        isAntiAlias = true
-        color = parchment
-        style = android.graphics.Paint.Style.STROKE
-        this.strokeWidth = strokeWidth
-    }
-    val radius = (size / 2f) - strokeWidth
-    canvas.drawCircle(cx, cy, radius, fill)
-    canvas.drawCircle(cx, cy, radius, stroke)
-    return bitmap
+    return image.asAndroidBitmap()
 }
 
 /**
