@@ -18,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import androidx.compose.runtime.LaunchedEffect
@@ -449,6 +451,22 @@ fun PilgrimNavHost(
             val sheetState = androidx.compose.material3.rememberModalBottomSheetState(
                 skipPartiallyExpanded = true,
             )
+            val sheetScope = rememberCoroutineScope()
+            // Done-tap previously popped the back stack while the sheet
+            // was still fully expanded — Material3 then tore the sheet
+            // down abruptly, a visible "tap … nothing … jump" delay.
+            // Animate the sheet down first (immediate visual feedback),
+            // then pop on completion. onDismissRequest (swipe/scrim)
+            // already animated, so it pops directly.
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            val dismissAndDone: () -> Unit = remember(sheetState) {
+                {
+                    sheetScope.launch { sheetState.hide() }
+                        .invokeOnCompletion {
+                            if (!sheetState.isVisible) onDone()
+                        }
+                }
+            }
             @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
             androidx.compose.material3.ModalBottomSheet(
                 onDismissRequest = onDone,
@@ -462,7 +480,7 @@ fun PilgrimNavHost(
                 contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0) },
             ) {
                 WalkSummaryScreen(
-                    onDone = onDone,
+                    onDone = dismissAndDone,
                     onShareJourney = {
                         navController.navigate(Routes.walkShare(walkId)) {
                             launchSingleTop = true

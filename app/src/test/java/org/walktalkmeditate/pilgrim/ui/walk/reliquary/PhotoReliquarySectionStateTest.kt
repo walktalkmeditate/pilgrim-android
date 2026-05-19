@@ -59,9 +59,12 @@ class PhotoReliquarySectionStateTest {
     }
 
     @Test
-    fun permissionDenied_rendersPromptAndSettingsButton() {
+    fun permissionDenied_rendersPrompt_grantButton_andSettingsFallback() {
         render(ReliquaryState.PermissionDenied)
         composeRule.onNodeWithTag(TAG_RELIQUARY_PERMISSION_PROMPT).assertIsDisplayed()
+        // Primary action requests the permission in-app (iOS parity);
+        // Open settings remains only as the permanently-denied fallback.
+        composeRule.onNodeWithTag(TAG_RELIQUARY_GRANT_BUTTON).assertIsDisplayed()
         composeRule.onNodeWithTag(TAG_RELIQUARY_SETTINGS_BUTTON).assertIsDisplayed()
     }
 

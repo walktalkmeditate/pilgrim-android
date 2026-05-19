@@ -21,6 +21,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.voiceguide.LocalActiveVoiceGuideId
+import org.walktalkmeditate.pilgrim.ui.settings.about.drawableForGuide
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 /**
@@ -93,13 +95,15 @@ fun BreathingLogo(
 
     val stoneColor = pilgrimColors.stone
 
-    // iOS v1.6.0 `PilgrimLogoView` — swap to the starlit constellation
-    // mark (indigo washi + lavender serif "p" + sparse stars) when the
-    // constellation appearance is active.
+    // iOS v1.6.0 `PilgrimLogoView` precedence (must match PilgrimLogo):
+    // constellation appearance wins over the selected voice-guide's
+    // themed mark, which wins over the default logo. Previously this
+    // only handled constellation-vs-default, so the Path logo never
+    // reflected the chosen voice guide.
     val logoRes = if (org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation.current) {
         R.drawable.ic_pilgrim_logo_constellation
     } else {
-        R.drawable.ic_pilgrim_logo
+        drawableForGuide(LocalActiveVoiceGuideId.current)
     }
 
     Image(

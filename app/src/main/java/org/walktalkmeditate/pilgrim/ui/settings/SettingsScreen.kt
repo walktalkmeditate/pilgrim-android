@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,6 +55,8 @@ import org.walktalkmeditate.pilgrim.ui.settings.practice.PracticeCard
 import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCard
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.isPhotosPermissionGranted
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.photoPermissionsToRequest
 
 /**
  * Settings scaffold. Card-based layout matching iOS exactly: no nav
@@ -83,12 +88,17 @@ fun SettingsScreen(
     val voiceCardState by viewModel.voiceCardState.collectAsStateWithLifecycle()
     val practiceSummary by viewModel.practiceSummary.collectAsStateWithLifecycle()
     val milestone by viewModel.milestone.collectAsStateWithLifecycle()
-    // Android's Photo Picker (ActivityResultContracts.PickVisualMedia)
-    // doesn't require a runtime permission on API 33+ and uses the
-    // photo-picker pseudo-permission below that, so this flag will rarely
-    // flip to true in practice. It is screen-level transient state per
-    // the iOS pattern and survives rotation via rememberSaveable.
+    // iOS parity: enabling the reliquary requests photo access. The
+    // note shows only when that request is denied. Screen-level
+    // transient state; survives rotation via rememberSaveable.
     var showPhotosDeniedNote by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val photoPermContract = remember {
+        ActivityResultContracts.RequestMultiplePermissions()
+    }
+    val photoPermLauncher = rememberLauncherForActivityResult(photoPermContract) {
+        showPhotosDeniedNote = !isPhotosPermissionGranted(context)
+    }
     // rememberLazyListState wraps a rememberSaveable internally — without
     // it, rotating the device would yank the user back to the top of
     // Settings instead of preserving their scroll position.
@@ -148,7 +158,19 @@ fun SettingsScreen(
                     walkWithCollective = optIn,
                     onSetWalkWithCollective = viewModel::setOptIn,
                     walkReliquary = walkReliquary,
-                    onSetWalkReliquary = viewModel::setWalkReliquaryEnabled,
+                    onSetWalkReliquary = { enabled ->
+                        // Persist the preference regardless (iOS keeps
+                        // the toggle on and shows the denied note).
+                        viewModel.setWalkReliquaryEnabled(enabled)
+                        when {
+                            !enabled -> showPhotosDeniedNote = false
+                            isPhotosPermissionGranted(context) ->
+                                showPhotosDeniedNote = false
+                            else -> photoPermLauncher.launch(
+                                photoPermissionsToRequest(),
+                            )
+                        }
+                    },
                     showPhotosDeniedNote = showPhotosDeniedNote,
                 )
             }

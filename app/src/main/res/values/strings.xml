@@ -245,7 +245,8 @@
     <string name="settings_walk_reliquary_photos_denied_note">Photo access was declined. To enable the reliquary, grant photo access in Android Settings → Apps → Pilgrim → Permissions.</string>
     <!-- Task 2.3: Walk Summary permission-denied inline prompt (PhotoReliquarySection) -->
     <string name="reliquary_permission_denied_title">Photos access needed</string>
-    <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk. You can grant access in Settings.</string>
+    <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk.</string>
+    <string name="reliquary_permission_denied_action_grant">Grant access</string>
     <string name="reliquary_permission_denied_action_settings">Open settings</string>
     <string name="reliquary_action_add">Add</string>
     <string name="reliquary_action_full">Full</string>

@@ -40,6 +40,18 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Photo Reliquary: read photos taken along a walk so they can be
+         pinned to the route (iOS-parity photo-library access). Granted
+         on enabling the reliquary toggle, mirroring iOS.
+         API 33+ uses READ_MEDIA_IMAGES; API 34+ also accepts the
+         partial-access grant; pre-33 falls back to READ_EXTERNAL_STORAGE
+         (scoped to <=32 to avoid Play's enhanced-storage review). -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
     <!-- Android 11+ package visibility: required to bind the platform
          speech recognizer for voice intention dictation. -->
     <queries>

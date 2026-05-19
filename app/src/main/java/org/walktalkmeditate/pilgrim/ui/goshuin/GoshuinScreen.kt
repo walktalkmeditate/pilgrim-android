@@ -62,6 +62,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SealShareBitmapWriter
 
 private val CELL_SEAL_SIZE = 140.dp
@@ -203,6 +204,11 @@ internal fun GoshuinScreenContent(
                         totalWalks = uiState.totalIncludingArchived,
                         totalDistanceMeters = uiState.totalDistanceMeters,
                         totalMeditationSeconds = uiState.totalMeditationSeconds,
+                        units = if (isImperial) {
+                            UnitSystem.Imperial
+                        } else {
+                            UnitSystem.Metric
+                        },
                     )
                     Spacer(Modifier.height(PilgrimSpacing.small))
                     GoshuinFilterBar(
@@ -347,12 +353,14 @@ private fun GoshuinStatsHeader(
     totalWalks: Int,
     totalDistanceMeters: Double,
     totalMeditationSeconds: Long,
+    units: UnitSystem,
 ) {
-    val km = totalDistanceMeters / 1000.0
     val minutes = totalMeditationSeconds / 60L
     val walksLabel = java.text.NumberFormat.getNumberInstance(java.util.Locale.getDefault())
         .format(totalWalks)
-    val kmLabel = String.format(java.util.Locale.getDefault(), "%.1f km", km)
+    // Shared formatter so the header honours the user's distance-unit
+    // preference (km vs mi) — was hardcoded "%.1f km" regardless.
+    val distanceLabel = WalkFormat.distance(totalDistanceMeters, units)
     val minLabel = String.format(java.util.Locale.US, "%d min", minutes)
     androidx.compose.foundation.layout.Row(
         modifier = Modifier
@@ -361,7 +369,7 @@ private fun GoshuinStatsHeader(
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
     ) {
         StatPill(value = walksLabel, label = "walks")
-        StatPill(value = kmLabel, label = "distance")
+        StatPill(value = distanceLabel, label = "distance")
         StatPill(value = minLabel, label = "meditation")
     }
 }

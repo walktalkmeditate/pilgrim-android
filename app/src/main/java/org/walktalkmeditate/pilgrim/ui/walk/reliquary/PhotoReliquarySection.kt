@@ -49,6 +49,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 internal const val TAG_RELIQUARY_TOGGLE_OFF = "reliquary-toggle-off"
 internal const val TAG_RELIQUARY_PERMISSION_PROMPT = "reliquary-permission-prompt"
+internal const val TAG_RELIQUARY_GRANT_BUTTON = "reliquary-grant-button"
 internal const val TAG_RELIQUARY_SETTINGS_BUTTON = "reliquary-settings-button"
 internal const val TAG_RELIQUARY_SKELETON = "reliquary-skeleton"
 internal const val TAG_RELIQUARY_CAROUSEL = "reliquary-carousel"
@@ -84,6 +85,26 @@ internal fun isPhotosPermissionGranted(context: android.content.Context): Boolea
 }
 
 /**
+ * SDK-appropriate photo-read permissions to request when the user
+ * enables the reliquary (iOS-parity: enabling asks for photo access).
+ * Mirrors the read split in [isPhotosPermissionGranted]:
+ *  - API 34+ : READ_MEDIA_IMAGES + the partial-access pseudo-permission
+ *  - API 33  : READ_MEDIA_IMAGES
+ *  - pre-33  : READ_EXTERNAL_STORAGE
+ */
+internal fun photoPermissionsToRequest(): Array<String> = when {
+    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+        arrayOf(
+            android.Manifest.permission.READ_MEDIA_IMAGES,
+            "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        )
+    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU ->
+        arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES)
+    else ->
+        arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+}
+
+/**
  * Walk Summary's photo reliquary section.
  * Dispatches on [ReliquaryState] per the D6 precedence spec:
  *   ToggleOff > PermissionDenied > Loading > Populated(candidates)
@@ -115,12 +136,24 @@ fun PhotoReliquarySection(
         onDispose { lifecycle.removeObserver(observer) }
     }
 
+    // Stable contract identity across recompositions (Stage 7-A
+    // launcher-race precedent). On result, push the live permission
+    // snapshot through the same seam ON_START uses so the VM leaves
+    // PermissionDenied the instant access is granted — no app round-trip.
+    val photoPermContract = remember {
+        ActivityResultContracts.RequestMultiplePermissions()
+    }
+    val photoPermLauncher = rememberLauncherForActivityResult(photoPermContract) {
+        onForegrounded(isPhotosPermissionGranted(context))
+    }
+
     when (state) {
         is ReliquaryState.ToggleOff -> {
             Box(modifier = modifier.testTag(TAG_RELIQUARY_TOGGLE_OFF))
         }
         is ReliquaryState.PermissionDenied -> {
             ReliquaryPermissionPrompt(
+                onGrantClick = { photoPermLauncher.launch(photoPermissionsToRequest()) },
                 onSettingsClick = onSettingsClick,
                 modifier = modifier,
             )
@@ -145,6 +178,7 @@ fun PhotoReliquarySection(
 
 @Composable
 private fun ReliquaryPermissionPrompt(
+    onGrantClick: () -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -165,6 +199,15 @@ private fun ReliquaryPermissionPrompt(
             color = pilgrimColors.ink,
         )
         Button(
+            onClick = onGrantClick,
+            modifier = Modifier.testTag(TAG_RELIQUARY_GRANT_BUTTON),
+        ) {
+            Text(stringResource(R.string.reliquary_permission_denied_action_grant))
+        }
+        // Fallback only — reaches the system app-settings page for the
+        // permanently-denied case (system stops showing the in-app
+        // dialog after the user denies with "don't ask again").
+        OutlinedButton(
             onClick = onSettingsClick,
             modifier = Modifier.testTag(TAG_RELIQUARY_SETTINGS_BUTTON),
         ) {
