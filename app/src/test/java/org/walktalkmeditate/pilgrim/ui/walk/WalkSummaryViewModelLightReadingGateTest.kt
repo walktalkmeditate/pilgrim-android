@@ -265,8 +265,19 @@ class WalkSummaryViewModelLightReadingGateTest {
         walkSharingTracker.markShared(walkUuid)
         advanceUntilIdle()
         val (vm, _) = newViewModel(walkId)
+        // hasRevealedLightReading = state.flatMapLatest { if Loaded ->
+        // hasSharedFlow(uuid) else flowOf(false) } with initialValue
+        // false. Before state reaches Loaded the chain emits false;
+        // under a CPU-starved full-suite shard state is still Loading
+        // when Turbine subscribes, so the first awaitItem is false and
+        // assertEquals(true, awaitItem()) fails (the
+        // ci-realtime-withtimeout flake). Await Loaded first, then
+        // drain to true (predicate-gated, not a clock).
+        vm.state.first { it is WalkSummaryUiState.Loaded }
         vm.hasRevealedLightReading.test {
-            assertEquals(true, awaitItem())
+            var revealed = awaitItem()
+            while (!revealed) revealed = awaitItem()
+            assertEquals(true, revealed)
             cancelAndIgnoreRemainingEvents()
         }
     }

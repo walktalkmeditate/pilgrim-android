@@ -146,18 +146,23 @@ class WalkShareViewModelTest {
     fun `canShare false when all toggles off`() = runTest(dispatcher) {
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        // Wait for Loaded.
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
-        }
+        // canShare = combine(_isSharing, _toggledStatsCount, _uiState):
+        // all in-memory flows + Room-on-test-dispatcher uiState, no
+        // network or DataStore. The prior real-wall-clock hatch
+        // (withContext(Default.limitedParallelism(1)){withTimeout})
+        // parked the test body on a real thread while the VM's combine
+        // collectors advanced on virtual time, so canShare.first{!it}
+        // returned on the initial false before the toggle-off
+        // propagated and .value then read true — the
+        // ci-realtime-withtimeout flake. Await purely in virtual time
+        // (gated by predicate), as the sibling uiState test does.
+        vm.uiState.first { it is WalkShareUiState.Loaded }
         vm.toggleDistance(false)
         vm.toggleDuration(false)
         vm.toggleElevation(false)
         vm.toggleActivityBreakdown(false)
         vm.toggleSteps(false)
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(5_000L) { vm.canShare.first { !it } }
-        }
+        vm.canShare.first { !it }
         assertEquals(false, vm.canShare.value)
     }
 
