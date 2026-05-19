@@ -664,6 +664,8 @@
     <string name="settings_permissions_microphone_caption">Record reflections</string>
     <string name="settings_permissions_motion_label">Motion</string>
     <string name="settings_permissions_motion_caption">Count your steps</string>
+    <string name="settings_permissions_battery_label">Background activity</string>
+    <string name="settings_permissions_battery_caption">Keep long walks alive when the screen is off</string>
     <string name="settings_permissions_action_grant">Grant</string>
     <string name="settings_permissions_action_settings">Settings</string>
     <string name="settings_permissions_status_restricted">Restricted</string>

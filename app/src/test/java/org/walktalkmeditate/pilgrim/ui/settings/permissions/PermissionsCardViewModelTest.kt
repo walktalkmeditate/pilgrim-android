@@ -91,6 +91,29 @@ class PermissionsCardViewModelTest {
     }
 
     @Test
+    fun `battery exempt emits Granted, not-exempt emits NotDetermined and refresh re-reads`() =
+        runTest {
+            val checks = FakePermissionChecks(
+                location = false, microphone = false, motion = false, battery = false,
+            )
+            val vm = PermissionsCardViewModel(checks = checks, askedFlags = FakeAskedStore())
+
+            vm.state.test(timeout = 10.seconds) {
+                var state = awaitItem()
+                while (state.battery != PermissionStatus.NotDetermined) state = awaitItem()
+                // Not exempt + no asked-flag concept -> always actionable.
+                assertEquals(PermissionStatus.NotDetermined, state.battery)
+
+                checks.battery = true
+                vm.refresh()
+                var next = awaitItem()
+                while (next.battery != PermissionStatus.Granted) next = awaitItem()
+                assertEquals(PermissionStatus.Granted, next.battery)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
     fun `refresh re-reads live state`() = runTest {
         val checks = FakePermissionChecks(location = false, microphone = false, motion = false)
         val vm = PermissionsCardViewModel(checks = checks, askedFlags = FakeAskedStore())
@@ -112,10 +135,12 @@ private class FakePermissionChecks(
     var location: Boolean,
     var microphone: Boolean,
     var motion: Boolean,
+    var battery: Boolean = false,
 ) : LivePermissionChecks {
     override fun isLocationGranted(): Boolean = location
     override fun isMicrophoneGranted(): Boolean = microphone
     override fun isMotionGranted(): Boolean = motion
+    override fun isBatteryExempt(): Boolean = battery
 }
 
 private class FakeAskedStore(asked: Set<PermissionAskedStore.Key> = emptySet()) : AskedFlagSource {
