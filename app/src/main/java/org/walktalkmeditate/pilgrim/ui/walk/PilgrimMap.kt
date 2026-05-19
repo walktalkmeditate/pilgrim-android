@@ -14,15 +14,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -175,7 +172,9 @@ internal fun PilgrimMap(
     var waypointAnnotations by remember { mutableStateOf<List<PointAnnotation>>(emptyList()) }
     // iOS parity: each waypoint renders its type's glyph (leaf / eye /
     // heart / chair / sparkles / flag / pin), not one shared solid dot.
-    val waypointBitmaps = rememberWaypointBitmaps(darkMode)
+    val waypointBitmaps = rememberWaypointBitmaps(
+        org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.stone,
+    )
     // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — custom 2D
     // puck: stone-filled outer disc + white@0.9 inner dot. Keyed on
     // `stoneArgb` only (the single value the draw reads) so a theme /
@@ -720,10 +719,12 @@ internal fun PilgrimMap(
                                 photoPinBitmaps[k.walkPhotoId]
                                     ?: bitmaps.getValue("photo")
                             is WalkMapAnnotationKind.Waypoint ->
-                                // Reuse the meditation pin until a
-                                // dedicated waypoint icon ships; iOS
-                                // renders these with a flag glyph.
-                                bitmaps.getValue("meditation")
+                                // iOS-parity per-type glyph (bare,
+                                // appearance-stone), same bitmaps the
+                                // live walk map uses; null/unknown key
+                                // → pin glyph.
+                                waypointBitmaps[k.iconKey]
+                                    ?: waypointBitmaps.getValue("mappin")
                             is WalkMapAnnotationKind.Whisper ->
                                 // Render with the proximity-style soft
                                 // colored circle. Generated per-pin so
@@ -831,19 +832,19 @@ internal fun PilgrimMap(
 
 /**
  * Per-waypoint-type icon bitmaps. iOS parity
- * `WalkSummaryView.swift:887 / PilgrimAnnotation .waypoint(icon:)` —
- * the marker shows the chip's glyph (leaf / eye / heart / chair /
- * sparkles / flag / pin), not one shared solid dot. Each is a rust
- * circle + thin parchment stroke with the Material glyph centered in
- * parchment, visible against both light and dark Mapbox styles.
+ * `PilgrimMapView.buildPoints@v1.6.0` —
+ * `renderSFSymbol(icon, size: 18, color: .stone)`: a BARE glyph
+ * (leaf / eye / heart / chair / sparkles / flag / pin), no circle, no
+ * stroke, tinted the appearance-resolved `stone` color (so it tracks
+ * light / dark / constellation, unlike the route line which is fixed).
  *
  * A fixed (constant) number of `rememberVectorPainter` calls — one per
  * known [iconKeyToVector] key — keyed into a map; an unknown / null
- * `Waypoint.icon` falls back to the "mappin" pin bitmap at the call
- * site. Rebuilt only on a theme (dark/light) flip.
+ * `Waypoint.iconKey` falls back to the "mappin" glyph at the call
+ * site. Rebuilt only when the resolved [stoneColor] changes.
  */
 @Composable
-internal fun rememberWaypointBitmaps(darkMode: Boolean): Map<String, Bitmap> {
+internal fun rememberWaypointBitmaps(stoneColor: Color): Map<String, Bitmap> {
     val leaf = rememberVectorPainter(iconKeyToVector("leaf"))
     val eye = rememberVectorPainter(iconKeyToVector("eye"))
     val heart = rememberVectorPainter(iconKeyToVector("heart"))
@@ -851,7 +852,7 @@ internal fun rememberWaypointBitmaps(darkMode: Boolean): Map<String, Bitmap> {
     val sparkles = rememberVectorPainter(iconKeyToVector("sparkles"))
     val flag = rememberVectorPainter(iconKeyToVector("flag.fill"))
     val pin = rememberVectorPainter(iconKeyToVector("mappin"))
-    return remember(darkMode, leaf, eye, heart, seated, sparkles, flag, pin) {
+    return remember(stoneColor, leaf, eye, heart, seated, sparkles, flag, pin) {
         mapOf(
             "leaf" to leaf,
             "eye" to eye,
@@ -860,44 +861,36 @@ internal fun rememberWaypointBitmaps(darkMode: Boolean): Map<String, Bitmap> {
             "sparkles" to sparkles,
             "flag.fill" to flag,
             "mappin" to pin,
-        ).mapValues { (_, painter) -> renderWaypointGlyphBitmap(painter, darkMode) }
+        ).mapValues { (_, painter) -> renderWaypointGlyphBitmap(painter, stoneColor) }
     }
 }
 
 /**
- * Draw [painter]'s glyph centered on the rust/parchment waypoint
- * circle. Rendered at 3x [WAYPOINT_BITMAP_SIZE_PX] so the glyph stays
+ * iOS `renderSFSymbol(icon, size: 18, color: .stone)` — the glyph
+ * alone, [tint]-colored, filling the bitmap (no circle / stroke
+ * background). Rendered larger than the on-screen size so it stays
  * crisp after Mapbox scales the icon image down.
  */
-private fun renderWaypointGlyphBitmap(painter: Painter, darkMode: Boolean): Bitmap {
-    val size = WAYPOINT_BITMAP_SIZE_PX * 3
-    // Pilgrim rust + parchment tokens — see ui/theme/Color.kt. Kept in
-    // sync with [createCircleBitmap]'s parchment hex pair below.
-    val rust = if (darkMode) Color(0xFFB85F4D) else Color(0xFFA8543E)
-    val parchment = if (darkMode) Color(0xFF1A1814) else Color(0xFFF5F0E6)
+private fun renderWaypointGlyphBitmap(painter: Painter, tint: Color): Bitmap {
+    val size = WAYPOINT_GLYPH_SIZE_PX
     val image = ImageBitmap(size, size)
     val canvas = androidx.compose.ui.graphics.Canvas(image)
-    val strokeWidth = size * 0.08f
-    val radius = size / 2f - strokeWidth
-    val center = Offset(size / 2f, size / 2f)
     CanvasDrawScope().draw(
         density = Density(1f),
         layoutDirection = LayoutDirection.Ltr,
         canvas = canvas,
         size = Size(size.toFloat(), size.toFloat()),
     ) {
-        drawCircle(rust, radius, center)
-        drawCircle(parchment, radius, center, style = Stroke(width = strokeWidth))
-        val glyph = size * 0.5f
-        val inset = (size - glyph) / 2f
-        translate(inset, inset) {
-            with(painter) {
-                draw(Size(glyph, glyph), colorFilter = ColorFilter.tint(parchment))
-            }
+        with(painter) {
+            draw(Size(size.toFloat(), size.toFloat()), colorFilter = ColorFilter.tint(tint))
         }
     }
     return image.asAndroidBitmap()
 }
+
+// ~18dp glyph rendered at 4x for crispness; iOS uses SF-symbol
+// pointSize 18 with iconSize 1.0.
+private const val WAYPOINT_GLYPH_SIZE_PX = 72
 
 /**
  * Generate a parchment-stroked circle bitmap in the given fill color.

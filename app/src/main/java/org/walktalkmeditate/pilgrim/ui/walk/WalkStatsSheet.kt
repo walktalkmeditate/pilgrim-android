@@ -541,7 +541,11 @@ private fun TimeChip(
     // Direct port of iOS TimeMetricItem (ActiveWalkSubviews.swift:3-27):
     // VStack with icon on top, value middle, label bottom. NO background,
     // NO border. Icon color flips rust/stone for active/inactive.
-    val iconTint = if (active) pilgrimColors.rust else pilgrimColors.stone
+    // iOS TimeMetricItem uses the same .rust as the Talk control; keep
+    // them identical (the fixed talk color, constant across appearance)
+    // so the timer icon doesn't read as a different red than the
+    // talk/meditate action icons.
+    val iconTint = if (active) RouteSegmentColors.Fixed.talking else pilgrimColors.stone
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
