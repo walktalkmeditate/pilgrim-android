@@ -203,6 +203,16 @@ fun PermissionsScreen(
                 },
             )
         }
+        Spacer(Modifier.height(PilgrimSpacing.normal))
+
+        // Long backgrounded walks are force-killed by OEM power managers
+        // (OnePlus/OxygenOS, Xiaomi/MIUI, Samsung) unless the app is
+        // battery-optimization-exempt — the single biggest determinant
+        // of 45-90min walk survival (see CLAUDE.md "Long-session
+        // reliability"). The card self-hides once the user is exempt or
+        // has answered the prompt; it never gates [canContinue], so
+        // onboarding is never blocked (soft / skippable).
+        BatteryExemptionCard(viewModel = viewModel)
         Spacer(Modifier.height(PilgrimSpacing.breathingRoom))
 
         Button(
