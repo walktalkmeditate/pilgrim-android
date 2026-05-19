@@ -145,7 +145,18 @@ class WalkSummaryViewModelTest {
             ignoreUnknownKeys = true
             explicitNulls = false
         }
-        val cachedShareStore = org.walktalkmeditate.pilgrim.data.share.CachedShareStore(context, json)
+        val cachedShareStore = org.walktalkmeditate.pilgrim.data.share.CachedShareStore(
+            dataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                produceFile = {
+                    java.io.File(
+                        context.cacheDir,
+                        "vmtest-share-${java.util.UUID.randomUUID()}.preferences_pb",
+                    )
+                },
+            ),
+            json = json,
+        )
         return WalkSummaryViewModel(
             context = context,
             repository = repositoryOverride,
@@ -259,14 +270,11 @@ class WalkSummaryViewModelTest {
         hemisphereScope.coroutineContext[Job]?.cancel()
         persistenceScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
-        // Stage 8-A: WalkSummaryViewModel.cachedShareFlow opens the
-        // share_cache DataStore eagerly via SharingStarted.Eagerly.
-        // Without this cleanup, cached entries from one test would
-        // leak into another's `cachedShare` observer (Stage 7-A
-        // Robolectric+Eagerly cross-test pollution lesson). Matches
-        // the cleanup already in WalkShareViewModelTest +
-        // CachedShareStoreTest.
-        java.io.File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
+        // cachedShareStore now uses a per-test DataStore file (unique
+        // UUID), so the old shared global share_cache.preferences_pb
+        // cleanup band-aid is no longer needed — isolation, not a
+        // racing delete, is what prevents the Stage 7-A Robolectric +
+        // SharingStarted.Eagerly cross-test pollution.
         Dispatchers.resetMain()
     }
 

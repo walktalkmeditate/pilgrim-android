@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -127,7 +128,6 @@ class WalkSummaryViewModelLightReadingGateTest {
         hemisphereScope.coroutineContext[Job]?.cancel()
         db.close()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
-        java.io.File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
         Dispatchers.resetMain()
     }
 
@@ -148,7 +148,18 @@ class WalkSummaryViewModelLightReadingGateTest {
             sweeper = sweeper,
             photoAnalysisScheduler = photoAnalysisScheduler,
             hemisphereRepository = hemisphereRepo,
-            cachedShareStore = CachedShareStore(context, json),
+            cachedShareStore = CachedShareStore(
+                dataStore = PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            context.cacheDir,
+                            "light-reading-gate-share-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+                json = json,
+            ),
             unitsPreferences = FakeUnitsPreferencesRepository(),
             practicePreferences = practicePreferences,
             promptsCoordinator = stubPromptsCoordinator(),
@@ -267,11 +278,19 @@ class WalkSummaryViewModelLightReadingGateTest {
     fun markCurrentWalkShared_flipsHasRevealedToTrue() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
         val (vm, _) = newViewModel(walkId)
-        vm.hasRevealedLightReading.test {
+        vm.hasRevealedLightReading.test(timeout = 10.seconds) {
             assertEquals(false, awaitItem())
             vm.markCurrentWalkShared()
-            advanceUntilIdle()
-            assertEquals(true, awaitItem())
+            // markCurrentWalkShared() persists through a real
+            // DataStore-backed tracker, so advanceUntilIdle() can't wait
+            // it out (separate real dispatcher) and Turbine's default 3s
+            // bound loses under a CPU-starved full-suite shard. Await the
+            // flip with a generous failsafe, draining intermediate falses
+            // (the ci-realtime-withtimeout flake family — determinism
+            // from await-until, not the timeout value).
+            var revealed = awaitItem()
+            while (!revealed) revealed = awaitItem()
+            assertEquals(true, revealed)
             cancelAndIgnoreRemainingEvents()
         }
     }

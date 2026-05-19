@@ -128,7 +128,7 @@ class HomeViewModelJournalTest {
             override fun now(): Long = 10_000_000L
         }
         val cachedShareStore = CachedShareStore(
-            ApplicationProvider.getApplicationContext(),
+            ApplicationProvider.getApplicationContext<android.content.Context>(),
             Json { ignoreUnknownKeys = true },
         )
         return HomeViewModel(

@@ -32,12 +32,21 @@ import kotlinx.serialization.json.Json
  * [CachedShare.isExpiredAt] in the consumer (VM / UI).
  */
 @Singleton
-class CachedShareStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+class CachedShareStore(
+    private val dataStore: DataStore<Preferences>,
     private val json: Json,
 ) {
+    // Production (Hilt) path uses the process-wide named DataStore. The
+    // primary constructor takes an injectable DataStore so tests pass a
+    // per-test file instead of contending on the shared singleton.
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        json: Json,
+    ) : this(context.cachedShareDataStore, json)
+
     fun observe(walkUuid: String): Flow<CachedShare?> =
-        context.cachedShareDataStore.data
+        dataStore.data
             .map { prefs -> prefs[keyFor(walkUuid)]?.let(::decode) }
             .distinctUntilChanged()
 
@@ -49,7 +58,7 @@ class CachedShareStore @Inject constructor(
      * fan-out of `observe(walkUuid)` collectors.
      */
     fun observeAll(): Flow<Map<String, CachedShare>> =
-        context.cachedShareDataStore.data
+        dataStore.data
             .map { prefs ->
                 prefs.asMap().asSequence()
                     .filter { (key, _) -> key.name.startsWith("share_cache_") }
@@ -76,13 +85,13 @@ class CachedShareStore @Inject constructor(
 
     suspend fun put(walkUuid: String, share: CachedShare) {
         val blob = json.encodeToString(CachedSharePrefs.serializer(), share.toPrefs())
-        context.cachedShareDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[keyFor(walkUuid)] = blob
         }
     }
 
     suspend fun clear(walkUuid: String) {
-        context.cachedShareDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs.remove(keyFor(walkUuid))
         }
     }
