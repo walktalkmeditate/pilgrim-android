@@ -607,7 +607,7 @@ class WalkSummaryViewModelTest {
         hemisphereRepo.setOverride(Hemisphere.Southern)
         // Bridge to real-dispatcher time since the repo's StateFlow
         // collects on Dispatchers.Default, not the runTest virtual clock.
-        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val observed = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.hemisphere.first { it == Hemisphere.Southern }
             }
@@ -640,7 +640,7 @@ class WalkSummaryViewModelTest {
         vm.pinPhotos(listOf(uri1, uri2))
 
         // Bridge virtual-time → Dispatchers.IO for the VM's launch(IO).
-        val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val rows = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.pinnedPhotos.first { it.size == 2 }
             }
@@ -661,7 +661,7 @@ class WalkSummaryViewModelTest {
         val uri = android.net.Uri.parse("content://media/picker/0/com.example/1")
         vm.pinPhotos(listOf(uri, uri, uri))
 
-        val rows = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val rows = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.pinnedPhotos.first { it.isNotEmpty() }
             }
@@ -691,7 +691,7 @@ class WalkSummaryViewModelTest {
         val observer = launch(Dispatchers.Default) {
             vm.pinnedPhotos.collect { }
         }
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) { vm.pinnedPhotos.first { it.isNotEmpty() } }
         }
 
@@ -702,7 +702,7 @@ class WalkSummaryViewModelTest {
             ),
         )
 
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 while (repository.countPhotosFor(walk.id) < 2) {
                     kotlinx.coroutines.delay(10)
@@ -730,7 +730,7 @@ class WalkSummaryViewModelTest {
             ),
         )
         // Give the IO launch a beat to hit the scheduler.
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 while (photoAnalysisScheduler.scheduleForWalkCalls.isEmpty()) {
                     kotlinx.coroutines.delay(10)
@@ -760,7 +760,7 @@ class WalkSummaryViewModelTest {
 
         vm.runStartupSweep()
 
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 while (photoAnalysisScheduler.scheduleForWalkCalls.isEmpty()) {
                     kotlinx.coroutines.delay(10)
@@ -781,14 +781,14 @@ class WalkSummaryViewModelTest {
             pinnedAt = 2_000L,
         )
         val vm = newViewModel(walkId = walk.id)
-        val initial = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val initial = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) { vm.pinnedPhotos.first { it.size == 1 } }
         }
         assertEquals(1, initial.size)
 
         vm.unpinPhoto(initial.first().copy(id = id))
 
-        val after = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val after = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) { vm.pinnedPhotos.first { it.isEmpty() } }
         }
         assertTrue(after.isEmpty())
@@ -854,7 +854,7 @@ class WalkSummaryViewModelTest {
 
         vm.etegamiEvents.test(timeout = 10.seconds) {
             vm.shareEtegami(fixtureEtegamiSpec(walk.uuid))
-            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            val ev = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) { awaitItem() }
             }
             assertTrue(
@@ -889,7 +889,7 @@ class WalkSummaryViewModelTest {
         // predicate explicitly so we're observing actual completion,
         // not a race-window snapshot.
         vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) { vm.etegamiBusy.first { it == null } }
         }
         assertNull(vm.etegamiBusy.value)
@@ -1111,7 +1111,7 @@ class WalkSummaryViewModelTest {
         // virtual-time test dispatcher) — advanceUntilIdle alone won't
         // wait for it. Bridge to wall-clock the same way the
         // pinPhotos suite does.
-        val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val persisted = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 var w = repository.getWalk(walkId)
                 while (w?.favicon == null) {
@@ -1128,7 +1128,7 @@ class WalkSummaryViewModelTest {
         advanceUntilIdle()
 
         assertNull(vm.selectedFavicon.value)
-        val persistedNull = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val persistedNull = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 var w = repository.getWalk(walkId)
                 while (w?.favicon != null) {
@@ -1195,7 +1195,7 @@ class WalkSummaryViewModelTest {
         // is still alive — it proceeds past the gate and writes.
         gate.complete(Unit)
 
-        val persisted = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val persisted = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 var w = repository.getWalk(walkId)
                 while (w?.favicon == null) {
@@ -1263,7 +1263,7 @@ class WalkSummaryViewModelTest {
         // WhileSubscribed flow + .value read: subscribe a small
         // collector so the upstream actually starts emitting, then
         // wait for a non-null snapshot.
-        val snap = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val snap = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.celestialSnapshotDisplay.first { it != null }
             }
@@ -1286,7 +1286,7 @@ class WalkSummaryViewModelTest {
         // WhileSubscribed: subscribe so the combine actually fires.
         // Tolerate both initial null and post-collect null — the
         // expectation is "no prose ever materializes."
-        val prose = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val prose = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 // Drain: subscribe then read .value once the upstream
                 // has had a chance to settle.
@@ -1340,7 +1340,7 @@ class WalkSummaryViewModelTest {
         val vm = newViewModel(currentWalk.id)
         awaitLoaded(vm)
 
-        val prose = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val prose = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.walkSummaryCalloutProseDisplay.first { it != null }
             }
@@ -1421,7 +1421,7 @@ class WalkSummaryViewModelTest {
     }
 
     private suspend fun awaitLoaded(vm: WalkSummaryViewModel): WalkSummaryUiState.Loaded {
-        return withContext(Dispatchers.Default.limitedParallelism(1)) {
+        return withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.state.first { it is WalkSummaryUiState.Loaded } as WalkSummaryUiState.Loaded
             }

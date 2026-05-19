@@ -243,7 +243,7 @@ class GoshuinViewModelTest {
         hemisphereRepo.setOverride(Hemisphere.Southern)
         // Repository's StateFlow collects on real Dispatchers.Default;
         // bridge to wall-clock same as HomeViewModelTest.
-        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val observed = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 vm.hemisphere.first { it == Hemisphere.Southern }
             }

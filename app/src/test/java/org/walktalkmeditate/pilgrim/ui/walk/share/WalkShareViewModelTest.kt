@@ -176,12 +176,12 @@ class WalkShareViewModelTest {
         )
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
         }
         vm.events.test(timeout = 10.seconds) {
             vm.share()
-            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            val ev = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) { awaitItem() }
             }
             assertTrue("expected Success, got $ev", ev is WalkShareEvent.Success)
@@ -189,7 +189,7 @@ class WalkShareViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
         // Cached.
-        val cached = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val cached = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.cachedShare.first { it != null } }
         }
         assertEquals("https://walk.pilgrimapp.org/abc123", cached?.url)
@@ -200,12 +200,12 @@ class WalkShareViewModelTest {
         server.enqueue(MockResponse().setResponseCode(429).setBody("{}"))
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
         }
         vm.events.test(timeout = 10.seconds) {
             vm.share()
-            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            val ev = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) { awaitItem() }
             }
             assertEquals(WalkShareEvent.RateLimited, ev)
@@ -215,7 +215,7 @@ class WalkShareViewModelTest {
         assertEquals(null, vm.cachedShare.value)
         // isSharing resets via the share() finally block so the user
         // can retry tomorrow (iOS parity — no client-side lockout).
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.isSharing.first { !it } }
         }
         assertEquals(false, vm.isSharing.value)

@@ -282,7 +282,7 @@ class VoiceGuideCatalogRepositoryTest {
         assertEquals("b", selection.selectedPackId.value)
     }
 
-    private fun realTimeDispatcher() = Dispatchers.Default.limitedParallelism(1)
+    private fun realTimeDispatcher() = org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance
 
     private companion object {
         const val DATASTORE_NAME = "voice-guide-catalog-test"

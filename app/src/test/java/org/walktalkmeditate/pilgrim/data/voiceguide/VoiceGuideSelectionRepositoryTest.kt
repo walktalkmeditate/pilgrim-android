@@ -134,7 +134,7 @@ class VoiceGuideSelectionRepositoryTest {
         repo2Scope.coroutineContext[Job]?.cancel()
     }
 
-    private fun realTimeDispatcher() = Dispatchers.Default.limitedParallelism(1)
+    private fun realTimeDispatcher() = org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance
 
     private companion object {
         const val DATASTORE_NAME = "voice-guide-selection-test"
