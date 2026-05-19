@@ -791,9 +791,12 @@ private fun MicActionButton(
         }
     }
 
-    // Talk/voice-record control: active = fixed talk color (constant
-    // across appearance), inactive = neutral stone.
-    val baseColor = if (isRecording) RouteSegmentColors.Fixed.talking else pilgrimColors.stone
+    // iOS parity `WalkStatsSheet.swift micButton` — the mic/Talk button
+    // is .rust ALWAYS (recording or not; only the background-circle
+    // opacity changes). Android previously used stone when idle, which
+    // read like the Meditate (.dawn) button — looked swapped. Fixed
+    // talk color, constant across appearance.
+    val baseColor = RouteSegmentColors.Fixed.talking
     val effectiveColor = if (enabled) baseColor else pilgrimColors.fog.copy(alpha = 0.4f)
     // The label sitting under the mic intentionally MIRRORS the chip's
     // "Talk" label so the spatial association is obvious to the user.
