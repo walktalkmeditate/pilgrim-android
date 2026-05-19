@@ -82,6 +82,20 @@ class WalkFormatTest {
         assertEquals("0.10 mi", label)
     }
 
+    // --- Steps -------------------------------------------------------------
+
+    @Test
+    fun `steps formats non-null count with Locale_US digits`() {
+        assertEquals("0", WalkFormat.steps(0))
+        assertEquals("1", WalkFormat.steps(1))
+        assertEquals("4321", WalkFormat.steps(4321))
+    }
+
+    @Test
+    fun `steps returns em-dash for null`() {
+        assertEquals("—", WalkFormat.steps(null))
+    }
+
     // --- Metric pace -------------------------------------------------------
 
     @Test

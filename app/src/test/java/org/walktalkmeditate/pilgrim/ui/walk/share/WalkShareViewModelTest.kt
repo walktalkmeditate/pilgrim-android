@@ -146,18 +146,23 @@ class WalkShareViewModelTest {
     fun `canShare false when all toggles off`() = runTest(dispatcher) {
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        // Wait for Loaded.
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
-        }
+        // canShare = combine(_isSharing, _toggledStatsCount, _uiState):
+        // all in-memory flows + Room-on-test-dispatcher uiState, no
+        // network or DataStore. The prior real-wall-clock hatch
+        // (withContext(Default.limitedParallelism(1)){withTimeout})
+        // parked the test body on a real thread while the VM's combine
+        // collectors advanced on virtual time, so canShare.first{!it}
+        // returned on the initial false before the toggle-off
+        // propagated and .value then read true — the
+        // ci-realtime-withtimeout flake. Await purely in virtual time
+        // (gated by predicate), as the sibling uiState test does.
+        vm.uiState.first { it is WalkShareUiState.Loaded }
         vm.toggleDistance(false)
         vm.toggleDuration(false)
         vm.toggleElevation(false)
         vm.toggleActivityBreakdown(false)
         vm.toggleSteps(false)
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
-            withTimeout(5_000L) { vm.canShare.first { !it } }
-        }
+        vm.canShare.first { !it }
         assertEquals(false, vm.canShare.value)
     }
 
@@ -171,12 +176,12 @@ class WalkShareViewModelTest {
         )
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
         }
         vm.events.test(timeout = 10.seconds) {
             vm.share()
-            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            val ev = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) { awaitItem() }
             }
             assertTrue("expected Success, got $ev", ev is WalkShareEvent.Success)
@@ -184,7 +189,7 @@ class WalkShareViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
         // Cached.
-        val cached = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val cached = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.cachedShare.first { it != null } }
         }
         assertEquals("https://walk.pilgrimapp.org/abc123", cached?.url)
@@ -195,12 +200,12 @@ class WalkShareViewModelTest {
         server.enqueue(MockResponse().setResponseCode(429).setBody("{}"))
         val walkId = seedWalkWithRoute()
         val vm = vm(walkId)
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.uiState.first { it is WalkShareUiState.Loaded } }
         }
         vm.events.test(timeout = 10.seconds) {
             vm.share()
-            val ev = withContext(Dispatchers.Default.limitedParallelism(1)) {
+            val ev = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) { awaitItem() }
             }
             assertEquals(WalkShareEvent.RateLimited, ev)
@@ -210,7 +215,7 @@ class WalkShareViewModelTest {
         assertEquals(null, vm.cachedShare.value)
         // isSharing resets via the share() finally block so the user
         // can retry tomorrow (iOS parity — no client-side lockout).
-        withContext(Dispatchers.Default.limitedParallelism(1)) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5_000L) { vm.isSharing.first { !it } }
         }
         assertEquals(false, vm.isSharing.value)

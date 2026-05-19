@@ -68,6 +68,16 @@ class WalkController @Inject constructor(
     )
     val bellTriggers: SharedFlow<BellTrigger> = _bellTriggers.asSharedFlow()
 
+    /**
+     * iOS parity `ActiveWalkViewModel.steps` — live step count for the
+     * in-progress walk. Direct passthrough of the @Singleton
+     * [org.walktalkmeditate.pilgrim.sensor.StepCounter]'s hot StateFlow
+     * (no `WhileSubscribed` re-wrap — Stage 5-G stale-cache trap). Null
+     * until the first sensor event, or permanently when the sensor /
+     * permission is unavailable.
+     */
+    val liveSteps: StateFlow<Int?> = stepCounter.liveSteps
+
     private val dispatchMutex = Mutex()
 
     /**
@@ -409,6 +419,7 @@ class WalkController @Inject constructor(
             val current = _state.value
             val (next, effect) = WalkReducer.reduce(current, action)
             applyEffect(effect)
+            syncStepCounter(from = current, to = next)
             _state.value = next
             // LocationSampled arrives ~once per second and would flood the
             // log; emit every 10th sample at DEBUG and leave the rest
@@ -423,6 +434,30 @@ class WalkController @Inject constructor(
             } else {
                 Log.i(TAG, "dispatch $actionName: $fromName → $toName effect=${effect::class.simpleName}")
             }
+        }
+    }
+
+    /**
+     * iOS parity `StepCounter.swift:75-83` — the pedometer records only
+     * while `status == .recording` (Active). Pausing or entering
+     * meditation suspends the counter; returning to Active resumes it
+     * with a fresh segment so OS-counted steps during the suspended span
+     * are excluded from the walk total. Driven off the reducer's
+     * Active↔Paused / Active↔Meditating transitions. Both
+     * [StepCounter.pause] and [StepCounter.resume] are internally
+     * guarded, so redundant calls (e.g. LocationSampled while Active →
+     * Active) are no-ops. Start/stop are owned by the
+     * startWalk / Finalize / Purge paths, not here.
+     */
+    private fun syncStepCounter(from: WalkState, to: WalkState) {
+        if (from::class == to::class) return
+        when (to) {
+            is WalkState.Active -> if (from is WalkState.Paused || from is WalkState.Meditating) {
+                stepCounter.resume()
+            }
+            is WalkState.Paused, is WalkState.Meditating ->
+                if (from is WalkState.Active) stepCounter.pause()
+            else -> Unit
         }
     }
 

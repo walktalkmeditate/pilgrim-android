@@ -523,7 +523,7 @@ class PromptsCoordinatorTest {
      * latency; 5s ceiling.
      */
     private suspend fun awaitStylesSize(target: Int) {
-        kotlinx.coroutines.withContext(Dispatchers.Default.limitedParallelism(1)) {
+        kotlinx.coroutines.withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(5.seconds) {
                 while (customStyleStore.styles.value.size != target) {
                     kotlinx.coroutines.delay(10L)

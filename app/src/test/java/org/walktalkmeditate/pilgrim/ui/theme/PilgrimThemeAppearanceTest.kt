@@ -2,8 +2,15 @@
 package org.walktalkmeditate.pilgrim.ui.theme
 
 import android.app.Application
+import androidx.compose.material3.Text
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Rule
@@ -90,6 +97,78 @@ class PilgrimThemeAppearanceTest {
         }
         composeRule.runOnIdle {
             assertEquals(expectedLight().parchment, captured!!.parchment)
+        }
+    }
+
+    @Test
+    fun `back-stack screen recolors after appearance flip while off-screen`() {
+        // Regression for the staticCompositionLocalOf -> compositionLocalOf
+        // swap (manual-QA #7b). A screen sitting on the Navigation back
+        // stack while the user flips Appearance kept its old-theme
+        // composition slots and rendered the stale palette (e.g. WalkShare
+        // stuck in Constellation indigo). With a static local, the change
+        // only re-ran the currently-composing provider subtree; the
+        // retained back-stack screen never saw the new colors. A non-static
+        // compositionLocalOf invalidates every reader, so the popped-back
+        // screen recolors.
+        val constellationParchment = pilgrimConstellationOverride(
+            pilgrimSeasonalColors(pilgrimDarkColors(), fixedDate, fixedHemisphere),
+        ).parchment
+        val lightParchment = expectedLight().parchment
+
+        var mode by mutableStateOf(AppearanceMode.Constellation)
+        var screenAParchment: androidx.compose.ui.graphics.Color? = null
+        var nav: androidx.navigation.NavHostController? = null
+
+        composeRule.setContent {
+            PilgrimTheme(
+                appearanceMode = mode,
+                hemisphere = fixedHemisphere,
+                today = fixedDate,
+            ) {
+                val controller = rememberNavController()
+                SideEffect { nav = controller }
+                NavHost(navController = controller, startDestination = "a") {
+                    composable("a") {
+                        val c = pilgrimColors
+                        SideEffect { screenAParchment = c.parchment }
+                        Text("A")
+                    }
+                    composable("b") {
+                        Text("B")
+                    }
+                }
+            }
+        }
+
+        composeRule.runOnIdle {
+            assertEquals(
+                "screen A should resolve constellation parchment before the flip",
+                constellationParchment,
+                screenAParchment,
+            )
+        }
+
+        // Push B on top so A leaves the back stack: its composition is
+        // retained but no longer actively recomposing.
+        composeRule.runOnIdle { nav!!.navigate("b") }
+        composeRule.runOnIdle { }
+
+        // User flips Appearance while A is off-screen on the back stack.
+        mode = AppearanceMode.Light
+        composeRule.runOnIdle { }
+
+        // Pop back to A. Under a static local A would still render the
+        // stale Constellation parchment; under compositionLocalOf it
+        // recolors to the post-flip Light value.
+        composeRule.runOnIdle { nav!!.popBackStack() }
+        composeRule.runOnIdle {
+            assertEquals(
+                "popped-back screen A must pick up the post-flip Light parchment, " +
+                    "not the stale Constellation value",
+                lightParchment,
+                screenAParchment,
+            )
         }
     }
 

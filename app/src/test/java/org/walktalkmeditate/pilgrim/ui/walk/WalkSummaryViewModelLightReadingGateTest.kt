@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -104,16 +105,13 @@ class WalkSummaryViewModelLightReadingGateTest {
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, FakeLocationSource(), hemisphereScope)
         persistenceScope = CoroutineScope(SupervisorJob() + dispatcher)
         photoAnalysisScheduler = FakePhotoAnalysisScheduler()
+        // In-memory DataStore: markCurrentWalkShared() -> tracker write
+        // -> hasRevealedLightReading flip must propagate synchronously
+        // under the test dispatcher. A real file-backed DataStore runs
+        // its actor on a real dispatcher and defeats Turbine's bound on
+        // CPU-starved CI (the ci-realtime-withtimeout flake family).
         walkSharingTracker = WalkSharingTracker(
-            dataStore = PreferenceDataStoreFactory.create(
-                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
-                produceFile = {
-                    java.io.File(
-                        context.cacheDir,
-                        "wsvm-light-reading-gate-${java.util.UUID.randomUUID()}.preferences_pb",
-                    )
-                },
-            ),
+            dataStore = org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore(),
         )
     }
 
@@ -127,7 +125,6 @@ class WalkSummaryViewModelLightReadingGateTest {
         hemisphereScope.coroutineContext[Job]?.cancel()
         db.close()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
-        java.io.File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
         Dispatchers.resetMain()
     }
 
@@ -148,7 +145,18 @@ class WalkSummaryViewModelLightReadingGateTest {
             sweeper = sweeper,
             photoAnalysisScheduler = photoAnalysisScheduler,
             hemisphereRepository = hemisphereRepo,
-            cachedShareStore = CachedShareStore(context, json),
+            cachedShareStore = CachedShareStore(
+                dataStore = PreferenceDataStoreFactory.create(
+                    scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                    produceFile = {
+                        java.io.File(
+                            context.cacheDir,
+                            "light-reading-gate-share-${java.util.UUID.randomUUID()}.preferences_pb",
+                        )
+                    },
+                ),
+                json = json,
+            ),
             unitsPreferences = FakeUnitsPreferencesRepository(),
             practicePreferences = practicePreferences,
             promptsCoordinator = stubPromptsCoordinator(),
@@ -257,8 +265,19 @@ class WalkSummaryViewModelLightReadingGateTest {
         walkSharingTracker.markShared(walkUuid)
         advanceUntilIdle()
         val (vm, _) = newViewModel(walkId)
+        // hasRevealedLightReading = state.flatMapLatest { if Loaded ->
+        // hasSharedFlow(uuid) else flowOf(false) } with initialValue
+        // false. Before state reaches Loaded the chain emits false;
+        // under a CPU-starved full-suite shard state is still Loading
+        // when Turbine subscribes, so the first awaitItem is false and
+        // assertEquals(true, awaitItem()) fails (the
+        // ci-realtime-withtimeout flake). Await Loaded first, then
+        // drain to true (predicate-gated, not a clock).
+        vm.state.first { it is WalkSummaryUiState.Loaded }
         vm.hasRevealedLightReading.test {
-            assertEquals(true, awaitItem())
+            var revealed = awaitItem()
+            while (!revealed) revealed = awaitItem()
+            assertEquals(true, revealed)
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -267,11 +286,21 @@ class WalkSummaryViewModelLightReadingGateTest {
     fun markCurrentWalkShared_flipsHasRevealedToTrue() = runTest(dispatcher) {
         val walkId = freshFinishedWalkId()
         val (vm, _) = newViewModel(walkId)
+        // markCurrentWalkShared() early-returns when state.value !is
+        // Loaded (a no-op), so calling it before the Room-backed state
+        // flow loads silently drops the write and the flip never
+        // arrives. In isolation state reaches Loaded fast enough by
+        // luck; under a CPU-starved full-suite shard it does not — the
+        // ci-realtime-withtimeout flake. Await Loaded deterministically
+        // first (gated by predicate, not a clock); the in-memory
+        // tracker then propagates the flip synchronously.
+        vm.state.first { it is WalkSummaryUiState.Loaded }
         vm.hasRevealedLightReading.test {
             assertEquals(false, awaitItem())
             vm.markCurrentWalkShared()
-            advanceUntilIdle()
-            assertEquals(true, awaitItem())
+            var revealed = awaitItem()
+            while (!revealed) revealed = awaitItem()
+            assertEquals(true, revealed)
             cancelAndIgnoreRemainingEvents()
         }
     }

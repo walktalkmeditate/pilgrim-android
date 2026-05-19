@@ -250,7 +250,7 @@ class SoundscapeCatalogRepositoryTest {
         assertTrue(scheduler.cancelled.contains("s1"))
     }
 
-    private fun realTimeDispatcher() = Dispatchers.Default.limitedParallelism(1)
+    private fun realTimeDispatcher() = org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance
 
     private companion object {
         const val DATASTORE_NAME = "soundscape-catalog-test"

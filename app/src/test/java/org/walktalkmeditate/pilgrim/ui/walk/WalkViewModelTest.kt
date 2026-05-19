@@ -698,7 +698,7 @@ class WalkViewModelTest {
         // verify by code reading; the unit under test here is the
         // refresh function's location → hemisphere → DataStore path.
         hemisphereRepo.refreshFromLocationIfNeeded()
-        val observed = withContext(Dispatchers.Default.limitedParallelism(1)) {
+        val observed = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 hemisphereRepo.hemisphere.first { it == Hemisphere.Southern }
             }

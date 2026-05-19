@@ -21,7 +21,7 @@ class CachedShareStoreObserveAllTest {
     @Test
     fun `observeAll emits keys reconstructed with hyphens`() = runBlocking {
         val store = CachedShareStore(
-            ApplicationProvider.getApplicationContext(),
+            ApplicationProvider.getApplicationContext<android.content.Context>(),
             Json { ignoreUnknownKeys = true },
         )
         val uuid1 = UUID.randomUUID().toString()

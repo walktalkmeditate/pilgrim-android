@@ -13,23 +13,30 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Manual-QA batch 2, BUG C1: a dropped waypoint never appeared on the
- * live map. The PointAnnotationManagers created in the loadStyle
- * callback never set `iconAllowOverlap`, so Mapbox's default symbol
- * collision engine culled the waypoint icon (created at the user's
- * exact location, colliding with the live puck).
+ * Manual-QA batch 3, BUG #2: a dropped waypoint never appeared on the
+ * live map. Verified root cause is LAYER Z-ORDER, not symbol collision
+ * (the earlier `iconAllowOverlap` fix was a misdiagnosis — left in
+ * place as harmless). Mapbox inserts the `location-indicator` puck
+ * layer at the TOP of the layer stack (null LayerPosition); when the
+ * `loadStyle` callback enabled the location component AFTER creating
+ * the annotation managers, the puck rendered ABOVE the waypoint
+ * SymbolLayer. A waypoint dropped at the user's exact location sat
+ * under the larger stone puck and was fully occluded. The fix enables
+ * the location component BEFORE the annotation managers are created so
+ * the annotation SymbolLayers stack on top of the location-indicator
+ * layer — iOS parity `PilgrimMapView.swift:123,128-144@v1.6.0`
+ * (`configurePuck` runs in `makeUIView` before `onStyleLoaded`
+ * recreates the annotation managers).
  *
  * CLAUDE.md platform-object-builder rule: a real
  * `PointAnnotationManager` cannot be constructed under Robolectric
  * (`MapView.<init>` requires an EGL/GL context — same constraint that
- * forced the `buildStonePuck` extraction). The runtime-validated path
- * that Mapbox actually exercises at create-time is the
+ * forced the `buildStonePuck` extraction), and layer z-order needs a
+ * live EGL surface, so the reorder itself can only be proven on-device.
+ * The runtime-validated path that Mapbox actually exercises at
+ * create-time is the
  * `PointAnnotationOptions().withPoint(...).withIconImage(bitmap)`
- * builder — that is the path this test locks down in CI. The
- * `iconAllowOverlap` / `iconIgnorePlacement` property assignments in
- * [allowIconOverlap] are plain setters with no runtime validation;
- * their effect (dropped waypoints render instead of being culled) is
- * verified by on-device QA. iOS parity `PilgrimMapView.swift:389@v1.6.0`.
+ * builder — that is the path this test locks down in CI.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)

@@ -88,6 +88,18 @@ object WalkFormat {
     }
 
     /**
+     * iOS parity `WalkStatsSheet.swift:341,429` Steps column. Plain
+     * integer (no grouping separators — matches iOS's
+     * `"\(steps)"`), `Locale.US` digits per the project numeric-display
+     * convention. `—` when the live count is unavailable (no step
+     * sensor, ACTIVITY_RECOGNITION denied, or first sample not yet in).
+     */
+    fun steps(count: Int?): String {
+        if (count == null) return "—"
+        return String.format(Locale.US, "%d", count)
+    }
+
+    /**
      * Pace formatted in the user's preferred unit system.
      *
      * Metric: `M:SS /km`.

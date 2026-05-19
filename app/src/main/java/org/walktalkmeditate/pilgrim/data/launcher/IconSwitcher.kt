@@ -11,29 +11,33 @@ import javax.inject.Singleton
 /**
  * iOS parity `UIApplication.setAlternateIconName(_:)` — swap the
  * launcher icon among the declared `<activity-alias>` entries in
- * AndroidManifest. Only one alias is enabled at a time; the others
- * have their component-enabled-setting flipped to DISABLED. The
- * Default alias is the cold-install state.
+ * AndroidManifest. Exactly one alias is enabled at a time; the
+ * others have their component-enabled-setting flipped to DISABLED.
+ * The Default alias is the cold-install state.
  *
- * Eviction-to-launcher bug (E2): disabling the alias that roots the
- * live MainActivity task tears the task down even with
- * `DONT_KILL_APP`, kicking the user back to the home screen. iOS's
- * `setAlternateIconName` swaps in place and the user stays put
- * (`AboutView.swift:411-417@v1.6.0`). To match that, [switchTo]
- * enables `target`, persists it, and disables every alias EXCEPT
- * `target` AND EXCEPT the currently-running alias. The stale running
- * alias is reaped on the next cold start by [reconcile], called from
- * `PilgrimApp.onCreate`. Two LAUNCHER aliases briefly coexisting is
- * harmless — the launcher dedupes by `targetActivity`.
+ * [switchTo] enables `target` FIRST, then disables every other
+ * alias including the previously-enabled one. Because a valid
+ * LAUNCHER component for MainActivity exists for the whole
+ * transition (target is enabled before the old alias is disabled),
+ * the live task is never left without a rooting alias, so there is
+ * no eviction back to the home screen — iOS's `setAlternateIconName`
+ * likewise swaps in place and the user stays put
+ * (`AboutView.swift:411-417@v1.6.0`). The end state is a single
+ * enabled LAUNCHER alias = `target`; two enabled aliases sharing the
+ * same `targetActivity` make the launcher dedupe to the original and
+ * show no visible change, which is why the old alias must be
+ * disabled rather than left enabled.
+ *
+ * This makes [switchTo] structurally identical to [reconcile].
  *
  * Implementation notes:
  *  - `setComponentEnabledSetting` is a synchronous call but Android
  *    may delay the launcher refresh by a few hundred ms — the user
  *    sees the new icon after the next homescreen redraw, same as
  *    iOS's setAlternateIconName.
- *  - `DONT_KILL_APP` flag keeps the process alive on the toggle, but
- *    it does NOT preserve the activity task when the alias rooting it
- *    is disabled — that is exactly the bug this class works around.
+ *  - `DONT_KILL_APP` keeps the process alive across the toggles; the
+ *    enable-target-before-disable-old ordering keeps the activity
+ *    task rooted throughout, so the process is never torn down.
  */
 @Singleton
 open class IconSwitcher @Inject constructor(
@@ -61,11 +65,14 @@ open class IconSwitcher @Inject constructor(
     }
 
     /**
-     * Enable [target]'s alias and disable every other alias EXCEPT the
-     * one rooting the live MainActivity task (`current`). Leaving
-     * `current` enabled keeps the running task alive; the stale alias
-     * is disabled on the next cold start by [reconcile]. Idempotent —
-     * re-applying the current variant is a no-op.
+     * Enable [target]'s alias FIRST, then disable every other alias
+     * including the previously-enabled one. The end state is exactly
+     * one enabled LAUNCHER alias = [target], so the launcher shows
+     * the new icon (two enabled aliases would dedupe to the original
+     * and show no change). The enable-before-disable ordering keeps a
+     * valid LAUNCHER component for MainActivity present throughout, so
+     * the live task is never evicted. Idempotent — re-applying the
+     * current variant is a no-op.
      */
     open fun switchTo(target: IconVariant) {
         val pm = context.packageManager
@@ -74,7 +81,7 @@ open class IconSwitcher @Inject constructor(
         if (current == target) return
         setEnabled(pm, target, true)
         for (variant in IconVariant.entries) {
-            if (variant != target && variant != current) setEnabled(pm, variant, false)
+            if (variant != target) setEnabled(pm, variant, false)
         }
     }
 
