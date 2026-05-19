@@ -33,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -443,11 +444,32 @@ private fun ModeButton(
             maxLines = 1,
         )
         Spacer(Modifier.height(PilgrimSpacing.xs))
+        // iOS parity `WalkStartView.trailUnderline(for:)@v1.6.0` —
+        // selected-tab underline is a horizontal stone gradient that
+        // fades toward the row's outer edges so the three tabs read as
+        // one soft band: Wander solid→faded, Together faded both ends,
+        // Seek faded→solid. Unselected = transparent.
+        val stone = pilgrimColors.stone
+        val underline: Brush = if (selected) {
+            when (mode) {
+                WalkMode.Wander -> Brush.horizontalGradient(
+                    listOf(stone, stone.copy(alpha = 0.2f)),
+                )
+                WalkMode.Together -> Brush.horizontalGradient(
+                    listOf(stone.copy(alpha = 0.3f), stone, stone.copy(alpha = 0.3f)),
+                )
+                WalkMode.Seek -> Brush.horizontalGradient(
+                    listOf(stone.copy(alpha = 0.2f), stone),
+                )
+            }
+        } else {
+            Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(2.dp)
-                .background(if (selected) pilgrimColors.stone else Color.Transparent),
+                .background(underline),
         )
     }
 }

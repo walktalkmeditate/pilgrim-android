@@ -40,7 +40,7 @@
     <string name="permission_activity_rationale">Measure steps as you move</string>
 
     <string name="permissions_optional">(optional)</string>
-    <string name="permissions_grant">Continue</string>
+    <string name="permissions_grant">Allow</string>
     <string name="permissions_continue">Next</string>
     <string name="permissions_granted_label">Granted</string>
     <string name="permissions_open_settings">Open settings</string>
@@ -51,10 +51,10 @@
     <string name="permission_location_needs_settings">Location is blocked. Open settings and enable precise location for Pilgrim to continue.</string>
 
     <string name="battery_exemption_title">A word about sleep</string>
-    <string name="battery_exemption_body">Android may pause recording when the screen is off. Ask your phone to let Pilgrim keep listening to location on long walks.</string>
+    <string name="battery_exemption_body">Without this, Android can stop recording on long walks once the screen is off. Strongly recommended.</string>
     <string name="battery_exemption_body_samsung">Samsung phones can be especially strict. After this prompt, find Pilgrim in Settings → Battery → Background usage limits → Sleeping apps, and remove it.</string>
     <string name="battery_exemption_body_xiaomi">Xiaomi\'s MIUI can kill background services aggressively. After this prompt, also enable AutoStart for Pilgrim in Security → Permissions → Autostart.</string>
-    <string name="battery_exemption_action">Ask my phone</string>
+    <string name="battery_exemption_action">Allow</string>
     <string name="battery_exemption_later">Later</string>
 
     <string name="home_title">Pilgrim Log</string>
@@ -245,7 +245,8 @@
     <string name="settings_walk_reliquary_photos_denied_note">Photo access was declined. To enable the reliquary, grant photo access in Android Settings → Apps → Pilgrim → Permissions.</string>
     <!-- Task 2.3: Walk Summary permission-denied inline prompt (PhotoReliquarySection) -->
     <string name="reliquary_permission_denied_title">Photos access needed</string>
-    <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk. You can grant access in Settings.</string>
+    <string name="reliquary_permission_denied_body">Pilgrim needs Photos access to find pictures from this walk.</string>
+    <string name="reliquary_permission_denied_action_grant">Grant access</string>
     <string name="reliquary_permission_denied_action_settings">Open settings</string>
     <string name="reliquary_action_add">Add</string>
     <string name="reliquary_action_full">Full</string>

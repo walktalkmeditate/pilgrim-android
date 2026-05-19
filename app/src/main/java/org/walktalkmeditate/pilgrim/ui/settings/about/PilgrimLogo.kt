@@ -83,7 +83,7 @@ fun PilgrimLogo(
  * v1.5.0 set: breeze, drift, dusk, ember, river, sage, stone. Future
  * packs without a matching drawable silently fall back to default.
  */
-private fun drawableForGuide(guideId: String?): Int = when (guideId) {
+internal fun drawableForGuide(guideId: String?): Int = when (guideId) {
     "breeze" -> R.drawable.ic_pilgrim_logo_breeze
     "drift" -> R.drawable.ic_pilgrim_logo_drift
     "dusk" -> R.drawable.ic_pilgrim_logo_dusk
