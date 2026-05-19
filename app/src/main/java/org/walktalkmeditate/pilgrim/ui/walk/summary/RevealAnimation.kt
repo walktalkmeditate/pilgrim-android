@@ -101,7 +101,24 @@ data class RouteSegmentColors(
     val walking: Color,
     val talking: Color,
     val meditating: Color,
-)
+) {
+    companion object {
+        /**
+         * iOS parity `PilgrimMapView.swift:321-329@v1.6.0` — the route
+         * line uses FIXED `UIColor.moss/.rust/.dawn` assets, NOT the
+         * colorScheme-resolved tokens. Reading `pilgrimColors.*` drifted
+         * the walk/talk/meditate route colors across
+         * light/dark/constellation; iOS keeps them constant. These are
+         * the frozen base-palette values (see ui/theme/Color.kt light
+         * set) used regardless of appearance.
+         */
+        val Fixed = RouteSegmentColors(
+            walking = Color(0xFF7A8B6F),
+            talking = Color(0xFFA0634B),
+            meditating = Color(0xFFC4956A),
+        )
+    }
+}
 
 /**
  * Theme-resolved colors for the Walk Summary map's annotation pins
@@ -122,4 +139,20 @@ data class WalkAnnotationColors(
      * swap to a real circular thumbnail via Mapbox ViewAnnotation.
      */
     val photo: Color,
-)
+) {
+    companion object {
+        /**
+         * iOS parity — annotation pin colors are fixed assets
+         * (`UIColor.stone/.dawn/.rust/.moss`), not colorScheme-resolved,
+         * so the meditation circle + start/end + voice pins stay
+         * constant across light/dark/constellation. Frozen base-palette
+         * values (see ui/theme/Color.kt light set).
+         */
+        val Fixed = WalkAnnotationColors(
+            startEnd = Color(0xFF8B7355),
+            meditation = Color(0xFFC4956A),
+            voice = Color(0xFFA0634B),
+            photo = Color(0xFF7A8B6F),
+        )
+    }
+}

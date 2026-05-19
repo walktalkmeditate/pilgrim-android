@@ -75,6 +75,7 @@ import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 
 /**
  * Bottom-sheet overlay for the Active Walk screen. Two detents
@@ -540,7 +541,11 @@ private fun TimeChip(
     // Direct port of iOS TimeMetricItem (ActiveWalkSubviews.swift:3-27):
     // VStack with icon on top, value middle, label bottom. NO background,
     // NO border. Icon color flips rust/stone for active/inactive.
-    val iconTint = if (active) pilgrimColors.rust else pilgrimColors.stone
+    // iOS TimeMetricItem uses the same .rust as the Talk control; keep
+    // them identical (the fixed talk color, constant across appearance)
+    // so the timer icon doesn't read as a different red than the
+    // talk/meditate action icons.
+    val iconTint = if (active) RouteSegmentColors.Fixed.talking else pilgrimColors.stone
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -636,7 +641,9 @@ private fun ActionButtonRow(
             CircularActionButton(
                 label = stringResource(R.string.walk_action_start),
                 icon = Icons.Filled.PlayArrow,
-                color = pilgrimColors.moss,
+                // iOS parity: walk/talk/meditate control colors are
+                // fixed assets, constant across appearance modes.
+                color = RouteSegmentColors.Fixed.walking,
                 onClick = startWithStepPermission,
             )
         }
@@ -655,13 +662,13 @@ private fun ActionButtonRow(
             is WalkState.Active -> CircularActionButton(
                 label = stringResource(R.string.walk_action_meditate_short),
                 icon = Icons.Outlined.SelfImprovement,
-                color = pilgrimColors.dawn,
+                color = RouteSegmentColors.Fixed.meditating,
                 onClick = onStartMeditation,
             )
             is WalkState.Meditating -> CircularActionButton(
                 label = stringResource(R.string.walk_action_end_meditation_short),
                 icon = Icons.Filled.Stop,
-                color = pilgrimColors.dawn,
+                color = RouteSegmentColors.Fixed.meditating,
                 onClick = onEndMeditation,
             )
             else -> CircularActionButton(
@@ -784,7 +791,12 @@ private fun MicActionButton(
         }
     }
 
-    val baseColor = if (isRecording) pilgrimColors.rust else pilgrimColors.stone
+    // iOS parity `WalkStatsSheet.swift micButton` — the mic/Talk button
+    // is .rust ALWAYS (recording or not; only the background-circle
+    // opacity changes). Android previously used stone when idle, which
+    // read like the Meditate (.dawn) button — looked swapped. Fixed
+    // talk color, constant across appearance.
+    val baseColor = RouteSegmentColors.Fixed.talking
     val effectiveColor = if (enabled) baseColor else pilgrimColors.fog.copy(alpha = 0.4f)
     // The label sitting under the mic intentionally MIRRORS the chip's
     // "Talk" label so the spatial association is obvious to the user.
