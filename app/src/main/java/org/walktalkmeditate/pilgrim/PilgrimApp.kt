@@ -179,19 +179,6 @@ class PilgrimApp : Application(), Configuration.Provider {
         // that visually until a valid token is configured.
         MapboxOptions.accessToken = BuildConfig.MAPBOX_ACCESS_TOKEN
 
-        // E2: reap any launcher alias left enabled by an in-place icon
-        // switch in a previous session. No activity task exists yet at
-        // this point, so disabling the stale alias is safe.
-        // setComponentEnabledSetting can throw SecurityException on some
-        // hardened ROMs — swallow so a fresh install still boots.
-        try {
-            iconSwitcher.reconcile()
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (t: Throwable) {
-            Log.w(TAG, "icon reconcile failed", t)
-        }
-
         // KEEP policy means this is a no-op after the first launch; the
         // periodic sweeper runs on its own daily cadence regardless of
         // how often the user opens the app.
@@ -309,6 +296,39 @@ class PilgrimApp : Application(), Configuration.Provider {
             throw cancel
         } catch (t: Throwable) {
             Log.w(TAG, "recoverStaleWalks failed", t)
+        }
+
+        // E2: reap any launcher alias left enabled by an in-place icon
+        // switch in a previous session. Deferred to AFTER stale-walk
+        // recovery so the controller's state is settled, then skipped
+        // entirely while a walk is in progress: when the OS revives a
+        // backgrounded long walk's process, churning launcher aliases on
+        // every restart force-cycles the alias the user is mid-walk
+        // under. recoverStaleWalks() finalizes any orphan walk to
+        // Finished/Idle, so a remaining in-progress state here means the
+        // process is genuinely hosting a live walk — leave the launcher
+        // alone. IconSwitcher.reconcile()'s own current==persisted
+        // no-op guard is the primary churn defense (covers the dominant
+        // case even when this in-progress check can't); this gate adds
+        // belt-and-braces for the live-walk window. setComponentEnabled
+        // can throw SecurityException on hardened ROMs — swallow so a
+        // fresh install still boots.
+        val walkInProgress = when (walkController.state.value) {
+            is org.walktalkmeditate.pilgrim.domain.WalkState.Active,
+            is org.walktalkmeditate.pilgrim.domain.WalkState.Paused,
+            is org.walktalkmeditate.pilgrim.domain.WalkState.Meditating -> true
+            else -> false
+        }
+        if (walkInProgress) {
+            Log.i(TAG, "icon reconcile skipped: walk in progress")
+        } else {
+            try {
+                iconSwitcher.reconcile()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "icon reconcile failed", t)
+            }
         }
     }
 

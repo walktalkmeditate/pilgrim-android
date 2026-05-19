@@ -100,11 +100,13 @@ internal val AMBIENT_ROW_BOTTOM_DP =
     SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs + SPARKLINE_BAND_HEIGHT_DP + PilgrimSpacing.xs
 
 /**
- * iOS-parity (`ActiveWalkView.swift:374`): the auto-intention sheet
- * pops 0.5s after the walk transitions to Active so the start-button
- * tap haptic + sheet animation don't collide with a modal dialog
- * appearing on the same frame. Seen as a single named constant so the
- * test can use the same value and the iOS reference is documented.
+ * iOS-parity (`ActiveWalkView.swift:373-376@v1.6.0`,
+ * `DispatchQueue.main.asyncAfter(deadline: .now() + 0.5)`): the
+ * auto-intention sheet pops 0.5s after the pre-walk surface appears
+ * so the screen-transition animation doesn't collide with a modal
+ * sheet appearing on the same frame. Kept as a single named constant
+ * so the test can use the same value and the iOS reference is
+ * documented.
  */
 internal const val AUTO_INTENTION_DELAY_MS = 500L
 
@@ -118,15 +120,26 @@ internal const val AUTO_INTENTION_DELAY_MS = 500L
 internal const val SHEET_HANDOFF_DELAY_MS = 300L
 
 /**
- * Pure predicate extracted from the Stage 10-C auto-intention prompt
+ * Pure predicate extracted from the auto-intention prompt
  * LaunchedEffect so it can be unit-tested without standing up Compose
- * + Hilt + Mapbox. Mirrors iOS `ActiveWalkView.swift:374`:
+ * + Hilt + Mapbox. Mirrors iOS `ActiveWalkView.swift:362-379@v1.6.0`,
+ * where the prompt fires in `.onAppear` on the PRE-walk surface
+ * (status .waiting/.ready, BEFORE the user taps Start) with the gate
+ * purely `!hasCheckedAutoIntention && beginWithIntention &&
+ * viewModel.intention == nil` — no active/recording condition:
  *
- *   - Already checked this walk → false (latch fires once per walk).
- *   - Walk is not Active → false (only fires on Active entry).
+ *   - Already checked this surface → false (latch fires once).
+ *   - Walk is in progress → false (pre-walk only; the surface is
+ *     Idle on a fresh start or Finished on the post-summary
+ *     "wander again" path — never Active/Paused/Meditating). This
+ *     mirrors iOS firing on the pre-walk `.onAppear` and matches the
+ *     batch-1 [canSetIntentionForState] `!isInProgress` convention.
  *   - Pref is off → false.
- *   - Intention already set (ellipsis-menu pre-walk path or prior
- *     confirm) → false.
+ *   - Intention already set (the ellipsis-menu pre-walk draft path
+ *     or a prior confirm) → false; the caller passes the pre-walk
+ *     draft (`preWalkIntention ?: intention`) so an in-flight draft
+ *     suppresses the auto-prompt, matching iOS's single
+ *     `viewModel.intention` check.
  */
 internal fun shouldAutoPromptIntention(
     walkState: WalkState,
@@ -134,7 +147,7 @@ internal fun shouldAutoPromptIntention(
     intention: String?,
     hasCheckedAutoIntention: Boolean,
 ): Boolean = !hasCheckedAutoIntention &&
-    walkState is WalkState.Active &&
+    !walkState.isInProgress &&
     beginWithIntention &&
     intention == null
 
@@ -352,23 +365,15 @@ fun ActiveWalkScreen(
     val handoffJob = remember {
         androidx.compose.runtime.mutableStateOf<kotlinx.coroutines.Job?>(null)
     }
-    // Stage 10-C: auto-intention prompt (mirrors iOS
-    // `ActiveWalkView.swift:374`). Fires once per walk session 0.5s
-    // after the walk transitions to Active when the
-    // `beginWithIntention` pref is on AND no intention has been
-    // committed yet (either via the pre-walk ellipsis path or by a
-    // prior auto-prompt confirm). Separate state from
-    // `showPreWalkIntention` so the two flows remain orthogonal: the
-    // ellipsis-menu path edits a draft on the Idle state, the
-    // auto-prompt commits straight to the Walk row via
-    // viewModel.setIntention.
-    var showAutoIntention by rememberSaveable { mutableStateOf(false) }
-    // The latch is intentionally NOT rememberSaveable. It's tied to
-    // the walk-id of the currently-Active walk via `remember(walkId)`
-    // below, so it resets on a fresh walk start and rotation re-fires
-    // the auto-prompt at most once more (mildly annoying but not a
-    // correctness issue — the user can dismiss it again). Survives
-    // recomposition WITHIN the same walk.
+    // iOS parity (`ActiveWalkView.swift:362-379@v1.6.0`): the
+    // auto-intention prompt opens the SAME pre-walk intention sheet
+    // the manual "Set Intention" ellipsis row opens
+    // (`showPreWalkIntention`), so there is no separate
+    // `showAutoIntention` surface. Committing the sheet writes the
+    // `preWalkIntention` draft that `onStartWalk` flushes into the
+    // Walk row — matching iOS where the auto-prompt presents the same
+    // `IntentionSettingView` as the manual option.
+    //
     // resetKey counters force the sheet/dialog's `rememberSaveable`-keyed
     // text states to re-initialize on each open, so Cancel-then-reopen
     // discards the typed-but-not-committed draft (matches dismiss-button
@@ -444,15 +449,6 @@ fun ActiveWalkScreen(
             showPreWalkIntention = false
             preWalkIntentionResetKey++
         }
-        // Stage 10-C: dismiss the auto-intention dialog if the walk
-        // transitions away from Active (e.g., the user paused or
-        // discarded the walk while the dialog was up). The dialog's
-        // commit path writes to the Walk row via setIntention, so a
-        // stale dialog after a discard would silently target a
-        // non-existent walk.
-        if (state !is WalkState.Active && showAutoIntention) {
-            showAutoIntention = false
-        }
         when (state) {
             // Gate Finished re-fire on `hasSeenInProgress` for the same
             // reason as the Idle → onDiscarded branch below: when the
@@ -473,46 +469,52 @@ fun ActiveWalkScreen(
         }
     }
 
-    // Stage 10-C auto-intention prompt. Mirrors iOS
-    // `ActiveWalkView.swift:374`: 0.5s after the walk transitions to
-    // Active, IF `beginWithIntention` is on AND no intention has been
-    // set, surface the IntentionSettingDialog. The latch
-    // (`hasCheckedAutoIntention`) is keyed on the active walk id via
-    // `remember(activeWalkId)` so it resets per walk — finishing one
-    // walk and starting another in the same session re-arms the
-    // prompt. `rememberSaveable` is intentionally NOT used (rotation
-    // re-firing the prompt is a minor annoyance, not a correctness
-    // issue, and the `intention != null` check naturally suppresses
-    // the re-fire after a confirmed value).
+    // Auto-intention prompt. Mirrors iOS
+    // `ActiveWalkView.swift:362-379@v1.6.0`, which fires in the
+    // pre-walk surface's `.onAppear` (status .waiting/.ready, BEFORE
+    // the user taps Start): IF `beginWithIntention` is on AND no
+    // intention/draft is set, present the SAME IntentionSettingView
+    // the manual "Set Intention" ellipsis row opens, 0.5s after the
+    // surface appears so the present animation doesn't fight the
+    // screen transition.
+    //
+    // The latch (`hasCheckedAutoIntention`) is a plain `remember` so
+    // it fires once per pre-walk composition and re-arms for a fresh
+    // `ActiveWalkScreen` mount — the direct analogue of iOS's
+    // per-`.onAppear` `hasCheckedAutoIntention` Bool. `rememberSaveable`
+    // is intentionally NOT used (rotation re-firing the prompt is a
+    // minor annoyance, not a correctness issue, and the
+    // already-set-draft check naturally suppresses the re-fire after a
+    // committed value).
     //
     // **Recovery guard**: if the first observed walk-state is already
     // in-progress (Active / Paused / Meditating), the user is
     // returning to an already-running walk via process death + cold
     // launch (Stage 9.5-D recovery) OR notification-tap-while-walking.
-    // Don't pop a fresh-walk auto-prompt on the recovery surface —
-    // it's confusing UX. Auto-prompt only fires when the user
-    // observably transitions FROM idle TO active in this composition.
-    val activeWalkId = (navWalkState as? WalkState.Active)?.walk?.walkId
-    val hasCheckedAutoIntention = remember(activeWalkId) { mutableStateOf(false) }
+    // Don't pop a pre-walk auto-prompt on the recovery surface — it's
+    // confusing UX. The auto-prompt only fires on a genuine pre-walk
+    // surface (fresh Idle, or the post-summary Finished the @Singleton
+    // controller stays in until the next startWalk()).
+    val hasCheckedAutoIntention = remember { mutableStateOf(false) }
     val isRecoveryComposition = remember {
         // `navWalkState` at first composition: Idle = fresh start;
         // anything else = we're entering an in-progress walk (recovery).
         navWalkState !is WalkState.Idle
     }
-    // Product decision (overrides the iOS `ActiveWalkView.swift:374`
-    // auto-prompt): the intention is a PRE-WALK affordance only. The
-    // user sets it from the pre-walk options sheet before pressing
-    // Wander; it is NEVER prompted again after the walk starts. The
-    // post-Active auto-prompt was popping the IntentionSettingDialog
-    // 0.5s into the walk, which the user explicitly does not want.
-    // `showAutoIntention` therefore stays false for the lifetime of
-    // the screen; the auto-prompt machinery
-    // (`hasCheckedAutoIntention` / `isRecoveryComposition` /
-    // `shouldAutoPromptIntention` / `AUTO_INTENTION_DELAY_MS`) is left
-    // in place but inert so the behavior is a one-line revert if the
-    // product call changes.
-    @Suppress("UNUSED_EXPRESSION")
-    run { hasCheckedAutoIntention; isRecoveryComposition }
+    LaunchedEffect(navWalkState::class) {
+        if (isRecoveryComposition) return@LaunchedEffect
+        if (shouldAutoPromptIntention(
+                walkState = navWalkState,
+                beginWithIntention = beginWithIntention,
+                intention = preWalkIntention ?: intention,
+                hasCheckedAutoIntention = hasCheckedAutoIntention.value,
+            )
+        ) {
+            hasCheckedAutoIntention.value = true
+            delay(AUTO_INTENTION_DELAY_MS)
+            showPreWalkIntention = true
+        }
+    }
     val activeWeather by viewModel.activeWeather.collectAsStateWithLifecycle()
     val activeCelestialGreeting by viewModel.activeCelestialGreeting.collectAsStateWithLifecycle()
     // iOS parity (D6/D7 audit): fade a greeting in only while
@@ -801,30 +803,6 @@ fun ActiveWalkScreen(
                     preWalkIntentionResetKey++
                 },
                 resetKey = preWalkIntentionResetKey,
-            )
-        }
-        // Stage 10-C: auto-intention dialog. Distinct conditional from
-        // showPreWalkIntention — they cover two different states (Idle
-        // pre-walk vs Active post-start), and bundling them would
-        // require a single resetKey-style draft buffer that doesn't
-        // exist for the auto path (commit goes straight to the Walk
-        // row).
-        if (showAutoIntention) {
-            val autoSuggestions = remember(showAutoIntention) {
-                viewModel.intentionSuggestions()
-            }
-            IntentionSettingSheet(
-                initial = null,
-                recents = recentIntentions,
-                suggestions = autoSuggestions,
-                onSave = { text ->
-                    if (text.isNotBlank()) {
-                        viewModel.rememberIntention(text)
-                        viewModel.setIntention(text)
-                    }
-                    showAutoIntention = false
-                },
-                onDismiss = { showAutoIntention = false },
             )
         }
         // iOS parity `ActiveWalkView.swift:80-96, 138-141@db4196e`:
