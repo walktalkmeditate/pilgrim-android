@@ -97,18 +97,30 @@ class WalkTrackingService : Service() {
             ACTION_MARK_WAYPOINT,
             ACTION_FINISH -> handleControllerAction(action)
             null -> {
-                // We return START_NOT_STICKY, so the system shouldn't revive
-                // us with a null intent — but be defensive: if it ever does,
-                // we have no tracking pipeline and would crash on the API 31+
+                // START_REDELIVER_INTENT redelivers the LAST delivered
+                // intent (the original ACTION_START), so a null intent
+                // here is not the revival path — it only happens on a
+                // genuinely malformed start. We have no tracking pipeline
+                // and would crash on the API 31+
                 // ForegroundServiceDidNotStartInTimeException timer. Bail.
                 stopSelf()
             }
         }
-        // START_NOT_STICKY: if the OS kills the service mid-walk, the walk
-        // row in Room remains unfinished. The app surfaces it on next open
-        // and the user resumes explicitly, rather than the service silently
-        // re-promoting itself with a null intent (and no tracking pipeline).
-        return START_NOT_STICKY
+        // START_REDELIVER_INTENT: if the OS kills the service mid-walk
+        // (OEM power manager force-kill after the screen has been off for
+        // ~30-40 min — the OnePlus/OxygenOS failure that ended long
+        // backgrounded walks), the system revives the service AND
+        // redelivers the last ACTION_START intent. onStartCommand then
+        // receives ACTION_START again → startTracking() rebuilds the
+        // location pipeline against the still-unfinished Room walk. The
+        // old START_NOT_STICKY rejected START_STICKY because that revives
+        // with a NULL intent (no pipeline + API 31+ FGS-start-timeout
+        // crash); START_REDELIVER_INTENT sidesteps both — the redelivered
+        // intent is the real ACTION_START, and startTracking() restores
+        // the controller from Room (restoreActiveWalk) before promoting,
+        // so a bare revived process re-establishes a live walk instead of
+        // silently dropping GPS into an Idle controller.
+        return START_MODE
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -154,9 +166,39 @@ class WalkTrackingService : Service() {
         // hard-coding Idle here would flash a zero-action "Preparing
         // your walk…" notification for the sub-second window before
         // the state collector delivers the first real emission.
+        //
+        // promoteToForeground MUST run synchronously here (not inside the
+        // launch below): the API 31+ FGS-start timeout requires
+        // startForeground() promptly after the OS hands us the
+        // (redelivered) start intent. The Idle notification is acceptable
+        // for the sub-second window before restore + the first real
+        // state emission re-render it.
         promoteToForeground(buildNotification(controller.state.value))
 
         locationJob = scope.launch {
+            // START_REDELIVER_INTENT revival: the OS killed the service
+            // mid-walk and re-delivered ACTION_START into a fresh
+            // process. The @Singleton WalkController is Idle (nothing
+            // restored it — restoreActiveWalk only runs from
+            // MainActivity, which is not up on a headless revival), so
+            // GPS samples would reduce against Idle and be silently
+            // dropped. Rebuild the controller from the unfinished Room
+            // row first. Idempotent + safe on the normal start path:
+            // restoreActiveWalk no-ops when the state is already
+            // non-Idle (user-initiated start already moved it to
+            // Active). When no unfinished walk exists, there is nothing
+            // to track — stop gracefully rather than collect GPS into a
+            // dead Idle controller.
+            if (controller.state.value is WalkState.Idle) {
+                val restored = runCatching { controller.restoreActiveWalk() }
+                    .onFailure { Log.w(TAG, "restoreActiveWalk on revival failed", it) }
+                    .getOrNull()
+                if (restored == null && controller.state.value is WalkState.Idle) {
+                    Log.w(TAG, "revived ACTION_START with no unfinished walk — stopping")
+                    stopSelf()
+                    return@launch
+                }
+            }
             try {
                 locationSource.locationFlow().collect { point ->
                     controller.recordLocation(point)
@@ -416,6 +458,23 @@ class WalkTrackingService : Service() {
         private val isRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
         fun isFgsAlive(): Boolean = isRunning.get()
+
+        /**
+         * The value [onStartCommand] returns. Named so a Robolectric
+         * test can pin the contract without Hilt-injecting the service
+         * (the project deliberately has no hilt-android-testing dep —
+         * see [WalkTrackingServiceDiscardTest]'s rationale). Mirrors the
+         * [decideStateAction] pure-extraction precedent.
+         *
+         * START_REDELIVER_INTENT (not START_NOT_STICKY): an OEM
+         * power-manager mid-walk kill is revived by the OS WITH the last
+         * ACTION_START intent re-delivered, so [startTracking] re-runs
+         * and [WalkController.restoreActiveWalk] rebuilds the live walk
+         * from the unfinished Room row. START_STICKY is still wrong (it
+         * revives with a null intent → no pipeline + API 31+ FGS-start
+         * timeout crash); REDELIVER_INTENT carries the real ACTION_START.
+         */
+        const val START_MODE: Int = Service.START_REDELIVER_INTENT
 
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
         const val ACTION_PAUSE = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.PAUSE"
