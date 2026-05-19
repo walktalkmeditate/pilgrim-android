@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.data.launcher
 
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -77,7 +78,14 @@ open class IconSwitcher @Inject constructor(
     open fun switchTo(target: IconVariant) {
         val pm = context.packageManager
         val current = currentVariant()
-        prefs.edit().putString(KEY_TARGET, target.name).apply()
+        // commit(), not apply(): [restartForLauncherIconRefresh] exits
+        // the process immediately after this returns. An async apply()
+        // is killed before its background flush completes, so on
+        // relaunch reconcile() reads the STALE target, sees it diverge
+        // from the (durably PM-persisted) enabled alias, and reverts
+        // the switch — device-confirmed on OnePlus 13. switchTo runs on
+        // Dispatchers.IO, so the synchronous write is free.
+        prefs.edit().putString(KEY_TARGET, target.name).commit()
         if (current == target) return
         setEnabled(pm, target, true)
         for (variant in IconVariant.entries) {
@@ -113,6 +121,48 @@ open class IconSwitcher @Inject constructor(
             // an `== ENABLED` filter would never reap it.
             if (variant != target) setEnabled(pm, variant, false)
         }
+    }
+
+    /**
+     * Process-exit seam. Overridable so unit tests can assert the
+     * restart path without terminating the test JVM.
+     */
+    internal var processExit: () -> Unit = { Runtime.getRuntime().exit(0) }
+
+    /**
+     * Force OEM launchers to render the just-switched icon.
+     *
+     * [switchTo] toggles activity-aliases with `DONT_KILL_APP`, which
+     * keeps the process alive. AOSP/Pixel launchers re-query on the
+     * resulting `ACTION_PACKAGE_CHANGED` and show the new icon
+     * immediately — but OEM launchers (OxygenOS, MIUI, ColorOS) cache
+     * the launcher icon per-package and ignore a bare alias toggle
+     * while the process lives, so the user keeps seeing the OLD icon
+     * until the launcher restarts or the device reboots
+     * (device-confirmed on OnePlus 13 / OxygenOS 15: the system
+     * resolved the new alias correctly but the home screen kept the
+     * stale icon until the launcher's data was cleared).
+     *
+     * The reliable cross-OEM refresh signal is the app's own process
+     * dying right after the component change. Relaunches the package
+     * (into the now-enabled alias → the user lands back in the app,
+     * the closest achievable parity to iOS's in-place
+     * `setAlternateIconName`) and then exits the process.
+     *
+     * Caller MUST ensure no walk/foreground tracking is active —
+     * exiting the process would tear the tracking service down.
+     */
+    open fun restartForLauncherIconRefresh() {
+        context.packageManager
+            .getLaunchIntentForPackage(context.packageName)
+            ?.apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK,
+                )
+                context.startActivity(this)
+            }
+        processExit()
     }
 
     private fun setEnabled(pm: PackageManager, variant: IconVariant, enabled: Boolean) {

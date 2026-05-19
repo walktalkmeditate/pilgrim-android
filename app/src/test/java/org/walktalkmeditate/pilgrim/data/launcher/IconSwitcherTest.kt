@@ -131,6 +131,30 @@ class IconSwitcherTest {
     }
 
     @Test
+    fun restartForLauncherIconRefresh_relaunches_package_and_exits_process() {
+        var exited = false
+        switcher.processExit = { exited = true }
+
+        switcher.restartForLauncherIconRefresh()
+
+        assertTrue("process-exit seam invoked", exited)
+        // Best-effort: the package relaunch Intent is fired so the user
+        // lands back in the app after the OEM launcher refreshes. A null
+        // launch intent (Robolectric manifest quirk) still must not skip
+        // the exit — the assertion above is the contract.
+        val started = org.robolectric.Shadows.shadowOf(
+            ApplicationProvider.getApplicationContext<Application>(),
+        ).nextStartedActivity
+        if (started != null) {
+            val flags = started.flags
+            assertTrue(
+                "relaunch is a fresh task",
+                flags and android.content.Intent.FLAG_ACTIVITY_NEW_TASK != 0,
+            )
+        }
+    }
+
+    @Test
     fun constellation_variant_exists_and_switches() {
         val constellation = IconVariant.entries.firstOrNull {
             it.name == "Constellation"
