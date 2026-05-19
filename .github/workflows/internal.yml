@@ -1,0 +1,112 @@
+name: Play Internal
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Marketing version (e.g. 1.0.1). Empty = keep current.'
+        required: false
+        type: string
+
+concurrency:
+  group: play-internal-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 1.0.0 was seeded at versionCode=100; automated builds start at 101.
+  GHA_VERSION_CODE_OFFSET: 100
+
+jobs:
+  publish-internal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "KEYSTORE_BASE64 secret is not set."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > pilgrim-release.keystore
+
+      - name: Write keystore.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          {
+            echo "storeFile=pilgrim-release.keystore"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Write local.properties
+        env:
+          MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo "MAPBOX_ACCESS_TOKEN=$MAPBOX_ACCESS_TOKEN"
+            echo "MAPBOX_DOWNLOADS_TOKEN=$MAPBOX_DOWNLOADS_TOKEN"
+          } > local.properties
+
+      - name: Decode Play service account JSON (fail-fast)
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON_BASE64" ]; then
+            echo "PLAY_SERVICE_ACCOUNT_JSON_BASE64 secret is not set."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON_BASE64" | base64 --decode > play-service-account.json
+          if ! grep -q '"client_email"' play-service-account.json; then
+            echo "Decoded service-account JSON missing client_email — credential malformed."
+            exit 1
+          fi
+
+      - name: Set versionName (if input provided)
+        if: inputs.version != ''
+        env:
+          NEW_VERSION: ${{ inputs.version }}
+        run: |
+          sed -i 's/versionName = ".*"/versionName = "'"$NEW_VERSION"'"/' app/build.gradle.kts
+          echo "Set versionName to $NEW_VERSION"
+          grep 'versionName' app/build.gradle.kts
+
+      - name: Bump versionCode (offset + github.run_number)
+        run: |
+          NEW_CODE=$(( GHA_VERSION_CODE_OFFSET + ${{ github.run_number }} ))
+          sed -i 's/versionCode = [0-9]*/versionCode = '"$NEW_CODE"'/' app/build.gradle.kts
+          echo "Set versionCode to $NEW_CODE"
+          grep 'versionCode' app/build.gradle.kts
+
+      - name: Build signed AAB
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: ./gradlew bundleRelease
+
+      - name: Publish to Play Internal
+        run: ./gradlew publishReleaseBundle --track internal
