@@ -153,6 +153,52 @@ class AboutViewModelTest {
     }
 
     @Test
+    fun `setIconVariant restarts launcher for OEM refresh when no walk active`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()), walkActive = false)
+        val fake = RecordingIconSwitcher()
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
+                current = awaitItem()
+            }
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+            fake.lastSwitchTo,
+        )
+        assertEquals("launcher restart fired once", 1, fake.restartCount)
+    }
+
+    @Test
+    fun `setIconVariant skips launcher restart while a walk is active`() = runTest {
+        val source = FakeWalkSource(flowOf(emptyList()), walkActive = true)
+        val fake = RecordingIconSwitcher()
+        val vm = AboutViewModel(source, FakeUnits(), fake)
+
+        vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
+
+        vm.iconVariant.test(timeout = 5.seconds) {
+            var current = awaitItem()
+            while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
+                current = awaitItem()
+            }
+            cancelAndIgnoreRemainingEvents()
+        }
+        // Switch still applied; restart suppressed so the active walk's
+        // foreground tracking service is not torn down.
+        assertEquals(
+            org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage,
+            fake.lastSwitchTo,
+        )
+        assertEquals("restart suppressed mid-walk", 0, fake.restartCount)
+    }
+
+    @Test
     fun `refreshIconVariant re-reads currentVariant and updates flow`() = runTest {
         val source = FakeWalkSource(flowOf(emptyList()))
         // Returns Default on VM init, then Sage on every subsequent
@@ -211,8 +257,10 @@ class AboutViewModelTest {
 
 private class FakeWalkSource(
     private val flow: Flow<List<Walk>>,
+    private val walkActive: Boolean = false,
 ) : AboutWalkSource {
     override fun observeAllWalks(): Flow<List<Walk>> = flow
+    override fun isWalkActive(): Boolean = walkActive
 }
 
 private class FakeUnits : UnitsPreferencesRepository {
@@ -236,10 +284,14 @@ private class RecordingIconSwitcher :
         context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
     ) {
     var lastSwitchTo: org.walktalkmeditate.pilgrim.data.launcher.IconVariant? = null
+    var restartCount = 0
     override fun currentVariant() =
         org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Default
     override fun switchTo(target: org.walktalkmeditate.pilgrim.data.launcher.IconVariant) {
         lastSwitchTo = target
+    }
+    override fun restartForLauncherIconRefresh() {
+        restartCount++
     }
 }
 

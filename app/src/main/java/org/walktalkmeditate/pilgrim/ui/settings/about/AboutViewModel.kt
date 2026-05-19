@@ -98,6 +98,13 @@ class AboutViewModel @Inject constructor(
             try {
                 iconSwitcher.switchTo(target)
                 _iconVariant.value = target
+                // OEM launchers (OxygenOS/MIUI) cache the launcher icon
+                // and won't render the switch until the process dies —
+                // restart so the new icon actually appears. Skipped
+                // mid-walk: exiting would kill the tracking service.
+                if (!walkSource.isWalkActive()) {
+                    iconSwitcher.restartForLauncherIconRefresh()
+                }
             } catch (_: Exception) {
                 _iconVariant.value = iconSwitcher.currentVariant()
             }
