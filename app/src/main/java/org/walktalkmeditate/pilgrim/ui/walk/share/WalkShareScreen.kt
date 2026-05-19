@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk.share
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.content.Intent
-import android.widget.Toast
-import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,10 +16,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,14 +36,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -93,12 +87,9 @@ fun WalkShareScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
-    val activity = LocalActivity.current
     val errNetwork = stringResource(R.string.share_modal_error_network)
     val errRateLimited = stringResource(R.string.share_modal_error_rate_limited)
     val errUnknown = stringResource(R.string.share_modal_error_unknown)
-    val chooserTitle = stringResource(R.string.share_modal_chooser_title)
-    val copiedToast = stringResource(R.string.share_journey_copied)
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { ev ->
@@ -130,33 +121,13 @@ fun WalkShareScreen(
         // system bar insets; pass WindowInsets(0) to avoid double-counting.
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(
-                            if (isShared) R.string.share_modal_shared_title
-                            else R.string.share_modal_title,
-                        ),
-                        style = pilgrimType.heading,
-                    )
-                },
-                navigationIcon = {
-                    if (!isShared) {
-                        TextButton(onClick = onDone) {
-                            Text(stringResource(R.string.share_modal_cancel))
-                        }
-                    }
-                },
-                actions = {
-                    if (isShared) {
-                        TextButton(onClick = onDone) {
-                            Text(stringResource(R.string.share_modal_done))
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = pilgrimColors.parchment,
-                ),
+            WalkShareTopBar(
+                isShared = isShared,
+                canShare = canShare,
+                isSharing = isSharing,
+                onCancel = onDone,
+                onDone = onDone,
+                onShare = viewModel::share,
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -233,11 +204,6 @@ fun WalkShareScreen(
                                 onToggle = viewModel::toggleWaypoints,
                             )
                         }
-                        ShareButton(
-                            enabled = canShare,
-                            isSharing = isSharing,
-                            onShare = viewModel::share,
-                        )
                         if (!canShare && !isSharing) {
                             Text(
                                 text = stringResource(R.string.share_modal_toggle_at_least_one),
@@ -393,20 +359,89 @@ private fun WaypointToggle(on: Boolean, count: Int, onToggle: (Boolean) -> Unit)
     }
 }
 
+/**
+ * Share Walk modal top bar. Truly-centered title with a leading Cancel
+ * (pre-share) and a trailing pill action — "Share Walk" while composing
+ * (the primary share trigger, per the user's request to move the action
+ * to the top-right) or "Done" once shared. Mirrors iOS
+ * `WalkShareView.swift:53-71` (centered principal title, leading Cancel
+ * when !shared, trailing Done when shared) and reuses the repo
+ * [org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryTopBar]
+ * Box-centered + parchmentTertiary pill pattern.
+ *
+ * No [windowInsetsPadding]: the screen sits inside the PilgrimNavHost
+ * Scaffold which already consumes system-bar insets.
+ */
 @Composable
-private fun ShareButton(enabled: Boolean, isSharing: Boolean, onShare: () -> Unit) {
-    Button(
-        onClick = onShare,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
+private fun WalkShareTopBar(
+    isShared: Boolean,
+    canShare: Boolean,
+    isSharing: Boolean,
+    onCancel: () -> Unit,
+    onDone: () -> Unit,
+    onShare: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(pilgrimColors.parchment)
+            .height(64.dp)
+            .padding(horizontal = PilgrimSpacing.normal),
     ) {
-        if (isSharing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp,
-            )
-        } else {
-            Text(stringResource(R.string.share_modal_share_button))
+        Text(
+            text = stringResource(
+                if (isShared) R.string.share_modal_shared_title
+                else R.string.share_modal_title,
+            ),
+            style = pilgrimType.heading,
+            color = pilgrimColors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 72.dp),
+        )
+        if (!isShared) {
+            TextButton(
+                onClick = onCancel,
+                modifier = Modifier.align(Alignment.CenterStart),
+            ) {
+                Text(
+                    text = stringResource(R.string.share_modal_cancel),
+                    style = pilgrimType.button,
+                    color = pilgrimColors.stone,
+                )
+            }
+        }
+        Button(
+            onClick = if (isShared) onDone else onShare,
+            enabled = isShared || (canShare && !isSharing),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = pilgrimColors.parchmentTertiary,
+                contentColor = pilgrimColors.stone,
+            ),
+            contentPadding = PaddingValues(
+                horizontal = PilgrimSpacing.normal,
+                vertical = PilgrimSpacing.small,
+            ),
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            if (!isShared && isSharing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = pilgrimColors.stone,
+                )
+            } else {
+                Text(
+                    text = stringResource(
+                        if (isShared) R.string.share_modal_done
+                        else R.string.share_modal_title,
+                    ),
+                    style = pilgrimType.button,
+                )
+            }
         }
     }
 }
@@ -417,8 +452,8 @@ private fun ShareButton(enabled: Boolean, isSharing: Boolean, onShare: () -> Uni
  * route-preview thumbnail, a centered "Shared ✓" row, an italic
  * "Returns to the trail on {date}" caption, and a full-width plain
  * "View scroll" button. Both the thumbnail and "View scroll" open the
- * in-app scroll preview (Custom Tab) — the Copy/Share floating bar
- * belongs to the separate web-preview screen, not the success state.
+ * in-app scroll preview (Custom Tab). The actual re-share trigger is
+ * the top-bar button (iOS keeps Cancel→Done in the toolbar).
  */
 @Composable
 private fun SharedLayout(
@@ -488,40 +523,3 @@ private fun SharedLayout(
     }
 }
 
-internal fun copyUrl(context: Context, url: String, toast: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-    clipboard?.setPrimaryClip(ClipData.newPlainText("Pilgrim walk", url))
-    // API 33+ shows a system-level clipboard confirmation badge
-    // automatically. Rendering our own Toast on top would
-    // double-confirm and also falsely-confirm on scenarios where
-    // the OS silently rejects the write (foreground-app policy).
-    // Retain the Toast only for pre-Tiramisu devices where no
-    // system confirmation exists.
-    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-        Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
-    }
-}
-
-internal fun launchShareChooser(context: Context, url: String, chooserTitle: String) {
-    val send = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, url)
-    }
-    val chooser = Intent.createChooser(send, chooserTitle).apply {
-        // If the caller passed a non-Activity Context (e.g.,
-        // LocalActivity.current was null and WalkSummaryScreen fell
-        // back to LocalContext.current), startActivity needs
-        // FLAG_ACTIVITY_NEW_TASK to avoid an AndroidRuntimeException.
-        // Adding it unconditionally is safe when the caller IS an
-        // Activity — the flag is a no-op.
-        if (context !is android.app.Activity) {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-    }
-    try {
-        context.startActivity(chooser)
-    } catch (_: android.content.ActivityNotFoundException) {
-        // Edge-case devices with no share chooser — swallow silently;
-        // the user can still use Copy.
-    }
-}
