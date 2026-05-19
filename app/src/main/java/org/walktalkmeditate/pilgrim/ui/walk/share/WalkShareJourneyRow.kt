@@ -272,7 +272,7 @@ private val expiryDateFormatter =
     DateTimeFormatter.ofPattern("MMMM d", Locale.getDefault())
         .withDecimalStyle(java.time.format.DecimalStyle.STANDARD)
 
-private fun formatExpiryDate(epochMs: Long): String =
+internal fun formatExpiryDate(epochMs: Long): String =
     expiryDateFormatter
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochMilli(epochMs))

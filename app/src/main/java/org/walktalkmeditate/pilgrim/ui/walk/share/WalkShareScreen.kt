@@ -22,8 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,8 +31,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -53,7 +50,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -183,9 +182,20 @@ fun WalkShareScreen(
                 is WalkShareUiState.Loaded -> {
                     if (activeShare != null) {
                         SharedLayout(
-                            url = activeShare.url,
-                            onCopy = { copyUrl(context, it, copiedToast) },
-                            onShare = { launchShareChooser(activity ?: context, it, chooserTitle) },
+                            points = s.inputs.routePoints.map {
+                                org.walktalkmeditate.pilgrim.domain.LocationPoint(
+                                    timestamp = it.timestamp,
+                                    latitude = it.latitude,
+                                    longitude = it.longitude,
+                                )
+                            },
+                            expiryEpochMs = activeShare.expiryEpochMs,
+                            onOpenScroll = {
+                                org.walktalkmeditate.pilgrim.ui.util.CustomTabs.launch(
+                                    context,
+                                    android.net.Uri.parse(activeShare.url),
+                                )
+                            },
                         )
                     } else {
                         RoutePreview(points = s.inputs.routePoints.map {
@@ -401,47 +411,78 @@ private fun ShareButton(enabled: Boolean, isSharing: Boolean, onShare: () -> Uni
     }
 }
 
+/**
+ * Post-share success state. Mirrors iOS `WalkShareView.swift:329-375`:
+ * a single `parchmentSecondary` rounded card containing a tappable
+ * route-preview thumbnail, a centered "Shared ✓" row, an italic
+ * "Returns to the trail on {date}" caption, and a full-width plain
+ * "View scroll" button. Both the thumbnail and "View scroll" open the
+ * in-app scroll preview (Custom Tab) — the Copy/Share floating bar
+ * belongs to the separate web-preview screen, not the success state.
+ */
 @Composable
 private fun SharedLayout(
-    url: String,
-    onCopy: (String) -> Unit,
-    onShare: (String) -> Unit,
+    points: List<org.walktalkmeditate.pilgrim.domain.LocationPoint>,
+    expiryEpochMs: Long,
+    onOpenScroll: () -> Unit,
 ) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+    Card(
         modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = pilgrimColors.parchmentSecondary),
     ) {
-        Text(
-            text = stringResource(R.string.share_modal_success_label),
-            style = pilgrimType.body,
-            color = pilgrimColors.ink,
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = pilgrimColors.parchmentSecondary),
+        Column(
+            modifier = Modifier.padding(PilgrimSpacing.normal),
+            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
         ) {
-            Text(
-                text = url,
-                style = pilgrimType.caption,
-                color = pilgrimColors.stone,
-                maxLines = 2,
-                overflow = TextOverflow.MiddleEllipsis,
-                modifier = Modifier.padding(PilgrimSpacing.normal),
-            )
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            OutlinedButton(onClick = { onCopy(url) }, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(PilgrimSpacing.small))
-                Text(stringResource(R.string.share_journey_copy))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .clickable(onClick = onOpenScroll),
+                colors = CardDefaults.cardColors(containerColor = pilgrimColors.parchment),
+            ) {
+                if (points.size >= 2) {
+                    PilgrimMap(points = points, followLatest = false, modifier = Modifier.fillMaxSize())
+                }
             }
-            Button(onClick = { onShare(url) }, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.IosShare, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(PilgrimSpacing.small))
-                Text(stringResource(R.string.share_journey_share))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.share_modal_shared),
+                    style = pilgrimType.body,
+                    color = pilgrimColors.stone,
+                )
+                Spacer(Modifier.width(PilgrimSpacing.xs))
+                Icon(
+                    Icons.Outlined.Check,
+                    contentDescription = null,
+                    tint = pilgrimColors.moss,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Text(
+                text = stringResource(
+                    R.string.share_journey_returns_on,
+                    formatExpiryDate(expiryEpochMs),
+                ),
+                style = pilgrimType.caption,
+                color = pilgrimColors.fog,
+                fontStyle = FontStyle.Italic,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+            TextButton(
+                onClick = onOpenScroll,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = stringResource(R.string.share_modal_view_scroll),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                )
             }
         }
     }

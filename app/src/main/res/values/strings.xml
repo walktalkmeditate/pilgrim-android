@@ -387,6 +387,8 @@
     <string name="share_modal_error_rate_limited">You\'ve shared too many walks today. Try again tomorrow.</string>
     <string name="share_modal_error_unknown">Couldn\'t share the walk. Try again.</string>
     <string name="share_modal_success_label">Your walk has been carried to the trail.</string>
+    <string name="share_modal_shared">Shared</string>
+    <string name="share_modal_view_scroll">View scroll</string>
     <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
     <string name="share_modal_chooser_title">Share walk</string>
 
