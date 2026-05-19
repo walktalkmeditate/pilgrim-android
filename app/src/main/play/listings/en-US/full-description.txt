@@ -1,0 +1,35 @@
+Every walk holds something waiting to be noticed.
+
+Pilgrim is a walking companion for those who walk with intention — whether across a continent or around the block. No leaderboards. No calorie goals. No social feeds. Just you, the path, and whatever arises.
+
+WALK
+
+GPS tracking with live pace, steps, altitude, and waypoint marking. A three-way time breakdown shows how each walk splits between walking, talking, and meditating — because those are different states of attention.
+
+RECORD
+
+Tap to capture a voice note at any moment. Each recording is timestamped and pinned to your location. After the walk, everything is transcribed on your device using whisper.cpp — no audio ever leaves your phone.
+
+REFLECT
+
+Six styles of writing prompts — contemplative, reflective, creative, gratitude, philosophical, journaling — generated from your own words and walk context. Copy them into your favorite AI (ChatGPT, Claude, or any other) and turn a walk into writing.
+
+MEDITATE
+
+A dedicated meditation mode with an animated breathing circle and customizable rhythms. Downloadable voice guide packs offer spoken prompts during stillness. Meditation time is tracked separately and shown alongside walk time.
+
+PILGRIM COLLECTS GOSHUIN
+
+In Japan, pilgrims collect vermilion ink stamps at temples along a route. Pilgrim generates a digital seal for each walk, derived from its unique data — distance, duration, weather, elevation. Your collection grows with your practice.
+
+YOUR WALK IS YOURS ALONE
+
+Everything stays on your device. Transcription is on-device. There are no accounts, no analytics, no behavioral profiling. When you delete the app, your data goes with it — unless you exported it first.
+
+Weather awareness via Open-Meteo. Moon phases, zodiac signs, and planetary hours woven into the walk context. Seasonal color shifts calibrated to your hemisphere. Export as .pilgrim packages. Share walks as ephemeral web pages or hand-painted etegami postcards.
+
+Open source. Free forever. No subscriptions.
+
+pilgrimapp.org
+
+This app uses the Mapbox Maps SDK. © Mapbox, © OpenStreetMap.
