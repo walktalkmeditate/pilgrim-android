@@ -32,6 +32,7 @@ release/
 *.jks
 keystore.properties
 /app/signing/
+play-service-account.json
 
 # Kotlin
 .kotlin/
