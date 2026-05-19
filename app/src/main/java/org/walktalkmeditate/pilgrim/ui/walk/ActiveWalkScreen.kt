@@ -211,6 +211,7 @@ fun ActiveWalkScreen(
     val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
     val intention by viewModel.intention.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val steps by viewModel.steps.collectAsStateWithLifecycle()
     val paceHistory by viewModel.paceHistory.collectAsStateWithLifecycle()
     val beginWithIntention by viewModel.beginWithIntention.collectAsStateWithLifecycle()
     // Stage 5-G: read walkState from the hot passthrough, not the
@@ -869,6 +870,7 @@ fun ActiveWalkScreen(
             audioLevel = audioLevel,
             recordingsCount = recordingsCount,
             units = distanceUnits,
+            steps = steps,
             // Caption display rule: pre-walk shows the typed-but-not-yet-
             // committed draft (preWalkIntention); in-walk shows the value
             // committed to the Walk row (intention StateFlow). The two are

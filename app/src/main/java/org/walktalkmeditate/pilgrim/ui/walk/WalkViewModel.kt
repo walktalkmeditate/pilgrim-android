@@ -392,6 +392,19 @@ class WalkViewModel @Inject constructor(
     val walkState: StateFlow<WalkState> = controller.state
 
     /**
+     * iOS parity `ActiveWalkViewModel.steps` (`ActiveWalkViewModel
+     * .swift:179-181@db4196e`) — live step count for the in-progress
+     * walk, rendered in the WalkStatsSheet Steps column. Direct
+     * passthrough of the @Singleton controller's hot StateFlow (no
+     * `WhileSubscribed` re-wrap — Stage 5-G stale-cache trap, same
+     * rationale as [walkState] / [voiceGuidePackName]). Null until the
+     * first sensor sample, or permanently when the step sensor /
+     * ACTIVITY_RECOGNITION permission is unavailable, in which case the
+     * sheet falls back to the "—" dash.
+     */
+    val steps: StateFlow<Int?> = controller.liveSteps
+
+    /**
      * iOS parity `ActiveWalkViewModel.voiceGuidePackName` /
      * `voiceGuideManagement.isPaused` (`ActiveWalkView.swift:433-443`).
      * Direct passthrough of the @Singleton orchestrator's hot

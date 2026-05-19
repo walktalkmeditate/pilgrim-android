@@ -61,6 +61,34 @@ class WalkStatsSheetMinimizedTest {
     }
 
     @Test
+    fun `minimized sheet renders live step count when non-null`() {
+        composeRule.setContent {
+            WalkStatsSheet(
+                state = SheetState.Minimized,
+                onStateChange = {},
+                walkState = WalkState.Active(WalkAccumulator(1L, 0L, distanceMeters = 250.0)),
+                totalElapsedMillis = 90_000L,
+                distanceMeters = 250.0,
+                walkMillis = 90_000L,
+                talkMillis = 0L,
+                meditateMillis = 0L,
+                recorderState = VoiceRecorderUiState.Idle,
+                audioLevel = 0f,
+                recordingsCount = 0,
+                units = UnitSystem.Metric,
+                steps = 1234,
+                onStartWalk = {},
+                onStartMeditation = {}, onEndMeditation = {},
+                onToggleRecording = {}, onPermissionDenied = {}, onDismissError = {},
+                onFinish = {},
+            )
+        }
+        composeRule.onAllNodesWithText("1234")
+            .filterToOne(hasParent(hasTestTag(MINIMIZED_LAYER_TAG)))
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun `tap on minimized invokes onStateChange Expanded`() {
         var newState: SheetState? = null
         composeRule.setContent {

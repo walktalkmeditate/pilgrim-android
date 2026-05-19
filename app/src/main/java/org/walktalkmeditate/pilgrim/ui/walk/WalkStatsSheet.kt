@@ -104,6 +104,7 @@ fun WalkStatsSheet(
     audioLevel: Float,
     recordingsCount: Int,
     units: UnitSystem,
+    steps: Int? = null,
     intention: String? = null,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
@@ -266,6 +267,7 @@ fun WalkStatsSheet(
                         totalElapsedMillis = totalElapsedMillis,
                         distanceMeters = distanceMeters,
                         units = units,
+                        steps = steps,
                         onTap = { onStateChange(SheetState.Expanded) },
                     )
                 },
@@ -281,6 +283,7 @@ fun WalkStatsSheet(
                         audioLevel = audioLevel,
                         recordingsCount = recordingsCount,
                         units = units,
+                        steps = steps,
                         intention = intention,
                         onStartWalk = onStartWalk,
                         onStartMeditation = onStartMeditation,
@@ -351,6 +354,7 @@ private fun MinimizedContent(
     totalElapsedMillis: Long,
     distanceMeters: Double,
     units: UnitSystem,
+    steps: Int?,
     onTap: () -> Unit,
 ) {
     Row(
@@ -374,7 +378,7 @@ private fun MinimizedContent(
             label = stringResource(R.string.walk_stat_distance),
         )
         StatColumn(
-            value = "—",
+            value = WalkFormat.steps(steps),
             label = stringResource(R.string.walk_stat_steps),
         )
     }
@@ -415,6 +419,7 @@ private fun ExpandedContent(
     audioLevel: Float,
     recordingsCount: Int,
     units: UnitSystem,
+    steps: Int?,
     intention: String?,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
@@ -472,7 +477,7 @@ private fun ExpandedContent(
                 modifier = Modifier.weight(1f),
             )
             StatColumn(
-                value = "—",
+                value = WalkFormat.steps(steps),
                 label = stringResource(R.string.walk_stat_steps),
                 modifier = Modifier.weight(1f),
             )
@@ -594,6 +599,36 @@ private fun ActionButtonRow(
     // here. Showing the Start button — not a row of disabled
     // controls — matches the ready-to-record intent.
     if (walkState == WalkState.Idle || walkState is WalkState.Finished) {
+        val context = LocalContext.current
+        // iOS parity: CMPedometer step counting needs the Motion &
+        // Fitness grant, requested at walk start. Android's equivalent
+        // is ACTIVITY_RECOGNITION (runtime permission since API 29 / Q),
+        // and `Sensor.TYPE_STEP_COUNTER` silently delivers ZERO events
+        // without it. The grant is intentionally NOT in the minimum
+        // walk-start permission set (PermissionChecks.isMinimumGranted)
+        // — steps are a soft-optional stat, so denial must NOT block the
+        // walk. We request it just-in-time on the first Start tap and
+        // start the walk regardless of the outcome; a denied user simply
+        // sees the "—" dash, matching the graceful no-sensor fallback.
+        //
+        // remember the contract + rememberUpdatedState the callback for
+        // the same reasons MicActionButton documents (Stage 7-A
+        // DisposableEffect-keys-on-identity / Stage 4-B stale-closure).
+        val activityRecognitionContract =
+            remember { ActivityResultContracts.RequestPermission() }
+        val currentOnStartWalk by rememberUpdatedState(onStartWalk)
+        val activityRecognitionLauncher = rememberLauncherForActivityResult(
+            contract = activityRecognitionContract,
+        ) { currentOnStartWalk() }
+        val startWithStepPermission = {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+                !PermissionChecks.isActivityRecognitionGranted(context)
+            ) {
+                activityRecognitionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+            } else {
+                onStartWalk()
+            }
+        }
         Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center,
@@ -602,7 +637,7 @@ private fun ActionButtonRow(
                 label = stringResource(R.string.walk_action_start),
                 icon = Icons.Filled.PlayArrow,
                 color = pilgrimColors.moss,
-                onClick = onStartWalk,
+                onClick = startWithStepPermission,
             )
         }
         return
