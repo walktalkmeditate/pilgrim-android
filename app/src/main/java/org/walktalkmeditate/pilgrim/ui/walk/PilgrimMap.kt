@@ -326,6 +326,42 @@ internal fun PilgrimMap(
         renderedProximityPins = emptyList()
         proximityPinIndex = emptyMap()
         view.mapboxMap.loadStyle(styleUri) {
+            // Show the "you are here" puck on the Active Walk map only.
+            // The summary map is a post-hoc review; a live puck there
+            // would be out of place. iOS parity
+            // `PilgrimMapView.swift:123,128-144@v1.6.0` — iOS calls
+            // `configurePuck(on:)` in `makeUIView` BEFORE the
+            // `onStyleLoaded` observer recreates the annotation managers
+            // (`applyRouteSource` / `applyAnnotations`), so the
+            // location-indicator layer is established first and the
+            // annotation symbol layers stack on top of it. Mapbox
+            // inserts the location-indicator layer at the TOP of the
+            // layer stack (bound with a null LayerPosition); enabling
+            // the location component AFTER creating the annotation
+            // managers would put the puck above a waypoint dropped at
+            // the user's exact location, fully occluding it. Enabling
+            // it FIRST keeps the annotation SymbolLayers on top so the
+            // waypoint stays visible. The actual `locationPuck` +
+            // `pulsingColor` are applied (and re-applied on theme flip)
+            // by the dedicated puck LaunchedEffect below; here we only
+            // enable the component + pulsing so the puck appears as
+            // soon as the style finishes loading.
+            //
+            // Tech debt: Mapbox's DefaultLocationProvider creates its own
+            // FusedLocationProviderClient subscription, separate from our
+            // WalkTrackingService's FusedLocationSource. Both request
+            // AccuracyLevel.HIGH / PRIORITY_HIGH_ACCURACY so the platform-
+            // merged work item stays at full GPS fidelity — no harm to
+            // sample quality — but it's two callback chains for the same
+            // GNSS stream. Future cleanup: implement a LocationProvider
+            // backed by FusedLocationSource (turning it into a SharedFlow)
+            // so the map + service share one subscription.
+            if (followLatest) {
+                view.location.updateSettings {
+                    enabled = true
+                    pulsingEnabled = true
+                }
+            }
             polylineManager = view.annotations.createPolylineAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
                 .also(::allowIconOverlap)
@@ -341,35 +377,9 @@ internal fun PilgrimMap(
                     } else false
                 }
             }
-            // Show the "you are here" puck on the Active Walk map only.
-            // The summary map is a post-hoc review; a live puck there
-            // would be out of place. iOS parity
-            // `PilgrimMapView.swift:231-251@v1.6.0` — the puck is a
-            // custom stone-tinted disc (NOT Mapbox blue) with a
-            // stone@0.3 pulsing ring. The actual `locationPuck` +
-            // `pulsingColor` are applied (and re-applied on theme flip)
-            // by the dedicated puck LaunchedEffect below; here we only
-            // enable the component + pulsing so the puck appears as
-            // soon as the style finishes loading.
-            //
-            // Tech debt: Mapbox's DefaultLocationProvider creates its own
-            // FusedLocationProviderClient subscription, separate from our
-            // WalkTrackingService's FusedLocationSource. Both request
-            // AccuracyLevel.HIGH / PRIORITY_HIGH_ACCURACY so the platform-
-            // merged work item stays at full GPS fidelity — no harm to
-            // sample quality — but it's two callback chains for the same
-            // GNSS stream. Future cleanup: implement a LocationProvider
-            // backed by FusedLocationSource (turning it into a SharedFlow)
-            // so the map + service share one subscription.
             // iOS reference doesn't show a scale bar on the walk map and
             // device QA flagged the "0—150m" indicator as visually noisy.
             view.scalebar.enabled = false
-            if (followLatest) {
-                view.location.updateSettings {
-                    enabled = true
-                    pulsingEnabled = true
-                }
-            }
             // Opt out of Mapbox's anonymous event collection once per
             // MapView instance. Pilgrim's privacy posture is
             // no-telemetry-by-default; this covers the plugin's own usage
