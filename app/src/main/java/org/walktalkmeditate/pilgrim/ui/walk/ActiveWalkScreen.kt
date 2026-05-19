@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -73,6 +74,30 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 private val SHEET_HEIGHT_EXPANDED_DP = 340.dp
 private val SHEET_HEIGHT_MINIMIZED_DP = 88.dp
+
+/**
+ * Reserved height of the live pace sparkline band. iOS reserves this
+ * slot via `.frame(height: 24)` (`ActiveWalkView.swift:478@v1.6.0`) so
+ * the layout doesn't jump when the sparkline appears. Shared between
+ * [AmbientPaceSparkline]'s drawn height and [AMBIENT_ROW_BOTTOM_DP] so
+ * the ambient row's clearance stays consistent with what the sparkline
+ * actually occupies.
+ */
+internal val SPARKLINE_BAND_HEIGHT_DP = 24.dp
+
+/**
+ * Bottom inset for the ambient indicators row (voice-guide pause +
+ * weather/celestial vignette). iOS stacks these as one VStack ordered
+ * sheet → sparkline → row, with the whole stack pinned above the
+ * minimized sheet (`ActiveWalkView.swift:421-487, 129-133@v1.6.0`).
+ * Derived rather than the prior magic `big * 7` (168dp) so the row
+ * sits exactly clear of the sparkline band:
+ *
+ *   minimized sheet (88) + sparkline top pad (xs=4) +
+ *   sparkline band (24) + gap above the row (xs=4) = 120dp.
+ */
+internal val AMBIENT_ROW_BOTTOM_DP =
+    SHEET_HEIGHT_MINIMIZED_DP + PilgrimSpacing.xs + SPARKLINE_BAND_HEIGHT_DP + PilgrimSpacing.xs
 
 /**
  * iOS-parity (`ActiveWalkView.swift:374`): the auto-intention sheet
@@ -565,43 +590,50 @@ fun ActiveWalkScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = PilgrimSpacing.big * 3),
         )
-        // iOS parity `ActiveWalkView.swift:447-456` — ambient
-        // weather + celestial vignette pinned to the bottom-end of
-        // the map, sitting just above the minimized stats sheet.
+        // iOS parity `ActiveWalkView.swift:421-456@v1.6.0` — the ambient
+        // indicators are ONE HStack: bottom-left voice-guide play/pause
+        // control, a Spacer, then the bottom-right weather/celestial
+        // vignette. iOS stacks this row above the sparkline above the
+        // minimized sheet (one VStack, spacing 0). Android mirrors with a
+        // single BottomCenter Row at the derived [AMBIENT_ROW_BOTTOM_DP]
+        // (clear of the sparkline band) so the two ambient indicators
+        // share one center-aligned line instead of two independently
+        // bottom-pinned children of unequal height. Both children
+        // early-return when their data is null (packName == null / no
+        // weather + celestial), so the Row collapses to just the Spacer.
         val activeCelestialSnapshot by viewModel.activeCelestialSnapshot
             .collectAsStateWithLifecycle()
         val celestialAwareness by viewModel.celestialAwarenessEnabled
             .collectAsStateWithLifecycle()
         val vignetteUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
-        WalkVignette(
-            weather = activeWeather,
-            celestial = activeCelestialSnapshot,
-            celestialAwarenessEnabled = celestialAwareness,
-            units = vignetteUnits,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = PilgrimSpacing.normal, bottom = PilgrimSpacing.big * 7),
-        )
-        // iOS parity `ActiveWalkView.swift:433-443,767-779@v1.6.0` —
-        // bottom-left voice-guide play/pause control. Shown only when a
-        // voice-guide pack scheduler is active (packName != null);
-        // toggles pause/resume. Same vertical band as the WalkVignette
-        // (BottomEnd) so the two ambient indicators sit on one row.
         val voiceGuidePackName by viewModel.voiceGuidePackName
             .collectAsStateWithLifecycle()
         val isVoiceGuidePaused by viewModel.isVoiceGuidePaused
             .collectAsStateWithLifecycle()
-        VoiceGuidePauseControl(
-            packName = voiceGuidePackName,
-            isPaused = isVoiceGuidePaused,
-            onToggle = viewModel::toggleVoiceGuidePause,
+        Row(
             modifier = Modifier
-                .align(Alignment.BottomStart)
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
                 .padding(
                     start = PilgrimSpacing.normal,
-                    bottom = PilgrimSpacing.big * 7,
+                    end = PilgrimSpacing.normal,
+                    bottom = AMBIENT_ROW_BOTTOM_DP,
                 ),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VoiceGuidePauseControl(
+                packName = voiceGuidePackName,
+                isPaused = isVoiceGuidePaused,
+                onToggle = viewModel::toggleVoiceGuidePause,
+            )
+            Spacer(Modifier.weight(1f))
+            WalkVignette(
+                weather = activeWeather,
+                celestial = activeCelestialSnapshot,
+                celestialAwarenessEnabled = celestialAwareness,
+                units = vignetteUnits,
+            )
+        }
         // iOS-parity overlay row at the top of the map: ellipsis (options)
         // top-left, X (leave walk) top-right.
         // ActiveWalkView.swift:530-567.
@@ -1154,7 +1186,7 @@ internal fun AmbientPaceSparkline(
                 .testTag(AMBIENT_SPARKLINE_TAG)
                 .fillMaxWidth()
                 .padding(horizontal = PilgrimSpacing.big)
-                .height(24.dp),
+                .height(SPARKLINE_BAND_HEIGHT_DP),
         )
     }
 }
