@@ -18,6 +18,7 @@ data class PermissionsCardState(
     val location: PermissionStatus,
     val microphone: PermissionStatus,
     val motion: PermissionStatus,
+    val battery: PermissionStatus,
 )
 
 @HiltViewModel
@@ -44,6 +45,18 @@ class PermissionsCardViewModel @Inject constructor(
             location = resolve(checks.isLocationGranted(), lAsked),
             microphone = resolve(checks.isMicrophoneGranted(), mAsked),
             motion = resolve(checks.isMotionGranted(), motionAsked),
+            // Battery exemption has no system "permanently denied"
+            // state and no asked-flag — it is directly observable and
+            // always re-requestable. Granted when exempt, otherwise
+            // NotDetermined so the actionable "Grant" affordance shows
+            // every time until the user is exempt (the whole point:
+            // an already-onboarded user must always have an in-app
+            // path to stop OEM-killed walks).
+            battery = if (checks.isBatteryExempt()) {
+                PermissionStatus.Granted
+            } else {
+                PermissionStatus.NotDetermined
+            },
         )
     }.stateIn(
         scope = viewModelScope,
@@ -52,6 +65,7 @@ class PermissionsCardViewModel @Inject constructor(
             location = PermissionStatus.NotDetermined,
             microphone = PermissionStatus.NotDetermined,
             motion = PermissionStatus.NotDetermined,
+            battery = PermissionStatus.NotDetermined,
         ),
     )
 

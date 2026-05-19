@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -88,6 +89,47 @@ class BatteryExemptionCardOnboardingTest {
         composeRule.onNodeWithText("A word about sleep").assertIsDisplayed()
         composeRule.onNodeWithText("Ask my phone").assertIsDisplayed()
         composeRule.onNodeWithText("Later").assertIsDisplayed()
+    }
+
+    @Test
+    fun `action button does NOT permanently hide the card (grant-then-backout stays visible)`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 1200.dp)) {
+                    BatteryExemptionCard(viewModel = viewModel)
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Ask my phone").performClick()
+        composeRule.waitForIdle()
+
+        // Robolectric PowerManager stays not-exempt and the system
+        // dialog is a no-op, so a user who backs out without granting
+        // must still see the card — the action path must NOT latch
+        // `asked`. Permanent suppression here is the OxygenOS
+        // dying-walk regression.
+        composeRule.onNodeWithText("A word about sleep").assertIsDisplayed()
+        composeRule.onNodeWithText("Ask my phone").assertIsDisplayed()
+    }
+
+    @Test
+    fun `Later button latches and hides the card`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                Box(Modifier.size(400.dp, 1200.dp)) {
+                    BatteryExemptionCard(viewModel = viewModel)
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Later").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("A word about sleep")
+                .fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithText("A word about sleep").assertDoesNotExist()
     }
 
     @Test

@@ -98,14 +98,25 @@ fun BatteryExemptionCard(
                     Text(stringResource(R.string.battery_exemption_later))
                 }
                 TextButton(onClick = {
-                    viewModel.markBatteryExemptionAsked()
+                    // Deliberately NOT markBatteryExemptionAsked() here.
+                    // Marking on the action path permanently suppresses
+                    // the card (`if (exemptNow || asked) return`) even
+                    // when the user backs out of the system battery
+                    // dialog without granting — they'd never be prompted
+                    // again, the app would never become battery-exempt,
+                    // and OxygenOS/MIUI would keep killing every
+                    // backgrounded walk (device-confirmed: OnePlus 13
+                    // o-kill at ~10 min, walk left for recoverStaleWalks
+                    // to finalize). The ON_RESUME observer refreshes
+                    // exemptNow on return: a real grant self-hides the
+                    // card via exemptNow; a back-out keeps it visible so
+                    // the user can retry. Only the explicit "Later"
+                    // button latches `asked`.
                     val intent = BatteryExemption.requestIgnoreBatteryOptimizationsIntent(context.packageName)
                     runCatching { context.startActivity(intent) }
                         .onFailure {
                             context.startActivity(BatteryExemption.batteryOptimizationsSettingsIntent())
                         }
-                    // exemptNow is refreshed by the ON_RESUME observer
-                    // once the user returns from the system prompt.
                 }) {
                     Text(stringResource(R.string.battery_exemption_action))
                 }

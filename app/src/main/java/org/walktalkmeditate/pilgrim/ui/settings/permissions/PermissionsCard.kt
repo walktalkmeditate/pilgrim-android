@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -36,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.permissions.BatteryExemption
 import org.walktalkmeditate.pilgrim.permissions.PermissionAskedStore
 import org.walktalkmeditate.pilgrim.permissions.PermissionStatus
 import org.walktalkmeditate.pilgrim.ui.settings.CardHeader
@@ -57,6 +59,7 @@ fun PermissionsCard(
     viewModel: PermissionsCardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -120,6 +123,25 @@ fun PermissionsCard(
                 // branch is unreachable in that case. No-op for safety.
             },
             onOpenSettings = { onAction(SettingsAction.OpenAppPermissionSettings) },
+        )
+        PermissionRow(
+            label = stringResource(R.string.settings_permissions_battery_label),
+            caption = stringResource(R.string.settings_permissions_battery_caption),
+            status = state.battery,
+            onGrant = {
+                val intent = BatteryExemption
+                    .requestIgnoreBatteryOptimizationsIntent(context.packageName)
+                runCatching { context.startActivity(intent) }
+                    .onFailure {
+                        context.startActivity(
+                            BatteryExemption.batteryOptimizationsSettingsIntent(),
+                        )
+                    }
+                // ON_RESUME refresh re-reads isBatteryExempt() on return.
+            },
+            onOpenSettings = {
+                context.startActivity(BatteryExemption.batteryOptimizationsSettingsIntent())
+            },
         )
     }
 }
