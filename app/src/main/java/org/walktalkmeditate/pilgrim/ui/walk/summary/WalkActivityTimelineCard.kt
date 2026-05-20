@@ -343,7 +343,10 @@ private fun PaceSparklineCanvas(points: List<PaceSparklinePoint>) {
         drawPath(
             path = fillPath,
             brush = Brush.verticalGradient(
-                colors = listOf(stoneFill.copy(alpha = 0.12f), stoneFill.copy(alpha = 0.02f)),
+                // Bumped from 0.12/0.02 — was nearly invisible against
+                // parchmentSecondary; users couldn't tell the sparkline
+                // was there at all.
+                colors = listOf(stoneFill.copy(alpha = 0.22f), stoneFill.copy(alpha = 0.05f)),
                 startY = 0f,
                 endY = h,
             ),
@@ -354,8 +357,8 @@ private fun PaceSparklineCanvas(points: List<PaceSparklinePoint>) {
         }
         drawPath(
             path = strokePath,
-            color = stoneFill.copy(alpha = 0.45f),
-            style = Stroke(width = 1.5.dp.toPx()),
+            color = stoneFill.copy(alpha = 0.8f),
+            style = Stroke(width = 2.2.dp.toPx()),
         )
     }
 }

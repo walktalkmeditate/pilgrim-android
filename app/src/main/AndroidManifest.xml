@@ -256,7 +256,7 @@
             android:name=".service.WalkTrackingService"
             android:exported="false"
             android:foregroundServiceType="location"
-            android:stopWithTask="true" />
+            android:stopWithTask="false" />
 
         <!-- WorkManager is initialized via Configuration.Provider in
              PilgrimApp so its WorkerFactory can access Hilt-bound
