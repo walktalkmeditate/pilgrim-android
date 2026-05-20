@@ -3,7 +3,6 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.content.Context
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -1080,23 +1079,15 @@ class WalkViewModel @Inject constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "celestial greeting compute failed", t)
             }
-            try {
-                ContextCompat.startForegroundService(
-                    context,
-                    WalkTrackingService.startIntent(context),
-                )
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (e: Exception) {
-                // Service refused to start — most commonly
-                // ForegroundServiceStartNotAllowedException (API 31+ when
-                // triggered from a background state) or SecurityException
-                // (FINE_LOCATION revoked between our gate and this call).
-                // Roll back the in-memory walk so state and "actually
-                // tracking" stay consistent.
-                Log.w(TAG, "could not start walk tracking service", e)
-                controller.finishWalk()
-            }
+            // No explicit startForegroundService call here under the
+            // `:tracker` process split — [UiWalkController.startWalk]
+            // fires ACTION_START via [WalkActionPublisher] inside the
+            // controller, which is the same channel notification-button
+            // taps already use. The 5s await inside that call gives the
+            // tracker process time to spin up + insert the walk row;
+            // a timeout there bubbles as IllegalStateException which
+            // the catch above handles identically to the same-process
+            // start-rejection path.
         }
     }
 

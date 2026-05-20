@@ -152,6 +152,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * cold start, exactly when we want recovery to apply.
      */
     @Inject lateinit var walkController: WalkController
+    @Inject lateinit var walkRepository: org.walktalkmeditate.pilgrim.data.WalkRepository
     @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
 
     /**
@@ -177,7 +178,28 @@ class PilgrimApp : Application(), Configuration.Provider {
         // BuildConfig.MAPBOX_ACCESS_TOKEN. Empty token is accepted but
         // map tiles will fail to load; the placeholder map card handles
         // that visually until a valid token is configured.
+        //
+        // Safe to set in either process: it's a static config write that
+        // the `:tracker` process doesn't read (tracker doesn't render a
+        // MapView), but the assignment is cheap and keeps the call site
+        // identical across processes.
         MapboxOptions.accessToken = BuildConfig.MAPBOX_ACCESS_TOKEN
+
+        // WalkTrackingService runs in the `:tracker` process (manifest
+        // android:process=":tracker") so the UI process being OEM-killed
+        // mid-walk no longer kills GPS tracking. The tracker process
+        // instantiates its own PilgrimApp / Hilt graph; we skip every
+        // UI-side init below so its rss stays lean (~50MB target vs
+        // ~440MB in UI) and the eager observers don't double-fire side
+        // effects across processes.
+        //
+        // Hilt's @AndroidEntryPoint Service still injects deps via the
+        // per-process SingletonComponent — no PilgrimApp.onCreate side
+        // effects are required for the service to operate.
+        if (!isMainProcess()) {
+            Log.i(TAG, "onCreate: skipping UI inits in non-main process ${getProcessName()}")
+            return
+        }
 
         // KEEP policy means this is a no-op after the first launch; the
         // periodic sweeper runs on its own daily cadence regardless of
@@ -313,12 +335,15 @@ class PilgrimApp : Application(), Configuration.Provider {
         // belt-and-braces for the live-walk window. setComponentEnabled
         // can throw SecurityException on hardened ROMs — swallow so a
         // fresh install still boots.
-        val walkInProgress = when (walkController.state.value) {
-            is org.walktalkmeditate.pilgrim.domain.WalkState.Active,
-            is org.walktalkmeditate.pilgrim.domain.WalkState.Paused,
-            is org.walktalkmeditate.pilgrim.domain.WalkState.Meditating -> true
-            else -> false
-        }
+        // Under the :tracker process split, walkController.state in the
+        // UI process derives from Room asynchronously — `.value` is
+        // Idle until the first Room emission lands. The icon-reconcile
+        // gate needs a stable answer, so probe Room directly via the
+        // same blocking pattern recoverStaleWalks uses. `recoverStaleWalks`
+        // above has already finalized any orphan walk, so any walk
+        // still in `getActiveWalk()` is genuinely live in :tracker.
+        val activeWalk = kotlinx.coroutines.runBlocking { walkRepository.getActiveWalk() }
+        val walkInProgress = activeWalk != null
         if (walkInProgress) {
             Log.i(TAG, "icon reconcile skipped: walk in progress")
         } else {
@@ -331,6 +356,18 @@ class PilgrimApp : Application(), Configuration.Provider {
             }
         }
     }
+
+    /**
+     * Identify the process this Application instance is running in.
+     * `:tracker` (WalkTrackingService) gets a process name distinct
+     * from the main UI process; gating PilgrimApp's UI-side inits on
+     * this saves rss + avoids cross-process double-firing of eager
+     * observers.
+     *
+     * [Application.getProcessName] is API 28+, matching our minSdk 28
+     * — no fallback path needed.
+     */
+    private fun isMainProcess(): Boolean = getProcessName() == packageName
 
     /**
      * Drop the Coil image-memory cache when the system signals the UI

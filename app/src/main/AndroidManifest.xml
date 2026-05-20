@@ -252,10 +252,27 @@
 
 
 
+        <!-- WalkTrackingService runs in its own `:tracker` process so an
+             OEM RAM-manager kill of the UI process (OnePlus / OxygenOS
+             o-kill(6) at rss ~430-460 MB observed even with battery
+             exemption granted) does NOT take the GPS pipeline with it.
+             The tracker's process owns only the foreground service +
+             GPS pipeline + step counter + Room writes, keeping its rss
+             baseline far below the o-kill threshold. The split is
+             coordinated end-to-end:
+              - UI in-app actions route through WalkActionPublisher
+                (intent-based) instead of direct controller calls; the
+                notification-tap path already follows this same channel.
+              - Room writes from the tracker invalidate UI's Room Flow
+                queries via enableMultiInstanceInvalidation, keeping
+                the UI's polyline + state in sync.
+              - PilgrimApp.onCreate skips UI-side eager inits when
+                isMainProcess()==false so the tracker's rss stays lean. -->
         <service
             android:name=".service.WalkTrackingService"
             android:exported="false"
             android:foregroundServiceType="location"
+            android:process=":tracker"
             android:stopWithTask="false" />
 
         <!-- WorkManager is initialized via Configuration.Provider in
