@@ -24,7 +24,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
@@ -57,9 +60,12 @@ class WalkTrackingService : Service() {
 
     @Inject lateinit var unitsPreferences: UnitsPreferencesRepository
 
+    @Inject lateinit var repository: org.walktalkmeditate.pilgrim.data.WalkRepository
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
     private var notificationJob: Job? = null
+    private var stepFlushJob: Job? = null
 
     /**
      * Latch: true once the controller has emitted any in-progress state
@@ -242,6 +248,34 @@ class WalkTrackingService : Service() {
                         StateAction.UpdateNotification -> updateNotification(state)
                     }
                 }
+        }
+
+        // Persist the step count every 30s while Active so an OEM
+        // mid-walk kill (e.g. OnePlus o-kill at 24min in walk 16) can
+        // be recovered with the last live counter. Previously
+        // `updateSteps` fired only on the Finish path
+        // (WalkEffect.PersistWalk), so any kill-then-recoverStaleWalks
+        // path produced a NULL `walk.steps` and the Steps row hid on
+        // the summary. `collectLatest` rotates the inner block on
+        // state changes so the ticker auto-cancels when leaving
+        // Active.
+        stepFlushJob = scope.launch {
+            controller.state.collectLatest { state ->
+                if (state is org.walktalkmeditate.pilgrim.domain.WalkState.Active) {
+                    val walkId = state.walk.walkId
+                    while (isActive) {
+                        delay(STEP_FLUSH_INTERVAL_MS)
+                        val steps = controller.liveSteps.value ?: continue
+                        try {
+                            repository.updateSteps(walkId, steps)
+                        } catch (ce: kotlinx.coroutines.CancellationException) {
+                            throw ce
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "step flush failed for walk $walkId", t)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -486,6 +520,9 @@ class WalkTrackingService : Service() {
         const val ACTION_FINISH = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.FINISH"
 
         private const val TAG = "WalkTrackingService"
+        /** Persist `walk.steps` this often while Active so a mid-walk
+         *  OEM kill recovers with the last live counter intact. */
+        private const val STEP_FLUSH_INTERVAL_MS = 30_000L
         private const val CHANNEL_ID = "walk_tracking"
         private const val NOTIFICATION_ID = 1
         private const val REQUEST_CODE_CONTENT = 0

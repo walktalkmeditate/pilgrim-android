@@ -86,6 +86,14 @@ class FusedLocationSource @Inject constructor(
                             if (location.hasAccuracy()) location.accuracy else null,
                         speedMetersPerSecond =
                             if (location.hasSpeed()) location.speed else null,
+                        altitudeMeters =
+                            if (location.hasAltitude()) location.altitude else null,
+                        verticalAccuracyMeters =
+                            if (location.hasVerticalAccuracy()) {
+                                location.verticalAccuracyMeters
+                            } else {
+                                null
+                            },
                     )
                     val isFirst = !hasEmitted.get()
                     // First sample is force-anchored, mirroring iOS
@@ -131,6 +139,14 @@ class FusedLocationSource @Inject constructor(
                                 if (location.hasAccuracy()) location.accuracy else null,
                             speedMetersPerSecond =
                                 if (location.hasSpeed()) location.speed else null,
+                            altitudeMeters =
+                                if (location.hasAltitude()) location.altitude else null,
+                            verticalAccuracyMeters =
+                                if (location.hasVerticalAccuracy()) {
+                                    location.verticalAccuracyMeters
+                                } else {
+                                    null
+                                },
                         ),
                     )
                 }

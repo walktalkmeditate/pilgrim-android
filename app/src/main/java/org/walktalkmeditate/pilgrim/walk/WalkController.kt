@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
@@ -383,6 +384,8 @@ class WalkController @Inject constructor(
                 longitude = sample.longitude,
                 horizontalAccuracyMeters = sample.horizontalAccuracyMeters,
                 speedMetersPerSecond = sample.speedMetersPerSecond,
+                altitudeMeters = sample.altitudeMeters,
+                verticalAccuracyMeters = sample.verticalAccuracyMeters,
             )
         }
         val distance = walkDistanceMeters(points)
@@ -483,8 +486,31 @@ class WalkController @Inject constructor(
                             longitude = effect.point.longitude,
                             horizontalAccuracyMeters = effect.point.horizontalAccuracyMeters,
                             speedMetersPerSecond = effect.point.speedMetersPerSecond,
+                            altitudeMeters = effect.point.altitudeMeters,
+                            verticalAccuracyMeters = effect.point.verticalAccuracyMeters,
                         ),
                     )
+                    // Mirror to the dedicated `altitude_samples` table
+                    // so the post-walk summary's
+                    // `WalkSummaryViewModel.altitudeSamples` query
+                    // (which reads from that table, not from
+                    // `route_data_samples`) resolves a non-empty list
+                    // and computes ascendMeters > 0. iOS keeps these
+                    // separate because barometric altitude is more
+                    // accurate than GPS; GPS altitude lands here as a
+                    // best-effort fallback when no barometer feeds it.
+                    val alt = effect.point.altitudeMeters
+                    if (alt != null) {
+                        repository.recordAltitude(
+                            AltitudeSample(
+                                walkId = effect.walkId,
+                                timestamp = effect.point.timestamp,
+                                altitudeMeters = alt,
+                                verticalAccuracyMeters =
+                                    effect.point.verticalAccuracyMeters,
+                            ),
+                        )
+                    }
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (e: Exception) {
