@@ -51,6 +51,14 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <!-- ACCESS_MEDIA_LOCATION (Android Q+): required to read unredacted
+         EXIF GPS via MediaStore.setRequireOriginal(uri). Used by
+         PhotoLibraryScanner to auto-discover photos taken during the
+         walk window AND filter them by proximity to the route — iOS
+         parity for the reliquary auto-find. Without it MediaStore
+         strips lat/lng from EXIF and the proximity filter rejects
+         every candidate. -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 
     <!-- Android 11+ package visibility: required to bind the platform
          speech recognizer for voice intention dictation. -->
