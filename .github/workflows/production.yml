@@ -13,18 +13,21 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GHA_VERSION_CODE_OFFSET: 100
+  MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
 jobs:
   publish-production:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # NOTE: pushes directly to main as github-actions[bot]. Any future branch
+    # protection on main must allowlist this identity or this workflow breaks
+    # post-Play-upload (half-shipped state).
     permissions:
       contents: write  # need push for bump commit + tag, and release creation
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # need full history to push tags + commits cleanly
+          fetch-depth: 0  # need full history for git rev-list --count HEAD + push tags + commits cleanly
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
@@ -35,6 +38,8 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -47,7 +52,7 @@ jobs:
             echo "KEYSTORE_BASE64 secret is not set."
             exit 1
           fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > pilgrim-release.keystore
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > pilgrim-release.keystore || { echo "base64 decode failed"; exit 1; }
 
       - name: Write keystore.properties
         env:
@@ -65,7 +70,6 @@ jobs:
       - name: Write local.properties
         env:
           MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
-          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: |
           {
             echo "sdk.dir=$ANDROID_HOME"
@@ -81,7 +85,7 @@ jobs:
             echo "PLAY_SERVICE_ACCOUNT_JSON_BASE64 secret is not set."
             exit 1
           fi
-          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON_BASE64" | base64 --decode > play-service-account.json
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON_BASE64" | base64 --decode > play-service-account.json || { echo "base64 decode failed"; exit 1; }
           if ! grep -q '"client_email"' play-service-account.json; then
             echo "Decoded service-account JSON missing client_email — credential malformed."
             exit 1
@@ -92,41 +96,63 @@ jobs:
         env:
           NEW_VERSION: ${{ inputs.version }}
         run: |
+          if ! printf '%s' "$NEW_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "Invalid versionName '$NEW_VERSION' — must match SemVer (e.g. 1.0.1 or 1.0.1-rc1)." >&2
+            exit 1
+          fi
           sed -i 's/versionName = ".*"/versionName = "'"$NEW_VERSION"'"/' app/build.gradle.kts
+          grep -q "versionName = \"$NEW_VERSION\"" app/build.gradle.kts || { echo "sed failed to set versionName"; exit 1; }
 
-      - name: Bump versionCode (100 + github.run_number)
-        env:
-          RUN_NUMBER: ${{ github.run_number }}
+      - name: Bump versionCode (git rev-list --count HEAD)
         run: |
-          NEW_CODE=$(( GHA_VERSION_CODE_OFFSET + RUN_NUMBER ))
+          NEW_CODE=$(git rev-list --count HEAD)
           sed -i 's/versionCode = [0-9]*/versionCode = '"$NEW_CODE"'/' app/build.gradle.kts
+          grep -q "versionCode = $NEW_CODE" app/build.gradle.kts || { echo "sed failed to set versionCode"; exit 1; }
           echo "VERSION_CODE=$NEW_CODE" >> "$GITHUB_ENV"
 
       - name: Capture versionName for downstream steps
         run: |
           VN=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | sed -E 's/versionName = "([^"]+)"/\1/')
+          if [ -z "$VN" ]; then
+            echo "Failed to extract versionName from app/build.gradle.kts" >&2
+            exit 1
+          fi
           echo "VERSION_NAME=$VN" >> "$GITHUB_ENV"
 
+      - name: Verify tag v${{ env.VERSION_NAME }} does not exist
+        run: |
+          if git rev-parse "v${VERSION_NAME}" >/dev/null 2>&1 || \
+             git ls-remote --exit-code --tags origin "v${VERSION_NAME}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION_NAME} already exists locally or on remote — refusing to overwrite." >&2
+            exit 1
+          fi
+
       - name: Build signed AAB
-        env:
-          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew bundleRelease
 
       - name: Build signed APK (for GH Release attachment)
-        env:
-          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew assembleRelease
 
       - name: Publish to Play Production (20% rollout)
-        run: ./gradlew publishReleaseBundle --track production --user-fraction 0.20 --release-status COMPLETED
+        run: ./gradlew publishReleaseBundle --track production --user-fraction 0.20 --release-status inProgress
 
       - name: Commit versionCode/versionName bump to main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/build.gradle.kts
-          git commit -m "release: bump to v${VERSION_NAME} (code ${VERSION_CODE}) [skip ci]"
-          git push origin HEAD:main
+          git commit -m "chore(release): bump to v${VERSION_NAME} (code ${VERSION_CODE}) [skip ci]"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Bump commit pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "Push failed on attempt $attempt — fetching + rebasing main"
+            git fetch origin main
+            git rebase origin/main || { echo "Rebase conflict — aborting"; git rebase --abort; exit 1; }
+          done
+          echo "Bump commit push failed after 3 attempts — manual recovery required" >&2
+          exit 1
 
       - name: Create + push tag
         run: |
