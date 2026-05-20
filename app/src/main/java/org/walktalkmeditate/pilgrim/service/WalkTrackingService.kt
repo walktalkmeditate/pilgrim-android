@@ -96,12 +96,15 @@ class WalkTrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (val action = intent?.action) {
-            ACTION_START -> startTracking()
+            ACTION_START -> startTracking(intent)
             ACTION_PAUSE,
             ACTION_RESUME,
+            ACTION_START_MEDITATION,
             ACTION_END_MEDITATION,
             ACTION_MARK_WAYPOINT,
-            ACTION_FINISH -> handleControllerAction(action)
+            ACTION_FINISH,
+            ACTION_DISCARD,
+            ACTION_SET_INTENTION -> handleControllerAction(action, intent)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -149,12 +152,15 @@ class WalkTrackingService : Service() {
         super.onDestroy()
     }
 
-    private fun startTracking() {
+    private fun startTracking(startIntent: Intent?) {
         // Re-entrant START intents are a no-op: if the pipeline is already
         // live, cancelling and relaunching would race the old subscription's
         // awaitClose cleanup against the new one's subscribe and produce
         // duplicate route samples in the window between.
         if (locationJob?.isActive == true) return
+
+        val intentionExtra = startIntent?.getStringExtra(EXTRA_INTENTION)
+        val isFreshStart = startIntent?.getBooleanExtra(EXTRA_FRESH_START, false) == true
 
         // API 34+ rejects startForeground(type=location) with SecurityException
         // if FINE location isn't granted at that moment; API 33+ silently
@@ -182,27 +188,52 @@ class WalkTrackingService : Service() {
         promoteToForeground(buildNotification(controller.state.value))
 
         locationJob = scope.launch {
-            // START_REDELIVER_INTENT revival: the OS killed the service
-            // mid-walk and re-delivered ACTION_START into a fresh
-            // process. The @Singleton WalkController is Idle (nothing
-            // restored it — restoreActiveWalk only runs from
-            // MainActivity, which is not up on a headless revival), so
-            // GPS samples would reduce against Idle and be silently
-            // dropped. Rebuild the controller from the unfinished Room
-            // row first. Idempotent + safe on the normal start path:
-            // restoreActiveWalk no-ops when the state is already
-            // non-Idle (user-initiated start already moved it to
-            // Active). When no unfinished walk exists, there is nothing
-            // to track — stop gracefully rather than collect GPS into a
-            // dead Idle controller.
+            // Three paths land here, all distinguished by Room state +
+            // the [EXTRA_FRESH_START] flag:
+            //
+            //  1. UI fresh start (`isFreshStart=true`, no active walk in
+            //     Room): insert the walk row + transition to Active here.
+            //     UI's [UiWalkController.startWalk] awaits the new row
+            //     via [WalkRepository.observeActiveWalk] before returning
+            //     a [Walk] to the caller.
+            //  2. START_REDELIVER_INTENT revival (the OS killed the
+            //     service mid-walk and re-delivered the last intent into
+            //     a fresh process): controller is Idle, walk row already
+            //     in Room, nothing to insert. `restoreActiveWalk` rebuilds
+            //     the in-memory state from the persisted row + events +
+            //     samples. The redelivered intent may carry the original
+            //     `isFreshStart=true` flag — the restored-walk check
+            //     short-circuits the insert before we'd double-create.
+            //  3. UI fresh start raced with a prior in-flight walk row
+            //     (defensive — shouldn't happen via UiWalkController
+            //     because UI's flow only fires ACTION_START when no
+            //     active walk is observed, but a stale process or
+            //     test-time corner can land here). `restoreActiveWalk`
+            //     adopts the existing walk; the `isFreshStart` insert is
+            //     skipped.
             if (controller.state.value is WalkState.Idle) {
                 val restored = runCatching { controller.restoreActiveWalk() }
                     .onFailure { Log.w(TAG, "restoreActiveWalk on revival failed", it) }
                     .getOrNull()
-                if (restored == null && controller.state.value is WalkState.Idle) {
-                    Log.w(TAG, "revived ACTION_START with no unfinished walk — stopping")
-                    stopSelf()
-                    return@launch
+                if (restored == null) {
+                    if (isFreshStart) {
+                        // No walk in Room yet — UI is asking us to
+                        // create one. Failure here (e.g. controller
+                        // already non-Idle from a fast race) is logged
+                        // and swallowed so the pipeline still proceeds
+                        // against whatever state the controller landed in.
+                        try {
+                            controller.startWalk(intentionExtra)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: IllegalStateException) {
+                            Log.w(TAG, "fresh ACTION_START rejected: ${e.message}")
+                        }
+                    } else {
+                        Log.w(TAG, "revived ACTION_START with no unfinished walk — stopping")
+                        stopSelf()
+                        return@launch
+                    }
                 }
             }
             try {
@@ -279,7 +310,7 @@ class WalkTrackingService : Service() {
         }
     }
 
-    private fun handleControllerAction(action: String) {
+    private fun handleControllerAction(action: String, intent: Intent?) {
         // Defensive: action intents only make sense while tracking is live.
         // If the notification persisted past stopSelf and a stale tap
         // reached a fresh service instance, locationJob will be null —
@@ -308,9 +339,31 @@ class WalkTrackingService : Service() {
                 when (action) {
                     ACTION_PAUSE -> controller.pauseWalk()
                     ACTION_RESUME -> controller.resumeWalk()
-                    ACTION_END_MEDITATION -> controller.endMeditation()
-                    ACTION_MARK_WAYPOINT -> controller.recordWaypoint()
+                    ACTION_START_MEDITATION -> controller.startMeditation()
+                    ACTION_END_MEDITATION -> {
+                        // EXTRA_END_MILLIS carries the captured Done-tap
+                        // timestamp from the meditation screen so the
+                        // closing 6.5s ceremony doesn't inflate the
+                        // recorded interval. Notification-tap path
+                        // omits it → controller falls back to its
+                        // injected clock.
+                        val endMillis = intent
+                            ?.takeIf { it.hasExtra(EXTRA_END_MILLIS) }
+                            ?.getLongExtra(EXTRA_END_MILLIS, -1L)
+                            ?.takeIf { it > 0 }
+                        controller.endMeditation(endMillis)
+                    }
+                    ACTION_MARK_WAYPOINT -> {
+                        val label = intent?.getStringExtra(EXTRA_WAYPOINT_LABEL)
+                        val icon = intent?.getStringExtra(EXTRA_WAYPOINT_ICON)
+                        controller.recordWaypoint(label = label, icon = icon)
+                    }
                     ACTION_FINISH -> controller.finishWalk()
+                    ACTION_DISCARD -> controller.discardWalk()
+                    ACTION_SET_INTENTION -> {
+                        val text = intent?.getStringExtra(EXTRA_INTENTION) ?: ""
+                        controller.setIntention(text)
+                    }
                 }
             } catch (ce: CancellationException) {
                 throw ce
@@ -513,11 +566,39 @@ class WalkTrackingService : Service() {
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
         const val ACTION_PAUSE = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.PAUSE"
         const val ACTION_RESUME = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.RESUME"
+        const val ACTION_START_MEDITATION =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START_MEDITATION"
         const val ACTION_END_MEDITATION =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.END_MEDITATION"
         const val ACTION_MARK_WAYPOINT =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.MARK_WAYPOINT"
         const val ACTION_FINISH = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.FINISH"
+        const val ACTION_DISCARD = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.DISCARD"
+        const val ACTION_SET_INTENTION =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_INTENTION"
+
+        /** Extra: starting walk's intention text, or new intention on
+         *  [ACTION_SET_INTENTION]. UTF-8 string, ≤140 chars (server-side
+         *  controller still re-sanitizes). */
+        const val EXTRA_INTENTION = "extra.intention"
+
+        /** Extra: flag distinguishing a UI-initiated [ACTION_START]
+         *  (where the service must insert the walk row) from a
+         *  START_REDELIVER_INTENT revival (where the service restores
+         *  from an existing Room row). Boolean. */
+        const val EXTRA_FRESH_START = "extra.fresh_start"
+
+        /** Extra: explicit Done-tap millis for [ACTION_END_MEDITATION].
+         *  Long. Absent → service uses its own clock. */
+        const val EXTRA_END_MILLIS = "extra.end_millis"
+
+        /** Extra: optional waypoint label (UTF-8 string) for
+         *  [ACTION_MARK_WAYPOINT]. */
+        const val EXTRA_WAYPOINT_LABEL = "extra.waypoint_label"
+
+        /** Extra: optional waypoint icon key (UTF-8 string) for
+         *  [ACTION_MARK_WAYPOINT]. */
+        const val EXTRA_WAYPOINT_ICON = "extra.waypoint_icon"
 
         private const val TAG = "WalkTrackingService"
         /** Persist `walk.steps` this often while Active so a mid-walk
