@@ -332,6 +332,27 @@ class PilgrimApp : Application(), Configuration.Provider {
         }
     }
 
+    /**
+     * Drop the Coil image-memory cache when the system signals the UI
+     * is off-screen / under pressure. Pinned-photo thumbnails on the
+     * Walk Summary reliquary easily reach 10-50 MB each in cache; on a
+     * long backgrounded walk that bloats `rss` and makes the process
+     * a juicier target for OxygenOS's RAM manager (`o-kill(6)` —
+     * killed walk 16 at 24:18 with rss=445 MB even with battery
+     * exemption granted). Mapbox v11 manages its own MapView/tile
+     * lifecycle via the host Lifecycle; Coil doesn't auto-trim on
+     * background. The location FGS keeps tracking either way.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        Log.i(TAG, "onTrimMemory level=$level")
+        if (level >= TRIM_MEMORY_BACKGROUND) {
+            runCatching {
+                coil3.SingletonImageLoader.get(this).memoryCache?.clear()
+            }.onFailure { Log.w(TAG, "Coil memory cache clear failed", it) }
+        }
+    }
+
     private companion object {
         const val TAG = "PilgrimApp"
     }
