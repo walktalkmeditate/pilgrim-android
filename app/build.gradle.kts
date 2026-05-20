@@ -47,6 +47,17 @@ android {
                 arguments += "-DANDROID_STL=c++_static"
             }
         }
+
+        // Emit FULL native debug symbols into the release AAB so that
+        // Play Console can symbolicate whisper.cpp JNI crash reports
+        // (otherwise stack traces show raw memory addresses instead of
+        // function names + line numbers). AGP strips the symbols from
+        // the installed APKs and bundles them into a separate
+        // `<module>-<variant>-native-debug-symbols.zip` packaged inside
+        // the AAB. Build time +5-10s, AAB +20-30MB pre-Play-strip.
+        ndk {
+            debugSymbolLevel = "FULL"
+        }
     }
 
     externalNativeBuild {
