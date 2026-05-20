@@ -48,7 +48,12 @@ fun MilestoneCalloutRow(
             .background(pilgrimColors.dawn.copy(alpha = 0.1f))
             .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+        // iOS parity `WalkSummaryView.milestoneCallout` — icon + prose
+        // sit centered horizontally as a pair, not left-aligned.
+        horizontalArrangement = Arrangement.spacedBy(
+            PilgrimSpacing.small,
+            Alignment.CenterHorizontally,
+        ),
     ) {
         Icon(
             imageVector = Icons.Rounded.AutoAwesome,
