@@ -10,7 +10,7 @@ origin: docs/brainstorms/2026-05-19-play-store-release-pipeline-requirements.md
 
 ## Summary
 
-Ship Pilgrim 1.0.0 to Google Play Production via hybrid path (current `release.yml` builds + signs the AAB; human uploads through Play Console). Then add two `workflow_dispatch`-triggered GitHub Actions workflows mirroring iOS — `internal.yml` (Play Internal Testing) + `production.yml` (Play Production with staged rollout) — using gradle-play-publisher (GPP). versionCode auto-bumps via `100 + github.run_number`; bumps commit back to `main` with `[skip ci]`. Plan front-loads all code work so it can land while D-U-N-S issuance (the long pole, ~30 days) processes in parallel.
+Ship Pilgrim 1.0.0 to Google Play Production via hybrid path (current `release.yml` builds + signs the AAB; human uploads through Play Console). Then add two `workflow_dispatch`-triggered GitHub Actions workflows mirroring iOS — `internal.yml` (Play Internal Testing) + `production.yml` (Play Production with staged rollout) — using gradle-play-publisher (GPP). versionCode is computed per-commit via `git rev-list --count HEAD` (no per-workflow run_number scoping); bumps commit back to `main` with `[skip ci]`. Plan front-loads all code work so it can land while D-U-N-S issuance (the long pole, ~30 days) processes in parallel.
 
 ---
 
@@ -88,10 +88,10 @@ Pilgrim Android has shipped phases 0–13 + iOS-v1.6.0 parity and is ready for a
 - **gradle-play-publisher over fastlane / r0adkll action** (origin decision): GPP is Gradle-native, declarative metadata + release-notes management lives in-tree, no Ruby toolchain on CI. Single moving-parts surface for a Gradle project.
 - **Two workflows, iOS-parallel shape** (`internal.yml` + `production.yml`) (origin decision): one workflow per ship-target so ceremony per track is independent. Mirrors `pilgrim-ios/.github/workflows/{testflight,release}.yml`.
 - **workflow_dispatch only, no tag trigger** (origin decision): tags become a downstream artifact created BY the workflow after Play upload succeeds; matches iOS shape, decouples Play upload from git-tag race conditions.
-- **versionCode = 100 + github.run_number** (origin A.10): 1.0.0 = manually-seeded `versionCode 100`; first automated build = `versionCode 101`. Run-number resets ONLY if the workflow file name changes (GHA scopes `run_number` per-workflow). Lock workflow filenames; document seed in workflow env var `GHA_VERSION_CODE_OFFSET=100` for discoverability.
-- **production.yml: direct publish, not promote-from-internal** (resolution of origin B.2 "choose at implementation time" item): direct `publishReleaseBundle --track production --user-fraction 0.20`. Rationale: (a) decouples production cadence from internal track state (you can ship a production hotfix without an internal build first); (b) avoids GPP's promote-artifact path which is more fragile around "no artifact on internal" errors; (c) re-builds the AAB so versionCode/versionName always match the production tag. Cost: ~3 min extra CI per production release. Worth it for the operational simplicity.
-- **`releaseStatus = COMPLETED`** for production, **`DRAFT`** for internal (option, evaluate at U6/U7): draft releases let humans inspect in Play Console before going live. Default to `COMPLETED` on internal too; revisit if internal builds need staging.
-- **No commit-back-to-main on internal builds** (deviation from iOS): iOS commits the build-number bump unconditionally. For Android, internal builds bump `versionCode` (which the new workflow will rewrite at build time anyway) but **do NOT commit back to main** — internal cadence may be 10+ builds/day during active development, polluting commit log. Production workflow DOES commit back so `main` tracks each shipped versionName. Trade-off: `main`'s versionCode is one bump behind during burst-internal periods; that's fine because production rebuilds use `github.run_number` directly.
+- **versionCode = `git rev-list --count HEAD`** (origin A.10): 1.0.0 = manually-seeded `versionCode 100`; first automated build computes versionCode from the commit count on the checked-out main (currently 505+, so first automated build is at versionCode 506 or higher). Both `internal.yml` and `production.yml` apply the same rule against main, so production versionCode is always ≥ any internal versionCode built from the same commit (they're equal on the same commit). Same-commit duplicate uploads (e.g. two internal runs on the same main HEAD) intentionally produce duplicate versionCode → Play rejects → operator must land any commit to bump. This is the right operational discipline; releases should correspond to commits. The previous rule (`100 + github.run_number`) was wrong because `github.run_number` is scoped per-workflow-file (not per-repo) — internal.yml run #50 would produce versionCode 150, then the FIRST production.yml run would produce versionCode 101, and Play would reject production because every prior internal upload had a higher code. The `GHA_VERSION_CODE_OFFSET` env-var concept is dropped entirely.
+- **production.yml: direct publish, not promote-from-internal** (resolution of origin B.2 "choose at implementation time" item): direct `publishReleaseBundle --track production --user-fraction 0.20 --release-status inProgress`. Rationale: (a) decouples production cadence from internal track state (you can ship a production hotfix without an internal build first); (b) avoids GPP's promote-artifact path which is more fragile around "no artifact on internal" errors; (c) re-builds the AAB so versionCode/versionName always match the production tag. Cost: ~3 min extra CI per production release. Worth it for the operational simplicity.
+- **`releaseStatus = inProgress`** for production with 20% userFraction; **`COMPLETED`** is only used when promoting to 100% (separate workflow run OR a Play Console action). For internal: **`COMPLETED`** is safe (no userFraction concept on the internal track). Critical bug avoided: gradle-play-publisher 4.0.0's `TrackManager.kt:212-218` applies `userFraction.takeIf { isRollout() }`, and `isRollout()` is true only for `IN_PROGRESS`/`HALTED` — so `--release-status COMPLETED --user-fraction 0.20` silently nulls the fraction and ships 100% live (README confirms: "userFraction is only applicable where releaseStatus=[IN_PROGRESS/HALTED]"). Optional `DRAFT` for internal lets humans inspect in Play Console before going live; default `COMPLETED` on internal, revisit if internal builds need staging.
+- **No commit-back-to-main on internal builds** (deviation from iOS): iOS commits the build-number bump unconditionally. For Android, internal builds rewrite `versionCode` at build time but **do NOT commit back to main** — internal cadence may be 10+ builds/day during active development, polluting commit log. Production workflow DOES commit back so `main` tracks each shipped versionName. Trade-off: `main`'s on-disk versionCode lags slightly during burst-internal periods; that's fine because both workflows compute versionCode fresh from `git rev-list --count HEAD` at run time, so the source-of-truth is the commit log itself, not the on-disk integer.
 - **Native debug symbols via `ndk { debugSymbolLevel = "FULL" }`** (origin A.7): one-line `app/build.gradle.kts` change; AGP embeds `.so` symbols in AAB metadata; Play strips before serving to users. **Already in flight as PR #126.**
 
 ---
@@ -106,12 +106,12 @@ Developer in GHA UI
   ├── Click "Run workflow" on internal.yml, version="1.0.1"
   │     │
   │     ▼
-  │   Checkout main (with push token)
+  │   Checkout main (with push token, fetch-depth: 0)
   │   JDK 17 + Gradle setup
   │   Decode KEYSTORE_BASE64 → pilgrim-release.keystore
   │   Decode PLAY_SERVICE_ACCOUNT_JSON_BASE64 → play-service-account.json
   │   sed-replace versionName in app/build.gradle.kts (from input)
-  │   sed-replace versionCode in app/build.gradle.kts (= 100 + github.run_number)
+  │   sed-replace versionCode in app/build.gradle.kts (= $(git rev-list --count HEAD))
   │   ./gradlew bundleRelease  (produces signed AAB with NDK symbols)
   │   ./gradlew publishReleaseBundle --track internal
   │     │
@@ -123,9 +123,9 @@ Developer in GHA UI
   ├── Click "Run workflow" on production.yml, version="1.0.1"
   │     │
   │     ▼
-  │   [same prep as internal.yml]
-  │   ./gradlew bundleRelease  (rebuilds; versionCode advances per run_number)
-  │   ./gradlew publishReleaseBundle --track production --user-fraction 0.20
+  │   [same prep as internal.yml — also checkout with fetch-depth: 0]
+  │   ./gradlew bundleRelease  (rebuilds; versionCode = git rev-list count of current main HEAD)
+  │   ./gradlew publishReleaseBundle --track production --user-fraction 0.20 --release-status inProgress
   │   git commit -am "release: bump to v1.0.1 (code N) [skip ci]" && git push
   │   git tag v1.0.1 && git push --tags
   │   Create GH Release with auto-generated notes
@@ -167,7 +167,7 @@ Per-unit `**Files:**` lists remain authoritative.
 - **Repo working tree**: `play-service-account.json` MUST be gitignored (U3); leak risk would compromise the Play publishing identity.
 - **App signing key**: existing `pilgrim-release.keystore` becomes the *upload* key once Play App Signing enrollment completes. **Recovery from key loss after enrollment is a Google support ticket** — back up to ≥2 secure locations BEFORE 1.0.0 upload (origin A.5).
 - **`main` branch**: production.yml pushes commits as `github-actions[bot]`. CODEOWNERS / branch protection (if added later) must allow this identity to push directly.
-- **versionCode invariant**: human bumps + workflow bumps must NOT collide. Plan locks human-bump to 1.0.0 only; everything after is workflow-driven.
+- **versionCode invariant**: workflows compute versionCode via `git rev-list --count HEAD` against main; human bumps + workflow bumps must NOT collide. Plan locks human-bump to 1.0.0 only (seeded at 100, already below the current commit count of 505+); everything after is workflow-driven. Both `internal.yml` and `production.yml` use the same rule, so production versionCode is always ≥ any internal versionCode on the same commit.
 
 ---
 
@@ -214,7 +214,7 @@ Per-unit `**Files:**` lists remain authoritative.
   - Add `play-publisher` version to `[versions]` in `libs.versions.toml`. **Verify latest stable from [github.com/Triple-T/gradle-play-publisher/releases](https://github.com/Triple-T/gradle-play-publisher/releases) at impl time** — pin a known-good version, not `+`.
   - Add `play-publisher = { id = "com.github.triplet.play", version.ref = "play-publisher" }` to `[plugins]`.
   - Add `alias(libs.plugins.play.publisher)` to `app/build.gradle.kts` plugins block.
-  - Add a top-level `play { ... }` block in `app/build.gradle.kts` with: `serviceAccountCredentials.set(rootProject.file("play-service-account.json"))`, `defaultToAppBundles.set(true)`, `track.set("internal")` (overridden per-task by workflows), `releaseStatus.set(ReleaseStatus.COMPLETED)`. Skip listing/screenshot sync (`commit.set(false)` if needed to avoid GPP auto-uploading metadata before U5 lands).
+  - Add a top-level `play { ... }` block in `app/build.gradle.kts` with: `serviceAccountCredentials.set(rootProject.file("play-service-account.json"))`, `defaultToAppBundles.set(true)`, `track.set("internal")` (overridden per-task by workflows), `releaseStatus.set(ReleaseStatus.COMPLETED)`. The `COMPLETED` default is safe at the configuration layer because the default `track` is `internal` (no userFraction concept on internal). Production runs override via CLI flag (`--release-status inProgress`) — see U6. Skip listing/screenshot sync (`commit.set(false)` if needed to avoid GPP auto-uploading metadata before U5 lands).
 - **Patterns to follow:** existing `plugins { ... }` block in `app/build.gradle.kts`; existing `[versions]` / `[plugins]` structure in `gradle/libs.versions.toml`.
 - **Test scenarios:**
   - `./gradlew :app:tasks --all | grep -i play` lists `publishReleaseBundle`, `promoteArtifact`, `bootstrapListing`.
@@ -251,7 +251,7 @@ Per-unit `**Files:**` lists remain authoritative.
   - Permissions: `contents: write` (needed for git-tag push at end; even if internal doesn't commit-back, it may tag).
   - Concurrency: `group: internal-${{ github.ref }}, cancel-in-progress: false` (don't kill in-flight uploads).
   - Steps mirror existing `release.yml`:
-    1. Checkout (full token, fetch-depth 1).
+    1. Checkout (full token, **fetch-depth: 0** so `git rev-list --count HEAD` returns the true commit count — default fetch-depth 1 would return 1).
     2. JDK 17 + Gradle setup (cache read-write).
     3. Make gradlew executable.
     4. Decode `KEYSTORE_BASE64` → `pilgrim-release.keystore`.
@@ -259,7 +259,7 @@ Per-unit `**Files:**` lists remain authoritative.
     6. Write `local.properties` (Mapbox tokens).
     7. **NEW:** Decode `PLAY_SERVICE_ACCOUNT_JSON_BASE64` → `play-service-account.json`. Fail-fast if secret unset.
     8. **NEW:** If `inputs.version` non-empty, `sed`-replace `versionName = ".*"` in `app/build.gradle.kts`.
-    9. **NEW:** `sed`-replace `versionCode = .*` to `versionCode = $((100 + ${{ github.run_number }}))` — use env var `GHA_VERSION_CODE_OFFSET=100` for discoverability.
+    9. **NEW:** Compute `VERSION_CODE=$(git rev-list --count HEAD)` and `sed`-replace `versionCode = .*` to `versionCode = ${VERSION_CODE}` in `app/build.gradle.kts`. No env-var offset; no dependency on `github.run_number`.
     10. `./gradlew bundleRelease`.
     11. `./gradlew publishReleaseBundle --track internal`. Release notes default to `app/src/main/play/release-notes/en-US/default.txt`.
   - **Internal does NOT commit back to main** (deviation from iOS, see Key Technical Decisions).
@@ -268,7 +268,7 @@ Per-unit `**Files:**` lists remain authoritative.
 - **Test scenarios:**
   - Workflow YAML passes `actionlint` (run locally before commit if available; otherwise GitHub validates on push).
   - Trigger the workflow with `version: 1.0.1` against a Play Console with the service account already registered — AAB lands on Internal Testing within ~5 min.
-  - Trigger with empty `version` — current `versionName` from `app/build.gradle.kts` is used; versionCode still bumps via `run_number`.
+  - Trigger with empty `version` — current `versionName` from `app/build.gradle.kts` is used; versionCode still bumps via `git rev-list --count HEAD`.
   - Fail-fast: deliberately invalidate `PLAY_SERVICE_ACCOUNT_JSON_BASE64` secret value (e.g. truncate) — workflow fails at step 7 (decode), NOT at step 11 (20 min later).
 - **Verification:** First successful run delivers an AAB to Play Internal Testing visible at `play.google.com/console/u/0/developers/.../app/.../tracks/internal`.
 - **Execution note:** Workflow YAML changes are hard to test pre-merge — only GHA's runtime can fully validate. Use `actionlint` locally for static checks; rely on first-run validation (U8) for end-to-end proof. Do not try to fake the Play upload step in unit tests — autopilot memory `Stage 2-F` lesson applies: real-API validation only.
@@ -280,20 +280,21 @@ Per-unit `**Files:**` lists remain authoritative.
 - **Dependencies:** U5 (shape pattern), U1, U2, U3, U4.
 - **Files:** `.github/workflows/production.yml`.
 - **Approach:**
-  - Same trigger / permissions / concurrency / setup steps as internal.yml (U5 steps 1–10).
+  - Same trigger / permissions / concurrency / setup steps as internal.yml (U5 steps 1–10). Checkout already uses **fetch-depth: 0** for the tag-push step at the end; the same fetch is what makes `git rev-list --count HEAD` accurate in step 9.
   - **Differences from internal.yml:**
-    - Step 11: `./gradlew publishReleaseBundle --track production --user-fraction 0.20 --release-status COMPLETED`.
+    - Step 11: `./gradlew publishReleaseBundle --track production --user-fraction 0.20 --release-status inProgress`. **Critical:** `--release-status inProgress` (not `COMPLETED`) is required for staged rollout — gradle-play-publisher 4.0.0 silently nulls `userFraction` when `releaseStatus` is `COMPLETED` (`TrackManager.kt:212-218`: `userFraction.takeIf { isRollout() }` where `isRollout()` is true only for `IN_PROGRESS`/`HALTED`). Using `COMPLETED` would ship 100% live instead of 20%. Promotion to 100% is a Play Console action (Halt → Resume at 100%) OR a separate workflow run with `--release-status completed`.
     - **NEW step 12:** `git commit -am "release: bump to v${VERSION} (code N) [skip ci]" && git push`. Identity: `github-actions[bot]`.
     - **NEW step 13:** `git tag v${VERSION} && git push --tags`.
     - **NEW step 14:** Create GH Release with auto-generated notes (`softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda` — pin SHA per existing `release.yml` precedent), attach the AAB + APK from `app/build/outputs/`.
   - The `[skip ci]` token in step 12's commit message prevents `build.yml` from rebuilding the bump commit.
+  - No `GHA_VERSION_CODE_OFFSET` env-var; versionCode comes entirely from `git rev-list --count HEAD` per step 9 (inherited from U5).
 - **Patterns to follow:** internal.yml from U5; existing `release.yml` for the GH Release step.
 - **Test scenarios:**
   - YAML passes `actionlint`.
   - Trigger with `version: 1.0.1` after a successful internal-track build of the same version exists — AAB lands on Play Production at 20% rollout within ~5 min.
-  - After successful run, `main` has a new commit `release: bump to v1.0.1 (code 101) [skip ci]` AND a new tag `v1.0.1` AND a new GH Release with AAB attached.
+  - After successful run, `main` has a new commit `release: bump to v1.0.1 (code N) [skip ci]` (N = `git rev-list --count HEAD` of the commit production.yml checked out, currently 506+) AND a new tag `v1.0.1` AND a new GH Release with AAB attached.
   - Trigger with empty `version` — uses current versionName; same flow.
-  - **Race scenario:** trigger production.yml while internal.yml is mid-run. Concurrency groups are independent (different `group:` value), so both run in parallel. Verify versionCode doesn't collide — they should differ because each workflow has its own `run_number` space.
+  - **Race scenario:** trigger production.yml while internal.yml is mid-run on the same main HEAD. Both compute the same versionCode (correct: same commit). Whichever uploads first wins; the second fails-loud at Play with "versionCode already used". This is the intended discipline — releases correspond to commits, so two same-commit uploads MUST collide. To ship two builds back-to-back, land any commit between them.
 - **Verification:** Play Console → Production tab shows new release at 20% rollout; `git log -1` on main shows the bump commit; `git tag --list v*` shows the new tag.
 - **Execution note:** Same as U5 — workflow YAML, real-API validation only.
 
@@ -329,7 +330,7 @@ Per-unit `**Files:**` lists remain authoritative.
 - **Test scenarios:**
   - Covers R2. internal.yml run completes; tester device shows 1.0.1 in Play Store within 30 min of opt-in URL refresh.
   - Covers R3. production.yml run completes; Play Production tab shows 1.0.1 at 20%; `main` log + tag + GH Release all updated.
-  - Covers R5. versionCode of the production 1.0.1 is exactly `100 + production.yml's github.run_number` and is > 100.
+  - Covers R5. versionCode of the production 1.0.1 equals `git rev-list --count HEAD` against the main commit that production.yml checked out (≥ 506 at time of writing) and is strictly greater than every prior internal-track versionCode.
   - Covers R6. `main` commit log shows `release: bump to v1.0.1 (code N) [skip ci]` with `github-actions[bot]` as author.
 - **Verification:** All four scenarios above pass. If ANY fails, halt — do not proceed to U9.
 - **Execution note:** Real-API validation. No fakes, no `--dry-run`.
@@ -358,7 +359,7 @@ Per-unit `**Files:**` lists remain authoritative.
 |---|---|---|---|
 | **Upload key lost after Play App Signing enrollment** | Low | Severe (Google support ticket, days of downtime) | Back up `pilgrim-release.keystore` to ≥2 secure locations BEFORE 1.0.0 upload. Treat `KEYSTORE_BASE64` GHA secret as load-bearing — also export to a password manager. (Origin A.5.) |
 | **Service account JSON leaks** | Low | High (attacker can ship malicious AAB under Pilgrim's name) | U2 gitignores the file. GCP IAM scopes the role to "Release manager" on Pilgrim only (not org-wide, not Admin). Rotate quarterly + on any contributor offboarding. |
-| **versionCode collision** | Medium | High (Play rejects upload mid-release) | Lock human bumps to 1.0.0 only. Workflows compute from `github.run_number`. If a workflow is ever renamed (resets run_number), bump `GHA_VERSION_CODE_OFFSET` past current max. |
+| **versionCode collision** | Low (only on same-commit re-runs) | High (Play rejects upload mid-release) | Both workflows compute versionCode via `git rev-list --count HEAD` against main. Same-commit duplicates fail-loud at Play — correct: forces a commit between releases. No human bumps after 1.0.0 except in disaster recovery. Workflows MUST checkout with `fetch-depth: 0` or rev-list returns 1. |
 | **D-U-N-S issuance blocks launch** | High (it's ~30 days) | High (blocks 1.0.0) | Front-load: start D-U-N-S request immediately; U1–U7 land in parallel. Expedited D-U-N-S available if launch date slips. |
 | **Mapbox SDK license attribution missing from listing** | Medium | Medium (license violation; Play may flag) | U4 full-description.txt includes attribution line. Verify against Mapbox docs at U4 impl time. |
 | **`whisper.cpp` JNI crash in production without symbols** | Medium | Low (symbolicated stack trace, not a user crash) | U1 ships NDK symbols. Already in PR #126. |
@@ -379,6 +380,7 @@ Per-unit `**Files:**` lists remain authoritative.
   5. Verify Play Production shows new release at 20%. Monitor Android Vitals for ~24h before manually bumping rollout to 50%, 100%.
 - **Rollout halt procedure:** Play Console → Production → "Halt rollout". Then revert main if needed and ship a hotfix versionCode > halted versionCode through the same pipeline.
 - **Service account rotation:** quarterly. `gh secret set PLAY_SERVICE_ACCOUNT_JSON_BASE64 --body "$(base64 -i new-json)"`; delete old key in GCP IAM.
+- **versionCode generation:** workflows compute `versionCode = $(git rev-list --count HEAD)` from the checked-out main HEAD. Operators don't bump anything by hand after 1.0.0. To ship two releases back-to-back, land any commit between them — same-commit re-runs intentionally collide at Play upload.
 
 ---
 

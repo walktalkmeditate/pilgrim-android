@@ -180,8 +180,11 @@ Required for Phase B (GHA → Play upload). Set up now while you're already in P
 ### A.10 versionCode seeding rule (decision lock-in)
 
 - 1.0.0 = `versionCode 100` (manual seed, chosen now).
-- 1.0.1+ workflows use `versionCode = 100 + github.run_number` of the new internal/production workflow runs. Since `run_number` starts at 1 for a new workflow, the first automated build will be `versionCode 101`.
-- The `GHA_VERSION_CODE_OFFSET` is captured as a workflow env var so it's discoverable + bumpable later if the workflow is ever recreated (which resets `run_number`).
+- 1.0.1+ workflows compute `versionCode = $(git rev-list --count HEAD)` against the checked-out main. Currently 505+ → first automated build will be at versionCode 506 or higher. Already above the manually-seeded 100 from 1.0.0. Per-commit monotonic.
+- Both `internal.yml` and `production.yml` use the same rule against main. Production versionCode is always ≥ any internal versionCode for the same commit (they're equal on the same commit).
+- Same-commit duplicate uploads (e.g. two internal runs on the same main HEAD) intentionally produce duplicate versionCode → Play rejects → operator must land any commit to bump. This is the right operational discipline; releases should correspond to commits.
+- Drop the `GHA_VERSION_CODE_OFFSET` env-var concept entirely. The previous rule (`100 + github.run_number`) is wrong because `github.run_number` is scoped per-workflow-file (not per-repo): internal.yml run #50 would produce versionCode 150, then the FIRST production.yml run would produce versionCode 101, and Play would reject production because every prior internal upload had a higher code.
+- Workflows MUST `actions/checkout@v6` with `fetch-depth: 0` so `git rev-list --count HEAD` returns the true commit count (default fetch-depth 1 returns 1).
 
 ## Scope — Phase B: GHA pipeline for 1.0.1 and beyond
 
@@ -198,20 +201,20 @@ Both Android workflows take an optional `version` input (e.g. `1.0.1`). Empty in
 
 Shared steps (both workflows):
 
-1. Checkout with `token: ${{ secrets.GITHUB_TOKEN }}` (need push permission for the version-bump commit).
+1. Checkout with `token: ${{ secrets.GITHUB_TOKEN }}` (need push permission for the version-bump commit) AND `fetch-depth: 0` (needed for `git rev-list --count HEAD` in step 7; default fetch-depth 1 returns 1).
 2. JDK 17 + Gradle setup (mirror existing `build.yml`).
 3. Decode `KEYSTORE_BASE64`, write `keystore.properties` (mirror existing `release.yml`).
 4. Write `local.properties` with Mapbox tokens (mirror existing `release.yml`).
 5. Decode `PLAY_SERVICE_ACCOUNT_JSON_BASE64` → `play-service-account.json`. Path is referenced from `app/build.gradle.kts` via GPP config.
 6. Set marketing version (if `version` input provided): `sed`-replace `versionName = "X.Y.Z"` in `app/build.gradle.kts`.
-7. Compute + set `versionCode = 100 + github.run_number` via the same `sed`-replace.
-8. Commit + push: `git commit -am "release: bump to vX.Y.Z (code N) [skip ci]" && git push`. Use `github-actions[bot]` identity. **This commit step is the iOS-parity move.**
+7. Compute `VERSION_CODE=$(git rev-list --count HEAD)` and `sed`-replace `versionCode = .*` to `versionCode = ${VERSION_CODE}` in `app/build.gradle.kts`. No env-var offset; no dependency on `github.run_number` (which is scoped per-workflow-file and would collide across the internal/production tracks).
+8. Commit + push: `git commit -am "release: bump to vX.Y.Z (code N) [skip ci]" && git push`. Use `github-actions[bot]` identity. **This commit step is the iOS-parity move.** Production-only — internal does NOT commit back (see B.2 deviation note).
 9. `./gradlew bundleRelease` — produces signed AAB with NDK symbols.
 
 Workflow-specific final step:
 
-- `internal.yml`: `./gradlew publishReleaseBundle --track internal`. Release notes come from `app/src/main/play/release-notes/en-US/internal.txt` (auto-generated from git log of commits since last tag if file is empty/absent).
-- `production.yml`: `./gradlew promoteArtifact --from-track internal --promote-track production --user-fraction 0.20`. Promotes the AAB already on Internal (no rebuild) to Production at 20 %. **Alternative**: `publishReleaseBundle --track production --user-fraction 0.20` for direct publish without internal promotion — choose at implementation time after testing GPP behavior.
+- `internal.yml`: `./gradlew publishReleaseBundle --track internal`. `releaseStatus = COMPLETED` is safe here — the internal track has no userFraction concept. Release notes come from `app/src/main/play/release-notes/en-US/internal.txt` (auto-generated from git log of commits since last tag if file is empty/absent).
+- `production.yml`: `./gradlew publishReleaseBundle --track production --user-fraction 0.20 --release-status inProgress` for direct publish at 20% staged rollout. **Critical:** `--release-status inProgress` (not `COMPLETED`) is required. gradle-play-publisher 4.0.0's `TrackManager.kt:212-218` applies `userFraction.takeIf { isRollout() }`, and `isRollout()` is true only for `IN_PROGRESS`/`HALTED` — so `--release-status COMPLETED --user-fraction 0.20` silently nulls the fraction and ships 100% live. README confirms: "userFraction is only applicable where releaseStatus=[IN_PROGRESS/HALTED]". Promotion to 100% is a Play Console action (Halt → Resume at 100%) OR a separate workflow run with `--release-status completed`. Direct publish (not `promoteArtifact`) chosen so production runs decouple from internal-track state and always rebuild the AAB with matching versionCode/versionName.
 
 After Play upload succeeds:
 
@@ -233,6 +236,10 @@ play {
     track.set("internal")  // overridden per-task in workflow
     defaultToAppBundles.set(true)
     releaseStatus.set(com.github.triplet.gradle.androidpublisher.ReleaseStatus.COMPLETED)
+    // COMPLETED default is safe at the config layer because the default track is
+    // internal (no userFraction concept). Production runs override via CLI flag:
+    // --release-status inProgress --user-fraction 0.20 (see B.2). Using COMPLETED
+    // + userFraction would silently null the fraction (GPP TrackManager:212-218).
     // Release notes default to file-based: app/src/main/play/release-notes/<lang>/default.txt
     // Listing/screenshots: app/src/main/play/listings/<lang>/{full-description.txt,short-description.txt,...}
 }
@@ -315,6 +322,8 @@ _(none — all opening questions resolved)_
 - **Publisher identity**: Organization account. Legal entity **ZREIG, LLC**, doing business as **Walk, Talk, Meditate**. Play Console "Developer name" (publicly shown) = `walk, talk, meditate` (all lowercase). Legal/billing name = `ZREIG, LLC`. **D-U-N-S number required** for organization verification — request free from [dnb.com/duns-number](https://www.dnb.com/duns-number/get-a-duns-number.html); takes ~30 days standard, ~5 business days expedited (paid). **Start D-U-N-S request today** — this is now the longest pole, not Play identity verification.
 - **Store listing copy**: reuse iOS App Store metadata from `pilgrim-ios/docs/app-store/metadata.md` with the platform-specific substitutions in A.4.
 - **Short description**: `Walk with intention. Record. Reflect. Meditate. Everything on your device.` (74 chars).
+- **versionCode rule**: `versionCode = $(git rev-list --count HEAD)` against checked-out main. 1.0.0 manually seeded at 100; first automated build computes from commit count (currently 505+ → first automated build at 506+). Both `internal.yml` and `production.yml` use the same rule, so production versionCode is always ≥ any internal versionCode on the same commit. Same-commit duplicate uploads fail-loud at Play (operator must land any commit to bump). `GHA_VERSION_CODE_OFFSET` env-var concept dropped. Previous rule (`100 + github.run_number`) was wrong because `github.run_number` is scoped per-workflow-file, not per-repo — internal+production tracks would collide.
+- **Production rollout flag**: `--release-status inProgress --user-fraction 0.20` (NOT `COMPLETED`). gradle-play-publisher 4.0.0 silently nulls `userFraction` when `releaseStatus = COMPLETED`, shipping 100% live. `COMPLETED` is only used when promoting from staged to 100% (separate workflow run OR Play Console action). Internal track uses default `COMPLETED` (no userFraction concept).
 
 ## Next step
 
