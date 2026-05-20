@@ -7,11 +7,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Size
@@ -157,6 +161,26 @@ internal fun PilgrimMap(
     val bottomInsetPx = with(LocalDensity.current) { bottomInsetDp.toPx().toDouble() }
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
+
+    // iOS-parity survival pairing for the Coil cache trim in PilgrimApp
+    // .onTrimMemory: when the host activity stops (user backgrounds the
+    // app during a walk; tracking continues in the FGS), nudge the
+    // MapView to drop its in-memory tile + style-image cache. Mapbox
+    // v11 lifecycle-pauses rendering on ON_STOP but holds the loaded
+    // tiles indefinitely — that's the bulk of the 430MB rss that the
+    // OnePlus o-kill targets. Best-effort; safe to fail silently.
+    val mapLifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(mapLifecycle, mapView) {
+        val view = mapView
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && view != null) {
+                runCatching { view.onLowMemory() }
+            }
+        }
+        mapLifecycle.addObserver(observer)
+        onDispose { mapLifecycle.removeObserver(observer) }
+    }
+
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var segmentPolylines by remember { mutableStateOf<List<PolylineAnnotation>>(emptyList()) }
