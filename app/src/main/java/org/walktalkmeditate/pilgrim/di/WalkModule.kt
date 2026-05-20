@@ -12,12 +12,23 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObservedState
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationScope
 
 @Module
 @InstallIn(SingletonComponent::class)
 object WalkModule {
+
+    /**
+     * Resolve the [WalkController] binding. Today there is one
+     * implementation ([WalkControllerImpl]); the manifest split that
+     * follows will pick between the in-memory authority (tracker
+     * process) and a Room-derived UI mirror at runtime.
+     */
+    @Provides
+    @Singleton
+    fun provideWalkController(impl: WalkControllerImpl): WalkController = impl
 
     @Provides
     @Singleton

@@ -44,7 +44,7 @@ class WalkControllerWaypointLabelIconTest {
             voiceRecordingDao = db.voiceRecordingDao(),
             walkPhotoDao = db.walkPhotoDao(),
         )
-        controller = WalkController(repository = repository, clock = object : Clock {
+        controller = WalkControllerImpl(repository = repository, clock = object : Clock {
             override fun now(): Long = 1_000L
         }, stepCounter = fakeStepCounter())
     }

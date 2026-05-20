@@ -48,7 +48,7 @@ class WalkControllerDiscardTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = DiscardFakeClock(initial = 1_000L)
-        controller = WalkController(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
     }
 
     @After

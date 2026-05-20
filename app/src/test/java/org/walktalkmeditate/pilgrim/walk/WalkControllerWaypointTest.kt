@@ -47,7 +47,7 @@ class WalkControllerWaypointTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = WaypointTestClock(initial = 1_000L)
-        controller = WalkController(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
     }
 
     @After

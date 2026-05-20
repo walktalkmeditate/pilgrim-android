@@ -76,6 +76,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
 
 /**
  * Exercises the WalkViewModel action surface. Uses UnconfinedTestDispatcher
@@ -142,7 +143,7 @@ class WalkViewModelTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = FakeClock(initial = 1_000L)
-        controller = WalkController(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
         fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)

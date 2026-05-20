@@ -74,3 +74,4 @@ docs/parity/*-triage.md
 docs/parity/capture-recipe.md
 docs/parity/review-protocol.md
 docs/parity/README-parity-ledger.md
+*.hprof
