@@ -532,19 +532,64 @@ class WalkTrackingService : Service() {
 
     companion object {
         /**
-         * Cross-cutting "is the FGS currently alive in this process" flag.
-         * Set in `onCreate`, cleared in `onDestroy`. Read by
-         * `MainActivity.onCreate` to discriminate the warm-launch-after-
-         * swipe case (FGS gone, walk row stale → recover) from the
-         * notification-tap-to-return case (FGS still alive, controller's
-         * Active state is the source of truth → don't recover).
+         * Per-process "is the FGS alive in THIS process" flag. Set in
+         * onCreate / cleared in onDestroy. Used by the same-process
+         * decideStateAction path — the service queries its own state,
+         * so the per-process scope is correct here.
          *
-         * AtomicBoolean for thread-safety across the service's worker
-         * threads + the Activity's main thread.
+         * **Do NOT read this from the UI process** — under the
+         * `:tracker` process split the flag is only ever set in
+         * `:tracker`, so UI reads always see false. Cross-process
+         * callers must use [isFgsAlive] instead, which queries
+         * ActivityManager.getRunningServices for the canonical answer.
          */
         private val isRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
-        fun isFgsAlive(): Boolean = isRunning.get()
+        /**
+         * Cross-process "is the WalkTrackingService alive in any
+         * process of this app" query. Called by
+         * `MainActivity.onCreate` to discriminate the warm-launch-
+         * after-swipe case (FGS gone, walk row stale → recover) from
+         * the notification-tap-to-return case (FGS still alive in
+         * `:tracker`, do not finalize a live walk).
+         *
+         * Under the `:tracker` process split, the previous
+         * `isRunning.get()` implementation was unsafe: the static is
+         * only set in the `:tracker` process, so the UI process's
+         * classloader copy stays false forever and warm-launch
+         * recovery would falsely finalize the live walk on every
+         * re-open of the app.
+         *
+         * [ActivityManager.getRunningServices] remains accessible to
+         * the calling app for its own services on API 26+ — the
+         * third-party restriction documented in the API only applies
+         * to OTHER apps' services. We pass `Int.MAX_VALUE` because
+         * the list always contains the caller's services regardless
+         * of the limit.
+         */
+        fun isFgsAlive(context: android.content.Context): Boolean {
+            val am = context.getSystemService(android.app.ActivityManager::class.java)
+                ?: return false
+            val name = WalkTrackingService::class.java.name
+            return try {
+                @Suppress("DEPRECATION")
+                am.getRunningServices(Int.MAX_VALUE)
+                    .any { it.service.className == name && it.foreground }
+            } catch (t: Throwable) {
+                // ActivityManager can throw on some hardened ROMs.
+                // Fall back to the conservative answer (assume FGS
+                // alive) so we DO NOT finalize a possibly-live walk.
+                // The warm-launch recovery is a backstop; a missed
+                // recovery just means the user sees the walk re-open
+                // — far less harmful than tombstoning a live walk.
+                android.util.Log.w(
+                    "WalkTrackingService",
+                    "isFgsAlive: ActivityManager query failed, assuming alive",
+                    t,
+                )
+                true
+            }
+        }
 
         /**
          * The value [onStartCommand] returns. Named so a Robolectric

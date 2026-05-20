@@ -178,7 +178,7 @@ class MainActivity : ComponentActivity() {
         // makes recoverStaleWalks the authoritative scan; it's a single
         // Room SELECT + 0-1 UPDATEs (a few ms) so the cost on a
         // no-stale-walk warm launch is negligible.
-        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive()) {
+        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive(this)) {
             Log.i(TAG, "warm-launch recovery: FGS alive, NOT finalizing")
             return
         }
