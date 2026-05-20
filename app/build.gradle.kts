@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.play.publisher)
 }
 
 val localProperties = Properties().apply {
@@ -189,6 +190,20 @@ android {
         // block CI.
         disable += "MissingTranslation"
     }
+}
+
+// Play publishing config. serviceAccountCredentials is provisioned at CI
+// runtime via the PLAY_SERVICE_ACCOUNT_JSON_BASE64 GHA secret (see
+// .github/workflows/internal.yml + production.yml). Local invocation
+// requires manually creating play-service-account.json at the repo root.
+// Track + releaseStatus + userFraction are passed per-invocation by the
+// workflows — DO NOT set releaseStatus here, as a project-level value
+// would cause any local `./gradlew publish` with credentials present to
+// publish live. See docs/plans/2026-05-19-001-feat-play-store-release-pipeline-plan.md.
+play {
+    serviceAccountCredentials.set(rootProject.file("play-service-account.json"))
+    defaultToAppBundles.set(true)
+    track.set("internal")
 }
 
 kotlin {
