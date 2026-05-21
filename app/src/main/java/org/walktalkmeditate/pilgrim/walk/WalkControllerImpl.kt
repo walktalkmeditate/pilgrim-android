@@ -356,6 +356,19 @@ class WalkControllerImpl @Inject constructor(
             else -> WalkState.Active(accumulator)
         }
         _state.value = restored
+        // Re-register the step sensor on the restored walk's behalf.
+        // Without this, a tracker o-kill + REDELIVER_INTENT revival
+        // leaves the controller in Active state but the sensor
+        // unregistered — every step the user walks after revival is
+        // silently dropped, walk.steps stays at the last flushed
+        // value (or null if nothing flushed pre-revival). Only fire
+        // start() on Active restoration; for Paused/Meditating the
+        // sensor should stay off (iOS parity StepCounter.swift:75-83),
+        // and the next resume/end-meditation transition's
+        // syncStepCounter() will resume the counter at that point.
+        if (restored is WalkState.Active) {
+            stepCounter.start()
+        }
         Log.i(
             TAG,
             "restoreActiveWalk id=${walk.id} samples=${samples.size} events=${events.size} " +
