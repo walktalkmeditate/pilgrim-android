@@ -160,6 +160,25 @@ class UiWalkController @Inject constructor(
             var prevActiveWalk: Walk? = null
             var firstEmission = true
             repository.observeActiveWalk()
+                // Dedupe active-walk emissions on (id, endTimestamp).
+                // Room re-fires observeActive whenever the walks table
+                // is dirtied — including the second write that
+                // WalkEffect.FinalizeWalk does for `walks.steps`. Without
+                // dedup, the tracker's finalize bundle (finishWalkAtomic
+                // + updateSteps) produces two null emissions: the first
+                // synthesizes WalkState.Finished, the second collapses
+                // to Idle because prevActiveWalk was reset between the
+                // two. UI then navigates Active → Summary → popBackStack
+                // to Path within a single frame, dropping the user on
+                // Path instead of the summary.
+                //
+                // Compare by (id, endTimestamp) so a steps-only update
+                // for the SAME active walk still emits (UI live step
+                // count); only re-emissions of the same null or same
+                // (id, endTimestamp) tuple are dropped.
+                .distinctUntilChanged { a, b ->
+                    a?.id == b?.id && a?.endTimestamp == b?.endTimestamp
+                }
                 .flatMapLatest { walk ->
                     if (walk == null) {
                         flowOf(null)
