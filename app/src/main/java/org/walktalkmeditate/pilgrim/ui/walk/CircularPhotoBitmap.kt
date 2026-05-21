@@ -97,8 +97,13 @@ private fun circularCenterCrop(src: Bitmap, sizePx: Int, darkMode: Boolean): Bit
     val canvas = Canvas(out)
     val cx = sizePx / 2f
     val cy = sizePx / 2f
-    val strokeWidth = sizePx * 0.08f
-    val radius = (sizePx / 2f) - strokeWidth
+    // iOS parity: PhotoMarkerImageBuilder uses borderWidth=2 / diameter=44
+    // = 4.5% of size, stroked at the inset rect (border centered on the
+    // edge so half is inside, half outside). Previous Android value of
+    // 8% × parchment-dark hex landed as a chunky ~black ring in dark
+    // mode that didn't match the iOS look at all.
+    val strokeWidth = sizePx * 0.045f
+    val radius = (sizePx / 2f) - (strokeWidth / 2f)
 
     // Center-crop square region of source so the circular mask doesn't
     // distort the aspect ratio. The shader-coordinate Matrix maps the
@@ -119,12 +124,14 @@ private fun circularCenterCrop(src: Bitmap, sizePx: Int, darkMode: Boolean): Bit
     canvas.drawCircle(cx, cy, radius, fill)
     if (cropped !== src) cropped.recycle()
 
-    // Parchment hex-pair matches createCircleBitmap — keep in sync if
-    // the palette ever shifts.
-    val parchment = if (darkMode) 0xFF1A1814.toInt() else 0xFFF5F0E6.toInt()
+    // iOS parity: borderColor = .stone. Match the palette's stone
+    // tan tone in both modes so the marker reads as a soft warm
+    // border, not the near-black parchment-dark variant we had.
+    // Color hex pair matches `Color.kt` (PilgrimColorPalette.stone).
+    val stoneTint = if (darkMode) 0xFFB8976E.toInt() else 0xFF8B7355.toInt()
     val stroke = Paint().apply {
         isAntiAlias = true
-        color = parchment
+        color = stoneTint
         style = Paint.Style.STROKE
         this.strokeWidth = strokeWidth
     }
