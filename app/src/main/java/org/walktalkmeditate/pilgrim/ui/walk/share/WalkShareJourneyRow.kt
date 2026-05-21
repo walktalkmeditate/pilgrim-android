@@ -276,3 +276,18 @@ internal fun formatExpiryDate(epochMs: Long): String =
     expiryDateFormatter
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochMilli(epochMs))
+
+/**
+ * Localized long form ("May 21, 2026") for the modal's "Expires …"
+ * line. iOS parity: `DateFormatter.dateStyle = .long`. Digits forced
+ * to ASCII like [formatExpiryDate] (Stage 6-B lesson).
+ */
+private val expiryDateLongFormatter =
+    DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG)
+        .withLocale(Locale.getDefault())
+        .withDecimalStyle(java.time.format.DecimalStyle.STANDARD)
+
+internal fun formatExpiryDateLong(epochMs: Long): String =
+    expiryDateLongFormatter
+        .withZone(ZoneId.systemDefault())
+        .format(Instant.ofEpochMilli(epochMs))

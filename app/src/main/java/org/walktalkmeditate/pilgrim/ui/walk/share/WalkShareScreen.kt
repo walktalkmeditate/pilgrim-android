@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
@@ -26,14 +27,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,29 +42,41 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.time.Instant
+import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
+import org.walktalkmeditate.pilgrim.data.share.ShareInputs
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-import org.walktalkmeditate.pilgrim.ui.walk.PilgrimMap
+
+private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1_000L
+private val ROW_VERTICAL_PADDING = 10.dp
+private val ROUTE_PREVIEW_HEIGHT = 200.dp
 
 /**
- * Stage 8-A: the Share Walk modal. Opens on "Share Journey" tap
- * from Walk Summary. Sections mirror iOS `WalkShareView`:
- * route preview → stat toggles → expiry picker → journal input →
- * waypoint opt-in → Share button. After successful share, flips to
- * a success layout showing the URL + Copy / Share / Done.
+ * The Share Walk modal. Opens on "Share Journey" tap from Walk
+ * Summary. Sections mirror iOS `WalkShareView@v1.6.0`: route shape
+ * preview → stat toggles → reflection → expiry picker → bottom Share
+ * button. The share action lives at the BOTTOM of the form (iOS
+ * parity) — the top bar carries only Cancel (pre-share) / Done (once
+ * shared). After a successful share the body flips to [SharedLayout].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +96,7 @@ fun WalkShareScreen(
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     val canShare by viewModel.canShare.collectAsStateWithLifecycle()
     val cached by viewModel.cachedShare.collectAsStateWithLifecycle()
+    val units by viewModel.distanceUnits.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -95,9 +108,8 @@ fun WalkShareScreen(
         viewModel.events.collect { ev ->
             when (ev) {
                 is WalkShareEvent.Success -> {
-                    // CachedShareStore emission drives the UI into
-                    // the "Shared" layout reactively; nothing else to
-                    // do here (snackbar would be redundant).
+                    // CachedShareStore emission drives the UI into the
+                    // "Shared" layout reactively; nothing else to do.
                 }
                 WalkShareEvent.RateLimited -> snackbarHostState.showSnackbar(errRateLimited)
                 is WalkShareEvent.Failed -> snackbarHostState.showSnackbar(
@@ -107,27 +119,22 @@ fun WalkShareScreen(
         }
     }
 
-    // Snapshot `cached` once per composition so the downstream
-    // reads see a consistent value — a second delegated-property
-    // read can observe a fresh DataStore emission (e.g.
-    // `clear(walkUuid)` from some future expiry-sweeper) and
-    // transition non-null → null between the `isShared` check and
-    // the `activeShare!!` unwrap, producing a NullPointerException.
+    // Snapshot `cached` once per composition so downstream reads see a
+    // consistent value — a second delegated-property read can observe a
+    // fresh DataStore emission and transition non-null → null between
+    // the `isShared` check and the unwrap, producing an NPE.
     val activeShare = cached?.takeIf { !it.isExpiredAt() }
     val isShared = activeShare != null
 
     Scaffold(
-        // Stage 9.5-A: outer PilgrimNavHost Scaffold already consumed
-        // system bar insets; pass WindowInsets(0) to avoid double-counting.
+        // Outer PilgrimNavHost Scaffold already consumed system bar
+        // insets; pass WindowInsets(0) to avoid double-counting.
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
         topBar = {
             WalkShareTopBar(
                 isShared = isShared,
-                canShare = canShare,
-                isSharing = isSharing,
                 onCancel = onDone,
                 onDone = onDone,
-                onShare = viewModel::share,
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -153,13 +160,7 @@ fun WalkShareScreen(
                 is WalkShareUiState.Loaded -> {
                     if (activeShare != null) {
                         SharedLayout(
-                            points = s.inputs.routePoints.map {
-                                org.walktalkmeditate.pilgrim.domain.LocationPoint(
-                                    timestamp = it.timestamp,
-                                    latitude = it.latitude,
-                                    longitude = it.longitude,
-                                )
-                            },
+                            points = s.inputs.routePoints,
                             expiryEpochMs = activeShare.expiryEpochMs,
                             onOpenScroll = {
                                 org.walktalkmeditate.pilgrim.ui.util.CustomTabs.launch(
@@ -169,24 +170,22 @@ fun WalkShareScreen(
                             },
                         )
                     } else {
-                        RoutePreview(points = s.inputs.routePoints.map {
-                            org.walktalkmeditate.pilgrim.domain.LocationPoint(
-                                timestamp = it.timestamp,
-                                latitude = it.latitude,
-                                longitude = it.longitude,
-                            )
-                        })
+                        RoutePreview(points = s.inputs.routePoints)
                         StatToggles(
+                            inputs = s.inputs,
+                            units = units,
                             distance = includeDistance,
                             duration = includeDuration,
                             elevation = includeElevation,
                             activity = includeActivity,
                             steps = includeSteps,
+                            waypoints = includeWaypoints,
                             onDistance = viewModel::toggleDistance,
                             onDuration = viewModel::toggleDuration,
                             onElevation = viewModel::toggleElevation,
                             onActivity = viewModel::toggleActivityBreakdown,
                             onSteps = viewModel::toggleSteps,
+                            onWaypoints = viewModel::toggleWaypoints,
                         )
                         JournalInput(
                             journal = journal,
@@ -196,14 +195,6 @@ fun WalkShareScreen(
                             selected = selectedExpiry,
                             onSelect = viewModel::updateExpiry,
                         )
-                        val waypointCount = s.inputs.waypoints.size
-                        if (waypointCount > 0) {
-                            WaypointToggle(
-                                on = includeWaypoints,
-                                count = waypointCount,
-                                onToggle = viewModel::toggleWaypoints,
-                            )
-                        }
                         if (!canShare && !isSharing) {
                             Text(
                                 text = stringResource(R.string.share_modal_toggle_at_least_one),
@@ -212,6 +203,11 @@ fun WalkShareScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
+                        ShareActionButton(
+                            canShare = canShare,
+                            isSharing = isSharing,
+                            onShare = viewModel::share,
+                        )
                     }
                 }
             }
@@ -220,69 +216,132 @@ fun WalkShareScreen(
 }
 
 @Composable
-private fun RoutePreview(points: List<org.walktalkmeditate.pilgrim.domain.LocationPoint>) {
-    Card(
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(Locale.ROOT),
+        style = pilgrimType.micro,
+        color = pilgrimColors.fog,
+        letterSpacing = 1.5.sp,
+    )
+}
+
+@Composable
+private fun RoutePreview(points: List<LocationPoint>) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(200.dp),
-        colors = CardDefaults.cardColors(containerColor = pilgrimColors.parchmentSecondary),
+            .height(ROUTE_PREVIEW_HEIGHT)
+            .clip(RoundedCornerShape(PilgrimCornerRadius.normal))
+            .background(pilgrimColors.parchmentSecondary),
     ) {
-        if (points.size >= 2) {
-            PilgrimMap(points = points, followLatest = false, modifier = Modifier.fillMaxSize())
-        }
+        RouteShapeView(points = points)
     }
 }
 
 @Composable
 private fun StatToggles(
+    inputs: ShareInputs,
+    units: UnitSystem,
     distance: Boolean,
     duration: Boolean,
     elevation: Boolean,
     activity: Boolean,
     steps: Boolean,
+    waypoints: Boolean,
     onDistance: (Boolean) -> Unit,
     onDuration: (Boolean) -> Unit,
     onElevation: (Boolean) -> Unit,
     onActivity: (Boolean) -> Unit,
     onSteps: (Boolean) -> Unit,
+    onWaypoints: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
-        Text(
-            text = stringResource(R.string.share_modal_stats_header),
-            style = pilgrimType.caption,
-            color = pilgrimColors.fog,
+        SectionLabel(stringResource(R.string.share_modal_stats_header))
+        StatToggleRow(
+            title = stringResource(R.string.share_modal_stat_distance),
+            value = ShareStatFormat.distance(inputs.distanceMeters, units),
+            on = distance,
+            onChange = onDistance,
         )
-        ToggleRow(stringResource(R.string.share_modal_stat_distance), distance, onDistance)
-        ToggleRow(stringResource(R.string.share_modal_stat_duration), duration, onDuration)
-        ToggleRow(stringResource(R.string.share_modal_stat_elevation), elevation, onElevation)
-        ToggleRow(stringResource(R.string.share_modal_stat_activity), activity, onActivity)
-        ToggleRow(stringResource(R.string.share_modal_stat_steps), steps, onSteps)
+        StatToggleRow(
+            title = stringResource(R.string.share_modal_stat_duration),
+            value = ShareStatFormat.duration(inputs.activeDurationSeconds),
+            on = duration,
+            onChange = onDuration,
+        )
+        StatToggleRow(
+            title = stringResource(R.string.share_modal_stat_elevation),
+            value = ShareStatFormat.elevation(inputs.elevationAscentMeters, units),
+            on = elevation,
+            onChange = onElevation,
+        )
+        StatToggleRow(
+            title = stringResource(R.string.share_modal_stat_activity),
+            value = ShareStatFormat.activityBreakdown(
+                meditateSeconds = inputs.meditateDurationSeconds,
+                talkSeconds = inputs.talkDurationSeconds,
+            ),
+            on = activity,
+            onChange = onActivity,
+        )
+        StatToggleRow(
+            title = stringResource(R.string.share_modal_stat_steps),
+            value = ShareStatFormat.steps(inputs.steps),
+            on = steps,
+            onChange = onSteps,
+        )
+        val waypointCount = inputs.waypoints.size
+        if (waypointCount > 0) {
+            StatToggleRow(
+                title = stringResource(R.string.share_modal_include_waypoints, waypointCount),
+                value = null,
+                on = waypoints,
+                onChange = onWaypoints,
+            )
+        }
     }
 }
 
 @Composable
-private fun ToggleRow(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
+private fun StatToggleRow(
+    title: String,
+    value: String?,
+    on: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(PilgrimCornerRadius.small))
+            .background(pilgrimColors.parchmentSecondary)
             .clickable { onChange(!on) }
-            .padding(vertical = PilgrimSpacing.xs),
+            .padding(horizontal = PilgrimSpacing.normal, vertical = ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(text = label, style = pilgrimType.body, color = pilgrimColors.ink)
-        Switch(checked = on, onCheckedChange = onChange)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(text = title, style = pilgrimType.body, color = pilgrimColors.ink)
+            if (value != null) {
+                Text(text = value, style = pilgrimType.caption, color = pilgrimColors.fog)
+            }
+        }
+        Switch(
+            checked = on,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = pilgrimColors.moss,
+                checkedThumbColor = pilgrimColors.parchment,
+            ),
+        )
     }
 }
 
 @Composable
 private fun JournalInput(journal: String, onJournalChange: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
-        Text(
-            text = stringResource(R.string.share_modal_journal_header),
-            style = pilgrimType.caption,
-            color = pilgrimColors.fog,
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
+        SectionLabel(stringResource(R.string.share_modal_journal_header))
         OutlinedTextField(
             value = journal,
             onValueChange = onJournalChange,
@@ -292,6 +351,7 @@ private fun JournalInput(journal: String, onJournalChange: (String) -> Unit) {
                 Text(
                     text = stringResource(R.string.share_modal_journal_placeholder),
                     style = pilgrimType.body,
+                    color = pilgrimColors.fog,
                 )
             },
         )
@@ -304,82 +364,127 @@ private fun JournalInput(journal: String, onJournalChange: (String) -> Unit) {
             style = pilgrimType.caption,
             color = pilgrimColors.fog,
             modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.End,
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExpiryPicker(selected: ExpiryOption, onSelect: (ExpiryOption) -> Unit) {
+    val expiresMs = remember(selected) {
+        Instant.now().toEpochMilli() + selected.days.toLong() * MILLIS_PER_DAY
+    }
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
-        Text(
-            text = stringResource(R.string.share_modal_expiry_header),
-            style = pilgrimType.caption,
-            color = pilgrimColors.fog,
-        )
+        SectionLabel(stringResource(R.string.share_modal_expiry_header))
         Row(
             horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
             modifier = Modifier.fillMaxWidth(),
         ) {
             ExpiryOption.entries.forEach { option ->
-                FilterChip(
+                ExpiryButton(
+                    option = option,
                     selected = selected == option,
                     onClick = { onSelect(option) },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(option.kanji, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(PilgrimSpacing.xs))
-                            Text(option.label)
-                        }
-                    },
-                    colors = FilterChipDefaults.filterChipColors(),
-                    modifier = Modifier.weight(1f),
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun WaypointToggle(on: Boolean, count: Int, onToggle: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onToggle(!on) }
-            .padding(vertical = PilgrimSpacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
         Text(
-            text = stringResource(R.string.share_modal_include_waypoints, count),
-            style = pilgrimType.body,
-            color = pilgrimColors.ink,
+            text = stringResource(R.string.share_modal_expires, formatExpiryDateLong(expiresMs)),
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center,
         )
-        Switch(checked = on, onCheckedChange = onToggle)
     }
 }
 
 /**
- * Share Walk modal top bar. Truly-centered title with a leading Cancel
- * (pre-share) and a trailing pill action — "Share Walk" while composing
- * (the primary share trigger, per the user's request to move the action
- * to the top-right) or "Done" once shared. Mirrors iOS
- * `WalkShareView.swift:53-71` (centered principal title, leading Cancel
- * when !shared, trailing Done when shared) and reuses the repo
- * [org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryTopBar]
- * Box-centered + parchmentTertiary pill pattern.
- *
- * No [windowInsetsPadding]: the screen sits inside the PilgrimNavHost
- * Scaffold which already consumes system-bar insets.
+ * Expiry option button — iOS parity with `expiryButton`. The kanji is
+ * a faint full-size glyph BEHIND the label (not inline), forced to the
+ * system font family because Cormorant Garamond has no CJK coverage.
+ * Selected: stone fill + parchment ink. Unselected: parchmentSecondary
+ * fill + fog ink.
+ */
+@Composable
+private fun RowScope.ExpiryButton(
+    option: ExpiryOption,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(PilgrimCornerRadius.small))
+            .background(if (selected) pilgrimColors.stone else pilgrimColors.parchmentSecondary)
+            .clickable(onClick = onClick)
+            .padding(vertical = ROW_VERTICAL_PADDING),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = option.kanji,
+            fontFamily = FontFamily.Default,
+            fontWeight = FontWeight.Thin,
+            fontSize = 40.sp,
+            color = if (selected) {
+                pilgrimColors.parchment.copy(alpha = 0.12f)
+            } else {
+                pilgrimColors.fog.copy(alpha = 0.06f)
+            },
+        )
+        Text(
+            text = option.label,
+            style = pilgrimType.caption,
+            maxLines = 1,
+            color = if (selected) pilgrimColors.parchment else pilgrimColors.fog,
+        )
+    }
+}
+
+@Composable
+private fun ShareActionButton(
+    canShare: Boolean,
+    isSharing: Boolean,
+    onShare: () -> Unit,
+) {
+    Button(
+        onClick = onShare,
+        enabled = canShare && !isSharing,
+        shape = RoundedCornerShape(PilgrimCornerRadius.normal),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = pilgrimColors.stone,
+            contentColor = pilgrimColors.parchment,
+            // iOS uploading state: stone.opacity(0.6) background.
+            disabledContainerColor = pilgrimColors.stone.copy(alpha = 0.6f),
+            disabledContentColor = pilgrimColors.parchment,
+        ),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (isSharing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = pilgrimColors.parchment,
+            )
+            Spacer(Modifier.width(PilgrimSpacing.small))
+            Text(text = stringResource(R.string.share_modal_sharing), style = pilgrimType.button)
+        } else {
+            Text(text = stringResource(R.string.share_modal_share_button), style = pilgrimType.button)
+        }
+    }
+}
+
+/**
+ * Share Walk modal top bar. Centered title, leading Cancel before the
+ * share, trailing Done after. No top-bar share action — the primary
+ * "Share Walk" trigger lives at the bottom of the form (iOS parity,
+ * `WalkShareView.swift` toolbar + bottom `shareButton`).
  */
 @Composable
 private fun WalkShareTopBar(
     isShared: Boolean,
-    canShare: Boolean,
-    isSharing: Boolean,
     onCancel: () -> Unit,
     onDone: () -> Unit,
-    onShare: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -396,12 +501,22 @@ private fun WalkShareTopBar(
             style = pilgrimType.heading,
             color = pilgrimColors.ink,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .align(Alignment.Center)
                 .padding(horizontal = 72.dp),
         )
-        if (!isShared) {
+        if (isShared) {
+            TextButton(
+                onClick = onDone,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            ) {
+                Text(
+                    text = stringResource(R.string.share_modal_done),
+                    style = pilgrimType.button,
+                    color = pilgrimColors.stone,
+                )
+            }
+        } else {
             TextButton(
                 onClick = onCancel,
                 modifier = Modifier.align(Alignment.CenterStart),
@@ -413,51 +528,20 @@ private fun WalkShareTopBar(
                 )
             }
         }
-        Button(
-            onClick = if (isShared) onDone else onShare,
-            enabled = isShared || (canShare && !isSharing),
-            shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = pilgrimColors.parchmentTertiary,
-                contentColor = pilgrimColors.stone,
-            ),
-            contentPadding = PaddingValues(
-                horizontal = PilgrimSpacing.normal,
-                vertical = PilgrimSpacing.small,
-            ),
-            modifier = Modifier.align(Alignment.CenterEnd),
-        ) {
-            if (!isShared && isSharing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = pilgrimColors.stone,
-                )
-            } else {
-                Text(
-                    text = stringResource(
-                        if (isShared) R.string.share_modal_done
-                        else R.string.share_modal_title,
-                    ),
-                    style = pilgrimType.button,
-                )
-            }
-        }
     }
 }
 
 /**
- * Post-share success state. Mirrors iOS `WalkShareView.swift:329-375`:
+ * Post-share success state. Mirrors iOS `WalkShareView.swift:330-375`:
  * a single `parchmentSecondary` rounded card containing a tappable
- * route-preview thumbnail, a centered "Shared ✓" row, an italic
+ * route-shape thumbnail, a centered "Shared ✓" row, an italic
  * "Returns to the trail on {date}" caption, and a full-width plain
  * "View scroll" button. Both the thumbnail and "View scroll" open the
- * in-app scroll preview (Custom Tab). The actual re-share trigger is
- * the top-bar button (iOS keeps Cancel→Done in the toolbar).
+ * in-app scroll preview (Custom Tab).
  */
 @Composable
 private fun SharedLayout(
-    points: List<org.walktalkmeditate.pilgrim.domain.LocationPoint>,
+    points: List<LocationPoint>,
     expiryEpochMs: Long,
     onOpenScroll: () -> Unit,
 ) {
@@ -469,16 +553,15 @@ private fun SharedLayout(
             modifier = Modifier.padding(PilgrimSpacing.normal),
             verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
         ) {
-            Card(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(ROUTE_PREVIEW_HEIGHT)
+                    .clip(RoundedCornerShape(PilgrimCornerRadius.normal))
+                    .background(pilgrimColors.parchment)
                     .clickable(onClick = onOpenScroll),
-                colors = CardDefaults.cardColors(containerColor = pilgrimColors.parchment),
             ) {
-                if (points.size >= 2) {
-                    PilgrimMap(points = points, followLatest = false, modifier = Modifier.fillMaxSize())
-                }
+                RouteShapeView(points = points)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -522,4 +605,3 @@ private fun SharedLayout(
         }
     }
 }
-
