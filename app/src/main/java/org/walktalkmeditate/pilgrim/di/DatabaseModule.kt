@@ -41,6 +41,16 @@ object DatabaseModule {
             PilgrimDatabase.MIGRATION_6_7,
             PilgrimDatabase.MIGRATION_7_8,
         )
+        // WalkTrackingService runs in the `:tracker` process (manifest
+        // android:process). Both processes open this same SQLite file;
+        // without multi-instance invalidation the UI process's Room
+        // Flow queries don't re-emit when the tracker process writes
+        // route_data_samples / altitude_samples / walk_events / walks
+        // — the live polyline + steps + state derivation would stall.
+        // Room's multi-instance invalidation uses a SQL invalidation
+        // table each process observes, costing one cheap query per
+        // write.
+        .enableMultiInstanceInvalidation()
         .build()
 
     @Provides

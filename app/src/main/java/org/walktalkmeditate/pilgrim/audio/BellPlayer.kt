@@ -324,6 +324,26 @@ class BellPlayer @Inject constructor(
         val safetyNet = Runnable { cleanupRef.get()?.invoke() }
         safetyNetRef.set(safetyNet)
 
+        // Size the safety-net to the actual bell duration so longer
+        // bells (temple-bell.aac is 14s, yoga-chime.aac is 10s)
+        // aren't cut off mid-ring by a fixed 5s timeout. MediaPlayer
+        // .getDuration() is valid in the Prepared state per docs;
+        // unknown duration returns -1, in which case we fall back to
+        // a generous fixed ceiling. The 2s buffer covers normal
+        // playback-clock drift between the safety-net postDelayed and
+        // the natural onCompletion callback firing.
+        val durationMs = try {
+            player.duration.toLong()
+        } catch (t: Throwable) {
+            Log.w(TAG, "MediaPlayer.getDuration failed", t)
+            -1L
+        }
+        val safetyNetDelayMs = if (durationMs > 0) {
+            durationMs + SAFETY_NET_BUFFER_MS
+        } else {
+            SAFETY_NET_FALLBACK_MS
+        }
+
         // Wrap listener wiring + safetyNet posting in try/catch:
         // focus revoke can still fire on a system thread between the
         // re-check above and these lines, releasing the MediaPlayer.
@@ -339,7 +359,7 @@ class BellPlayer @Inject constructor(
                 cleanup()
                 true
             }
-            mainHandler.postDelayed(safetyNet, SAFETY_NET_MS)
+            mainHandler.postDelayed(safetyNet, safetyNetDelayMs)
         } catch (t: Throwable) {
             Log.w(TAG, "MediaPlayer listener wiring failed", t)
             cleanup()
@@ -436,11 +456,20 @@ class BellPlayer @Inject constructor(
 
     private companion object {
         const val TAG = "BellPlayer"
-        // Bell asset is 3.0s; 5000ms leaves a generous margin for
-        // the natural onCompletion callback. If it hasn't fired by
-        // then, force-release so neither the MediaPlayer nor the
-        // audio-focus request leaks.
-        const val SAFETY_NET_MS = 5_000L
+        // Buffer past the bell's reported duration before forcing
+        // cleanup. Covers normal playback-clock drift; without it the
+        // safety net could fire a few ms before MediaPlayer's natural
+        // onCompletion callback and abort the very last fade of the
+        // bell.
+        const val SAFETY_NET_BUFFER_MS = 2_000L
+
+        // Fallback ceiling when MediaPlayer.getDuration returns -1
+        // (unknown duration — e.g. malformed asset). Generous enough
+        // for the longest known bundled bell (temple-bell.aac at 14s)
+        // plus headroom; tight enough that a leak after a true
+        // onCompletion failure doesn't pin focus + the player for a
+        // perceptible interval.
+        const val SAFETY_NET_FALLBACK_MS = 30_000L
 
         // 30 ms is short enough to feel tap-like (matches iOS .medium
         // tactile envelope) without smearing on slow OEM actuators.

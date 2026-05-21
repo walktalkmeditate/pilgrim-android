@@ -3,7 +3,6 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.content.Context
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -403,6 +402,35 @@ class WalkViewModel @Inject constructor(
      * sheet falls back to the "—" dash.
      */
     val steps: StateFlow<Int?> = controller.liveSteps
+
+    /**
+     * Live ascent (meters of elevation gained) for the active walk.
+     * Observes `altitude_samples` cross-process: the `:tracker`
+     * process inserts samples via the [WalkEffect.PersistLocation]
+     * effect; multi-instance Room invalidation re-emits in the UI
+     * process so the stats sheet's Ascent column recomputes on every
+     * new sample.
+     *
+     * Null when no active walk OR no samples yet OR cumulative
+     * ascent is at-or-below the 1 m display threshold (iOS parity
+     * `walk.ascend > 1` gate). The sheet renders "—" for null and
+     * the formatted altitude otherwise.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val ascendMeters: StateFlow<Double?> = walkState
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
+            if (walkId == null) {
+                flowOf(null)
+            } else {
+                repository.observeAltitudeSamples(walkId).map { samples ->
+                    val ascend = org.walktalkmeditate.pilgrim.data.walk.computeAscend(samples)
+                    ascend.takeIf { it > 1.0 }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * iOS parity `ActiveWalkViewModel.voiceGuidePackName` /
@@ -1080,23 +1108,15 @@ class WalkViewModel @Inject constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "celestial greeting compute failed", t)
             }
-            try {
-                ContextCompat.startForegroundService(
-                    context,
-                    WalkTrackingService.startIntent(context),
-                )
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (e: Exception) {
-                // Service refused to start — most commonly
-                // ForegroundServiceStartNotAllowedException (API 31+ when
-                // triggered from a background state) or SecurityException
-                // (FINE_LOCATION revoked between our gate and this call).
-                // Roll back the in-memory walk so state and "actually
-                // tracking" stay consistent.
-                Log.w(TAG, "could not start walk tracking service", e)
-                controller.finishWalk()
-            }
+            // No explicit startForegroundService call here under the
+            // `:tracker` process split — [UiWalkController.startWalk]
+            // fires ACTION_START via [WalkActionPublisher] inside the
+            // controller, which is the same channel notification-button
+            // taps already use. The 5s await inside that call gives the
+            // tracker process time to spin up + insert the walk row;
+            // a timeout there bubbles as IllegalStateException which
+            // the catch above handles identically to the same-process
+            // start-rejection path.
         }
     }
 

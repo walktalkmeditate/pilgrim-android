@@ -70,7 +70,7 @@ class WalkControllerStepCounterTest {
             ShadowSensor.newInstance(Sensor.TYPE_STEP_COUNTER),
         )
         stepCounter = StepCounter(context)
-        controller = WalkController(repository, clock, stepCounter)
+        controller = WalkControllerImpl(repository, clock, stepCounter)
     }
 
     @After

@@ -8,6 +8,7 @@ import androidx.work.Configuration
 import com.mapbox.common.MapboxOptions
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -30,8 +31,16 @@ import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
 
-    @Inject lateinit var workerFactory: HiltWorkerFactory
-    @Inject lateinit var orphanSweeperScheduler: OrphanSweeperScheduler
+    // Every UI-only @Inject is wrapped in `Provider<T>` so the
+    // tracker process (which early-returns from onCreate before any
+    // .get() is called) never builds the underlying instance + its
+    // downstream graph. Cuts tracker rss by ~30-60 MB of objects
+    // (observer coroutine scopes, voice-guide / soundscape DataStore
+    // subscriptions, ML Kit / Mapbox-init side effects). WorkManager's
+    // configuration getter is one of the deferred consumers — tracker
+    // never initializes WorkManager so workerFactory stays uninstantiated.
+    @Inject lateinit var workerFactoryProvider: Provider<HiltWorkerFactory>
+    @Inject lateinit var orphanSweeperSchedulerProvider: Provider<OrphanSweeperScheduler>
 
     /**
      * E2 cold-start reconcile for the launcher-icon switcher. When the
@@ -41,7 +50,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * screen). That stale alias is reaped here on the next cold start,
      * where no activity task exists yet so disabling it is safe.
      */
-    @Inject lateinit var iconSwitcher: IconSwitcher
+    @Inject lateinit var iconSwitcherProvider: Provider<IconSwitcher>
 
     /**
      * First-launch defaults for bell + soundscape selections. iOS
@@ -49,7 +58,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * [meditationBellObserver] starts collecting so the start/end
      * bell ids are non-null on the first meditation transition.
      */
-    @Inject lateinit var soundsPreferencesSeeder: SoundsPreferencesSeeder
+    @Inject lateinit var soundsPreferencesSeederProvider: Provider<SoundsPreferencesSeeder>
 
     /**
      * Referenced in [onCreate] to force Hilt to instantiate the
@@ -57,7 +66,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * binding is lazy and the observer's `init { scope.launch { ... } }`
      * block would never run — bells would silently not fire.
      */
-    @Inject lateinit var meditationBellObserver: MeditationBellObserver
+    @Inject lateinit var meditationBellObserverProvider: Provider<MeditationBellObserver>
 
     /**
      * App-scoped auto-select observer for the voice-guide picker —
@@ -67,7 +76,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * so the subscription is visible + cancellable from the owning
      * Application class.
      */
-    @Inject lateinit var voiceGuideDownloadObserver: VoiceGuideDownloadObserver
+    @Inject lateinit var voiceGuideDownloadObserverProvider: Provider<VoiceGuideDownloadObserver>
 
     /**
      * App-scoped orchestrator for voice-guide prompt playback.
@@ -77,14 +86,14 @@ class PilgrimApp : Application(), Configuration.Provider {
      * runs-for-process-lifetime shape as the bell observer + download
      * observer above.
      */
-    @Inject lateinit var voiceGuideOrchestrator: VoiceGuideOrchestrator
+    @Inject lateinit var voiceGuideOrchestratorProvider: Provider<VoiceGuideOrchestrator>
 
     /**
      * App-scoped orchestrator for soundscape ambient loop playback
      * during meditation. Watches walk-state + selected-soundscape-id
      * and plays/stops the looping ExoPlayer-backed player.
      */
-    @Inject lateinit var soundscapeOrchestrator: SoundscapeOrchestrator
+    @Inject lateinit var soundscapeOrchestratorProvider: Provider<SoundscapeOrchestrator>
 
     /**
      * App-scoped auto-download observer for soundscapes. Matches
@@ -93,7 +102,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * download in the picker. Kicks a manifest sync on start so fresh
      * installs begin downloading immediately.
      */
-    @Inject lateinit var soundscapeAutoDownloadObserver: SoundscapeAutoDownloadObserver
+    @Inject lateinit var soundscapeAutoDownloadObserverProvider: Provider<SoundscapeAutoDownloadObserver>
 
     /**
      * Stage 8-B: collective counter. Boot-time fetch warms the cached
@@ -102,9 +111,9 @@ class PilgrimApp : Application(), Configuration.Provider {
      * config-change re-fetch storm — Application.onCreate fires once
      * per process so this is the right hook (matches iOS AppDelegate).
      */
-    @Inject lateinit var collectiveRepository: CollectiveRepository
+    @Inject lateinit var collectiveRepositoryProvider: Provider<CollectiveRepository>
 
-    @Inject @CollectiveRepoScope lateinit var collectiveScope: CoroutineScope
+    @Inject @CollectiveRepoScope lateinit var collectiveScopeProvider: Provider<CoroutineScope>
 
     /**
      * Stage 9-A: home-screen widget refresh scheduler. PilgrimApp.onCreate
@@ -114,7 +123,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * boot-time enqueue is only needed when WorkManager's queue is empty
      * (fresh install, "Clear data", or rare WorkManager DB corruption).
      */
-    @Inject lateinit var widgetRefreshScheduler: org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
+    @Inject lateinit var widgetRefreshSchedulerProvider: Provider<org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler>
 
     /**
      * Stage 9-B: subscribes to `WalkController.state` and runs the
@@ -125,7 +134,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * orchestration as the in-app Finish path. Eager `@Inject` so the
      * `init { scope.launch { ... } }` block runs at app start.
      */
-    @Inject lateinit var walkFinalizationObserver: WalkFinalizationObserver
+    @Inject lateinit var walkFinalizationObserverProvider: Provider<WalkFinalizationObserver>
 
     /**
      * Stage 9.5-C: voice-recorder auto-stop on every in-progress →
@@ -137,7 +146,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * insert. Eager `@Inject` so the `init { scope.launch { ... } }`
      * block runs at app start.
      */
-    @Inject lateinit var walkLifecycleObserver: WalkLifecycleObserver
+    @Inject lateinit var walkLifecycleObserverProvider: Provider<WalkLifecycleObserver>
 
     /**
      * Cold-launch recovery: any Walk row whose `end_timestamp IS NULL`
@@ -151,8 +160,9 @@ class PilgrimApp : Application(), Configuration.Provider {
      * alive) don't re-run this — `Application.onCreate` only fires on
      * cold start, exactly when we want recovery to apply.
      */
-    @Inject lateinit var walkController: WalkController
-    @Inject lateinit var walkRecoveryRepository: WalkRecoveryRepository
+    @Inject lateinit var walkControllerProvider: Provider<WalkController>
+    @Inject lateinit var walkRepositoryProvider: Provider<org.walktalkmeditate.pilgrim.data.WalkRepository>
+    @Inject lateinit var walkRecoveryRepositoryProvider: Provider<WalkRecoveryRepository>
 
     /**
      * Stage 11-A: drains stale walk-metrics cache columns for legacy
@@ -162,16 +172,37 @@ class PilgrimApp : Application(), Configuration.Provider {
      * idempotent (AtomicBoolean), so a re-call after a config change
      * is a safe no-op.
      */
-    @Inject lateinit var walkMetricsBackfillCoordinator: WalkMetricsBackfillCoordinator
+    @Inject lateinit var walkMetricsBackfillCoordinatorProvider: Provider<WalkMetricsBackfillCoordinator>
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
-            .setWorkerFactory(workerFactory)
+            .setWorkerFactory(workerFactoryProvider.get())
             .setMinimumLoggingLevel(Log.INFO)
             .build()
 
     override fun onCreate() {
         super.onCreate()
+        // WalkTrackingService runs in the `:tracker` process (manifest
+        // android:process=":tracker") so the UI process being OEM-killed
+        // mid-walk no longer kills GPS tracking. The tracker process
+        // instantiates its own PilgrimApp / Hilt graph; we skip every
+        // UI-side init below so its rss stays lean (~50MB target vs
+        // ~440MB in UI) and the eager observers don't double-fire side
+        // effects across processes.
+        //
+        // Hilt's @AndroidEntryPoint Service still injects deps via the
+        // per-process SingletonComponent — no PilgrimApp.onCreate side
+        // effects are required for the service to operate.
+        //
+        // Even the Mapbox token init below is gated: tracker never
+        // creates a MapView, so loading the Mapbox common SDK (which
+        // happens transitively when [MapboxOptions] is touched) is
+        // wasted rss there.
+        if (!isMainProcess()) {
+            Log.i(TAG, "onCreate: skipping UI inits in non-main process ${getProcessName()}")
+            return
+        }
+
         // Mapbox reads the public access token (pk.xxx) here — the token
         // value is injected from local.properties at build time via
         // BuildConfig.MAPBOX_ACCESS_TOKEN. Empty token is accepted but
@@ -179,17 +210,22 @@ class PilgrimApp : Application(), Configuration.Provider {
         // that visually until a valid token is configured.
         MapboxOptions.accessToken = BuildConfig.MAPBOX_ACCESS_TOKEN
 
-        // KEEP policy means this is a no-op after the first launch; the
-        // periodic sweeper runs on its own daily cadence regardless of
-        // how often the user opens the app.
-        orphanSweeperScheduler.scheduleDaily()
+        // Every `.get()` below forces Hilt to construct the underlying
+        // singleton + its dependency graph. Tracker process early-
+        // returned above, so it never reaches these calls and the
+        // associated graph (observer coroutine scopes, voice-guide /
+        // soundscape DataStore subscriptions, etc.) never instantiates
+        // there — that's the rss savings.
+        orphanSweeperSchedulerProvider.get().scheduleDaily()
 
         // Seed bell + soundscape selection defaults on first launch
         // so MeditationBellObserver's null-id "None" guard doesn't
         // silence a fresh install. runBlocking matches the
         // recoverStaleWalks precedent — single DataStore.edit, <50ms.
         try {
-            kotlinx.coroutines.runBlocking { soundsPreferencesSeeder.seedDefaultsIfNeeded() }
+            kotlinx.coroutines.runBlocking {
+                soundsPreferencesSeederProvider.get().seedDefaultsIfNeeded()
+            }
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (t: Throwable) {
@@ -199,34 +235,34 @@ class PilgrimApp : Application(), Configuration.Provider {
         // Force Hilt to instantiate the bell observer so its `init`
         // block subscribes to the walk-state flow for the whole app
         // process. Without this reference the `@Singleton` binding
-        // stays lazy and bells silently don't fire. `hashCode()` is a
-        // side-effect-free op that ensures the field is actually used.
-        meditationBellObserver.hashCode()
+        // stays lazy and bells silently don't fire.
+        meditationBellObserverProvider.get()
 
         // Start the voice-guide auto-select observer for the app's
         // process lifetime. Its collection on `catalog.packStates`
         // lives on `VoiceGuideCatalogScope`, so no per-screen tether.
-        voiceGuideDownloadObserver.start()
+        voiceGuideDownloadObserverProvider.get().start()
 
         // Start the voice-guide playback orchestrator. Observes the
         // walk-state flow + selected-pack flow and drives the player
         // via per-session scheduler coroutines on VoiceGuidePlaybackScope.
-        voiceGuideOrchestrator.start()
+        voiceGuideOrchestratorProvider.get().start()
 
         // Start the soundscape playback orchestrator. Observes the
         // walk-state flow + selected-soundscape-id flow and drives
         // the looping ExoPlayer-backed player during meditation.
-        soundscapeOrchestrator.start()
+        soundscapeOrchestratorProvider.get().start()
 
         // Start the soundscape auto-download observer. Triggers a
         // manifest sync and enqueues background downloads for any
         // soundscape assets not already on disk (iOS parity).
-        soundscapeAutoDownloadObserver.start()
+        soundscapeAutoDownloadObserverProvider.get().start()
 
         // Stage 8-B: warm the collective-counter cache once per
         // process. fetchIfStale is TTL-gated so a re-launch within
         // 216s is a no-op.
-        collectiveScope.launch {
+        val collectiveRepository = collectiveRepositoryProvider.get()
+        collectiveScopeProvider.get().launch {
             try {
                 collectiveRepository.fetchIfStale()
             } catch (cancel: CancellationException) {
@@ -242,31 +278,22 @@ class PilgrimApp : Application(), Configuration.Provider {
         // data", or after a long stretch where the chain ran out).
         // REPLACE policy in the scheduler de-dupes if a chain run is
         // already pending.
-        widgetRefreshScheduler.scheduleMidnightRefresh()
+        widgetRefreshSchedulerProvider.get().scheduleMidnightRefresh()
 
         // Force Hilt to instantiate the walk-finalization observer so
         // its `init { scope.launch { ... } }` block subscribes to the
-        // controller state flow for the whole process. Without this
-        // reference the binding stays lazy and finalize side-effects
-        // would silently not fire — most consequentially, the
-        // collective counter would lose any walk finished from the
-        // notification's Finish button.
-        walkFinalizationObserver.hashCode()
+        // controller state flow for the whole process.
+        walkFinalizationObserverProvider.get()
 
         // Force Hilt to instantiate the walk-lifecycle observer so
         // its `init { scope.launch { ... } }` block subscribes to the
-        // controller state flow. Without this reference the binding
-        // stays lazy and voice auto-stop on the discardWalk path
-        // (Active → Idle) silently fails — leaving the recorder
-        // running and an orphan WAV on disk that the user has no UI
-        // to recover.
-        walkLifecycleObserver.hashCode()
+        // controller state flow. Without this, voice auto-stop on the
+        // discardWalk path (Active → Idle) silently fails.
+        walkLifecycleObserverProvider.get()
 
         // Stage 11-A: arm the cache backfill coordinator. Idempotent
-        // start() — re-invocation is a no-op via AtomicBoolean. The
-        // collector lives on @CollectiveRepoScope (SupervisorJob +
-        // Dispatchers.IO) so it survives the whole process.
-        walkMetricsBackfillCoordinator.start()
+        // start() — re-invocation is a no-op via AtomicBoolean.
+        walkMetricsBackfillCoordinatorProvider.get().start()
 
         // Cold-launch stale-walk recovery. Any walk with end_timestamp
         // NULL is one the OS killed (swipe-from-recents, force-stop,
@@ -275,27 +302,40 @@ class PilgrimApp : Application(), Configuration.Provider {
         // WalkSessionGuard.recoverIfNeeded does the same on cold start
         // via the JSON checkpoint file).
         //
+        // CRITICAL gate under the `:tracker` process split: if
+        // WalkTrackingService FGS is still alive in `:tracker`, the
+        // walk is in-progress there — UI was o-killed mid-walk and is
+        // just restarting. Finalizing here would tombstone a live
+        // walk: tracker keeps writing route samples to a row that UI
+        // has marked Finished, and the user sees the recovered banner
+        // instead of the ActiveWalkScreen they expected. Same FGS
+        // check the warm-launch path uses.
+        //
         // runBlocking on the main thread is acceptable here: the recovery
         // path is a single Room SELECT + a small fixed number of UPDATEs
         // (typically 0-1 walks). Total cost <50ms in practice. Running
         // synchronously here guarantees the banner is armed before any
         // UI composition reads `recoveredWalkId`, eliminating a
         // visible-then-flash-away race.
-        Log.i(TAG, "recoverStaleWalks: starting cold-launch recovery sweep")
-        try {
-            val recoveredId = kotlinx.coroutines.runBlocking {
-                walkController.recoverStaleWalks()
+        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive(this)) {
+            Log.i(TAG, "recoverStaleWalks: FGS alive in :tracker, NOT finalizing on cold launch")
+        } else {
+            Log.i(TAG, "recoverStaleWalks: starting cold-launch recovery sweep")
+            try {
+                val recoveredId = kotlinx.coroutines.runBlocking {
+                    walkControllerProvider.get().recoverStaleWalks()
+                }
+                if (recoveredId != null) {
+                    walkRecoveryRepositoryProvider.get().markRecoveredBlocking(recoveredId)
+                    Log.i(TAG, "recoverStaleWalks armed banner for walk=$recoveredId")
+                } else {
+                    Log.i(TAG, "recoverStaleWalks: no stale walks")
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "recoverStaleWalks failed", t)
             }
-            if (recoveredId != null) {
-                walkRecoveryRepository.markRecoveredBlocking(recoveredId)
-                Log.i(TAG, "recoverStaleWalks armed banner for walk=$recoveredId")
-            } else {
-                Log.i(TAG, "recoverStaleWalks: no stale walks")
-            }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (t: Throwable) {
-            Log.w(TAG, "recoverStaleWalks failed", t)
         }
 
         // E2: reap any launcher alias left enabled by an in-place icon
@@ -313,17 +353,22 @@ class PilgrimApp : Application(), Configuration.Provider {
         // belt-and-braces for the live-walk window. setComponentEnabled
         // can throw SecurityException on hardened ROMs — swallow so a
         // fresh install still boots.
-        val walkInProgress = when (walkController.state.value) {
-            is org.walktalkmeditate.pilgrim.domain.WalkState.Active,
-            is org.walktalkmeditate.pilgrim.domain.WalkState.Paused,
-            is org.walktalkmeditate.pilgrim.domain.WalkState.Meditating -> true
-            else -> false
+        // Under the :tracker process split, walkController.state in the
+        // UI process derives from Room asynchronously — `.value` is
+        // Idle until the first Room emission lands. The icon-reconcile
+        // gate needs a stable answer, so probe Room directly via the
+        // same blocking pattern recoverStaleWalks uses. `recoverStaleWalks`
+        // above has already finalized any orphan walk, so any walk
+        // still in `getActiveWalk()` is genuinely live in :tracker.
+        val activeWalk = kotlinx.coroutines.runBlocking {
+            walkRepositoryProvider.get().getActiveWalk()
         }
+        val walkInProgress = activeWalk != null
         if (walkInProgress) {
             Log.i(TAG, "icon reconcile skipped: walk in progress")
         } else {
             try {
-                iconSwitcher.reconcile()
+                iconSwitcherProvider.get().reconcile()
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {
@@ -331,6 +376,18 @@ class PilgrimApp : Application(), Configuration.Provider {
             }
         }
     }
+
+    /**
+     * Identify the process this Application instance is running in.
+     * `:tracker` (WalkTrackingService) gets a process name distinct
+     * from the main UI process; gating PilgrimApp's UI-side inits on
+     * this saves rss + avoids cross-process double-firing of eager
+     * observers.
+     *
+     * [Application.getProcessName] is API 28+, matching our minSdk 28
+     * — no fallback path needed.
+     */
+    private fun isMainProcess(): Boolean = getProcessName() == packageName
 
     /**
      * Drop the Coil image-memory cache when the system signals the UI

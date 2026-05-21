@@ -79,6 +79,14 @@ open class WalkRepository @Inject constructor(
 
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 
+    /**
+     * Cross-process Flow of the in-progress walk row (`end_timestamp
+     * IS NULL`) or null. The UI process consumes this to derive
+     * [org.walktalkmeditate.pilgrim.domain.WalkState] without
+     * sharing the `:tracker` process's in-memory state.
+     */
+    fun observeActiveWalk(): Flow<Walk?> = walkDao.observeActive()
+
     open suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)
 
     suspend fun startWalk(startTimestamp: Long, intention: String? = null): Walk {
@@ -173,9 +181,26 @@ open class WalkRepository @Inject constructor(
 
     suspend fun altitudeSamplesFor(walkId: Long): List<AltitudeSample> = altitudeDao.getForWalk(walkId)
 
+    /**
+     * Cross-process Flow of altitude samples for [walkId]. UI uses
+     * this to render live ascent on the active walk screen as the
+     * tracker writes new samples.
+     */
+    fun observeAltitudeSamples(walkId: Long): Flow<List<AltitudeSample>> =
+        altitudeDao.observeForWalk(walkId)
+
     suspend fun recordEvent(event: WalkEvent): Long = walkEventDao.insert(event)
 
     suspend fun eventsFor(walkId: Long): List<WalkEvent> = walkEventDao.getForWalk(walkId)
+
+    /**
+     * Cross-process Flow of walk-lifecycle events for [walkId]. The
+     * UI process consumes this together with [observeActiveWalk] and
+     * [observeLocationSamples] to derive the live WalkState while
+     * the `:tracker` process owns the in-memory reducer.
+     */
+    fun observeEventsForWalk(walkId: Long): Flow<List<WalkEvent>> =
+        walkEventDao.observeForWalk(walkId)
 
     suspend fun recordActivityInterval(interval: ActivityInterval): Long = activityIntervalDao.insert(interval)
 

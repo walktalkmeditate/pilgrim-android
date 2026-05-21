@@ -57,6 +57,16 @@ interface WalkDao {
     @Query("SELECT * FROM walks WHERE end_timestamp IS NULL ORDER BY start_timestamp DESC LIMIT 1")
     suspend fun getActive(): Walk?
 
+    /**
+     * Observe the in-progress walk row (`end_timestamp IS NULL`) as a
+     * cross-process Flow. Backs [UiWalkController]'s state derivation
+     * in the UI process — the `:tracker` process inserts the row and
+     * updates it; multi-instance Room invalidation re-emits here.
+     * Emits null when no walk is in progress.
+     */
+    @Query("SELECT * FROM walks WHERE end_timestamp IS NULL ORDER BY start_timestamp DESC LIMIT 1")
+    fun observeActive(): Flow<Walk?>
+
     @Query("SELECT * FROM walks ORDER BY start_timestamp DESC")
     fun observeAll(): Flow<List<Walk>>
 

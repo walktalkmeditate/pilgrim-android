@@ -47,7 +47,7 @@ class WalkControllerSetIntentionTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = SetIntentionTestClock(initial = 1_000L)
-        controller = WalkController(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
     }
 
     @After

@@ -163,31 +163,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun recoverIfStaleActiveWalk() {
-        val state = walkController.state.value
-        val needsRecovery = state is org.walktalkmeditate.pilgrim.domain.WalkState.Active ||
-            state is org.walktalkmeditate.pilgrim.domain.WalkState.Paused ||
-            state is org.walktalkmeditate.pilgrim.domain.WalkState.Meditating
-        if (!needsRecovery) {
-            Log.i(TAG, "warm-launch recovery: controller=${state::class.simpleName}, no-op")
-            return
-        }
         // CRITICAL gate: if WalkTrackingService FGS is still alive, the
-        // walk is genuinely in-progress in this same process — the user
-        // came BACK to it (notification tap, launcher icon while in
-        // background). Do NOT finalize. Only finalize if FGS is gone,
-        // which signals the user-initiated swipe-from-recents path.
-        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive()) {
-            Log.i(
-                TAG,
-                "warm-launch recovery: FGS is alive (controller=${state::class.simpleName}); " +
-                    "user returned to a live walk, NOT finalizing",
-            )
+        // walk is genuinely in-progress in the `:tracker` process — the
+        // user came BACK to it (notification tap, launcher icon while
+        // in background). Do NOT finalize. Only finalize if FGS is
+        // gone, which signals the user-initiated swipe-from-recents
+        // path.
+        //
+        // Pre-:tracker-split versions also short-circuited on
+        // `walkController.state.value` being Idle/Finished. Under the
+        // split, UI's state derives from Room asynchronously and is
+        // not guaranteed to be settled by the time MainActivity.onCreate
+        // runs warm-launch recovery. Dropping the state-value gate
+        // makes recoverStaleWalks the authoritative scan; it's a single
+        // Room SELECT + 0-1 UPDATEs (a few ms) so the cost on a
+        // no-stale-walk warm launch is negligible.
+        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive(this)) {
+            Log.i(TAG, "warm-launch recovery: FGS alive, NOT finalizing")
             return
         }
-        Log.i(
-            TAG,
-            "warm-launch recovery: controller=${state::class.simpleName}, FGS gone, finalizing",
-        )
+        Log.i(TAG, "warm-launch recovery: FGS gone, scanning for stale walks")
         try {
             val recoveredId = runBlocking { walkController.recoverStaleWalks() }
             if (recoveredId != null) {

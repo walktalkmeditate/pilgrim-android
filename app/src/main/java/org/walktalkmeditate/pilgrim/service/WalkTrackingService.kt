@@ -96,12 +96,15 @@ class WalkTrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (val action = intent?.action) {
-            ACTION_START -> startTracking()
+            ACTION_START -> startTracking(intent)
             ACTION_PAUSE,
             ACTION_RESUME,
+            ACTION_START_MEDITATION,
             ACTION_END_MEDITATION,
             ACTION_MARK_WAYPOINT,
-            ACTION_FINISH -> handleControllerAction(action)
+            ACTION_FINISH,
+            ACTION_DISCARD,
+            ACTION_SET_INTENTION -> handleControllerAction(action, intent)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -149,12 +152,15 @@ class WalkTrackingService : Service() {
         super.onDestroy()
     }
 
-    private fun startTracking() {
+    private fun startTracking(startIntent: Intent?) {
         // Re-entrant START intents are a no-op: if the pipeline is already
         // live, cancelling and relaunching would race the old subscription's
         // awaitClose cleanup against the new one's subscribe and produce
         // duplicate route samples in the window between.
         if (locationJob?.isActive == true) return
+
+        val intentionExtra = startIntent?.getStringExtra(EXTRA_INTENTION)
+        val isFreshStart = startIntent?.getBooleanExtra(EXTRA_FRESH_START, false) == true
 
         // API 34+ rejects startForeground(type=location) with SecurityException
         // if FINE location isn't granted at that moment; API 33+ silently
@@ -182,27 +188,52 @@ class WalkTrackingService : Service() {
         promoteToForeground(buildNotification(controller.state.value))
 
         locationJob = scope.launch {
-            // START_REDELIVER_INTENT revival: the OS killed the service
-            // mid-walk and re-delivered ACTION_START into a fresh
-            // process. The @Singleton WalkController is Idle (nothing
-            // restored it — restoreActiveWalk only runs from
-            // MainActivity, which is not up on a headless revival), so
-            // GPS samples would reduce against Idle and be silently
-            // dropped. Rebuild the controller from the unfinished Room
-            // row first. Idempotent + safe on the normal start path:
-            // restoreActiveWalk no-ops when the state is already
-            // non-Idle (user-initiated start already moved it to
-            // Active). When no unfinished walk exists, there is nothing
-            // to track — stop gracefully rather than collect GPS into a
-            // dead Idle controller.
+            // Three paths land here, all distinguished by Room state +
+            // the [EXTRA_FRESH_START] flag:
+            //
+            //  1. UI fresh start (`isFreshStart=true`, no active walk in
+            //     Room): insert the walk row + transition to Active here.
+            //     UI's [UiWalkController.startWalk] awaits the new row
+            //     via [WalkRepository.observeActiveWalk] before returning
+            //     a [Walk] to the caller.
+            //  2. START_REDELIVER_INTENT revival (the OS killed the
+            //     service mid-walk and re-delivered the last intent into
+            //     a fresh process): controller is Idle, walk row already
+            //     in Room, nothing to insert. `restoreActiveWalk` rebuilds
+            //     the in-memory state from the persisted row + events +
+            //     samples. The redelivered intent may carry the original
+            //     `isFreshStart=true` flag — the restored-walk check
+            //     short-circuits the insert before we'd double-create.
+            //  3. UI fresh start raced with a prior in-flight walk row
+            //     (defensive — shouldn't happen via UiWalkController
+            //     because UI's flow only fires ACTION_START when no
+            //     active walk is observed, but a stale process or
+            //     test-time corner can land here). `restoreActiveWalk`
+            //     adopts the existing walk; the `isFreshStart` insert is
+            //     skipped.
             if (controller.state.value is WalkState.Idle) {
                 val restored = runCatching { controller.restoreActiveWalk() }
                     .onFailure { Log.w(TAG, "restoreActiveWalk on revival failed", it) }
                     .getOrNull()
-                if (restored == null && controller.state.value is WalkState.Idle) {
-                    Log.w(TAG, "revived ACTION_START with no unfinished walk — stopping")
-                    stopSelf()
-                    return@launch
+                if (restored == null) {
+                    if (isFreshStart) {
+                        // No walk in Room yet — UI is asking us to
+                        // create one. Failure here (e.g. controller
+                        // already non-Idle from a fast race) is logged
+                        // and swallowed so the pipeline still proceeds
+                        // against whatever state the controller landed in.
+                        try {
+                            controller.startWalk(intentionExtra)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: IllegalStateException) {
+                            Log.w(TAG, "fresh ACTION_START rejected: ${e.message}")
+                        }
+                    } else {
+                        Log.w(TAG, "revived ACTION_START with no unfinished walk — stopping")
+                        stopSelf()
+                        return@launch
+                    }
                 }
             }
             try {
@@ -279,38 +310,64 @@ class WalkTrackingService : Service() {
         }
     }
 
-    private fun handleControllerAction(action: String) {
-        // Defensive: action intents only make sense while tracking is live.
-        // If the notification persisted past stopSelf and a stale tap
-        // reached a fresh service instance, locationJob will be null —
-        // the controller has no in-memory walk to act on, and processing
-        // the action would be a no-op at best and inconsistent at worst
-        // (e.g., dispatching Pause against a controller that's still
-        // Idle from cold-start). Bail and clear any orphan notification.
-        // (Note: PendingIntent.getService delivers via startService(),
-        // NOT startForegroundService(), so the API 31+ FGS timeout
-        // doesn't apply here — bailing is correctness, not deadline
-        // avoidance.)
-        if (locationJob?.isActive != true) {
-            Log.w(TAG, "ignoring action $action — tracking not active")
-            // Clear any orphan notification posted by a prior process
-            // instance (FGS notifications are normally cleared on
-            // service-destroy, but a stale notification can outlive an
-            // abnormal process termination). Without this, every tap
-            // spawns a fresh service that bails — the notification
-            // appears tappable but does nothing.
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
-            stopSelf()
-            return
-        }
+    private fun handleControllerAction(action: String, intent: Intent?) {
         scope.launch {
+            // Robustness path: if service was destroyed
+            // (locationJob inactive) but a UI action or
+            // notification tap arrives, restore the walk from Room
+            // first so the action targets the in-progress walk
+            // instead of bailing silently. Pre-:tracker-split this
+            // path was rare; under the split the tracker service can
+            // be torn down (FGS timeout, OEM cleanup) while the
+            // process remains and Room still holds the active walk —
+            // ACTION_FINISH on such a recreated service used to no-
+            // op and the walk would never get its end_timestamp set.
+            if (locationJob?.isActive != true) {
+                val restored = runCatching { controller.restoreActiveWalk() }
+                    .onFailure { Log.w(TAG, "restoreActiveWalk in action handler failed", it) }
+                    .getOrNull()
+                if (restored == null && controller.state.value is WalkState.Idle) {
+                    Log.w(TAG, "no active walk to apply $action to — bailing")
+                    // Clear any orphan notification posted by a prior
+                    // process instance (FGS notifications are normally
+                    // cleared on service-destroy, but a stale
+                    // notification can outlive abnormal process
+                    // termination).
+                    getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+                    stopSelf()
+                    return@launch
+                }
+                Log.i(TAG, "applying $action on restored walk (service was inactive)")
+            }
             try {
                 when (action) {
                     ACTION_PAUSE -> controller.pauseWalk()
                     ACTION_RESUME -> controller.resumeWalk()
-                    ACTION_END_MEDITATION -> controller.endMeditation()
-                    ACTION_MARK_WAYPOINT -> controller.recordWaypoint()
+                    ACTION_START_MEDITATION -> controller.startMeditation()
+                    ACTION_END_MEDITATION -> {
+                        // EXTRA_END_MILLIS carries the captured Done-tap
+                        // timestamp from the meditation screen so the
+                        // closing 6.5s ceremony doesn't inflate the
+                        // recorded interval. Notification-tap path
+                        // omits it → controller falls back to its
+                        // injected clock.
+                        val endMillis = intent
+                            ?.takeIf { it.hasExtra(EXTRA_END_MILLIS) }
+                            ?.getLongExtra(EXTRA_END_MILLIS, -1L)
+                            ?.takeIf { it > 0 }
+                        controller.endMeditation(endMillis)
+                    }
+                    ACTION_MARK_WAYPOINT -> {
+                        val label = intent?.getStringExtra(EXTRA_WAYPOINT_LABEL)
+                        val icon = intent?.getStringExtra(EXTRA_WAYPOINT_ICON)
+                        controller.recordWaypoint(label = label, icon = icon)
+                    }
                     ACTION_FINISH -> controller.finishWalk()
+                    ACTION_DISCARD -> controller.discardWalk()
+                    ACTION_SET_INTENTION -> {
+                        val text = intent?.getStringExtra(EXTRA_INTENTION) ?: ""
+                        controller.setIntention(text)
+                    }
                 }
             } catch (ce: CancellationException) {
                 throw ce
@@ -479,19 +536,64 @@ class WalkTrackingService : Service() {
 
     companion object {
         /**
-         * Cross-cutting "is the FGS currently alive in this process" flag.
-         * Set in `onCreate`, cleared in `onDestroy`. Read by
-         * `MainActivity.onCreate` to discriminate the warm-launch-after-
-         * swipe case (FGS gone, walk row stale → recover) from the
-         * notification-tap-to-return case (FGS still alive, controller's
-         * Active state is the source of truth → don't recover).
+         * Per-process "is the FGS alive in THIS process" flag. Set in
+         * onCreate / cleared in onDestroy. Used by the same-process
+         * decideStateAction path — the service queries its own state,
+         * so the per-process scope is correct here.
          *
-         * AtomicBoolean for thread-safety across the service's worker
-         * threads + the Activity's main thread.
+         * **Do NOT read this from the UI process** — under the
+         * `:tracker` process split the flag is only ever set in
+         * `:tracker`, so UI reads always see false. Cross-process
+         * callers must use [isFgsAlive] instead, which queries
+         * ActivityManager.getRunningServices for the canonical answer.
          */
         private val isRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
-        fun isFgsAlive(): Boolean = isRunning.get()
+        /**
+         * Cross-process "is the WalkTrackingService alive in any
+         * process of this app" query. Called by
+         * `MainActivity.onCreate` to discriminate the warm-launch-
+         * after-swipe case (FGS gone, walk row stale → recover) from
+         * the notification-tap-to-return case (FGS still alive in
+         * `:tracker`, do not finalize a live walk).
+         *
+         * Under the `:tracker` process split, the previous
+         * `isRunning.get()` implementation was unsafe: the static is
+         * only set in the `:tracker` process, so the UI process's
+         * classloader copy stays false forever and warm-launch
+         * recovery would falsely finalize the live walk on every
+         * re-open of the app.
+         *
+         * [ActivityManager.getRunningServices] remains accessible to
+         * the calling app for its own services on API 26+ — the
+         * third-party restriction documented in the API only applies
+         * to OTHER apps' services. We pass `Int.MAX_VALUE` because
+         * the list always contains the caller's services regardless
+         * of the limit.
+         */
+        fun isFgsAlive(context: android.content.Context): Boolean {
+            val am = context.getSystemService(android.app.ActivityManager::class.java)
+                ?: return false
+            val name = WalkTrackingService::class.java.name
+            return try {
+                @Suppress("DEPRECATION")
+                am.getRunningServices(Int.MAX_VALUE)
+                    .any { it.service.className == name && it.foreground }
+            } catch (t: Throwable) {
+                // ActivityManager can throw on some hardened ROMs.
+                // Fall back to the conservative answer (assume FGS
+                // alive) so we DO NOT finalize a possibly-live walk.
+                // The warm-launch recovery is a backstop; a missed
+                // recovery just means the user sees the walk re-open
+                // — far less harmful than tombstoning a live walk.
+                android.util.Log.w(
+                    "WalkTrackingService",
+                    "isFgsAlive: ActivityManager query failed, assuming alive",
+                    t,
+                )
+                true
+            }
+        }
 
         /**
          * The value [onStartCommand] returns. Named so a Robolectric
@@ -513,11 +615,39 @@ class WalkTrackingService : Service() {
         const val ACTION_START = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START"
         const val ACTION_PAUSE = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.PAUSE"
         const val ACTION_RESUME = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.RESUME"
+        const val ACTION_START_MEDITATION =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.START_MEDITATION"
         const val ACTION_END_MEDITATION =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.END_MEDITATION"
         const val ACTION_MARK_WAYPOINT =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.MARK_WAYPOINT"
         const val ACTION_FINISH = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.FINISH"
+        const val ACTION_DISCARD = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.DISCARD"
+        const val ACTION_SET_INTENTION =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_INTENTION"
+
+        /** Extra: starting walk's intention text, or new intention on
+         *  [ACTION_SET_INTENTION]. UTF-8 string, ≤140 chars (server-side
+         *  controller still re-sanitizes). */
+        const val EXTRA_INTENTION = "extra.intention"
+
+        /** Extra: flag distinguishing a UI-initiated [ACTION_START]
+         *  (where the service must insert the walk row) from a
+         *  START_REDELIVER_INTENT revival (where the service restores
+         *  from an existing Room row). Boolean. */
+        const val EXTRA_FRESH_START = "extra.fresh_start"
+
+        /** Extra: explicit Done-tap millis for [ACTION_END_MEDITATION].
+         *  Long. Absent → service uses its own clock. */
+        const val EXTRA_END_MILLIS = "extra.end_millis"
+
+        /** Extra: optional waypoint label (UTF-8 string) for
+         *  [ACTION_MARK_WAYPOINT]. */
+        const val EXTRA_WAYPOINT_LABEL = "extra.waypoint_label"
+
+        /** Extra: optional waypoint icon key (UTF-8 string) for
+         *  [ACTION_MARK_WAYPOINT]. */
+        const val EXTRA_WAYPOINT_ICON = "extra.waypoint_icon"
 
         private const val TAG = "WalkTrackingService"
         /** Persist `walk.steps` this often while Active so a mid-walk

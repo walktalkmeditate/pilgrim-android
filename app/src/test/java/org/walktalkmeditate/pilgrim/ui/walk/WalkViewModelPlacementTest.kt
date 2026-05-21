@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
 
 /**
  * Covers D13 whisper + stone placement state transitions: cap
@@ -82,7 +83,7 @@ class WalkViewModelPlacementTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = PlacementTestClock(initial = 1_000L)
-        controller = WalkController(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
         val fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)
