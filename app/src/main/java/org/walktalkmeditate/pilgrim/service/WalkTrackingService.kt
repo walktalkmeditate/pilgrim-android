@@ -311,30 +311,34 @@ class WalkTrackingService : Service() {
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {
-        // Defensive: action intents only make sense while tracking is live.
-        // If the notification persisted past stopSelf and a stale tap
-        // reached a fresh service instance, locationJob will be null —
-        // the controller has no in-memory walk to act on, and processing
-        // the action would be a no-op at best and inconsistent at worst
-        // (e.g., dispatching Pause against a controller that's still
-        // Idle from cold-start). Bail and clear any orphan notification.
-        // (Note: PendingIntent.getService delivers via startService(),
-        // NOT startForegroundService(), so the API 31+ FGS timeout
-        // doesn't apply here — bailing is correctness, not deadline
-        // avoidance.)
-        if (locationJob?.isActive != true) {
-            Log.w(TAG, "ignoring action $action — tracking not active")
-            // Clear any orphan notification posted by a prior process
-            // instance (FGS notifications are normally cleared on
-            // service-destroy, but a stale notification can outlive an
-            // abnormal process termination). Without this, every tap
-            // spawns a fresh service that bails — the notification
-            // appears tappable but does nothing.
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
-            stopSelf()
-            return
-        }
         scope.launch {
+            // Robustness path: if service was destroyed
+            // (locationJob inactive) but a UI action or
+            // notification tap arrives, restore the walk from Room
+            // first so the action targets the in-progress walk
+            // instead of bailing silently. Pre-:tracker-split this
+            // path was rare; under the split the tracker service can
+            // be torn down (FGS timeout, OEM cleanup) while the
+            // process remains and Room still holds the active walk —
+            // ACTION_FINISH on such a recreated service used to no-
+            // op and the walk would never get its end_timestamp set.
+            if (locationJob?.isActive != true) {
+                val restored = runCatching { controller.restoreActiveWalk() }
+                    .onFailure { Log.w(TAG, "restoreActiveWalk in action handler failed", it) }
+                    .getOrNull()
+                if (restored == null && controller.state.value is WalkState.Idle) {
+                    Log.w(TAG, "no active walk to apply $action to — bailing")
+                    // Clear any orphan notification posted by a prior
+                    // process instance (FGS notifications are normally
+                    // cleared on service-destroy, but a stale
+                    // notification can outlive abnormal process
+                    // termination).
+                    getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+                    stopSelf()
+                    return@launch
+                }
+                Log.i(TAG, "applying $action on restored walk (service was inactive)")
+            }
             try {
                 when (action) {
                     ACTION_PAUSE -> controller.pauseWalk()
