@@ -35,7 +35,6 @@ class PhotoReliquarySectionTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(emptyList()),
-                        onPinPhotos = {},
                         onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
@@ -48,14 +47,13 @@ class PhotoReliquarySectionTest {
     }
 
     @Test
-    fun `populated with photos shows header and enabled Add button`() {
+    fun `populated with photos shows header`() {
         val photos = (1L..3L).map { photo(it) }
         composeRule.setContent {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(photos),
-                        onPinPhotos = {},
                         onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
@@ -64,26 +62,9 @@ class PhotoReliquarySectionTest {
             }
         }
         composeRule.onNodeWithText("Reliquary").assertIsDisplayed()
-        composeRule.onNodeWithText("Add").assertIsDisplayed().assertIsEnabled()
-    }
-
-    @Test
-    fun `full state (MAX pins) disables Add and shows Full label`() {
-        val photos = (1L..MAX_PINS_PER_WALK.toLong()).map { photo(it) }
-        composeRule.setContent {
-            PilgrimTheme {
-                Box(Modifier.size(400.dp, 800.dp)) {
-                    PhotoReliquarySection(
-                        state = ReliquaryState.Populated(photos),
-                        onPinPhotos = {},
-                        onTogglePin = {},
-                        onForegrounded = {},
-                        onSettingsClick = {},
-                    )
-                }
-            }
-        }
-        composeRule.onNodeWithText("Full").assertIsDisplayed().assertIsNotEnabled()
+        // iOS parity: no manual Add affordance — the reliquary
+        // surfaces auto-discovered candidates and the user pins via
+        // the carousel's long-press → tap-pin gesture.
         composeRule.onNodeWithText("Add").assertDoesNotExist()
     }
 
@@ -95,7 +76,6 @@ class PhotoReliquarySectionTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(photos),
-                        onPinPhotos = {},
                         onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
