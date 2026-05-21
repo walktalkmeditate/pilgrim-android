@@ -139,6 +139,7 @@ class VoiceGuideOrchestratorVoiceEnabledTest {
                 capturingPlayer, FixedClock(),
                 FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
                 FakeVoicePreferencesRepository(initialVoiceGuideEnabled = false),
+                VoiceGuideProgressRepository.NoOp,
                 s,
             ).start()
             runCurrent()
@@ -159,7 +160,7 @@ class VoiceGuideOrchestratorVoiceEnabledTest {
                 walkState, selectedPackId, manifestService, fileStore,
                 capturingPlayer, FixedClock(),
                 FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
-                voicePrefs, s,
+                voicePrefs, VoiceGuideProgressRepository.NoOp, s,
             ).start()
             runCurrent()
             assertEquals(0, capturingPlayer.playCount)
@@ -186,7 +187,7 @@ class VoiceGuideOrchestratorVoiceEnabledTest {
                 walkState, selectedPackId, manifestService, fileStore,
                 capturingPlayer, FixedClock(),
                 FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
-                voicePrefs, s,
+                voicePrefs, VoiceGuideProgressRepository.NoOp, s,
             ).start()
             runCurrent()
             val baseline = capturingPlayer.playCount

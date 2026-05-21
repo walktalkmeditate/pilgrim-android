@@ -632,6 +632,11 @@ class WalkSummaryViewModel @Inject constructor(
                 }.onFailure {
                     android.util.Log.w(TAG, "photo auto-discovery failed for walk ${walk.id}", it)
                 }.getOrNull().orEmpty()
+                android.util.Log.i(
+                    TAG,
+                    "auto-discovery walk=${walk.id} window=${walk.startTimestamp}..$end " +
+                        "samples=${route.size} candidates=${candidates.size}",
+                )
                 if (candidates.isNotEmpty()) {
                     pinPhotos(candidates.map { it.uri })
                 }

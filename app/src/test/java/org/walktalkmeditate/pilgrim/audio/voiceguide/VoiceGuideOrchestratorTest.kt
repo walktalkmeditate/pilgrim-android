@@ -138,6 +138,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -158,6 +159,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -196,6 +198,7 @@ class VoiceGuideOrchestratorTest {
                 capturingPlayer, FixedClock(),
                 FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
                 FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
                 s,
             ).start()
             runCurrent()
@@ -237,6 +240,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -269,6 +273,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -291,6 +296,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -318,6 +324,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -343,6 +350,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -375,6 +383,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -403,6 +412,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -437,6 +447,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()
@@ -461,6 +472,7 @@ class VoiceGuideOrchestratorTest {
             capturingPlayer, FixedClock(),
             prefs,
             FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
             s,
         ).start()
         runCurrent()

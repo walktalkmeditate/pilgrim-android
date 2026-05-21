@@ -88,6 +88,7 @@ class VoiceGuideOrchestrator @Inject constructor(
     private val clock: Clock,
     private val soundsPreferences: SoundsPreferencesRepository,
     private val voicePreferences: VoicePreferencesRepository,
+    private val progressRepository: VoiceGuideProgressRepository,
     @VoiceGuidePlaybackScope private val scope: CoroutineScope,
 ) : VoiceGuidePauseController {
     private val _isPaused = MutableStateFlow(false)
@@ -199,11 +200,13 @@ class VoiceGuideOrchestrator @Inject constructor(
                             // over (iOS `stopGuiding` also resets it).
                             _isPaused.value = false
                             _activePackName.value = pack.name
+                            val walkId = state.walk.walkId
                             walkJob = scope.launch {
                                 try {
                                     runSchedulerLoop(
                                         pack = pack,
                                         ctx = VoiceGuideScheduler.SchedulerContext.Walk,
+                                        walkId = walkId,
                                         postMedSilenceSec = silenceSec,
                                     )
                                 } catch (ce: CancellationException) {
@@ -252,6 +255,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                                     runSchedulerLoop(
                                         pack = pack,
                                         ctx = VoiceGuideScheduler.SchedulerContext.Meditation,
+                                        walkId = null,
                                     )
                                 } catch (ce: CancellationException) {
                                     throw ce
@@ -275,6 +279,21 @@ class VoiceGuideOrchestrator @Inject constructor(
                     _activePackName.value = null
                     _isPaused.value = false
                     safeStopPlayer()
+                    // Clear persisted played-set on terminal transitions
+                    // (Finished / Idle) so the next walk starts fresh
+                    // at the opening prompt — iOS parity behavior.
+                    // Paused does NOT clear: a resumed walk should
+                    // continue past the last played prompt, not loop
+                    // back to seq=1.
+                    if (state is WalkState.Finished || state is WalkState.Idle) {
+                        scope.launch {
+                            try {
+                                progressRepository.clear()
+                            } catch (t: Throwable) {
+                                Log.w(TAG, "voice-guide progress clear failed", t)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -283,6 +302,7 @@ class VoiceGuideOrchestrator @Inject constructor(
     private suspend fun runSchedulerLoop(
         pack: VoiceGuidePack,
         ctx: VoiceGuideScheduler.SchedulerContext,
+        walkId: Long?,
         postMedSilenceSec: Int = 0,
     ) {
         val (prompts: List<VoiceGuidePrompt>, density: PromptDensity) = when (ctx) {
@@ -297,7 +317,20 @@ class VoiceGuideOrchestrator @Inject constructor(
                 medPrompts to medDensity
             }
         }
-        val sched = VoiceGuideScheduler(ctx, prompts, density, clock)
+        // Walk-context only: restore the persisted played-set so a
+        // UI process restart mid-walk (after o-kill) picks up where
+        // the prior scheduler left off — otherwise the new scheduler
+        // re-plays the opening prompt every restart. Meditation
+        // context stays per-session (short window, iOS-parity fresh
+        // start each time).
+        val initialPlayed = if (ctx == VoiceGuideScheduler.SchedulerContext.Walk && walkId != null) {
+            val restored = progressRepository.load(walkId)
+            Log.i(TAG, "scheduler loaded walk=$walkId restored=${restored.size} ids=$restored")
+            restored
+        } else {
+            emptySet()
+        }
+        val sched = VoiceGuideScheduler(ctx, prompts, density, clock, initialPlayed)
         sched.start()
         if (postMedSilenceSec > 0) sched.setPostMeditationSilence(postMedSilenceSec)
 
@@ -314,7 +347,13 @@ class VoiceGuideOrchestrator @Inject constructor(
                     isPaused = _isPaused.value,
                     isRecordingVoice = false,
                 )
-                if (prompt != null) playOrSkip(prompt, sched)
+                if (prompt != null) {
+                    playOrSkip(
+                        prompt = prompt,
+                        sched = sched,
+                        persistWalkId = if (ctx == VoiceGuideScheduler.SchedulerContext.Walk) walkId else null,
+                    )
+                }
                 delay(TICK_INTERVAL_MS)
             }
         } finally {
@@ -325,6 +364,7 @@ class VoiceGuideOrchestrator @Inject constructor(
     private fun playOrSkip(
         prompt: VoiceGuidePrompt,
         sched: VoiceGuideScheduler,
+        persistWalkId: Long?,
     ) {
         // Final defensive gate-check immediately before `player.play()`.
         // The combine-driven cancellation in `observe()` covers the
@@ -359,7 +399,25 @@ class VoiceGuideOrchestrator @Inject constructor(
         // coroutine (cancellation lands at the `delay()` in the outer
         // loop) and any main-thread exception inside the post would
         // never propagate here. No try/catch needed.
-        player.play(file) { sched.markPlayed(prompt.id) }
+        // Walk-context plays also persist to the progress repo so a
+        // UI restart mid-walk doesn't replay the opening prompt.
+        // Meditation plays stay per-session (persistWalkId is null
+        // for meditation context).
+        Log.i(TAG, "play start prompt=${prompt.id} persistWalkId=$persistWalkId")
+        player.play(file) {
+            Log.i(TAG, "play onCompletion prompt=${prompt.id} persistWalkId=$persistWalkId")
+            sched.markPlayed(prompt.id)
+            if (persistWalkId != null) {
+                scope.launch {
+                    try {
+                        progressRepository.markPlayed(persistWalkId, prompt.id)
+                        Log.i(TAG, "persisted played walk=$persistWalkId prompt=${prompt.id}")
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "voice-guide progress persist failed", t)
+                    }
+                }
+            }
+        }
     }
 
     /**

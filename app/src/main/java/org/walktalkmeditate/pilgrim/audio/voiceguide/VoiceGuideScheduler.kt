@@ -36,6 +36,7 @@ class VoiceGuideScheduler(
     prompts: List<VoiceGuidePrompt>,
     private val scheduling: PromptDensity,
     private val clock: Clock,
+    initialPlayedIds: Set<String> = emptySet(),
     private val random: (bound: Int) -> Int = { Random.Default.nextInt(it) },
 ) {
     enum class SchedulerContext(val settlingSec: Int, val closingSec: Int) {
@@ -58,7 +59,7 @@ class VoiceGuideScheduler(
     @Volatile private var lastPlayedMillis: Long? = null
     @Volatile private var nextIntervalSec: Int = scheduling.initialDelaySec
     private val played: MutableSet<String> =
-        Collections.synchronizedSet(mutableSetOf())
+        Collections.synchronizedSet(initialPlayedIds.toMutableSet())
     @Volatile private var isPlaying = false
     @Volatile private var silenceUntilMillis: Long? = null
 

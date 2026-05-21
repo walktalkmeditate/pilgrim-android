@@ -59,7 +59,7 @@ private val SKELETON_HEIGHT = 88.dp
 
 internal fun isPhotosPermissionGranted(context: android.content.Context): Boolean {
     val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
-    return when {
+    val readGranted = when {
         android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
             // Android 14+: accept either full (READ_MEDIA_IMAGES) or partial
             // (READ_MEDIA_VISUAL_USER_SELECTED) photo access. Per spec non-goal,
@@ -82,6 +82,22 @@ internal fun isPhotosPermissionGranted(context: android.content.Context): Boolea
             ) == granted
         }
     }
+    if (!readGranted) return false
+    // Q+ also requires ACCESS_MEDIA_LOCATION for the auto-discovery
+    // scanner to read unredacted EXIF GPS via
+    // MediaStore.setRequireOriginal. Without this, the scanner can
+    // still query MediaStore (READ_MEDIA_IMAGES alone), but every
+    // candidate's GPS comes back null → zero matches → empty
+    // reliquary that the user has no in-app path to fix. Treat as
+    // PermissionDenied so the Grant prompt re-requests both
+    // permissions via [photoPermissionsToRequest], which already
+    // includes ACCESS_MEDIA_LOCATION on Q+.
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, "android.permission.ACCESS_MEDIA_LOCATION",
+            ) != granted) return false
+    }
+    return true
 }
 
 /**
