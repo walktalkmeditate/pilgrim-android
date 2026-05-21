@@ -404,6 +404,35 @@ class WalkViewModel @Inject constructor(
     val steps: StateFlow<Int?> = controller.liveSteps
 
     /**
+     * Live ascent (meters of elevation gained) for the active walk.
+     * Observes `altitude_samples` cross-process: the `:tracker`
+     * process inserts samples via the [WalkEffect.PersistLocation]
+     * effect; multi-instance Room invalidation re-emits in the UI
+     * process so the stats sheet's Ascent column recomputes on every
+     * new sample.
+     *
+     * Null when no active walk OR no samples yet OR cumulative
+     * ascent is at-or-below the 1 m display threshold (iOS parity
+     * `walk.ascend > 1` gate). The sheet renders "—" for null and
+     * the formatted altitude otherwise.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val ascendMeters: StateFlow<Double?> = walkState
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
+            if (walkId == null) {
+                flowOf(null)
+            } else {
+                repository.observeAltitudeSamples(walkId).map { samples ->
+                    val ascend = org.walktalkmeditate.pilgrim.data.walk.computeAscend(samples)
+                    ascend.takeIf { it > 1.0 }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
      * iOS parity `ActiveWalkViewModel.voiceGuidePackName` /
      * `voiceGuideManagement.isPaused` (`ActiveWalkView.swift:433-443`).
      * Direct passthrough of the @Singleton orchestrator's hot

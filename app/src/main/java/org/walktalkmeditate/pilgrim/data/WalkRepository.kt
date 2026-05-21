@@ -181,6 +181,14 @@ open class WalkRepository @Inject constructor(
 
     suspend fun altitudeSamplesFor(walkId: Long): List<AltitudeSample> = altitudeDao.getForWalk(walkId)
 
+    /**
+     * Cross-process Flow of altitude samples for [walkId]. UI uses
+     * this to render live ascent on the active walk screen as the
+     * tracker writes new samples.
+     */
+    fun observeAltitudeSamples(walkId: Long): Flow<List<AltitudeSample>> =
+        altitudeDao.observeForWalk(walkId)
+
     suspend fun recordEvent(event: WalkEvent): Long = walkEventDao.insert(event)
 
     suspend fun eventsFor(walkId: Long): List<WalkEvent> = walkEventDao.getForWalk(walkId)

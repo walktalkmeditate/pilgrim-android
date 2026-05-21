@@ -106,6 +106,7 @@ fun WalkStatsSheet(
     recordingsCount: Int,
     units: UnitSystem,
     steps: Int? = null,
+    ascendMeters: Double? = null,
     intention: String? = null,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
@@ -285,6 +286,7 @@ fun WalkStatsSheet(
                         recordingsCount = recordingsCount,
                         units = units,
                         steps = steps,
+                        ascendMeters = ascendMeters,
                         intention = intention,
                         onStartWalk = onStartWalk,
                         onStartMeditation = onStartMeditation,
@@ -421,6 +423,7 @@ private fun ExpandedContent(
     recordingsCount: Int,
     units: UnitSystem,
     steps: Int?,
+    ascendMeters: Double?,
     intention: String?,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
@@ -483,7 +486,7 @@ private fun ExpandedContent(
                 modifier = Modifier.weight(1f),
             )
             StatColumn(
-                value = "—",
+                value = ascendMeters?.let { WalkFormat.altitude(it, units) } ?: "—",
                 label = stringResource(R.string.walk_stat_ascent),
                 modifier = Modifier.weight(1f),
             )
