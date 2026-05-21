@@ -297,27 +297,40 @@ class PilgrimApp : Application(), Configuration.Provider {
         // WalkSessionGuard.recoverIfNeeded does the same on cold start
         // via the JSON checkpoint file).
         //
+        // CRITICAL gate under the `:tracker` process split: if
+        // WalkTrackingService FGS is still alive in `:tracker`, the
+        // walk is in-progress there — UI was o-killed mid-walk and is
+        // just restarting. Finalizing here would tombstone a live
+        // walk: tracker keeps writing route samples to a row that UI
+        // has marked Finished, and the user sees the recovered banner
+        // instead of the ActiveWalkScreen they expected. Same FGS
+        // check the warm-launch path uses.
+        //
         // runBlocking on the main thread is acceptable here: the recovery
         // path is a single Room SELECT + a small fixed number of UPDATEs
         // (typically 0-1 walks). Total cost <50ms in practice. Running
         // synchronously here guarantees the banner is armed before any
         // UI composition reads `recoveredWalkId`, eliminating a
         // visible-then-flash-away race.
-        Log.i(TAG, "recoverStaleWalks: starting cold-launch recovery sweep")
-        try {
-            val recoveredId = kotlinx.coroutines.runBlocking {
-                walkController.recoverStaleWalks()
+        if (org.walktalkmeditate.pilgrim.service.WalkTrackingService.isFgsAlive(this)) {
+            Log.i(TAG, "recoverStaleWalks: FGS alive in :tracker, NOT finalizing on cold launch")
+        } else {
+            Log.i(TAG, "recoverStaleWalks: starting cold-launch recovery sweep")
+            try {
+                val recoveredId = kotlinx.coroutines.runBlocking {
+                    walkController.recoverStaleWalks()
+                }
+                if (recoveredId != null) {
+                    walkRecoveryRepository.markRecoveredBlocking(recoveredId)
+                    Log.i(TAG, "recoverStaleWalks armed banner for walk=$recoveredId")
+                } else {
+                    Log.i(TAG, "recoverStaleWalks: no stale walks")
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "recoverStaleWalks failed", t)
             }
-            if (recoveredId != null) {
-                walkRecoveryRepository.markRecoveredBlocking(recoveredId)
-                Log.i(TAG, "recoverStaleWalks armed banner for walk=$recoveredId")
-            } else {
-                Log.i(TAG, "recoverStaleWalks: no stale walks")
-            }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (t: Throwable) {
-            Log.w(TAG, "recoverStaleWalks failed", t)
         }
 
         // E2: reap any launcher alias left enabled by an in-place icon
