@@ -324,7 +324,9 @@ class VoiceGuideOrchestrator @Inject constructor(
         // context stays per-session (short window, iOS-parity fresh
         // start each time).
         val initialPlayed = if (ctx == VoiceGuideScheduler.SchedulerContext.Walk && walkId != null) {
-            progressRepository.load(walkId)
+            val restored = progressRepository.load(walkId)
+            Log.i(TAG, "scheduler loaded walk=$walkId restored=${restored.size} ids=$restored")
+            restored
         } else {
             emptySet()
         }
@@ -401,12 +403,15 @@ class VoiceGuideOrchestrator @Inject constructor(
         // UI restart mid-walk doesn't replay the opening prompt.
         // Meditation plays stay per-session (persistWalkId is null
         // for meditation context).
+        Log.i(TAG, "play start prompt=${prompt.id} persistWalkId=$persistWalkId")
         player.play(file) {
+            Log.i(TAG, "play onCompletion prompt=${prompt.id} persistWalkId=$persistWalkId")
             sched.markPlayed(prompt.id)
             if (persistWalkId != null) {
                 scope.launch {
                     try {
                         progressRepository.markPlayed(persistWalkId, prompt.id)
+                        Log.i(TAG, "persisted played walk=$persistWalkId prompt=${prompt.id}")
                     } catch (t: Throwable) {
                         Log.w(TAG, "voice-guide progress persist failed", t)
                     }
