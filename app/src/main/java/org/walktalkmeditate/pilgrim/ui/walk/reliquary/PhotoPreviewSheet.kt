@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -60,8 +62,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
  */
 @Composable
 internal fun PhotoPreviewSheet(
-    photo: WalkPhoto,
-    isPinned: Boolean,
+    candidate: PhotoCandidate,
     isPinningInFlight: Boolean,
     onPin: () -> Unit,
     onOpenInGallery: () -> Unit,
@@ -75,8 +76,7 @@ internal fun PhotoPreviewSheet(
         ),
     ) {
         PhotoPreviewSheetContent(
-            photo = photo,
-            isPinned = isPinned,
+            candidate = candidate,
             isPinningInFlight = isPinningInFlight,
             onPin = onPin,
             onOpenInGallery = onOpenInGallery,
@@ -87,8 +87,7 @@ internal fun PhotoPreviewSheet(
 
 @Composable
 private fun PhotoPreviewSheetContent(
-    photo: WalkPhoto,
-    isPinned: Boolean,
+    candidate: PhotoCandidate,
     isPinningInFlight: Boolean,
     onPin: () -> Unit,
     onOpenInGallery: () -> Unit,
@@ -124,7 +123,7 @@ private fun PhotoPreviewSheetContent(
             .fillMaxSize()
             .background(Color.Black)
             .graphicsLayer { translationY = with(density) { displayOffsetDp.dp.toPx() } }
-            .pointerInput(photo.id) {
+            .pointerInput(candidate.uri) {
                 detectVerticalDragGestures(
                     onDragStart = { isDragging = true },
                     onDragEnd = {
@@ -158,7 +157,7 @@ private fun PhotoPreviewSheetContent(
                 contentAlignment = Alignment.Center,
             ) {
                 AsyncImage(
-                    model = photo.photoUri,
+                    model = candidate.uri,
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
@@ -167,7 +166,7 @@ private fun PhotoPreviewSheetContent(
                 )
             }
             BottomActions(
-                isPinned = isPinned,
+                isPinned = candidate.isPinned,
                 isPinningInFlight = isPinningInFlight,
                 onPin = onPin,
                 onOpenInGallery = onOpenInGallery,
@@ -190,21 +189,25 @@ private fun BottomActions(
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // iOS parity: pin button is a toggle. Disabled only while a
+        // pin write is in-flight; otherwise tap commits the inverse
+        // of the current pin state via [onPin] (which the parent has
+        // wired to togglePin(candidate)).
         OutlinedButton(
             onClick = onPin,
-            enabled = !isPinned && !isPinningInFlight,
+            enabled = !isPinningInFlight,
             modifier = Modifier
                 .weight(1f)
                 .testTag("preview-sheet-pin-button"),
         ) {
             Icon(
-                imageVector = Icons.Outlined.Bookmark,
+                imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
                 contentDescription = null,
             )
             Spacer(Modifier.height(PilgrimSpacing.xs))
             Text(
                 text = stringResource(
-                    if (isPinned) R.string.preview_sheet_pinned
+                    if (isPinned) R.string.preview_sheet_unpin
                     else R.string.preview_sheet_pin,
                 ),
             )

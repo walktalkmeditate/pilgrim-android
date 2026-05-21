@@ -24,19 +24,20 @@ class PhotoPreviewSheetTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    private val photo = WalkPhoto(
-        id = 1L,
-        walkId = 100L,
-        photoUri = "content://media/1",
-        pinnedAt = 1_000L,
+    private val photo = PhotoCandidate(
+        uri = "content://media/1",
+        takenAtMs = 1_000L,
+        capturedLat = null,
+        capturedLng = null,
+        isPinned = false,
+        pinnedPhotoId = 1L,
     )
 
     @Test
     fun sheetRenders_withPhotoImageAndPinButton() {
         composeRule.setContent {
             PhotoPreviewSheet(
-                photo = photo,
-                isPinned = false,
+                candidate = photo.copy(isPinned = false),
                 isPinningInFlight = false,
                 onPin = {},
                 onOpenInGallery = {},
@@ -48,12 +49,15 @@ class PhotoPreviewSheetTest {
     }
 
     @Test
-    fun pinButtonDisabled_whenAlreadyPinned() {
+    fun pinButtonFires_whenAlreadyPinned_actingAsUnpin() {
+        // iOS-parity: the pin button is a toggle. When already pinned,
+        // tapping it acts as Unpin (fires onPin which the parent has
+        // wired to togglePin). Disabled-only-on-already-pinned was the
+        // pre-iOS-parity behavior.
         var pinFired = 0
         composeRule.setContent {
             PhotoPreviewSheet(
-                photo = photo,
-                isPinned = true,
+                candidate = photo.copy(isPinned = true),
                 isPinningInFlight = false,
                 onPin = { pinFired += 1 },
                 onOpenInGallery = {},
@@ -62,7 +66,7 @@ class PhotoPreviewSheetTest {
         }
         composeRule.onNodeWithTag("preview-sheet-pin-button").performClick()
         composeRule.waitForIdle()
-        assert(pinFired == 0) { "expected disabled pin button to swallow click, got $pinFired" }
+        assert(pinFired == 1) { "expected pin button click to fire onPin (unpin), got $pinFired" }
     }
 
     @Test
@@ -70,8 +74,7 @@ class PhotoPreviewSheetTest {
         var pinFired = 0
         composeRule.setContent {
             PhotoPreviewSheet(
-                photo = photo,
-                isPinned = false,
+                candidate = photo.copy(isPinned = false),
                 isPinningInFlight = true,
                 onPin = { pinFired += 1 },
                 onOpenInGallery = {},
@@ -88,8 +91,7 @@ class PhotoPreviewSheetTest {
         var galleryFired = 0
         composeRule.setContent {
             PhotoPreviewSheet(
-                photo = photo,
-                isPinned = false,
+                candidate = photo.copy(isPinned = false),
                 isPinningInFlight = false,
                 onPin = {},
                 onOpenInGallery = { galleryFired += 1 },
@@ -119,8 +121,7 @@ class PhotoPreviewSheetTest {
                 androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(1f),
             ) {
                 PhotoPreviewSheet(
-                    photo = photo,
-                    isPinned = false,
+                    candidate = photo.copy(isPinned = false),
                     isPinningInFlight = false,
                     onPin = {},
                     onOpenInGallery = {},
@@ -148,8 +149,7 @@ class PhotoPreviewSheetTest {
                 androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(1f),
             ) {
                 PhotoPreviewSheet(
-                    photo = photo,
-                    isPinned = false,
+                    candidate = photo.copy(isPinned = false),
                     isPinningInFlight = false,
                     onPin = {},
                     onOpenInGallery = {},

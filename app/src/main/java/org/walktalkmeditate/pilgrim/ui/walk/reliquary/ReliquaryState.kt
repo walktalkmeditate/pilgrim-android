@@ -2,7 +2,6 @@
 package org.walktalkmeditate.pilgrim.ui.walk.reliquary
 
 import androidx.compose.runtime.Immutable
-import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 
 /**
  * Walk Summary Photo Reliquary state machine. Strict precedence per
@@ -10,19 +9,20 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
  *
  *   ToggleOff > PermissionDenied > Loading > Populated(candidates)
  *
- * The `Populated.candidates` list may be empty; an empty-Populated
- * collapses to a height-zero leaf in the UI, distinct from Loading
- * (which renders the deferred skeleton).
+ * The `Populated.candidates` list mixes pinned and unpinned photos —
+ * iOS-parity "discover then opt-in" UX. An empty Populated collapses
+ * to a height-zero leaf in the UI, distinct from Loading (which
+ * renders the deferred skeleton).
  *
  * `@Immutable` annotation per Stage 4-D cascade audit — Compose can't
- * infer cross-module stability for `WalkPhoto`.
+ * infer cross-module stability for `PhotoCandidate`.
  */
 @Immutable
 sealed class ReliquaryState {
     data object ToggleOff : ReliquaryState()
     data object PermissionDenied : ReliquaryState()
     data object Loading : ReliquaryState()
-    data class Populated(val candidates: List<WalkPhoto>) : ReliquaryState()
+    data class Populated(val candidates: List<PhotoCandidate>) : ReliquaryState()
 }
 
 /**
@@ -39,10 +39,10 @@ internal fun resolveReliquaryState(
     toggleEnabled: Boolean,
     permissionGranted: Boolean,
     isFetching: Boolean,
-    photos: List<WalkPhoto>,
+    candidates: List<PhotoCandidate>,
 ): ReliquaryState = when {
     !toggleEnabled -> ReliquaryState.ToggleOff
     !permissionGranted -> ReliquaryState.PermissionDenied
-    isFetching && photos.isEmpty() -> ReliquaryState.Loading
-    else -> ReliquaryState.Populated(photos)
+    isFetching && candidates.isEmpty() -> ReliquaryState.Loading
+    else -> ReliquaryState.Populated(candidates)
 }

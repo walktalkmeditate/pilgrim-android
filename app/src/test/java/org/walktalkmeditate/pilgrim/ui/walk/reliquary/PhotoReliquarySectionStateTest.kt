@@ -25,12 +25,7 @@ class PhotoReliquarySectionStateTest {
 
     @get:Rule val composeRule = createComposeRule()
 
-    private fun photo(id: Long) = WalkPhoto(
-        id = id,
-        walkId = 1L,
-        photoUri = "content://media/picker/0/$id",
-        pinnedAt = 1_000L + id,
-    )
+    private fun photo(id: Long) = PhotoCandidate(uri = "content://media/picker/0/$id", takenAtMs = 1000L, capturedLat = null, capturedLng = null, isPinned = true, pinnedPhotoId = id)
 
     private fun render(state: ReliquaryState) {
         composeRule.setContent {
@@ -39,7 +34,7 @@ class PhotoReliquarySectionStateTest {
                     PhotoReliquarySection(
                         state = state,
                         onPinPhotos = {},
-                        onUnpinPhoto = {},
+                        onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
                     )

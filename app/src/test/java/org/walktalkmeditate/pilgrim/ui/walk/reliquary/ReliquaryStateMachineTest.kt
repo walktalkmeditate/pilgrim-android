@@ -6,15 +6,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
-
 @RunWith(JUnit4::class)
 class ReliquaryStateMachineTest {
 
-    private val photo = WalkPhoto(
-        walkId = 1L,
-        photoUri = "content://media/1",
-        pinnedAt = 5_000L,
+    private val photo = PhotoCandidate(
+        uri = "content://media/1",
+        takenAtMs = 5_000L,
+        capturedLat = null,
+        capturedLng = null,
+        isPinned = true,
+        pinnedPhotoId = 1L,
     )
 
     @Test
@@ -25,7 +26,7 @@ class ReliquaryStateMachineTest {
                 toggleEnabled = false,
                 permissionGranted = true,
                 isFetching = false,
-                photos = listOf(photo),
+                candidates = listOf(photo),
             ),
         )
     }
@@ -38,7 +39,7 @@ class ReliquaryStateMachineTest {
                 toggleEnabled = true,
                 permissionGranted = false,
                 isFetching = false,
-                photos = emptyList(),
+                candidates = emptyList(),
             ),
         )
     }
@@ -51,7 +52,7 @@ class ReliquaryStateMachineTest {
                 toggleEnabled = true,
                 permissionGranted = true,
                 isFetching = true,
-                photos = emptyList(),
+                candidates = emptyList(),
             ),
         )
     }
@@ -62,7 +63,7 @@ class ReliquaryStateMachineTest {
             toggleEnabled = true,
             permissionGranted = true,
             isFetching = false,
-            photos = listOf(photo),
+            candidates = listOf(photo),
         )
         assertTrue(state is ReliquaryState.Populated)
         assertEquals(listOf(photo), (state as ReliquaryState.Populated).candidates)
@@ -74,10 +75,10 @@ class ReliquaryStateMachineTest {
             toggleEnabled = true,
             permissionGranted = true,
             isFetching = false,
-            photos = emptyList(),
+            candidates = emptyList(),
         )
         assertTrue(state is ReliquaryState.Populated)
-        assertEquals(emptyList<WalkPhoto>(), (state as ReliquaryState.Populated).candidates)
+        assertEquals(emptyList<PhotoCandidate>(), (state as ReliquaryState.Populated).candidates)
     }
 
     @Test
@@ -88,7 +89,7 @@ class ReliquaryStateMachineTest {
                 toggleEnabled = false,
                 permissionGranted = false,
                 isFetching = false,
-                photos = listOf(photo),
+                candidates = listOf(photo),
             ),
         )
     }
