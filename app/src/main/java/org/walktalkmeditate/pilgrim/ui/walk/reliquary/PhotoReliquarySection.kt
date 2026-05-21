@@ -146,7 +146,7 @@ internal fun photoPermissionsToRequest(): Array<String> = when {
 fun PhotoReliquarySection(
     state: ReliquaryState,
     onPinPhotos: (List<Uri>) -> Unit,
-    onUnpinPhoto: (WalkPhoto) -> Unit,
+    onTogglePin: (PhotoCandidate) -> Unit,
     onForegrounded: (permissionGranted: Boolean) -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -195,8 +195,9 @@ fun PhotoReliquarySection(
                 Box(modifier = modifier)
             } else {
                 ReliquaryPopulated(
-                    photos = state.candidates,
+                    candidates = state.candidates,
                     onPinPhotos = onPinPhotos,
+                    onTogglePin = onTogglePin,
                     isPinningInFlight = isPinningInFlight,
                     modifier = modifier,
                 )
@@ -266,13 +267,19 @@ private fun ReliquaryDeferredSkeleton(modifier: Modifier = Modifier) {
 
 @Composable
 private fun ReliquaryPopulated(
-    photos: List<WalkPhoto>,
+    candidates: List<PhotoCandidate>,
     onPinPhotos: (List<Uri>) -> Unit,
+    onTogglePin: (PhotoCandidate) -> Unit,
     isPinningInFlight: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val slots = (MAX_PINS_PER_WALK - photos.size).coerceAtLeast(0)
-    var previewPhoto by remember { mutableStateOf<WalkPhoto?>(null) }
+    // Slots remaining for additional manual picks. iOS-parity caps
+    // at MAX_PINS_PER_WALK pinned photos; unpinned candidates above
+    // the cap are still visible but tapping pin reaches the same
+    // repo cap clip.
+    val pinnedCount = candidates.count { it.isPinned }
+    val slots = (MAX_PINS_PER_WALK - pinnedCount).coerceAtLeast(0)
+    var previewCandidate by remember { mutableStateOf<PhotoCandidate?>(null) }
 
     // Stable contract references across recompositions.
     // `rememberLauncherForActivityResult` keys its `DisposableEffect` on
@@ -313,34 +320,32 @@ private fun ReliquaryPopulated(
             },
         )
 
-        if (photos.isNotEmpty()) {
+        if (candidates.isNotEmpty()) {
             Spacer(Modifier.height(PilgrimSpacing.small))
             PhotoCarousel(
-                photos = photos,
-                pinnedIds = photos.mapTo(mutableSetOf()) { it.id },
-                onThumbnailCommit = { photo -> previewPhoto = photo },
+                candidates = candidates,
+                onTogglePin = onTogglePin,
+                onPreview = { previewCandidate = it },
             )
         }
     }
 
-    val previewState = previewPhoto
+    val previewState = previewCandidate
     if (previewState != null) {
         val context = LocalContext.current
-        val pinnedIds = photos.map { it.id }.toSet()
         PhotoPreviewSheet(
-            photo = previewState,
-            isPinned = previewState.id in pinnedIds,
+            candidate = previewState,
             isPinningInFlight = isPinningInFlight,
-            onPin = { onPinPhotos(listOf(previewState.photoUri.toUri())) },
+            onPin = { onTogglePin(previewState) },
             onOpenInGallery = {
-                val intent = buildOpenInGalleryIntent(previewState.photoUri)
+                val intent = buildOpenInGalleryIntent(previewState.uri)
                 try {
                     context.startActivity(intent)
                 } catch (_: android.content.ActivityNotFoundException) {
                     android.util.Log.w("PhotoReliquary", "no activity to handle gallery intent")
                 }
             },
-            onDismiss = { previewPhoto = null },
+            onDismiss = { previewCandidate = null },
         )
     }
 }

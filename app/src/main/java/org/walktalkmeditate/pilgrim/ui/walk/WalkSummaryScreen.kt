@@ -381,7 +381,7 @@ fun WalkSummaryScreen(
                         PhotoReliquarySection(
                             state = reliquaryState,
                             onPinPhotos = viewModel::pinPhotos,
-                            onUnpinPhoto = viewModel::unpinPhoto,
+                            onTogglePin = viewModel::togglePin,
                             onForegrounded = viewModel::onForegrounded,
                             isPinningInFlight = isPinningInFlight,
                             onSettingsClick = {

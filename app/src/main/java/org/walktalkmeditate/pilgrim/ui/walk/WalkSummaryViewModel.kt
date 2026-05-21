@@ -36,9 +36,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import androidx.core.net.toUri
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
+import org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner.DiscoveredPhoto
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoCandidate
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
@@ -599,16 +602,20 @@ class WalkSummaryViewModel @Inject constructor(
     private val _permissionGranted = MutableStateFlow(false)
 
     /**
-     * iOS parity for the "future MediaStore scan path" the reliquary
-     * code referenced. When this walk's summary becomes Loaded, the
-     * reliquary toggle is on, and BOTH the photos permission +
-     * ACCESS_MEDIA_LOCATION are granted, query MediaStore for photos
-     * whose DATE_TAKEN falls inside the walk window and whose EXIF
-     * lat/lng sits within ~200m of any route sample. Auto-pin the
-     * survivors via the existing [pinPhotos] path (one-time per
-     * walkId so a re-Loaded emission — theme flip, permission grant
-     * later — doesn't pin duplicates).
+     * Ephemeral discovered candidates from the MediaStore scanner.
+     * Populated by [autoDiscoveryJob] once per walkId per VM lifetime.
+     * Merged with [pinnedPhotos] in [candidates] below — pinned wins,
+     * so a discovered URI that the user already pinned shows up as
+     * pinned-and-not-duplicated.
+     *
+     * iOS-parity change (2026-05-21): the scanner used to call
+     * [pinPhotos] directly, auto-pinning every candidate. iOS instead
+     * surfaces candidates and lets the user opt-in via the carousel's
+     * long-press → tap-pin gesture. Match that by populating this
+     * flow without persisting.
      */
+    private val _discoveredCandidates = MutableStateFlow<List<DiscoveredPhoto>>(emptyList())
+
     private val autoDiscoveryRanWalkIds = mutableSetOf<Long>()
 
     @Suppress("unused")
@@ -627,7 +634,7 @@ class WalkSummaryViewModel @Inject constructor(
                 val end = walk.endTimestamp ?: return@collect
                 val route = s.summary.routeSamples
                 if (route.isEmpty()) return@collect
-                val candidates = runCatching {
+                val discovered = runCatching {
                     photoLibraryScanner.scan(walk.startTimestamp, end, route)
                 }.onFailure {
                     android.util.Log.w(TAG, "photo auto-discovery failed for walk ${walk.id}", it)
@@ -635,13 +642,52 @@ class WalkSummaryViewModel @Inject constructor(
                 android.util.Log.i(
                     TAG,
                     "auto-discovery walk=${walk.id} window=${walk.startTimestamp}..$end " +
-                        "samples=${route.size} candidates=${candidates.size}",
+                        "samples=${route.size} candidates=${discovered.size}",
                 )
-                if (candidates.isNotEmpty()) {
-                    pinPhotos(candidates.map { it.uri })
-                }
+                _discoveredCandidates.value = discovered
             }
     }
+
+    /**
+     * Merge [_discoveredCandidates] with [pinnedPhotos] into a single
+     * candidates list ready for the carousel. Pinned URIs always
+     * surface as pinned (with the WalkPhoto row id for the unpin
+     * path); discovered URIs that aren't pinned surface as unpinned
+     * candidates the user can tap to pin.
+     */
+    val candidates: StateFlow<List<PhotoCandidate>> =
+        combine(pinnedPhotos, _discoveredCandidates) { pinned, discovered ->
+            val pinnedByUri = pinned.associateBy { it.photoUri }
+            val merged = mutableListOf<PhotoCandidate>()
+            // Pinned first (preserves explicit-pin ordering).
+            for (p in pinned) {
+                merged += PhotoCandidate(
+                    uri = p.photoUri,
+                    takenAtMs = p.takenAt,
+                    capturedLat = p.capturedLat,
+                    capturedLng = p.capturedLng,
+                    isPinned = true,
+                    pinnedPhotoId = p.id,
+                )
+            }
+            // Discovered next, dedup against pinned by URI.
+            for (d in discovered) {
+                if (d.uri.toString() in pinnedByUri) continue
+                merged += PhotoCandidate(
+                    uri = d.uri.toString(),
+                    takenAtMs = d.takenAtMs,
+                    capturedLat = d.latitude,
+                    capturedLng = d.longitude,
+                    isPinned = false,
+                    pinnedPhotoId = null,
+                )
+            }
+            merged
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
 
     private fun isAccessMediaLocationGranted(): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return true
@@ -655,19 +701,44 @@ class WalkSummaryViewModel @Inject constructor(
         combine(
             practicePreferences.walkReliquaryEnabled,
             _permissionGranted,
-            pinnedPhotos,
-        ) { toggleEnabled, permissionGranted, photos ->
+            candidates,
+        ) { toggleEnabled, permissionGranted, candList ->
             resolveReliquaryState(
                 toggleEnabled = toggleEnabled,
                 permissionGranted = permissionGranted,
                 isFetching = false,
-                photos = photos,
+                candidates = candList,
             )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
             initialValue = ReliquaryState.ToggleOff,
         )
+
+    /**
+     * Toggle the pin state for [candidate]. If pinned, unpin via the
+     * existing [unpinPhoto] path (uses [PhotoCandidate.pinnedPhotoId]
+     * for the row lookup). If unpinned, pin via [pinPhotos] (existing
+     * cap + grant-take pipeline). Optimistic update happens via the
+     * underlying Room Flow re-emission; the merged [candidates] flow
+     * reflects the new state on the next tick.
+     */
+    fun togglePin(candidate: PhotoCandidate) {
+        viewModelScope.launch {
+            if (candidate.isPinned) {
+                val photoId = candidate.pinnedPhotoId ?: return@launch
+                // Reuse the pinned-photos snapshot to find the
+                // matching WalkPhoto row for the unpin path. The
+                // row may have been removed by another touch — null
+                // result is a benign no-op.
+                val pinnedSnapshot = pinnedPhotos.value
+                val target = pinnedSnapshot.firstOrNull { it.id == photoId } ?: return@launch
+                unpinPhoto(target)
+            } else {
+                pinPhotos(listOf(candidate.uri.toUri()))
+            }
+        }
+    }
 
     /**
      * iOS parity `WalkSummaryView.swift:86,132-134@db4196e` — gates

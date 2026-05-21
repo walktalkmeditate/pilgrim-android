@@ -26,12 +26,7 @@ class PhotoReliquarySectionTest {
 
     @get:Rule val composeRule = createComposeRule()
 
-    private fun photo(id: Long, uri: String = "content://media/picker/0/$id") = WalkPhoto(
-        id = id,
-        walkId = 1L,
-        photoUri = uri,
-        pinnedAt = 1_000L + id,
-    )
+    private fun photo(id: Long, uri: String = "content://media/picker/0/$id") = PhotoCandidate(uri = uri, takenAtMs = 1000L, capturedLat = null, capturedLng = null, isPinned = true, pinnedPhotoId = id)
 
     @Test
     fun `populated empty state shows no header`() {
@@ -41,7 +36,7 @@ class PhotoReliquarySectionTest {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(emptyList()),
                         onPinPhotos = {},
-                        onUnpinPhoto = {},
+                        onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
                     )
@@ -61,7 +56,7 @@ class PhotoReliquarySectionTest {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
-                        onUnpinPhoto = {},
+                        onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
                     )
@@ -81,7 +76,7 @@ class PhotoReliquarySectionTest {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
-                        onUnpinPhoto = {},
+                        onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
                     )
@@ -101,7 +96,7 @@ class PhotoReliquarySectionTest {
                     PhotoReliquarySection(
                         state = ReliquaryState.Populated(photos),
                         onPinPhotos = {},
-                        onUnpinPhoto = {},
+                        onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},
                     )

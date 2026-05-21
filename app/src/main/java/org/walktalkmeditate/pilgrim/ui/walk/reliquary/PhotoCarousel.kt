@@ -18,37 +18,38 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 
 /**
  * iOS-parity horizontal photo carousel for the Walk Summary reliquary.
- * Replaces the prior 3-column grid (Stage 7-A). Tap an activated
- * thumbnail → opens the PhotoPreviewSheet (Stage 4).
+ * Mirrors `PhotoCarouselView.swift @v1.6.0` — shows both pinned AND
+ * unpinned candidates; user pins / unpins via long-press → tap.
  *
- * Activation state machine:
- *  - Long-press 400ms on a thumbnail → activated (1.05× spring scale)
+ * Activation state machine (per [PhotoThumbnail] kdoc):
+ *  - Long-press 400ms on a thumbnail → activated (1.05× spring scale,
+ *    centered pin/unpin button overlay)
  *  - User-drag of the carousel → clears activation
  *  - Programmatic scroll (`scrollToItem`) → activation persists
- *  - Tap on an activated thumbnail → commit (fires onThumbnailCommit)
+ *  - Tap on activated thumbnail's centered button → [onTogglePin]
+ *  - Tap on activated thumbnail outside the button → dismiss
+ *    activation + fire [onPreview]
+ *  - Tap on inactive thumbnail → fire [onPreview] directly
  */
 @Composable
 internal fun PhotoCarousel(
-    photos: List<WalkPhoto>,
-    pinnedIds: Set<Long>,
-    onThumbnailCommit: (WalkPhoto) -> Unit,
+    candidates: List<PhotoCandidate>,
+    onTogglePin: (PhotoCandidate) -> Unit,
+    onPreview: (PhotoCandidate) -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
 ) {
-    var activatedId by remember { mutableStateOf<Long?>(null) }
+    var activatedKey by remember { mutableStateOf<String?>(null) }
     val haptic = LocalHapticFeedback.current
 
-    // Touch-drag detection (NOT programmatic scroll) — see
-    // `collectIsDraggedAsState` contract: emits true ONLY while the
-    // user's finger is on the list and dragging.
+    // Touch-drag detection (NOT programmatic scroll).
     val isDragged by listState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(isDragged) {
-        if (isDragged) activatedId = null
+        if (isDragged) activatedKey = null
     }
 
     LazyRow(
@@ -57,21 +58,22 @@ internal fun PhotoCarousel(
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
         contentPadding = PaddingValues(horizontal = PilgrimSpacing.normal),
     ) {
-        items(items = photos, key = { it.id }) { photo ->
+        items(items = candidates, key = { it.uri }) { candidate ->
             PhotoThumbnail(
-                photo = photo,
-                isPinned = photo.id in pinnedIds,
-                isActivated = activatedId == photo.id,
+                candidate = candidate,
+                isActivated = activatedKey == candidate.uri,
                 onLongPress = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    activatedId = photo.id
+                    activatedKey = candidate.uri
                 },
-                onTap = {
-                    if (activatedId == photo.id) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onThumbnailCommit(photo)
-                        activatedId = null
-                    }
+                onPinTap = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    activatedKey = null
+                    onTogglePin(candidate)
+                },
+                onPhotoTap = {
+                    activatedKey = null
+                    onPreview(candidate)
                 },
             )
         }
