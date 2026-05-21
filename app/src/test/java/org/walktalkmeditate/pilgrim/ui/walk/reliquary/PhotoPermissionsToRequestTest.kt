@@ -21,11 +21,12 @@ class PhotoPermissionsToRequestTest {
 
     @Test
     @Config(sdk = [34])
-    fun api34_requests_full_and_partial_media_images() {
+    fun api34_requests_full_partial_media_images_and_location() {
         assertEquals(
             listOf(
                 android.Manifest.permission.READ_MEDIA_IMAGES,
                 "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+                "android.permission.ACCESS_MEDIA_LOCATION",
             ),
             photoPermissionsToRequest().toList(),
         )
@@ -33,16 +34,31 @@ class PhotoPermissionsToRequestTest {
 
     @Test
     @Config(sdk = [33])
-    fun api33_requests_read_media_images_only() {
+    fun api33_requests_read_media_images_and_location() {
         assertEquals(
-            listOf(android.Manifest.permission.READ_MEDIA_IMAGES),
+            listOf(
+                android.Manifest.permission.READ_MEDIA_IMAGES,
+                "android.permission.ACCESS_MEDIA_LOCATION",
+            ),
             photoPermissionsToRequest().toList(),
         )
     }
 
     @Test
     @Config(sdk = [30])
-    fun pre33_requests_read_external_storage() {
+    fun q_to_pre33_requests_read_external_storage_and_location() {
+        assertEquals(
+            listOf(
+                android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                "android.permission.ACCESS_MEDIA_LOCATION",
+            ),
+            photoPermissionsToRequest().toList(),
+        )
+    }
+
+    @Test
+    @Config(sdk = [28])
+    fun pre_q_requests_read_external_storage_only() {
         assertEquals(
             listOf(android.Manifest.permission.READ_EXTERNAL_STORAGE),
             photoPermissionsToRequest().toList(),
