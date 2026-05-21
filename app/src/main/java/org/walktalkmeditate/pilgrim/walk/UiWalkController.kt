@@ -7,10 +7,12 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -84,35 +87,21 @@ class UiWalkController @Inject constructor(
     @WalkFinalizationScope private val scope: CoroutineScope,
 ) : WalkController {
 
-    override val state: StateFlow<WalkState> = repository.observeActiveWalk()
-        .flatMapLatest { walk ->
-            if (walk == null) {
-                // Walk row finalized OR discarded. We can't easily
-                // distinguish here; both terminal states collapse to
-                // Idle as far as the live state flow is concerned.
-                // Finished is only emitted briefly during the
-                // post-tap transition window when the walk row still
-                // exists with end_timestamp set; once the observe-active
-                // query stops including it (predicate is
-                // `end_timestamp IS NULL`), we fall back to Idle.
-                flowOf<WalkState>(WalkState.Idle)
-            } else if (walk.endTimestamp != null) {
-                // Defensive: observeActive's predicate already excludes
-                // finished rows, but a race window during the
-                // FinalizeWalk effect could surface one. Treat as
-                // Finished so observers fire their finalize bundles.
-                buildFinishedState(walk)
-            } else {
-                combine(
-                    repository.observeEventsForWalk(walk.id),
-                    repository.observeLocationSamples(walk.id),
-                ) { events, samples ->
-                    buildActiveState(walk, events, samples)
-                }
-            }
-        }
-        .distinctUntilChanged()
-        .stateIn(scope, SharingStarted.Eagerly, WalkState.Idle)
+    /**
+     * Source-of-truth StateFlow. Driven by [stateCollector] which
+     * tracks transitions between Room observations of the active
+     * walk and synthesizes [WalkState.Finished] on the active→null
+     * transition by re-reading the just-finalized row from Room.
+     *
+     * Without that synthesis, the active walk's row dropping out of
+     * `observeActiveWalk` (because tracker just set `end_timestamp`)
+     * would collapse straight to Idle, and the UI summary screen
+     * navigation (which keys off `state is Finished`) would never
+     * fire. Users would see the Path screen instead of their walk
+     * summary on tap-Finish.
+     */
+    private val _state = MutableStateFlow<WalkState>(WalkState.Idle)
+    override val state: StateFlow<WalkState> = _state.asStateFlow()
 
     private val _bellTriggers = MutableSharedFlow<BellTrigger>(
         replay = 0,
@@ -131,12 +120,113 @@ class UiWalkController @Inject constructor(
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     init {
+        // Drive [_state] from Room. Owns the active→null→finished
+        // transition synthesis that [stateIn]-based derivation can't
+        // express (see below).
+        stateCollector()
         // Bell trigger derivation: observe Room transitions and emit
         // the corresponding [BellTrigger] for each user-initiated
         // event. Skip-first pattern: the FIRST emission of each
         // observation is the restore snapshot and must not re-fire
         // bells that already rang in a prior process.
         observeBellTriggers()
+    }
+
+    /**
+     * Drives [_state] from Room observations. The hard case it solves:
+     *
+     *  - User taps Finish → tracker dispatches finishWalk → walk row
+     *    `end_timestamp` is set in Room → multi-instance invalidation
+     *    re-fires UI's `observeActiveWalk()` → row is filtered out
+     *    (`WHERE end_timestamp IS NULL`) → UI sees null.
+     *  - A naive null→Idle mapping would skip [WalkState.Finished]
+     *    entirely. UI navigation routes to the post-walk summary on
+     *    `state is Finished`; without that emission, tap-Finish lands
+     *    on the Path screen instead of the summary.
+     *
+     * On every active→null transition we re-read the previously-
+     * observed walk by id and inspect its `end_timestamp`:
+     *  - end_timestamp non-null → walk finalized → emit Finished
+     *    with the full accumulator reconstructed from samples + events.
+     *  - row missing → walk discarded (PurgeWalk effect deletes the
+     *    row + cascades to samples/events) → emit Idle.
+     *
+     * The first observation is always treated as a restore snapshot
+     * (no synthetic Finished emission for state we observed AFTER it
+     * had already finalized in a prior process).
+     */
+    private fun stateCollector() {
+        scope.launch {
+            var prevActiveWalk: Walk? = null
+            var firstEmission = true
+            repository.observeActiveWalk()
+                .flatMapLatest { walk ->
+                    if (walk == null) {
+                        flowOf(null)
+                    } else {
+                        combine(
+                            repository.observeEventsForWalk(walk.id),
+                            repository.observeLocationSamples(walk.id),
+                        ) { events, samples ->
+                            Triple(walk, events, samples)
+                        }
+                    }
+                }
+                .collect { tuple ->
+                    if (tuple == null) {
+                        // Active walk disappeared. Distinguish finish
+                        // (row exists with end_timestamp) from
+                        // discard (row deleted) by re-reading the
+                        // previously-active walk's row.
+                        val newState: WalkState = if (firstEmission || prevActiveWalk == null) {
+                            // App-start with no walk in progress, or
+                            // the prior state was already non-active.
+                            // Plain Idle.
+                            WalkState.Idle
+                        } else {
+                            val finalized = repository.getWalk(prevActiveWalk!!.id)
+                            if (finalized != null && finalized.endTimestamp != null) {
+                                val samples = repository.locationSamplesFor(finalized.id)
+                                val events = repository.eventsFor(finalized.id)
+                                buildFinishedAccumulatorState(finalized, events, samples)
+                            } else {
+                                // Row missing → discard path (PurgeWalk).
+                                WalkState.Idle
+                            }
+                        }
+                        prevActiveWalk = null
+                        firstEmission = false
+                        _state.value = newState
+                    } else {
+                        val (walk, events, samples) = tuple
+                        prevActiveWalk = walk
+                        firstEmission = false
+                        _state.value = buildActiveState(walk, events, samples)
+                    }
+                }
+        }
+    }
+
+    private fun buildFinishedAccumulatorState(
+        walk: Walk,
+        events: List<WalkEvent>,
+        samples: List<RouteDataSample>,
+    ): WalkState.Finished {
+        val points = samples.map { it.toLocationPoint() }
+        val distance = walkDistanceMeters(points)
+        val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
+        val accumulator = WalkAccumulator(
+            walkId = walk.id,
+            startedAt = walk.startTimestamp,
+            lastLocation = points.lastOrNull(),
+            distanceMeters = distance,
+            totalPausedMillis = totals.totalPausedMillis,
+            totalMeditatedMillis = totals.totalMeditatedMillis,
+        )
+        return WalkState.Finished(
+            accumulator,
+            endedAt = walk.endTimestamp ?: walk.startTimestamp,
+        )
     }
 
     private fun observeBellTriggers() {
@@ -248,25 +338,6 @@ class UiWalkController @Inject constructor(
                 WalkState.Meditating(accumulator, meditationStartedAt = totals.pendingMeditationAt!!)
             else -> WalkState.Active(accumulator)
         }
-    }
-
-    private suspend fun buildFinishedState(walk: Walk): kotlinx.coroutines.flow.Flow<WalkState> {
-        val samples = repository.locationSamplesFor(walk.id)
-        val events = repository.eventsFor(walk.id)
-        val points = samples.map { it.toLocationPoint() }
-        val distance = walkDistanceMeters(points)
-        val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
-        val accumulator = WalkAccumulator(
-            walkId = walk.id,
-            startedAt = walk.startTimestamp,
-            lastLocation = points.lastOrNull(),
-            distanceMeters = distance,
-            totalPausedMillis = totals.totalPausedMillis,
-            totalMeditatedMillis = totals.totalMeditatedMillis,
-        )
-        return flowOf(
-            WalkState.Finished(accumulator, endedAt = walk.endTimestamp ?: walk.startTimestamp),
-        )
     }
 
     private fun RouteDataSample.toLocationPoint(): LocationPoint = LocationPoint(
