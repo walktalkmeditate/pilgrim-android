@@ -97,6 +97,17 @@ class AndroidPilgrimPhotoEmbedder @Inject constructor(
     }
 
     /**
+     * Raw base64 JPEG (no `data:` prefix) for the Walk Share payload's
+     * `photos[].data` field. iOS parity: `jpegData.base64EncodedString()`
+     * in `WalkShareViewModel.loadSharePhoto`. Returns null on the same
+     * skip conditions as [encodeAsDataUrl]. Background coroutine only.
+     */
+    fun encodeBase64(localIdentifier: String): String? {
+        val bytes = encodePhoto(localIdentifier) ?: return null
+        return Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }
+
+    /**
      * Read URI → decode bounds → re-decode with inSampleSize → resize
      * → JPEG-encode @ quality 70. Returns null on any failure (caller
      * counts as skipped).

@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -93,6 +94,7 @@ fun WalkShareScreen(
     val includeActivity by viewModel.includeActivityBreakdown.collectAsStateWithLifecycle()
     val includeSteps by viewModel.includeSteps.collectAsStateWithLifecycle()
     val includeWaypoints by viewModel.includeWaypoints.collectAsStateWithLifecycle()
+    val includePhotos by viewModel.includePhotos.collectAsStateWithLifecycle()
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     val canShare by viewModel.canShare.collectAsStateWithLifecycle()
     val cached by viewModel.cachedShare.collectAsStateWithLifecycle()
@@ -180,12 +182,14 @@ fun WalkShareScreen(
                             activity = includeActivity,
                             steps = includeSteps,
                             waypoints = includeWaypoints,
+                            photos = includePhotos,
                             onDistance = viewModel::toggleDistance,
                             onDuration = viewModel::toggleDuration,
                             onElevation = viewModel::toggleElevation,
                             onActivity = viewModel::toggleActivityBreakdown,
                             onSteps = viewModel::toggleSteps,
                             onWaypoints = viewModel::toggleWaypoints,
+                            onPhotos = viewModel::togglePhotos,
                         )
                         JournalInput(
                             journal = journal,
@@ -248,12 +252,14 @@ private fun StatToggles(
     activity: Boolean,
     steps: Boolean,
     waypoints: Boolean,
+    photos: Boolean,
     onDistance: (Boolean) -> Unit,
     onDuration: (Boolean) -> Unit,
     onElevation: (Boolean) -> Unit,
     onActivity: (Boolean) -> Unit,
     onSteps: (Boolean) -> Unit,
     onWaypoints: (Boolean) -> Unit,
+    onPhotos: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
         SectionLabel(stringResource(R.string.share_modal_stats_header))
@@ -298,6 +304,29 @@ private fun StatToggles(
                 on = waypoints,
                 onChange = onWaypoints,
             )
+        }
+        // Reliquary photos. The Android reliquary is always on (no
+        // master toggle like iOS), so the only gate is "are there
+        // pinned photos?" — pinned URIs already carry persistable read
+        // grants + stored EXIF GPS, so no runtime permission is needed.
+        val photoCount = inputs.pinnedPhotos.size
+        if (photoCount > 0) {
+            StatToggleRow(
+                title = stringResource(R.string.share_modal_stat_photos),
+                value = pluralStringResource(R.plurals.share_modal_photos_pinned, photoCount, photoCount),
+                on = photos,
+                onChange = onPhotos,
+            )
+            if (photos) {
+                Text(
+                    text = stringResource(R.string.share_modal_photos_warning),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PilgrimSpacing.normal),
+                )
+            }
         }
     }
 }

@@ -141,6 +141,24 @@ class AndroidPilgrimPhotoEmbedderTest {
     }
 
     @Test
+    fun `encodeBase64 returns raw base64 with no data prefix for valid image`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val syntheticUri = registerSyntheticImage(app, name = "share.png", width = 200, height = 200)
+
+        val base64 = embedder.encodeBase64(syntheticUri.toString())
+
+        assertNotNull(base64)
+        assertFalse(base64!!.startsWith("data:"))
+        assertTrue(base64.isNotEmpty())
+        assertTrue(base64.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' })
+    }
+
+    @Test
+    fun `encodeBase64 returns null for unresolvable URI`() {
+        assertNull(embedder.encodeBase64("content://media/external/images/media/missing-99999"))
+    }
+
+    @Test
     fun `sanitizedFilename replaces slashes with underscores`() {
         assertEquals(
             "ABC-123_L0_001.jpg",

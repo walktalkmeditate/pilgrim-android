@@ -378,6 +378,12 @@
     <string name="share_modal_stat_elevation">Elevation</string>
     <string name="share_modal_stat_activity">Walk / Meditation / Talk</string>
     <string name="share_modal_stat_steps">Steps</string>
+    <string name="share_modal_stat_photos">Reliquary Photos</string>
+    <string name="share_modal_photos_warning">Photos will be visible to anyone with the link.</string>
+    <plurals name="share_modal_photos_pinned">
+        <item quantity="one">1 photo you pinned</item>
+        <item quantity="other">%1$d photos you pinned</item>
+    </plurals>
     <string name="share_modal_journal_header">Reflection</string>
     <string name="share_modal_journal_placeholder">“A few words about this walk...</string>
     <string name="share_modal_journal_counter">%1$d / %2$d</string>
