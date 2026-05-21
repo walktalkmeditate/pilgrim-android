@@ -143,6 +143,7 @@ class VoiceGuideOrchestratorPauseTest {
         capturingPlayer, FixedClock(),
         FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
         FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+                VoiceGuideProgressRepository.NoOp,
         scope,
     )
 

@@ -163,6 +163,7 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var walkControllerProvider: Provider<WalkController>
     @Inject lateinit var walkRepositoryProvider: Provider<org.walktalkmeditate.pilgrim.data.WalkRepository>
     @Inject lateinit var walkRecoveryRepositoryProvider: Provider<WalkRecoveryRepository>
+    @Inject lateinit var walkTrackingWatchdogProvider: Provider<org.walktalkmeditate.pilgrim.walk.WalkTrackingWatchdog>
 
     /**
      * Stage 11-A: drains stale walk-metrics cache columns for legacy
@@ -364,6 +365,16 @@ class PilgrimApp : Application(), Configuration.Provider {
             walkRepositoryProvider.get().getActiveWalk()
         }
         val walkInProgress = activeWalk != null
+        // Arm the watchdog on every cold launch where a walk is in
+        // progress — covers the case where the UI process was o-killed
+        // mid-walk, the FGS is still alive in :tracker, and the new
+        // UI process needs to resume watchdog duty. Idempotent;
+        // cancels any prior schedule first.
+        if (walkInProgress) {
+            walkTrackingWatchdogProvider.get().schedule()
+        } else {
+            walkTrackingWatchdogProvider.get().cancel()
+        }
         if (walkInProgress) {
             Log.i(TAG, "icon reconcile skipped: walk in progress")
         } else {

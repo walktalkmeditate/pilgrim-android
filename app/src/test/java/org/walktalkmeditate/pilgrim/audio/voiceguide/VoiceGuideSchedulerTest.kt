@@ -45,13 +45,45 @@ class VoiceGuideSchedulerTest {
         prompts: List<VoiceGuidePrompt>,
         density: PromptDensity = density(),
         random: (Int) -> Int = { 0 },
+        initialPlayedIds: Set<String> = emptySet(),
     ) = VoiceGuideScheduler(
         context = VoiceGuideScheduler.SchedulerContext.Walk,
         prompts = prompts,
         scheduling = density,
         clock = clock,
+        initialPlayedIds = initialPlayedIds,
         random = random,
     )
+
+    @Test fun `initialPlayedIds skips already-played prompts`() {
+        // Setup: 3 prompts in settling phase. Pretend "a" was already
+        // played in a prior UI-process session, then UI was o-killed
+        // and a fresh scheduler boots with that progress restored.
+        val a = prompt(id = "a", seq = 0, phase = "settling")
+        val b = prompt(id = "b", seq = 1, phase = "settling")
+        val c = prompt(id = "c", seq = 2, phase = "settling")
+        val sched = buildWalk(
+            prompts = listOf(a, b, c),
+            initialPlayedIds = setOf("a"),
+        )
+        sched.start()
+        clock.advanceSec(60)
+        // Without persistence, the next prompt would be "a" (lowest
+        // seq in the phase pool). With "a" in initialPlayedIds, the
+        // selector should skip to "b".
+        assertEquals("b", sched.decide(isPaused = false, isRecordingVoice = false)?.id)
+    }
+
+    @Test fun `empty initialPlayedIds preserves iOS-parity fresh-start behavior`() {
+        val a = prompt(id = "a", seq = 0, phase = "settling")
+        val b = prompt(id = "b", seq = 1, phase = "settling")
+        val sched = buildWalk(prompts = listOf(a, b), initialPlayedIds = emptySet())
+        sched.start()
+        clock.advanceSec(60)
+        // No prior progress → first prompt is "a", matching every
+        // fresh walk's opening selection.
+        assertEquals("a", sched.decide(isPaused = false, isRecordingVoice = false)?.id)
+    }
 
     @Test fun `decide returns null before start()`() {
         val sched = buildWalk(listOf(prompt("a")))

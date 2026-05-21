@@ -258,6 +258,21 @@
              blocklist). The Worker's persistence in WorkManager's
              database survives reboots. -->
 
+        <!-- AlarmManager watchdog for FGS revival. While a walk is
+             active, the WalkTrackingWatchdog schedules a 5-min
+             AlarmManager fire that lands here. The receiver checks
+             cross-process FGS-alive state + active walk in Room and
+             revives WalkTrackingService when REDELIVER_INTENT
+             revival fails on hardened ROMs. Not exported — only
+             our own scheduling reaches it. -->
+        <receiver
+            android:name=".walk.WatchdogReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.walktalkmeditate.pilgrim.walk.WalkTrackingWatchdog.CHECK" />
+            </intent-filter>
+        </receiver>
+
 
 
         <!-- WalkTrackingService runs in its own `:tracker` process so an

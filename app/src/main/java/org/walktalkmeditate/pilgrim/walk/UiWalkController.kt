@@ -84,6 +84,7 @@ import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 class UiWalkController @Inject constructor(
     private val repository: WalkRepository,
     private val actionPublisher: WalkActionPublisher,
+    private val watchdog: WalkTrackingWatchdog,
     @WalkFinalizationScope private val scope: CoroutineScope,
 ) : WalkController {
 
@@ -378,7 +379,7 @@ class UiWalkController @Inject constructor(
         // bubbles as TimeoutCancellationException, which
         // WalkViewModel.startWalk's try/catch maps to a no-op
         // (matches the existing IllegalStateException path).
-        return try {
+        val walk = try {
             withTimeout(START_AWAIT_TIMEOUT_MS) {
                 repository.observeActiveWalk().filterNotNull().first()
             }
@@ -391,6 +392,12 @@ class UiWalkController @Inject constructor(
             // rejection path.
             throw IllegalStateException("tracker did not start walk within ${START_AWAIT_TIMEOUT_MS} ms", t)
         }
+        // Belt-and-suspenders: AlarmManager watchdog periodically
+        // verifies the FGS is still alive in :tracker. If REDELIVER_
+        // INTENT revival fails (hardened ROM, repeated o-kill), the
+        // watchdog re-issues startForegroundService to wake tracker.
+        watchdog.schedule()
+        return walk
     }
 
     override suspend fun pauseWalk() {
@@ -411,10 +418,12 @@ class UiWalkController @Inject constructor(
 
     override suspend fun finishWalk() {
         actionPublisher.finish()
+        watchdog.cancel()
     }
 
     override suspend fun discardWalk() {
         actionPublisher.discard()
+        watchdog.cancel()
     }
 
     override suspend fun recordLocation(point: LocationPoint) {
