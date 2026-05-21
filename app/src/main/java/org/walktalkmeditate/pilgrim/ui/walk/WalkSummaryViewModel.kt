@@ -255,6 +255,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val sealRevealStore: SealRevealStore,
     private val walkSharingTracker: WalkSharingTracker,
     private val photoExifReader: org.walktalkmeditate.pilgrim.data.photo.PhotoExifReader,
+    private val photoLibraryScanner: org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner,
     private val transcriptionScheduler:
         org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
     private val waveformCache: org.walktalkmeditate.pilgrim.audio.WaveformCache,
@@ -596,6 +597,54 @@ class WalkSummaryViewModel @Inject constructor(
      * `ContextCompat.checkSelfPermission` result.
      */
     private val _permissionGranted = MutableStateFlow(false)
+
+    /**
+     * iOS parity for the "future MediaStore scan path" the reliquary
+     * code referenced. When this walk's summary becomes Loaded, the
+     * reliquary toggle is on, and BOTH the photos permission +
+     * ACCESS_MEDIA_LOCATION are granted, query MediaStore for photos
+     * whose DATE_TAKEN falls inside the walk window and whose EXIF
+     * lat/lng sits within ~200m of any route sample. Auto-pin the
+     * survivors via the existing [pinPhotos] path (one-time per
+     * walkId so a re-Loaded emission — theme flip, permission grant
+     * later — doesn't pin duplicates).
+     */
+    private val autoDiscoveryRanWalkIds = mutableSetOf<Long>()
+
+    @Suppress("unused")
+    private val autoDiscoveryJob: Job = viewModelScope.launch {
+        combine(
+            state,
+            practicePreferences.walkReliquaryEnabled,
+            _permissionGranted,
+        ) { s, enabled, granted -> Triple(s, enabled, granted) }
+            .collect { (s, enabled, granted) ->
+                if (s !is WalkSummaryUiState.Loaded) return@collect
+                if (!enabled || !granted) return@collect
+                if (!isAccessMediaLocationGranted()) return@collect
+                val walk = s.summary.walk
+                if (!autoDiscoveryRanWalkIds.add(walk.id)) return@collect
+                val end = walk.endTimestamp ?: return@collect
+                val route = s.summary.routeSamples
+                if (route.isEmpty()) return@collect
+                val candidates = runCatching {
+                    photoLibraryScanner.scan(walk.startTimestamp, end, route)
+                }.onFailure {
+                    android.util.Log.w(TAG, "photo auto-discovery failed for walk ${walk.id}", it)
+                }.getOrNull().orEmpty()
+                if (candidates.isNotEmpty()) {
+                    pinPhotos(candidates.map { it.uri })
+                }
+            }
+    }
+
+    private fun isAccessMediaLocationGranted(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return true
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            "android.permission.ACCESS_MEDIA_LOCATION",
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
 
     val reliquaryState: StateFlow<ReliquaryState> =
         combine(

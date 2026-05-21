@@ -97,9 +97,22 @@ internal fun photoPermissionsToRequest(): Array<String> = when {
         arrayOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
             "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+            // Q+ runtime grant needed for unredacted EXIF GPS via
+            // MediaStore.setRequireOriginal — the auto-discovery
+            // scanner (PhotoLibraryScanner) filters candidates by
+            // proximity to the route, which fails closed without it.
+            "android.permission.ACCESS_MEDIA_LOCATION",
         )
     android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU ->
-        arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES)
+        arrayOf(
+            android.Manifest.permission.READ_MEDIA_IMAGES,
+            "android.permission.ACCESS_MEDIA_LOCATION",
+        )
+    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q ->
+        arrayOf(
+            android.Manifest.permission.READ_EXTERNAL_STORAGE,
+            "android.permission.ACCESS_MEDIA_LOCATION",
+        )
     else ->
         arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
 }
