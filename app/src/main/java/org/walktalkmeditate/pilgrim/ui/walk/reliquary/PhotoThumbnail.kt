@@ -117,8 +117,9 @@ internal fun PhotoThumbnail(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
-        // Inactive pinned candidates get a small badge in the
-        // top-right corner (iOS parity).
+        // Inactive pinned candidates get a small badge top-right.
+        // iOS parity (PhotoThumbnailView.pinnedBadge): parchment
+        // icon on a stone-color circle.
         if (!isActivated && candidate.isPinned) {
             Box(
                 modifier = Modifier
@@ -126,7 +127,7 @@ internal fun PhotoThumbnail(
                     .padding(4.dp)
                     .size(PINNED_BADGE_DP.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.55f))
+                    .background(pilgrimColors.stone)
                     .testTag("photo-thumbnail-$keyId-pinned-badge"),
                 contentAlignment = Alignment.Center,
             ) {
@@ -138,16 +139,17 @@ internal fun PhotoThumbnail(
                 )
             }
         }
-        // Active candidates get a centered pin button overlay. The
-        // filled variant for currently-pinned (tap = unpin); the
-        // outlined variant for currently-unpinned (tap = pin).
+        // Active candidates get a centered pin button overlay. iOS
+        // parity (PhotoThumbnailView.centeredPinButton): stone icon
+        // on a parchment(0.85)-color circle. Filled-pin when pinned
+        // (tap = unpin), outlined when unpinned (tap = pin).
         if (isActivated) {
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .size(CENTER_ICON_BG_DP.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.55f))
+                    .background(pilgrimColors.parchment.copy(alpha = 0.85f))
                     .testTag("photo-thumbnail-$keyId-activated")
                     .pointerInput(keyId) {
                         detectTapGestures(onTap = { onPinTap() })
@@ -161,7 +163,7 @@ internal fun PhotoThumbnail(
                         Icons.Outlined.PushPin
                     },
                     contentDescription = null,
-                    tint = pilgrimColors.parchment,
+                    tint = pilgrimColors.stone,
                     modifier = Modifier.size(CENTER_ICON_DP.dp),
                 )
             }

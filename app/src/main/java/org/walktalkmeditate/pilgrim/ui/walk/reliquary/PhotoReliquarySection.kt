@@ -145,7 +145,6 @@ internal fun photoPermissionsToRequest(): Array<String> = when {
 @Composable
 fun PhotoReliquarySection(
     state: ReliquaryState,
-    onPinPhotos: (List<Uri>) -> Unit,
     onTogglePin: (PhotoCandidate) -> Unit,
     onForegrounded: (permissionGranted: Boolean) -> Unit,
     onSettingsClick: () -> Unit,
@@ -196,7 +195,6 @@ fun PhotoReliquarySection(
             } else {
                 ReliquaryPopulated(
                     candidates = state.candidates,
-                    onPinPhotos = onPinPhotos,
                     onTogglePin = onTogglePin,
                     isPinningInFlight = isPinningInFlight,
                     modifier = modifier,
@@ -268,57 +266,18 @@ private fun ReliquaryDeferredSkeleton(modifier: Modifier = Modifier) {
 @Composable
 private fun ReliquaryPopulated(
     candidates: List<PhotoCandidate>,
-    onPinPhotos: (List<Uri>) -> Unit,
     onTogglePin: (PhotoCandidate) -> Unit,
     isPinningInFlight: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    // Slots remaining for additional manual picks. iOS-parity caps
-    // at MAX_PINS_PER_WALK pinned photos; unpinned candidates above
-    // the cap are still visible but tapping pin reaches the same
-    // repo cap clip.
-    val pinnedCount = candidates.count { it.isPinned }
-    val slots = (MAX_PINS_PER_WALK - pinnedCount).coerceAtLeast(0)
     var previewCandidate by remember { mutableStateOf<PhotoCandidate?>(null) }
 
-    // Stable contract references across recompositions.
-    // `rememberLauncherForActivityResult` keys its `DisposableEffect` on
-    // the contract identity; constructing a fresh contract inline on
-    // every recompose would unregister / re-register the launcher on
-    // every tick, racing with in-flight picker intents. Wrap in
-    // `remember { }` so the contract instances survive unrelated
-    // recompositions. The picker's `maxItems` stays at MAX; the VM's
-    // pre-clip against pinnedPhotos.value and the repo's transactional
-    // count + insert inside `withTransaction` are the real defenses
-    // against exceeding the cap.
-    val multiContract = remember {
-        ActivityResultContracts.PickMultipleVisualMedia(maxItems = MAX_PINS_PER_WALK)
-    }
-    val multiLauncher = rememberLauncherForActivityResult(multiContract) { uris ->
-        if (uris.isNotEmpty()) onPinPhotos(uris)
-    }
-    // Single-pick fallback kept for the `slots == 1` case —
-    // PickMultipleVisualMedia requires maxItems > 1, so we cannot clamp
-    // the multi contract to 1 even though the VM would clip anyway.
-    val singleContract = remember { ActivityResultContracts.PickVisualMedia() }
-    val singleLauncher = rememberLauncherForActivityResult(singleContract) { uri ->
-        if (uri != null) onPinPhotos(listOf(uri))
-    }
-
     Column(modifier = modifier.fillMaxWidth().testTag(TAG_RELIQUARY_CAROUSEL)) {
-        ReliquaryHeader(
-            slotsAvailable = slots,
-            onAddClick = {
-                val request = PickVisualMediaRequest(
-                    ActivityResultContracts.PickVisualMedia.ImageOnly,
-                )
-                when (slots) {
-                    0 -> Unit
-                    1 -> singleLauncher.launch(request)
-                    else -> multiLauncher.launch(request)
-                }
-            },
-        )
+        // iOS parity: heading only. No manual "Add" affordance — the
+        // reliquary surfaces auto-discovered candidates and the user
+        // pins via the carousel's long-press → tap-pin gesture
+        // (matching PhotoReliquarySection.swift's reliquaryHeading).
+        ReliquaryHeader()
 
         if (candidates.isNotEmpty()) {
             Spacer(Modifier.height(PilgrimSpacing.small))
@@ -351,39 +310,11 @@ private fun ReliquaryPopulated(
 }
 
 @Composable
-private fun ReliquaryHeader(
-    slotsAvailable: Int,
-    onAddClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            text = "Reliquary",
-            style = pilgrimType.heading,
-            color = pilgrimColors.ink,
-        )
-        OutlinedButton(
-            enabled = slotsAvailable > 0,
-            onClick = onAddClick,
-        ) {
-            Icon(
-                imageVector = Icons.Default.AddAPhoto,
-                contentDescription = null,
-            )
-            Spacer(Modifier.width(PilgrimSpacing.xs))
-            Text(
-                stringResource(
-                    if (slotsAvailable > 0) {
-                        R.string.reliquary_action_add
-                    } else {
-                        R.string.reliquary_action_full
-                    },
-                ),
-            )
-        }
-    }
+private fun ReliquaryHeader() {
+    Text(
+        text = "Reliquary",
+        style = pilgrimType.heading,
+        color = pilgrimColors.ink,
+    )
 }
 

@@ -33,7 +33,6 @@ class PhotoReliquarySectionStateTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     PhotoReliquarySection(
                         state = state,
-                        onPinPhotos = {},
                         onTogglePin = {},
                         onForegrounded = {},
                         onSettingsClick = {},

@@ -18,14 +18,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,8 +48,10 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import coil3.compose.AsyncImage
 import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 /**
  * Full-screen photo preview matching iOS `PhotoPreviewSheet.swift@db4196e`.
@@ -68,6 +69,17 @@ internal fun PhotoPreviewSheet(
     onOpenInGallery: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Resolve theme colors HERE, in the parent composition, before
+    // entering the Dialog. `LocalPilgrimColors` is a
+    // `compositionLocalOf` whose default is the LIGHT palette; a
+    // Compose `Dialog` hosts its content in a separate composition
+    // that does not reliably inherit the appearance-mode override,
+    // so reading pilgrimColors inside the dialog rendered the
+    // pin/gallery icons with the light-mode ink (≈black) even in
+    // dark mode. Capturing the resolved values out here and passing
+    // them down keeps the pills theme-correct in both modes.
+    val pillContent = pilgrimColors.ink
+    val pillBackground = pilgrimColors.parchment.copy(alpha = 0.85f)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -78,6 +90,8 @@ internal fun PhotoPreviewSheet(
         PhotoPreviewSheetContent(
             candidate = candidate,
             isPinningInFlight = isPinningInFlight,
+            pillContent = pillContent,
+            pillBackground = pillBackground,
             onPin = onPin,
             onOpenInGallery = onOpenInGallery,
             onDismiss = onDismiss,
@@ -89,6 +103,8 @@ internal fun PhotoPreviewSheet(
 private fun PhotoPreviewSheetContent(
     candidate: PhotoCandidate,
     isPinningInFlight: Boolean,
+    pillContent: Color,
+    pillBackground: Color,
     onPin: () -> Unit,
     onOpenInGallery: () -> Unit,
     onDismiss: () -> Unit,
@@ -149,78 +165,93 @@ private fun PhotoPreviewSheetContent(
             },
         color = Color.Black,
     ) {
-        Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-            Box(
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = candidate.uri,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center,
+                    .fillMaxSize()
+                    .testTag("preview-sheet-image"),
+            )
+            // iOS parity: capsule pills overlaid at the TOP — pin
+            // top-left, open-in-gallery top-right.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .systemBarsPadding()
+                    .padding(PilgrimSpacing.normal),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                AsyncImage(
-                    model = candidate.uri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("preview-sheet-image"),
+                CapsulePill(
+                    icon = if (candidate.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                    label = stringResource(
+                        if (candidate.isPinned) R.string.preview_sheet_unpin
+                        else R.string.preview_sheet_pin,
+                    ),
+                    enabled = !isPinningInFlight,
+                    contentColor = pillContent,
+                    backgroundColor = pillBackground,
+                    onClick = {
+                        // iOS parity: commit the toggle then dismiss
+                        // immediately. The captured candidate is a
+                        // snapshot; the parent's togglePin reads the
+                        // canonical pinned state before persisting.
+                        onPin()
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("preview-sheet-pin-button"),
+                )
+                CapsulePill(
+                    icon = Icons.Filled.Photo,
+                    label = stringResource(R.string.preview_sheet_open_in_gallery),
+                    enabled = true,
+                    contentColor = pillContent,
+                    backgroundColor = pillBackground,
+                    onClick = onOpenInGallery,
+                    modifier = Modifier.testTag("preview-sheet-open-in-gallery"),
                 )
             }
-            BottomActions(
-                isPinned = candidate.isPinned,
-                isPinningInFlight = isPinningInFlight,
-                onPin = onPin,
-                onOpenInGallery = onOpenInGallery,
-            )
         }
     }
 }
 
+/**
+ * iOS-parity capsule action pill: rounded translucent parchment
+ * background, ink-colored icon + label. Matches the
+ * `.regularMaterial` + `.ink` Label capsules in
+ * `PhotoPreviewSheet.swift`. Colors are theme-aware (ink + parchment
+ * flip with appearance mode) — the prior implementation tinted the
+ * icon with the default onSurface color, which rendered black in
+ * both modes.
+ */
 @Composable
-private fun BottomActions(
-    isPinned: Boolean,
-    isPinningInFlight: Boolean,
-    onPin: () -> Unit,
-    onOpenInGallery: () -> Unit,
+private fun CapsulePill(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    contentColor: Color,
+    backgroundColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(PilgrimSpacing.normal),
-        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+        modifier = modifier
+            .clip(CircleShape)
+            .background(backgroundColor)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small),
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // iOS parity: pin button is a toggle. Disabled only while a
-        // pin write is in-flight; otherwise tap commits the inverse
-        // of the current pin state via [onPin] (which the parent has
-        // wired to togglePin(candidate)).
-        OutlinedButton(
-            onClick = onPin,
-            enabled = !isPinningInFlight,
-            modifier = Modifier
-                .weight(1f)
-                .testTag("preview-sheet-pin-button"),
-        ) {
-            Icon(
-                imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
-                contentDescription = null,
-            )
-            Spacer(Modifier.height(PilgrimSpacing.xs))
-            Text(
-                text = stringResource(
-                    if (isPinned) R.string.preview_sheet_unpin
-                    else R.string.preview_sheet_pin,
-                ),
-            )
-        }
-        IconButton(
-            onClick = onOpenInGallery,
-            modifier = Modifier.testTag("preview-sheet-open-in-gallery"),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.OpenInNew,
-                contentDescription = stringResource(R.string.preview_sheet_open_in_gallery),
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.height(18.dp),
+        )
+        Text(text = label, color = contentColor)
     }
 }
 
