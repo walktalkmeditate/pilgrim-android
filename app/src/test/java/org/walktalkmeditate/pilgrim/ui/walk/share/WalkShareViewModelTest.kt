@@ -36,6 +36,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
+import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 
@@ -93,10 +94,15 @@ class WalkShareViewModelTest {
         File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
     }
 
+    private val fakePhotoEncoder = object : SharePhotoEncoder {
+        override fun encodeBase64(uriString: String): String? = "BASE64:$uriString"
+    }
+
     private fun vm(walkId: Long): WalkShareViewModel = WalkShareViewModel(
         repository = repository,
         shareService = service,
         cachedShareStore = cachedStore,
+        photoEncoder = fakePhotoEncoder,
         unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     )

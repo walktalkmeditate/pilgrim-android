@@ -9,6 +9,7 @@ import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -33,6 +34,8 @@ data class ShareInputs(
     val elevationAscentMeters: Double,
     val elevationDescentMeters: Double,
     val steps: Int?,
+    /** Pinned reliquary photos for this walk (every `walk_photos` row IS a pin). */
+    val pinnedPhotos: List<WalkPhoto> = emptyList(),
 )
 
 /** User-selected share options surfaced by the modal. */
@@ -45,6 +48,7 @@ data class WalkShareOptions(
     val includeActivityBreakdown: Boolean,
     val includeSteps: Boolean,
     val includeWaypoints: Boolean,
+    val includePhotos: Boolean = false,
 )
 
 internal object SharePayloadBuilder {
@@ -57,6 +61,11 @@ internal object SharePayloadBuilder {
     fun build(
         inputs: ShareInputs,
         options: WalkShareOptions,
+        // Photo bytes are I/O — the VM pre-encodes pinned photos to
+        // base64 JPEG off the main thread and passes them in so this
+        // builder stays pure. iOS encodes inline in `buildPayload`
+        // (synchronous PhotoKit); Android keeps build() side-effect-free.
+        photos: List<SharePayload.Photo>? = null,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): SharePayload {
         val altitudeByTs = inputs.altitudeSamples.associateBy { it.timestamp }
@@ -168,7 +177,7 @@ internal object SharePayloadBuilder {
             placeEnd = null,
             mark = null,
             waypoints = waypointsPayload,
-            photos = null,
+            photos = if (options.includePhotos) photos else null,
             turningDay = null,
         )
     }

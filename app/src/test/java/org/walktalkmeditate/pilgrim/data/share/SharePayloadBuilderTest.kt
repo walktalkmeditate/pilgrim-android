@@ -277,4 +277,26 @@ class SharePayloadBuilderTest {
         assertNull(payload.stats.weatherCondition)
         assertNull(payload.stats.weatherTemperature)
     }
+
+    @Test
+    fun `photos are omitted unless includePhotos is on`() {
+        val photo = SharePayload.Photo(lat = 1.0, lon = 2.0, ts = 3L, data = "DATA")
+        val off = SharePayloadBuilder.build(
+            baseInputs(),
+            allOn().copy(includePhotos = false),
+            photos = listOf(photo),
+        )
+        assertNull(off.photos)
+    }
+
+    @Test
+    fun `photos pass through when includePhotos is on`() {
+        val photo = SharePayload.Photo(lat = 1.0, lon = 2.0, ts = 3L, data = "DATA")
+        val on = SharePayloadBuilder.build(
+            baseInputs(),
+            allOn().copy(includePhotos = true),
+            photos = listOf(photo),
+        )
+        assertEquals(listOf(photo), on.photos)
+    }
 }

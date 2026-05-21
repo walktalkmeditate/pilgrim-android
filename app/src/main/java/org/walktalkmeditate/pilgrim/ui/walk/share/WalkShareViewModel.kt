@@ -27,7 +27,9 @@ import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
 import org.walktalkmeditate.pilgrim.data.share.ShareError
 import org.walktalkmeditate.pilgrim.data.share.ShareInputs
+import org.walktalkmeditate.pilgrim.data.share.SharePayload
 import org.walktalkmeditate.pilgrim.data.share.SharePayloadBuilder
+import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.share.WalkShareOptions
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -63,6 +65,7 @@ class WalkShareViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val shareService: ShareService,
     private val cachedShareStore: CachedShareStore,
+    private val photoEncoder: SharePhotoEncoder,
     unitsPreferences: UnitsPreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -101,6 +104,8 @@ class WalkShareViewModel @Inject constructor(
     val includeSteps: StateFlow<Boolean> = _includeSteps.asStateFlow()
     private val _includeWaypoints = MutableStateFlow(false)
     val includeWaypoints: StateFlow<Boolean> = _includeWaypoints.asStateFlow()
+    private val _includePhotos = MutableStateFlow(false)
+    val includePhotos: StateFlow<Boolean> = _includePhotos.asStateFlow()
 
     private val _isSharing = MutableStateFlow(false)
     val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
@@ -149,6 +154,7 @@ class WalkShareViewModel @Inject constructor(
     fun toggleActivityBreakdown(on: Boolean) { _includeActivityBreakdown.value = on }
     fun toggleSteps(on: Boolean) { _includeSteps.value = on }
     fun toggleWaypoints(on: Boolean) { _includeWaypoints.value = on }
+    fun togglePhotos(on: Boolean) { _includePhotos.value = on }
 
     /**
      * Entry point for the "Share" button. Guarded by a
@@ -178,9 +184,24 @@ class WalkShareViewModel @Inject constructor(
                     includeActivityBreakdown = _includeActivityBreakdown.value,
                     includeSteps = _includeSteps.value,
                     includeWaypoints = _includeWaypoints.value,
+                    includePhotos = _includePhotos.value,
                 )
+                // Encode pinned photos to base64 JPEG here (we're on IO).
+                // Deleted / unreadable URIs are silently dropped, matching
+                // iOS `compactMap` in `loadSharePhoto`.
+                val photos = if (options.includePhotos && loaded.inputs.pinnedPhotos.isNotEmpty()) {
+                    loaded.inputs.pinnedPhotos.mapNotNull { photo ->
+                        val data = photoEncoder.encodeBase64(photo.photoUri) ?: return@mapNotNull null
+                        SharePayload.Photo(
+                            lat = photo.capturedLat ?: 0.0,
+                            lon = photo.capturedLng ?: 0.0,
+                            ts = (photo.takenAt ?: 0L) / MILLIS_PER_SECOND,
+                            data = data,
+                        )
+                    }
+                } else null
                 val payload = withContext(Dispatchers.Default) {
-                    SharePayloadBuilder.build(loaded.inputs, options)
+                    SharePayloadBuilder.build(loaded.inputs, options, photos = photos)
                 }
                 val result = shareService.share(payload)
                 val nowMs = Instant.now().toEpochMilli()
@@ -236,6 +257,7 @@ class WalkShareViewModel @Inject constructor(
         val intervals: List<org.walktalkmeditate.pilgrim.data.entity.ActivityInterval>
         val recordings: List<org.walktalkmeditate.pilgrim.data.entity.VoiceRecording>
         val waypoints: List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>
+        val pinnedPhotos: List<org.walktalkmeditate.pilgrim.data.entity.WalkPhoto>
         try {
             samples = repository.locationSamplesFor(walkId)
             altitudes = repository.altitudeSamplesFor(walkId)
@@ -243,6 +265,7 @@ class WalkShareViewModel @Inject constructor(
             intervals = repository.activityIntervalsFor(walkId)
             recordings = repository.voiceRecordingsFor(walkId)
             waypoints = repository.waypointsFor(walkId)
+            pinnedPhotos = repository.photosFor(walkId)
         } catch (ce: CancellationException) {
             throw ce
         } catch (t: Throwable) {
@@ -298,6 +321,7 @@ class WalkShareViewModel @Inject constructor(
             // Steps not yet tracked on Android (Phase 1/2 scope gap);
             // always null for 8-A. Backend accepts null.
             steps = null,
+            pinnedPhotos = pinnedPhotos,
         )
         _uiState.value = WalkShareUiState.Loaded(inputs = inputs)
     }
@@ -345,6 +369,7 @@ class WalkShareViewModel @Inject constructor(
     companion object {
         const val ARG_WALK_ID = "walkId"
         private const val TAG = "WalkShareVM"
+        private const val MILLIS_PER_SECOND = 1_000L
         private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1_000L
     }
 }

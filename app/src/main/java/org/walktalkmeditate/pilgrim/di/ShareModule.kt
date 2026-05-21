@@ -8,9 +8,11 @@ import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import okhttp3.OkHttpClient
+import org.walktalkmeditate.pilgrim.data.share.AndroidSharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.ShareBaseUrl
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
 import org.walktalkmeditate.pilgrim.data.share.ShareHttpClient
+import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
 
 /**
  * Stage 8-A: DI wiring for Share Worker — extends [NetworkModule]
@@ -42,6 +44,10 @@ object ShareModule {
     @Singleton
     @ShareBaseUrl
     fun provideShareBaseUrl(): String = ShareConfig.BASE_URL
+
+    @Provides
+    @Singleton
+    fun provideSharePhotoEncoder(impl: AndroidSharePhotoEncoder): SharePhotoEncoder = impl
 
     private const val SHARE_CALL_TIMEOUT_SEC = 90L
 }
