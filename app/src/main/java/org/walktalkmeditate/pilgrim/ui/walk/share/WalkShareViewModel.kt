@@ -30,6 +30,8 @@ import org.walktalkmeditate.pilgrim.data.share.ShareInputs
 import org.walktalkmeditate.pilgrim.data.share.SharePayloadBuilder
 import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.share.WalkShareOptions
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -61,12 +63,22 @@ class WalkShareViewModel @Inject constructor(
     private val repository: WalkRepository,
     private val shareService: ShareService,
     private val cachedShareStore: CachedShareStore,
+    unitsPreferences: UnitsPreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val walkId: Long = requireNotNull(savedStateHandle.get<Long>(ARG_WALK_ID)) {
         "WalkShareViewModel requires a `walkId` nav arg"
     }
+
+    /**
+     * Distance-unit preference, passed straight through from the repo's
+     * hot StateFlow. The modal formats its per-row stat previews
+     * ([ShareStatFormat]) at display time — storage stays metric, the
+     * km↔mi / m↔ft conversion happens in the composable (iOS reads
+     * `UserPreferences.distanceMeasurementType` the same way).
+     */
+    val distanceUnits: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
     private val _uiState = MutableStateFlow<WalkShareUiState>(WalkShareUiState.Loading)
     val uiState: StateFlow<WalkShareUiState> = _uiState.asStateFlow()

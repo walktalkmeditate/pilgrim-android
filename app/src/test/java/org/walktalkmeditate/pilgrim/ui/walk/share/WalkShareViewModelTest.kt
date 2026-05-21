@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.share.ShareService
+import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -96,6 +97,7 @@ class WalkShareViewModelTest {
         repository = repository,
         shareService = service,
         cachedShareStore = cachedStore,
+        unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     )
 
