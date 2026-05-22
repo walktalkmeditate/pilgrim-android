@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -73,6 +74,38 @@ open class GeoCacheService @Inject constructor(
 
     private val _cairns = MutableStateFlow<List<CachedCairn>>(emptyList())
     open val cairns: StateFlow<List<CachedCairn>> = _cairns.asStateFlow()
+
+    /**
+     * Append a just-placed whisper to the local cache so its map marker
+     * appears immediately. iOS appends to `cachedWhispers` on a
+     * successful placement; without this the marker only shows after the
+     * next geo-cache refetch (which is gated on a ~10km move), so a
+     * whisper the user just left never appears mid-walk. Idempotent on
+     * `id` — a later refetch returning the same row won't duplicate it.
+     */
+    open fun addPlacedWhisper(whisper: CachedWhisper) {
+        _whispers.update { current ->
+            if (current.any { it.id == whisper.id }) current else current + whisper
+        }
+    }
+
+    /**
+     * Insert or bump a just-placed cairn. A new stone may start a new
+     * cairn or increment an existing one's count; preserve the original
+     * `createdAt` when updating (iOS keeps the first-stone timestamp).
+     */
+    open fun addOrUpdatePlacedCairn(cairn: CachedCairn) {
+        _cairns.update { current ->
+            val idx = current.indexOfFirst { it.id == cairn.id }
+            if (idx >= 0) {
+                current.toMutableList().also {
+                    it[idx] = cairn.copy(createdAt = current[idx].createdAt ?: cairn.createdAt)
+                }
+            } else {
+                current + cairn
+            }
+        }
+    }
 
     // ETags are in-memory only — match iOS exactly. Re-fetch on every
     // process start. Both are cleared by `invalidateLastFetch()` so

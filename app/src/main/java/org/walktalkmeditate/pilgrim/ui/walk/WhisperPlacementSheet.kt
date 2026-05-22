@@ -51,12 +51,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * the caller (ActiveWalkScreen via WalkViewModel) drives the HTTP
  * round-trip with server-confirm-then-haptic ordering.
  *
- * Deferred from MVP (separate PR):
- *  - Audio preview (play.circle / stop.circle button per row)
- *  - Category prefetch on selection
- *  - Disabled rows when [placeableCategories] filters one out (today
- *    we just render all 8 — the manifest will surface the available
- *    set via `placeableCategories` once audio playback ships)
+ * Per-row audio preview (play/stop) is wired via [onPreviewToggle].
+ * The category list is weighted so it scrolls within the sheet while
+ * the "Leave Whisper" button stays pinned at the bottom.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -117,7 +114,12 @@ fun WhisperPlacementSheet(
                 color = pilgrimColors.fog,
             )
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+                // weight(1f) so the category list takes only the leftover
+                // space and SCROLLS within it — without this it greedily
+                // consumed the sheet height and pushed the privacy notice +
+                // "Leave Whisper" button off the bottom (iOS pins the button
+                // below a ScrollView; this is the Compose equivalent).
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(items = WhisperCategory.entries, key = { it.apiValue }) { category ->
