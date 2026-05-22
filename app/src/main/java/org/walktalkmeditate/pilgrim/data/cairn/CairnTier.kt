@@ -25,6 +25,24 @@ enum class CairnTier(
     Sacred(minStones = 77, soundTier = 6, circleRadius = 15f, glows = false),
     Eternal(minStones = 108, soundTier = 7, circleRadius = 17f, glows = true);
 
+    /** The next tier up, or null if already [Eternal] (iOS `CairnTier.nextTier`). */
+    val next: CairnTier? get() = entries.getOrNull(ordinal + 1)
+
+    /** Stones still needed to reach [next], or null at [Eternal]. */
+    fun stonesToNext(stoneCount: Int): Int? =
+        next?.let { (it.minStones - stoneCount).coerceAtLeast(0) }
+
+    /**
+     * Fill fraction in [0,1] toward [next] within this tier's band
+     * (iOS `CairnDetailView.progressSection`). 0 at [Eternal].
+     */
+    fun progressToNext(stoneCount: Int): Float {
+        val n = next ?: return 0f
+        val range = n.minStones - minStones
+        if (range <= 0) return 0f
+        return ((stoneCount - minStones).toFloat() / range).coerceIn(0f, 1f)
+    }
+
     companion object {
         /**
          * Map a raw stone count to its [CairnTier]. Linear scan of the

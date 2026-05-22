@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Landscape
+import androidx.compose.material.icons.outlined.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -70,7 +70,7 @@ fun StonePlacementSheet(
                 color = pilgrimColors.ink,
             )
             Icon(
-                imageVector = Icons.Outlined.Landscape,
+                imageVector = Icons.Outlined.Terrain,
                 contentDescription = null,
                 tint = if (nearbyCairn != null) pilgrimColors.stone else pilgrimColors.moss,
                 modifier = Modifier.size(56.dp),

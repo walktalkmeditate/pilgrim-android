@@ -13,10 +13,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.LocationOn
-import androidx.compose.material.icons.outlined.Landscape
-import androidx.compose.material.icons.outlined.Spa
+import androidx.compose.material.icons.outlined.Terrain
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -139,7 +139,7 @@ fun WalkOptionsSheet(
             // the place-call's network error to surface the failure.
             if (canDropWaypoint) {
                 OptionRow(
-                    icon = Icons.Outlined.Spa,
+                    icon = Icons.Outlined.Air,
                     title = stringResource(R.string.walk_options_whisper_title),
                     subtitle = when {
                         !isWhisperUnlocked -> stringResource(R.string.walk_options_whisper_locked)
@@ -150,7 +150,7 @@ fun WalkOptionsSheet(
                     onClick = onLeaveWhisper,
                 )
                 OptionRow(
-                    icon = Icons.Outlined.Landscape,
+                    icon = Icons.Outlined.Terrain,
                     title = stringResource(R.string.walk_options_stone_title),
                     subtitle = when {
                         !isStoneUnlocked -> stringResource(R.string.walk_options_stone_locked)
