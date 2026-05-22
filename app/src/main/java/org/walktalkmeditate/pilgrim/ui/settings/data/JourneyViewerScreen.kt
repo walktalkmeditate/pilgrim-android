@@ -2,8 +2,14 @@
 package org.walktalkmeditate.pilgrim.ui.settings.data
 
 import android.annotation.SuppressLint
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +33,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -69,6 +76,7 @@ fun JourneyViewerScreen(
                 is JourneyState.Ready -> JourneyWebView(
                     walksJson = current.walksJson,
                     manifestJson = current.manifestJson,
+                    isDark = LocalPilgrimDarkTheme.current,
                 )
             }
         }
@@ -114,8 +122,9 @@ private fun ErrorPlaceholder(message: String) {
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun JourneyWebView(walksJson: String, manifestJson: String) {
+private fun JourneyWebView(walksJson: String, manifestJson: String, isDark: Boolean) {
     var injected by remember { mutableStateOf(false) }
+    val theme = if (isDark) "dark" else "light"
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
@@ -123,32 +132,103 @@ private fun JourneyWebView(walksJson: String, manifestJson: String) {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 setBackgroundColor(0)
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                        Log.d(TAG, "[console] ${message.message()} @${message.sourceId()}:${message.lineNumber()}")
+                        return true
+                    }
+                }
                 webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): WebResourceResponse? {
+                        if (request != null) {
+                            MapboxRefererInterceptor.maybeIntercept(request, "$VIEWER_URL/")
+                                ?.let { return it }
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                        error: WebResourceError?,
+                    ) {
+                        Log.w(TAG, "load error ${error?.errorCode} ${error?.description} url=${request?.url}")
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (injected || view == null) return
                         injected = true
-                        // iOS uses a 1-second delay after onPageFinished
-                        // before injecting because the viewer's JS may
-                        // attach `window.pilgrimViewer` asynchronously
-                        // after DOM load. Mirror that here.
-                        // JourneyViewerView.swift:201.
-                        view.postDelayed({
-                            // Defensive: the WebView may have been
-                            // destroyed (user navigated away, screen
-                            // disposed) before the delay elapses.
-                            // `evaluateJavascript` on a destroyed
-                            // WebView throws IllegalStateException.
-                            // `view.parent` is the cheapest still-attached
-                            // signal (postDelayed runs on the View's
-                            // handler — if the View is destroyed, the
-                            // runnable is removed from the queue, but
-                            // belt-and-suspenders).
-                            if (view.parent == null) return@postDelayed
-                            val safeWalks = escapeJsBoundary(walksJson)
-                            val safeManifest = escapeJsBoundary(manifestJson)
-                            val payload = """{"walks":$safeWalks,"manifest":$safeManifest}"""
-                            view.evaluateJavascript("window.pilgrimViewer.loadData($payload);", null)
-                        }, INJECTION_DELAY_MS)
+                        // iOS v1.6.0 fix (JourneyViewerView.waitForBridgeReady):
+                        // the viewer's JS attaches `window.pilgrimViewer`
+                        // asynchronously after DOM load. The old fixed 1s
+                        // delay was a guess that left the page BLANK when
+                        // the bundle took longer (the bug this fixes). Mirror
+                        // the editor's self-polling shim: retry every 100ms
+                        // up to ~5s for the bridge, then call loadData.
+                        val safeWalks = escapeJsBoundary(walksJson)
+                        val safeManifest = escapeJsBoundary(manifestJson)
+                        val payload = """{"walks":$safeWalks,"manifest":$safeManifest}"""
+                        val script = """
+                            (function() {
+                                // Drive the viewer's theme from the app's resolved appearance
+                                // (LocalPilgrimDarkTheme) rather than the WebView's
+                                // prefers-color-scheme (which Android doesn't propagate from
+                                // the in-app appearance toggle) or stale localStorage. Set
+                                // BEFORE loadData so the Mapbox style (renderer reads
+                                // data-theme) and the UI chrome both pick it up.
+                                try {
+                                    document.documentElement.setAttribute('data-theme', '$theme');
+                                    localStorage.setItem('pilgrim-viewer-theme', '$theme');
+                                } catch (e) {}
+
+                                // Android System WebView (unlike iOS WKWebView) reports a
+                                // 0-height LAYOUT viewport, so the web app's height:100%/vh
+                                // chain collapses <body> and the Mapbox map container to 0px
+                                // even though the VISUAL viewport (window.innerHeight) is
+                                // correct. % and vh can't fix it — they resolve against the
+                                // broken layout viewport. Stamp a concrete pixel height from
+                                // innerHeight onto the html->body->root chain, then fire resize
+                                // so Mapbox GL re-measures.
+                                function fixHeights() {
+                                    var px = window.innerHeight + 'px';
+                                    document.documentElement.style.height = px;
+                                    document.body.style.height = px;
+                                    var root = document.body.firstElementChild;
+                                    if (root) root.style.height = px;
+                                    window.dispatchEvent(new Event('resize'));
+                                }
+                                fixHeights();
+                                // Re-stamp a few times to catch the SPA mounting its root after
+                                // our first pass, and on real viewport changes.
+                                var n = 0;
+                                var iv = setInterval(function() { fixHeights(); if (++n > 8) clearInterval(iv); }, 250);
+                                window.addEventListener('orientationchange', fixHeights);
+
+                                var data = $payload;
+                                var attempts = 0;
+                                function tryLoad() {
+                                    if (window.pilgrimViewer && typeof window.pilgrimViewer.loadData === 'function') {
+                                        try {
+                                            window.pilgrimViewer.loadData(data);
+                                            fixHeights();
+                                        } catch (e) { console.error('loadData error', e); }
+                                    } else if (attempts++ < 50) {
+                                        setTimeout(tryLoad, 100);
+                                    } else {
+                                        console.warn('pilgrimViewer.loadData never resolved');
+                                    }
+                                }
+                                tryLoad();
+                            })();
+                        """.trimIndent()
+                        // Defensive: the WebView may have been destroyed
+                        // before this runs. `view.parent` is the cheapest
+                        // still-attached signal.
+                        if (view.parent == null) return
+                        view.evaluateJavascript(script, null)
                     }
                 }
                 loadUrl(VIEWER_URL)
@@ -180,4 +260,4 @@ private fun escapeJsBoundary(json: String): String =
 
 private const val VIEWER_URL = "https://view.pilgrimapp.org"
 
-private const val INJECTION_DELAY_MS = 1_000L
+private const val TAG = "JourneyViewer"

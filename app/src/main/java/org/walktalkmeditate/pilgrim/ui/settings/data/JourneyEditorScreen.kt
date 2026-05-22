@@ -7,8 +7,13 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -39,6 +44,7 @@ import java.io.File
 import java.time.Instant
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.PilgrimDetailScaffold
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -103,6 +109,7 @@ fun JourneyEditorScreen(
                 is JourneyEditorState.Ready -> EditorWebView(
                     filename = current.filename,
                     base64Payload = current.base64Payload,
+                    isDark = LocalPilgrimDarkTheme.current,
                 )
             }
         }
@@ -126,9 +133,10 @@ private fun LoadingPlaceholder() {
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun EditorWebView(filename: String, base64Payload: String) {
+private fun EditorWebView(filename: String, base64Payload: String, isDark: Boolean) {
     val context = LocalContext.current
     var injected by remember { mutableStateOf(false) }
+    val theme = if (isDark) "dark" else "light"
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),
@@ -149,7 +157,32 @@ private fun EditorWebView(filename: String, base64Payload: String) {
                     SaveBridge(ctx, filename),
                     "PilgrimSaveBridge",
                 )
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                        Log.d(TAG, "[console] ${message.message()} @${message.sourceId()}:${message.lineNumber()}")
+                        return true
+                    }
+                }
                 webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): WebResourceResponse? {
+                        if (request != null) {
+                            MapboxRefererInterceptor.maybeIntercept(request, "$EDITOR_URL/")
+                                ?.let { return it }
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                        error: WebResourceError?,
+                    ) {
+                        Log.w(TAG, "load error ${error?.errorCode} ${error?.description} url=${request?.url}")
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (injected || view == null) return
                         injected = true
@@ -163,11 +196,35 @@ private fun EditorWebView(filename: String, base64Payload: String) {
                         val payload = "${'"'}$filename${'"'}, ${'"'}${escapeJsString(base64Payload)}${'"'}"
                         val script = """
                             (function() {
+                                // Drive theme from the app's resolved appearance (before any
+                                // map/UI renders) — see JourneyViewerScreen for rationale.
+                                try {
+                                    document.documentElement.setAttribute('data-theme', '$theme');
+                                    localStorage.setItem('pilgrim-viewer-theme', '$theme');
+                                } catch (e) {}
+
+                                // Android WebView reports a 0-height layout viewport, so the
+                                // web editor's height:100%/vh chain collapses the flex layout
+                                // (incl. the Mapbox map) to 0px. % / vh can't fix it; stamp a
+                                // concrete pixel height from innerHeight, then resize.
+                                function fixHeights() {
+                                    var px = window.innerHeight + 'px';
+                                    document.documentElement.style.height = px;
+                                    document.body.style.height = px;
+                                    var root = document.body.firstElementChild;
+                                    if (root) root.style.height = px;
+                                    window.dispatchEvent(new Event('resize'));
+                                }
+                                fixHeights();
+                                var fn = 0;
+                                var fiv = setInterval(function() { fixHeights(); if (++fn > 8) clearInterval(fiv); }, 250);
+                                window.addEventListener('orientationchange', fixHeights);
                                 var attempts = 0;
                                 function tryLoad() {
                                     if (window.pilgrimViewer && typeof window.pilgrimViewer.loadFile === 'function') {
                                         try {
                                             window.pilgrimViewer.loadFile($payload);
+                                            setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 300);
                                         } catch (e) { console.error('loadFile error', e); }
                                     } else if (attempts++ < 50) {
                                         setTimeout(tryLoad, 100);
@@ -265,3 +322,5 @@ private fun escapeJsString(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 
 private const val EDITOR_URL = "https://edit.pilgrimapp.org"
+
+private const val TAG = "JourneyEditor"
