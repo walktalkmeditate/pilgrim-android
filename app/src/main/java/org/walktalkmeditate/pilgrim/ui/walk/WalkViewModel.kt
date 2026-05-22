@@ -1417,7 +1417,7 @@ class WalkViewModel @Inject constructor(
         }
         val capturedWalkId = activeWalk.walkId
         try {
-            whisperService.placeWhisper(
+            val placeResult = whisperService.placeWhisper(
                 latitude = location.latitude,
                 longitude = location.longitude,
                 whisperId = whisper.id,
@@ -1445,6 +1445,24 @@ class WalkViewModel @Inject constructor(
                 proximityService.suppressTarget(
                     org.walktalkmeditate.pilgrim.data.proximity
                         .ProximityTarget.whisperId(whisper.id),
+                )
+                // iOS parity `ActiveWalkView.swift:826-833` — append the
+                // just-placed whisper to the geo cache so its map marker
+                // appears immediately (the next refetch is gated on a
+                // ~10km move, so without this the user never sees the
+                // whisper they just left).
+                val expiry = org.walktalkmeditate.pilgrim.data.whisper.ExpiryDuration.DEFAULT
+                geoCacheService.addPlacedWhisper(
+                    org.walktalkmeditate.pilgrim.data.whisper.CachedWhisper(
+                        id = placeResult.id,
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        whisperId = whisper.id,
+                        category = category.apiValue,
+                        expiresAt = java.time.Instant
+                            .ofEpochMilli(clock.now() + expiry.days.toLong() * 86_400_000L)
+                            .toString(),
+                    ),
                 )
                 // iOS parity `ActiveWalkView.swift:817-819@db4196e` —
                 // play the just-placed whisper after server confirm.
@@ -1560,6 +1578,20 @@ class WalkViewModel @Inject constructor(
                 // post-placement stone count. Silent when `soundsEnabled`
                 // is off (StonePlayer reads the pref internally).
                 stonePlayer.playForCount(result.stoneCount)
+                // Append/bump the cairn in the geo cache so its map marker
+                // appears (or grows) immediately — same rationale as the
+                // whisper path above.
+                val nowIso = java.time.Instant.ofEpochMilli(clock.now()).toString()
+                geoCacheService.addOrUpdatePlacedCairn(
+                    org.walktalkmeditate.pilgrim.data.cairn.CachedCairn(
+                        id = result.id,
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        stoneCount = result.stoneCount,
+                        lastPlacedAt = nowIso,
+                        createdAt = nowIso,
+                    ),
+                )
             }
         } catch (e: CancellationException) {
             throw e
