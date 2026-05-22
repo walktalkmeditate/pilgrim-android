@@ -577,6 +577,16 @@
         <item quantity="other">stones</item>
     </plurals>
     <string name="cairn_detail_close">Close</string>
+    <string name="cairn_detail_first_stone">First stone %1$s</string>
+    <string name="cairn_detail_last_stone">Last stone %1$s</string>
+    <string name="cairn_detail_progress">%1$d more to become %2$s</string>
+    <string name="cairn_detail_eternal_badge">108</string>
+    <string name="cairn_next_small">a small cairn</string>
+    <string name="cairn_next_medium">a steady cairn</string>
+    <string name="cairn_next_large">a large cairn</string>
+    <string name="cairn_next_great">a great cairn</string>
+    <string name="cairn_next_sacred">a sacred cairn</string>
+    <string name="cairn_next_eternal">an eternal cairn</string>
     <string name="cairn_tier_faint_desc">A faint cairn just beginning to form.</string>
     <string name="cairn_tier_small_desc">A small cairn building its presence.</string>
     <string name="cairn_tier_medium_desc">A cairn well established here.</string>

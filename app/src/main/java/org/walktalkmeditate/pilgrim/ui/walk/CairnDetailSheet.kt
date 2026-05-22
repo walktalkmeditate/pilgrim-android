@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.text.format.DateUtils
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Landscape
+import androidx.compose.material.icons.outlined.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,10 +24,17 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.time.Instant
+import java.time.OffsetDateTime
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.cairn.CachedCairn
 import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
@@ -33,15 +43,14 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
- * iOS parity `CairnDetailView.swift@db4196e` — medium-detent
+ * iOS parity `CairnDetailView.swift@v1.6.0` — medium-detent
  * ModalBottomSheet shown when the user taps a cairn pin on the map.
- * Read-only summary: tier glyph + stone count + tier description.
+ * Read-only summary: tier kanji watermark + scaled mountain glyph +
+ * stone count + tier description + first/last-stone relative times +
+ * progress toward the next tier (or the eternal 108 badge).
  *
- * MVP scope (this PR): no animated glow ring (deferred — requires a
- * Canvas radial-gradient + breathing animation port). No "Place a
- * Stone" button — the tap-on-pin path opens this in read-only mode
- * exactly like iOS (placement happens through the WalkOptionsSheet
- * → StonePlacementSheet flow, not from here).
+ * Deferred (decorative, not parity-critical): the breathing-scale
+ * animation + radial glow ring for great+ tiers.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,25 +67,33 @@ fun CairnDetailSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = PilgrimSpacing.big,
-                    vertical = PilgrimSpacing.normal,
-                ),
+                .padding(horizontal = PilgrimSpacing.big, vertical = PilgrimSpacing.normal),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
         ) {
-            // Hero glyph — size scaled by tier ordinal (32–68pt iOS).
-            val glyphSizeDp = 32 + cairn.tier.ordinal * 6
-            Icon(
-                imageVector = Icons.Outlined.Landscape,
-                contentDescription = null,
-                tint = if (cairn.tier.ordinal >= CairnTier.Great.ordinal) {
-                    pilgrimColors.stone
-                } else {
-                    pilgrimColors.moss
-                },
-                modifier = Modifier.size(glyphSizeDp.dp),
-            )
+            // Hero: faint tier kanji watermark behind a tier-scaled glyph.
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = tierKanji(cairn.tier),
+                    fontFamily = FontFamily.Default,
+                    fontWeight = FontWeight.Thin,
+                    fontSize = 120.sp,
+                    color = pilgrimColors.stone.copy(
+                        alpha = 0.04f + cairn.tier.ordinal * 0.006f,
+                    ),
+                )
+                val glyphSizeDp = 32 + cairn.tier.ordinal * 6
+                Icon(
+                    imageVector = Icons.Outlined.Terrain,
+                    contentDescription = null,
+                    tint = if (cairn.tier.ordinal >= CairnTier.Great.ordinal) {
+                        pilgrimColors.stone
+                    } else {
+                        pilgrimColors.moss
+                    },
+                    modifier = Modifier.size(glyphSizeDp.dp),
+                )
+            }
             Text(
                 text = cairn.stoneCount.toString(),
                 style = pilgrimType.displayLarge,
@@ -91,14 +108,48 @@ fun CairnDetailSheet(
                 style = pilgrimType.caption,
                 color = pilgrimColors.fog,
             )
-            Spacer(Modifier.height(PilgrimSpacing.small))
             Text(
                 text = stringResource(tierDescriptionRes(cairn.tier)),
                 style = pilgrimType.body,
-                color = pilgrimColors.ink,
+                color = pilgrimColors.stone,
+                fontStyle = FontStyle.Italic,
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(PilgrimSpacing.normal))
+
+            // Timestamps — first stone always, last stone only when >1.
+            relativeTime(cairn.createdAt ?: cairn.lastPlacedAt)?.let { first ->
+                Spacer(Modifier.height(PilgrimSpacing.xs))
+                Text(
+                    text = stringResource(R.string.cairn_detail_first_stone, first),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                )
+            }
+            if (cairn.stoneCount > 1) {
+                relativeTime(cairn.lastPlacedAt)?.let { last ->
+                    Text(
+                        text = stringResource(R.string.cairn_detail_last_stone, last),
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(PilgrimSpacing.small))
+            // Progress toward the next tier, or the eternal badge.
+            val nextTier = cairn.tier.next
+            if (nextTier != null) {
+                CairnProgress(cairn = cairn, nextTier = nextTier)
+            } else {
+                Text(
+                    text = stringResource(R.string.cairn_detail_eternal_badge),
+                    style = pilgrimType.displayLarge,
+                    color = pilgrimColors.dawn,
+                    modifier = Modifier.padding(vertical = PilgrimSpacing.small),
+                )
+            }
+
+            Spacer(Modifier.height(PilgrimSpacing.small))
             Button(
                 onClick = onDismiss,
                 colors = ButtonDefaults.buttonColors(
@@ -117,6 +168,76 @@ fun CairnDetailSheet(
             }
         }
     }
+}
+
+@Composable
+private fun CairnProgress(cairn: CachedCairn, nextTier: CairnTier) {
+    val needed = cairn.tier.stonesToNext(cairn.stoneCount) ?: 0
+    val progress = cairn.tier.progressToNext(cairn.stoneCount)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(pilgrimColors.parchmentTertiary),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.coerceIn(0.02f, 1f))
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(pilgrimColors.stone),
+            )
+        }
+        Text(
+            text = stringResource(
+                R.string.cairn_detail_progress,
+                needed,
+                stringResource(nextTierNameRes(nextTier)),
+            ),
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/** Relative "3 days ago" string from an ISO-8601 timestamp, or null if unparseable. */
+private fun relativeTime(iso: String): String? {
+    val millis = runCatching { Instant.parse(iso).toEpochMilli() }
+        .recoverCatching { OffsetDateTime.parse(iso).toInstant().toEpochMilli() }
+        .getOrNull() ?: return null
+    return DateUtils.getRelativeTimeSpanString(
+        millis,
+        System.currentTimeMillis(),
+        DateUtils.MINUTE_IN_MILLIS,
+    ).toString()
+}
+
+/** iOS `CairnDetailView.tierKanji` — one glyph per tier. */
+private fun tierKanji(tier: CairnTier): String = when (tier) {
+    CairnTier.Faint -> "石"
+    CairnTier.Small -> "積"
+    CairnTier.Medium -> "道"
+    CairnTier.Large -> "導"
+    CairnTier.Great -> "山"
+    CairnTier.Sacred -> "聖"
+    CairnTier.Eternal -> "永"
+}
+
+private fun nextTierNameRes(next: CairnTier): Int = when (next) {
+    CairnTier.Small -> R.string.cairn_next_small
+    CairnTier.Medium -> R.string.cairn_next_medium
+    CairnTier.Large -> R.string.cairn_next_large
+    CairnTier.Great -> R.string.cairn_next_great
+    CairnTier.Sacred -> R.string.cairn_next_sacred
+    CairnTier.Eternal -> R.string.cairn_next_eternal
+    CairnTier.Faint -> R.string.cairn_next_small
 }
 
 private fun tierDescriptionRes(tier: CairnTier): Int = when (tier) {

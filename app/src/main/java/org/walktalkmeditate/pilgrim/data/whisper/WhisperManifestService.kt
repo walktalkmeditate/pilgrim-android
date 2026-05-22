@@ -143,7 +143,11 @@ open class WhisperManifestService @Inject constructor(
         }
 
     private companion object {
-        const val MANIFEST_URL = "https://cdn.pilgrimapp.org/whispers/manifest.json"
+        // iOS parity (Config.swift Whisper.manifestURL): the manifest lives
+        // under /audio/whisper/, alongside the .aac files — NOT /whispers/.
+        // The old /whispers/manifest.json path 404s, leaving the catalog
+        // empty so preview/placement/tap all silently no-op.
+        const val MANIFEST_URL = "https://cdn.pilgrimapp.org/audio/whisper/manifest.json"
         const val TAG = "WhisperManifest"
     }
 }
