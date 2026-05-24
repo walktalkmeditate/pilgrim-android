@@ -300,6 +300,10 @@ fun ActiveWalkScreen(
     val stonePlacedThisWalk by viewModel.stonePlacedThisWalk.collectAsStateWithLifecycle()
     val isStoneUnlocked by viewModel.isStoneUnlocked.collectAsStateWithLifecycle()
     val canPlaceStone by viewModel.canPlaceStone.collectAsStateWithLifecycle()
+    val soundscapeName by viewModel.soundscapeName.collectAsStateWithLifecycle()
+    val soundscapeEnabled by viewModel.soundscapeEnabled.collectAsStateWithLifecycle()
+    val selectedSoundscapeId by viewModel.selectedSoundscapeId.collectAsStateWithLifecycle()
+    val availableSoundscapes by viewModel.availableSoundscapes.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val haptic = LocalHapticFeedback.current
     val nearbyCairn by viewModel.nearbyCairn.collectAsStateWithLifecycle()
@@ -737,6 +741,12 @@ fun ActiveWalkScreen(
                         showStoneSheet = true
                     }
                 },
+                soundscapeName = soundscapeName,
+                isSoundscapePlaying = soundscapeEnabled,
+                selectedSoundscapeId = selectedSoundscapeId,
+                availableSoundscapes = availableSoundscapes,
+                onToggleSoundscape = viewModel::onToggleSoundscape,
+                onSelectSoundscape = viewModel::onSelectSoundscape,
             )
         }
         if (showWhisperSheet) {

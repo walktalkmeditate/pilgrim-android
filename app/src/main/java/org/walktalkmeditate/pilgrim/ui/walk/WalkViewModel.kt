@@ -116,6 +116,7 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.data.intention.IntentionHistoryRepository,
     private val voiceGuidePauseController:
         org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePauseController,
+    private val soundscapeUiController: WalkSoundscapeUiController,
 ) : ViewModel() {
 
     /**
@@ -561,6 +562,13 @@ class WalkViewModel @Inject constructor(
     private val _initialCameraCenter = MutableStateFlow<LocationPoint?>(null)
     val initialCameraCenter: StateFlow<LocationPoint?> = _initialCameraCenter.asStateFlow()
 
+    /**
+     * Optimistic walk-long soundscape on/off for the options-sheet row.
+     * Declared before [init] because the reset collector below touches it
+     * and may run eagerly under an Unconfined test dispatcher.
+     */
+    private val _soundscapeEnabled = MutableStateFlow(false)
+
     init {
         viewModelScope.launch {
             try {
@@ -575,6 +583,45 @@ class WalkViewModel @Inject constructor(
                 Log.w(TAG, "initial camera seed lookup failed", t)
             }
         }
+        // Reset the optimistic soundscape toggle when the walk ends so the
+        // next walk's options sheet opens at "Off" — mirrors :tracker,
+        // which resets its manual request on Idle/Finished.
+        viewModelScope.launch {
+            controller.state.collect { state ->
+                if (state is WalkState.Idle || state is WalkState.Finished) {
+                    _soundscapeEnabled.value = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Public optimistic walk-long soundscape on/off (the actual player
+     * lives in `:tracker` and the UI process can't observe it, so this
+     * mirrors the user's intent and is reset on walk end). Toggling
+     * routes the command to `:tracker` via [WalkSoundscapeUiController].
+     */
+    val soundscapeEnabled: StateFlow<Boolean> = _soundscapeEnabled.asStateFlow()
+
+    /** Selected soundscape display name (null when none selected). */
+    val soundscapeName: StateFlow<String?> = soundscapeUiController.selectedName
+
+    /** Selected soundscape id (drives the picker checkmark). */
+    val selectedSoundscapeId: StateFlow<String?> = soundscapeUiController.selectedId
+
+    /** Downloaded soundscapes for the options-sheet picker. */
+    val availableSoundscapes: StateFlow<List<SoundscapeChoice>> =
+        soundscapeUiController.available
+
+    fun onToggleSoundscape() {
+        val next = !_soundscapeEnabled.value
+        _soundscapeEnabled.value = next
+        soundscapeUiController.setEnabled(next)
+    }
+
+    fun onSelectSoundscape(assetId: String) {
+        soundscapeUiController.select(assetId)
+        _soundscapeEnabled.value = true
     }
 
     /**

@@ -22,6 +22,8 @@ import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionRepositor
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionScope
 import org.walktalkmeditate.pilgrim.data.soundscape.WorkManagerSoundscapeDownloadScheduler
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.ui.walk.DefaultWalkSoundscapeUiController
+import org.walktalkmeditate.pilgrim.ui.walk.WalkSoundscapeUiController
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -42,6 +44,12 @@ abstract class SoundscapeModule {
     @Binds
     @Singleton
     abstract fun bindSoundscapePlayer(impl: ExoPlayerSoundscapePlayer): SoundscapePlayer
+
+    @Binds
+    @Singleton
+    abstract fun bindWalkSoundscapeUiController(
+        impl: DefaultWalkSoundscapeUiController,
+    ): WalkSoundscapeUiController
 
     companion object {
         /**

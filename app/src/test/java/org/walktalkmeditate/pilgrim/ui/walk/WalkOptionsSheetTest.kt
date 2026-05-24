@@ -187,4 +187,79 @@ class WalkOptionsSheetTest {
         composeRule.onNodeWithText("Drop Waypoint").performClick()
         assertTrue(fired)
     }
+
+    @Test
+    fun `soundscape row hidden when no soundscape selected`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onDropWaypoint = {},
+                onDismiss = {},
+                soundscapeName = null,
+            )
+        }
+        composeRule.onNodeWithText("Soundscape").assertDoesNotExist()
+    }
+
+    @Test
+    fun `soundscape row shows Off when not playing`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onDropWaypoint = {},
+                onDismiss = {},
+                soundscapeName = "Rain",
+                isSoundscapePlaying = false,
+            )
+        }
+        composeRule.onNodeWithText("Soundscape").assertIsDisplayed()
+        composeRule.onNodeWithText("Off").assertIsDisplayed()
+    }
+
+    @Test
+    fun `soundscape row shows name when playing`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onDropWaypoint = {},
+                onDismiss = {},
+                soundscapeName = "Rain",
+                isSoundscapePlaying = true,
+            )
+        }
+        composeRule.onNodeWithText("Rain").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping soundscape row fires onToggleSoundscape`() {
+        var fired = false
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onDropWaypoint = {},
+                onDismiss = {},
+                soundscapeName = "Rain",
+                isSoundscapePlaying = false,
+                onToggleSoundscape = { fired = true },
+            )
+        }
+        composeRule.onNodeWithText("Soundscape").performClick()
+        assertTrue(fired)
+    }
 }

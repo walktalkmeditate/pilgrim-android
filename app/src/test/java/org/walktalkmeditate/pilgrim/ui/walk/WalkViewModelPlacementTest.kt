@@ -106,6 +106,7 @@ class WalkViewModelPlacementTest {
             stonePlayer = org.walktalkmeditate.pilgrim.data.cairn.FakeStonePlayer(),
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
+            soundscapeUiController = FakeWalkSoundscapeUiController(),
         )
     }
 
