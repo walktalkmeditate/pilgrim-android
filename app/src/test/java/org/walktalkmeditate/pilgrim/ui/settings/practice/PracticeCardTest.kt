@@ -51,6 +51,8 @@ class PracticeCardTest {
         onSetDistanceUnits: (UnitSystem) -> Unit = {},
         walkWithCollective: Boolean = false,
         onSetWalkWithCollective: (Boolean) -> Unit = {},
+        autoPlayWhisper: Boolean = false,
+        onSetAutoPlayWhisper: (Boolean) -> Unit = {},
         walkReliquary: Boolean = false,
         onSetWalkReliquary: (Boolean) -> Unit = {},
         showPhotosDeniedNote: Boolean = false,
@@ -77,6 +79,8 @@ class PracticeCardTest {
                         onSetDistanceUnits = onSetDistanceUnits,
                         walkWithCollective = walkWithCollective,
                         onSetWalkWithCollective = onSetWalkWithCollective,
+                        autoPlayWhisper = autoPlayWhisper,
+                        onSetAutoPlayWhisper = onSetAutoPlayWhisper,
                         walkReliquary = walkReliquary,
                         onSetWalkReliquary = onSetWalkReliquary,
                         showPhotosDeniedNote = showPhotosDeniedNote,
@@ -87,7 +91,7 @@ class PracticeCardTest {
     }
 
     @Test
-    fun `renders header and all five toggle labels`() {
+    fun `renders header and all toggle labels`() {
         renderDefault(celestialAwareness = true)
         composeRule.onNodeWithText("Practice").assertExists()
         composeRule.onNodeWithText("How you walk").assertExists()
@@ -95,6 +99,7 @@ class PracticeCardTest {
         composeRule.onNodeWithText("Celestial awareness").assertExists()
         composeRule.onNodeWithText("Units").assertExists()
         composeRule.onNodeWithText("Walk with the collective").assertExists()
+        composeRule.onNodeWithText("Auto-play nearby whispers").assertExists()
         composeRule.onNodeWithText("Gather walk photos").assertExists()
     }
 
@@ -132,19 +137,30 @@ class PracticeCardTest {
     }
 
     @Test
+    fun `tapping whisper toggle fires setter`() {
+        var lastValue: Boolean? = null
+        renderDefault(
+            autoPlayWhisper = true,
+            onSetAutoPlayWhisper = { lastValue = it },
+        )
+        composeRule.onAllNodes(isToggleable())[WHISPER_TOGGLE_INDEX].performClick()
+        composeRule.runOnIdle { assertEquals(false, lastValue) }
+    }
+
+    @Test
     fun `tapping reliquary toggle fires setter with true`() {
         var lastValue: Boolean? = null
         renderDefault(
             walkReliquary = false,
             onSetWalkReliquary = { lastValue = it },
         )
-        // Sanity-check: 4 toggleable Switches render in default
+        // Sanity-check: 5 toggleable Switches render in default
         // configuration (zodiac picker hidden, photos note hidden).
         // The reliquary Switch is the LAST toggle; without the
         // class-level `qualifiers = "w400dp-h1000dp"` Robolectric's
         // default 320×470 viewport clips it to zero height and
         // performClick silently no-ops.
-        composeRule.onAllNodes(isToggleable()).assertCountEquals(4)
+        composeRule.onAllNodes(isToggleable()).assertCountEquals(5)
         composeRule.onAllNodes(isToggleable())[RELIQUARY_TOGGLE_INDEX].performClick()
         composeRule.runOnIdle { assertEquals(true, lastValue) }
     }
@@ -228,12 +244,13 @@ class PracticeCardTest {
 
     private companion object {
         // Toggleable nodes appear in the order PracticeCard renders
-        // them: intention, celestial, collective, reliquary. Pickers
-        // emit selectable (single-choice) semantics, not toggleable, so
-        // they are not part of this index sequence.
+        // them: intention, celestial, collective, whisper, reliquary.
+        // Pickers emit selectable (single-choice) semantics, not
+        // toggleable, so they are not part of this index sequence.
         const val INTENTION_TOGGLE_INDEX = 0
         const val CELESTIAL_TOGGLE_INDEX = 1
         const val COLLECTIVE_TOGGLE_INDEX = 2
-        const val RELIQUARY_TOGGLE_INDEX = 3
+        const val WHISPER_TOGGLE_INDEX = 3
+        const val RELIQUARY_TOGGLE_INDEX = 4
     }
 }

@@ -80,11 +80,18 @@
         android:theme="@style/Theme.Pilgrim.Splash"
         tools:targetApi="36">
 
+        <!-- Portrait-locked: the entire app (calligraphy scroll, walk map,
+             goshuin grid, meditation) is designed vertical; rotating to
+             landscape should NOT reflow. Single-activity app, so locking
+             MainActivity covers every screen. tools:ignore silences the
+             large-screen "don't lock orientation" lint — intentional here. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.Pilgrim">
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Pilgrim"
+            tools:ignore="LockedOrientationActivity">
             <!-- Stage 9-A: singleTop so widget-tap deep links re-enter
                  via onNewIntent instead of stacking a fresh MainActivity
                  instance.

@@ -43,7 +43,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -52,11 +54,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.util.CustomTabs
 import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
 import org.walktalkmeditate.pilgrim.data.share.ShareInputs
@@ -68,6 +74,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1_000L
+// iOS `WalkShareView.triggerRitualIfNeeded` beat before auto-presenting
+// the shared scroll on a successful share.
+private const val SHARE_RITUAL_DELAY_MS = 800L
 private val ROW_VERTICAL_PADDING = 10.dp
 private val ROUTE_PREVIEW_HEIGHT = 200.dp
 
@@ -102,6 +111,11 @@ fun WalkShareScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    // Shared latch so the manual "View scroll" tap and the delayed
+    // auto-present can't both launch the Custom Tab (iOS cancels the
+    // pending reveal on a manual tap; this is the Compose equivalent).
+    val scrollOpened = remember { AtomicBoolean(false) }
     val errNetwork = stringResource(R.string.share_modal_error_network)
     val errRateLimited = stringResource(R.string.share_modal_error_rate_limited)
     val errUnknown = stringResource(R.string.share_modal_error_unknown)
@@ -111,7 +125,20 @@ fun WalkShareScreen(
             when (ev) {
                 is WalkShareEvent.Success -> {
                     // CachedShareStore emission drives the UI into the
-                    // "Shared" layout reactively; nothing else to do.
+                    // "Shared" layout reactively. iOS parity
+                    // (`WalkShareView.triggerRitualIfNeeded`): after a
+                    // ~800ms beat + a soft haptic, auto-present the shared
+                    // scroll so the user doesn't have to tap "View scroll".
+                    // Fires only on a fresh share — the Success event never
+                    // emits on re-entry of an already-shared walk. The
+                    // latch guards the case where the user taps "View
+                    // scroll" during the 800ms beat — whichever fires first
+                    // wins, so the scroll never opens twice.
+                    delay(SHARE_RITUAL_DELAY_MS)
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    if (scrollOpened.compareAndSet(false, true)) {
+                        CustomTabs.launch(context, ev.url.toUri())
+                    }
                 }
                 WalkShareEvent.RateLimited -> snackbarHostState.showSnackbar(errRateLimited)
                 is WalkShareEvent.Failed -> snackbarHostState.showSnackbar(
@@ -165,10 +192,10 @@ fun WalkShareScreen(
                             points = s.inputs.routePoints,
                             expiryEpochMs = activeShare.expiryEpochMs,
                             onOpenScroll = {
-                                org.walktalkmeditate.pilgrim.ui.util.CustomTabs.launch(
-                                    context,
-                                    android.net.Uri.parse(activeShare.url),
-                                )
+                                // Manual tap always opens; mark the latch so
+                                // a pending auto-present beat doesn't re-open.
+                                scrollOpened.set(true)
+                                CustomTabs.launch(context, activeShare.url.toUri())
                             },
                         )
                     } else {

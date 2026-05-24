@@ -239,6 +239,8 @@
     <string name="settings_units_caption_imperial">mi · min/mi · ft · °F</string>
     <string name="settings_collective_label">Walk with the collective</string>
     <string name="settings_collective_description">Add your footsteps to the path</string>
+    <string name="settings_autoplay_whisper_label">Auto-play nearby whispers</string>
+    <string name="settings_autoplay_whisper_description">Hear whispers left by other pilgrims as you walk near them</string>
     <string name="settings_walk_reliquary_label">Gather walk photos</string>
     <!-- Photos copy adapted for Android: "Apple Photos" -> "your photo gallery"; "iOS Settings -> Pilgrim" -> "Android Settings -> Apps -> Pilgrim -> Permissions". -->
     <string name="settings_walk_reliquary_description">Find photos you took along each walk and pin them to the route. Photos stay in your gallery — never copied or uploaded.</string>

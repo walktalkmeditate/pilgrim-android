@@ -85,6 +85,7 @@ fun SettingsScreen(
     val celestialAwareness by viewModel.celestialAwarenessEnabled.collectAsStateWithLifecycle()
     val zodiacSystem by viewModel.zodiacSystem.collectAsStateWithLifecycle()
     val walkReliquary by viewModel.walkReliquaryEnabled.collectAsStateWithLifecycle()
+    val autoPlayWhisper by viewModel.autoPlayWhisperOnProximity.collectAsStateWithLifecycle()
     val voiceCardState by viewModel.voiceCardState.collectAsStateWithLifecycle()
     val practiceSummary by viewModel.practiceSummary.collectAsStateWithLifecycle()
     val milestone by viewModel.milestone.collectAsStateWithLifecycle()
@@ -157,6 +158,8 @@ fun SettingsScreen(
                     onSetDistanceUnits = viewModel::setDistanceUnits,
                     walkWithCollective = optIn,
                     onSetWalkWithCollective = viewModel::setOptIn,
+                    autoPlayWhisper = autoPlayWhisper,
+                    onSetAutoPlayWhisper = viewModel::setAutoPlayWhisperOnProximity,
                     walkReliquary = walkReliquary,
                     onSetWalkReliquary = { enabled ->
                         // Persist the preference regardless (iOS keeps

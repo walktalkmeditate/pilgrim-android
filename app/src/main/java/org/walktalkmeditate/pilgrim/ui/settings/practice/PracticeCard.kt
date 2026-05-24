@@ -33,14 +33,11 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * Settings → Practice card. iOS-faithful port of
  * `pilgrim-ios/Pilgrim/Scenes/Settings/SettingsCards/PracticeCard.swift`.
  *
- * Surfaces five toggles + two segmented pickers covering how the user
+ * Surfaces six toggles + two segmented pickers covering how the user
  * walks: intention prompt, celestial awareness (with conditional zodiac
  * picker), distance units (with derived caption), collective opt-in,
- * and the photo reliquary (with a denial note when access is refused).
- *
- * iOS's "Auto-play nearby whispers" toggle is INTENTIONALLY DEFERRED —
- * Android has no whispers feature in this milestone (Stage 10 master
- * spec Non-goals).
+ * auto-play nearby whispers, and the photo reliquary (with a denial
+ * note when access is refused).
  *
  * State is driven entirely by the parent — Chunk F wires
  * [SettingsViewModel] StateFlows into these parameters; Chunk E adds
@@ -59,6 +56,8 @@ fun PracticeCard(
     onSetDistanceUnits: (UnitSystem) -> Unit,
     walkWithCollective: Boolean,
     onSetWalkWithCollective: (Boolean) -> Unit,
+    autoPlayWhisper: Boolean,
+    onSetAutoPlayWhisper: (Boolean) -> Unit,
     walkReliquary: Boolean,
     onSetWalkReliquary: (Boolean) -> Unit,
     showPhotosDeniedNote: Boolean,
@@ -164,6 +163,15 @@ fun PracticeCard(
             description = stringResource(R.string.settings_collective_description),
             checked = walkWithCollective,
             onCheckedChange = onSetWalkWithCollective,
+        )
+
+        // iOS parity `PracticeCard.swift` — sits between the collective
+        // and reliquary toggles. Default on (DataStore default true).
+        SettingToggle(
+            label = stringResource(R.string.settings_autoplay_whisper_label),
+            description = stringResource(R.string.settings_autoplay_whisper_description),
+            checked = autoPlayWhisper,
+            onCheckedChange = onSetAutoPlayWhisper,
         )
 
         SettingToggle(

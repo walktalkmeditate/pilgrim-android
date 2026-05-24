@@ -55,6 +55,7 @@ class JournalHapticDispatcher internal constructor(
 
     private var lastDotDispatchNs: Long = 0L
     private val minIntervalNs: Long = 50_000_000L // 50 ms
+    private val MAX_AMPLITUDE = 255
 
     fun dispatch(event: HapticEvent) {
         if (event is HapticEvent.None) return
@@ -85,21 +86,26 @@ class JournalHapticDispatcher internal constructor(
     private fun buildEffect(event: HapticEvent): VibrationEffect? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val composition = VibrationEffect.startComposition()
+        // Strengths tuned to iOS `InkScrollView` `.sensoryFeedback`:
+        // small dot = .impact(.light), large dot = .impact(.medium),
+        // milestone = .impact(.heavy, 0.8). PRIMITIVE_TICK (the previous
+        // small-dot effect) is far weaker than iOS .light — it felt
+        // "too light" — so small dots now use a low-scale CLICK.
         when (event) {
             is HapticEvent.LightDot -> {
-                if (!supports(VibrationEffect.Composition.PRIMITIVE_TICK)) return fallback(0.4f)
-                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 1.0f)
+                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.55f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.5f)
             }
             is HapticEvent.HeavyDot -> {
-                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.7f)
-                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.7f)
+                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.85f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.85f)
             }
             is HapticEvent.Milestone -> {
                 val canHeavy = supports(VibrationEffect.Composition.PRIMITIVE_CLICK)
                 val canLow = supports(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)
-                if (!canHeavy) return fallback(0.9f)
+                if (!canHeavy) return fallback(1.0f)
                 composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f)
-                if (canLow) composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.6f, 30)
+                if (canLow) composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.7f, 30)
             }
             is HapticEvent.None -> return null
         }
@@ -115,7 +121,11 @@ class JournalHapticDispatcher internal constructor(
     private fun fallback(amplitude: Float): VibrationEffect =
         VibrationEffect.createOneShot(
             12L,
-            (amplitude * VibrationEffect.DEFAULT_AMPLITUDE).toInt().coerceAtLeast(1),
+            // Scale against the real 0..255 amplitude ceiling, NOT
+            // DEFAULT_AMPLITUDE (the sentinel -1): `amplitude * -1` floored
+            // to Int collapses every tier to 1, making the per-tier
+            // fallback strengths indistinguishable.
+            (amplitude * MAX_AMPLITUDE).toInt().coerceIn(1, MAX_AMPLITUDE),
         )
 
     private fun isReduceMotion(): Boolean = try {

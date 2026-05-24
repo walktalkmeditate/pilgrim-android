@@ -201,6 +201,22 @@ class SettingsViewModelPracticeTest {
     }
 
     @Test
+    fun `autoPlayWhisperOnProximity reflects repo value`() = runBlocking {
+        val practiceRepo = FakePracticePreferencesRepository(initialAutoPlayWhisperOnProximity = false)
+        val vm = buildVm(practiceRepo = practiceRepo)
+        assertEquals(false, vm.autoPlayWhisperOnProximity.first())
+    }
+
+    @Test
+    fun `setAutoPlayWhisperOnProximity delegates to repo`() = runBlocking {
+        val practiceRepo = FakePracticePreferencesRepository(initialAutoPlayWhisperOnProximity = false)
+        val vm = buildVm(practiceRepo = practiceRepo)
+        vm.setAutoPlayWhisperOnProximity(true)
+        assertEquals(true, vm.autoPlayWhisperOnProximity.first { it })
+        assertEquals(true, practiceRepo.autoPlayWhisperOnProximity.first())
+    }
+
+    @Test
     fun `distanceUnits reflects units repo value`() = runBlocking {
         val unitsRepo = FakeUnitsPreferencesRepository(initial = UnitSystem.Imperial)
         val vm = buildVm(unitsRepo = unitsRepo)
@@ -255,6 +271,17 @@ class SettingsViewModelPracticeTest {
     }
 
     @Test
+    fun `setAutoPlayWhisperOnProximity swallows DataStore errors`() = runBlocking {
+        val throwingRepo = ThrowingPracticeRepository()
+        val vm = buildVm(practiceRepo = throwingRepo)
+        vm.setAutoPlayWhisperOnProximity(false)
+        // Repo's StateFlow stays at its initial true because the write
+        // threw before the in-memory mirror updated.
+        assertEquals(true, vm.autoPlayWhisperOnProximity.first())
+        assertEquals(1, throwingRepo.autoPlayAttempts)
+    }
+
+    @Test
     fun `setDistanceUnits swallows DataStore errors`() = runBlocking {
         val throwingRepo = ThrowingUnitsRepository()
         val vm = buildVm(unitsRepo = throwingRepo)
@@ -268,6 +295,7 @@ class SettingsViewModelPracticeTest {
         @Volatile var celestialAttempts: Int = 0
         @Volatile var zodiacAttempts: Int = 0
         @Volatile var reliquaryAttempts: Int = 0
+        @Volatile var autoPlayAttempts: Int = 0
 
         override val beginWithIntention: StateFlow<Boolean> =
             MutableStateFlow(false).asStateFlow()
@@ -300,6 +328,7 @@ class SettingsViewModelPracticeTest {
         override val autoPlayWhisperOnProximity: StateFlow<Boolean> =
             MutableStateFlow(true).asStateFlow()
         override suspend fun setAutoPlayWhisperOnProximity(value: Boolean) {
+            autoPlayAttempts += 1
             throw IOException("disk full")
         }
     }
