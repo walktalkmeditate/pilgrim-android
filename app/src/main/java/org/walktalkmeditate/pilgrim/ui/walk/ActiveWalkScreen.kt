@@ -22,8 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.PauseCircle
-import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.outlined.PauseCircle
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,7 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -960,19 +959,20 @@ private fun OverlayCircleButton(
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .size(36.dp)
+            // Sized to the weather/celestial chip height so the control
+            // doesn't out-weigh them in the bottom row.
+            .size(30.dp)
             .clip(CircleShape)
-            // iOS uses `.ultraThinMaterial` — a content-adaptive
-            // translucent frost that does NOT flip with the app
-            // palette. Compose has no equivalent, and the previous
-            // `parchmentSecondary` token is constellation-pinned (flat
-            // indigo #141228 in the constellation appearance), which
-            // turned the disc into an opaque dark blob over the map.
-            // A FIXED low-alpha white reads as frost over the dark
-            // Mapbox tiles in every appearance without being sourced
-            // from any palette-overridden token. The icon tint stays
-            // `pilgrimColors.ink` (iOS-correct — flips lavender).
-            .background(Color.White.copy(alpha = 0.12f))
+            // Match the bottom-right weather/celestial chips' surface
+            // (`parchmentSecondary`) so the control reads as the same
+            // material in every appearance mode. The earlier fixed
+            // low-alpha white frost glowed as a light halo over the dark
+            // map in dark/constellation; sourcing the palette token
+            // instead flips with the chips (parchment in light, the
+            // pinned indigo in constellation) — no glow, no mismatch.
+            // Icon tint stays `pilgrimColors.ink` (flips lavender), same
+            // as the chip glyphs.
+            .background(pilgrimColors.parchmentSecondary)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -985,7 +985,7 @@ private fun OverlayCircleButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = pilgrimColors.ink,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }
@@ -1130,7 +1130,12 @@ internal fun VoiceGuidePauseControl(
 ) {
     if (packName == null) return
     OverlayCircleButton(
-        icon = if (isPaused) Icons.Filled.PlayCircle else Icons.Filled.PauseCircle,
+        // Outlined (not Filled) so the glyph reads as a thin ink stroke
+        // matching the bottom-right weather/celestial chips in every
+        // appearance mode — Filled.PlayCircle is a solid disc that the
+        // `ink` tint renders as a black blob over the light map. Mirrors
+        // iOS's outline `play.circle`/`pause.circle`.
+        icon = if (isPaused) Icons.Outlined.PlayCircle else Icons.Outlined.PauseCircle,
         contentDescription = if (isPaused) {
             stringResource(R.string.voice_guide_resume_a11y)
         } else {
