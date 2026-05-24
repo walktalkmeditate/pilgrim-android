@@ -22,8 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.PauseCircle
-import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.outlined.PauseCircle
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -1130,7 +1130,12 @@ internal fun VoiceGuidePauseControl(
 ) {
     if (packName == null) return
     OverlayCircleButton(
-        icon = if (isPaused) Icons.Filled.PlayCircle else Icons.Filled.PauseCircle,
+        // Outlined (not Filled) so the glyph reads as a thin ink stroke
+        // matching the bottom-right weather/celestial chips in every
+        // appearance mode — Filled.PlayCircle is a solid disc that the
+        // `ink` tint renders as a black blob over the light map. Mirrors
+        // iOS's outline `play.circle`/`pause.circle`.
+        icon = if (isPaused) Icons.Outlined.PlayCircle else Icons.Outlined.PauseCircle,
         contentDescription = if (isPaused) {
             stringResource(R.string.voice_guide_resume_a11y)
         } else {
