@@ -62,6 +62,8 @@ class WalkTrackingService : Service() {
 
     @Inject lateinit var repository: org.walktalkmeditate.pilgrim.data.WalkRepository
 
+    @Inject lateinit var backgroundWhisperAutoPlayer: BackgroundWhisperAutoPlayer
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
     private var notificationJob: Job? = null
@@ -136,6 +138,15 @@ class WalkTrackingService : Service() {
 
     override fun onDestroy() {
         isRunning.set(false)
+        // Stop the proximity detector (a @Singleton with its own scope)
+        // before cancelling ours — otherwise its location subscription
+        // outlives the walk. Quick mutex + job-cancel, so blocking briefly
+        // in onDestroy is acceptable.
+        if (this::backgroundWhisperAutoPlayer.isInitialized) {
+            kotlinx.coroutines.runBlocking {
+                runCatching { backgroundWhisperAutoPlayer.stop() }
+            }
+        }
         scope.cancel()
         // Explicit teardown so the FGS notification is gone the moment
         // the service stops, not whenever the OS gets around to clearing
@@ -308,6 +319,12 @@ class WalkTrackingService : Service() {
                 }
             }
         }
+
+        // Whisper proximity auto-play runs HERE (in :tracker) rather than
+        // in the UI so a nearby whisper plays even when the screen is
+        // locked / the UI process is gone. Fed by the controller's live
+        // state; tears down in onDestroy.
+        backgroundWhisperAutoPlayer.start(scope, controller.state)
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {

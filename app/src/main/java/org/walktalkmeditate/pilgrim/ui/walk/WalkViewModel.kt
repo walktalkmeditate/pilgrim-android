@@ -995,34 +995,12 @@ class WalkViewModel @Inject constructor(
                     geoCacheService.fetchIfNeeded(loc.latitude, loc.longitude)
                 }
         }
-        // iOS parity `ActiveWalkView.swift:944-951@db4196e` — auto-play
-        // a random placeable whisper from the encountered cache entry's
-        // category on every proximity-entry event, gated on both
-        // `autoPlayWhisperOnProximity` AND `soundsEnabled` prefs.
-        // The banner + haptic fire regardless of these prefs (handled
-        // upstream in `proximityNotifications`); only the AUDIO needs
-        // the gate. Tap-on-pin is a separate path with no pref gate
-        // — wired in ActiveWalkScreen.
-        viewModelScope.launch {
-            proximityService.events
-                .filter {
-                    it.direction == org.walktalkmeditate.pilgrim.data.proximity
-                        .ProximityEvent.Direction.Entered
-                }
-                .collect { event ->
-                    if (event.target.type != org.walktalkmeditate.pilgrim.data.proximity
-                            .ProximityTarget.Type.Whisper) return@collect
-                    if (!practicePreferences.autoPlayWhisperOnProximity.value) return@collect
-                    if (!soundsPreferences.soundsEnabled.value) return@collect
-                    val cacheId = event.target.id.removePrefix("whisper-")
-                    val cached = geoCacheService.whispers.value
-                        .firstOrNull { it.id == cacheId } ?: return@collect
-                    val category = cached.resolvedCategory ?: return@collect
-                    val definition = whisperManifestService.randomWhisper(category)
-                        ?: return@collect
-                    whisperPlayer.play(definition)
-                }
-        }
+        // Whisper proximity AUTO-PLAY now lives in the :tracker foreground
+        // service (BackgroundWhisperAutoPlayer) so a nearby whisper plays
+        // with the screen locked / UI process o-killed. The UI keeps the
+        // geo cache + proximity detection above ONLY for the on-screen
+        // banner (`proximityNotifications`) + map markers — not audio,
+        // which would double-play with the service while foregrounded.
         // iOS parity `ActiveWalkViewModel.swift:421-427` — whenever
         // the geo cache emits new whispers or cairns, rebuild the
         // proximity target set. `notifiedTargetIDs` is independent
