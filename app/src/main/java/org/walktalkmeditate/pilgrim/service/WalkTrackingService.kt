@@ -31,6 +31,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.LocationSource
@@ -63,6 +64,8 @@ class WalkTrackingService : Service() {
     @Inject lateinit var repository: org.walktalkmeditate.pilgrim.data.WalkRepository
 
     @Inject lateinit var backgroundWhisperAutoPlayer: BackgroundWhisperAutoPlayer
+
+    @Inject lateinit var soundscapeOrchestrator: SoundscapeOrchestrator
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
@@ -326,6 +329,19 @@ class WalkTrackingService : Service() {
         // locked / the UI process is gone. Fed by the controller's live
         // state; tears down in onDestroy.
         backgroundWhisperAutoPlayer.start(scope, controller.state)
+
+        // Soundscape meditation playback ALSO runs HERE, not in the UI.
+        // Soundscape only plays during WalkState.Meditating, which is
+        // reachable only from an Active walk (WalkReducer) — so :tracker
+        // is always alive when it matters, and running it here means the
+        // ambient loop survives a UI-process o-kill mid-meditation. The
+        // orchestrator observes the real WalkControllerImpl.state via its
+        // @SoundscapeObservedWalkState binding (the same controller this
+        // service drives). start() is idempotent so a cached :tracker
+        // process reused across walks doesn't double-wire it. The UI
+        // process no longer starts it (see PilgrimApp) to avoid two
+        // ExoPlayers looping the same file when both processes are alive.
+        soundscapeOrchestrator.start()
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {

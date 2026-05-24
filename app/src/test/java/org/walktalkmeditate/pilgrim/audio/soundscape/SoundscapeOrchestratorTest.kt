@@ -803,6 +803,36 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `start is idempotent — a second call does not double-spawn`() = runTest {
+        // Under the :tracker process split a cached :tracker process
+        // reused across walks calls start() once per walk. Two observe()
+        // collectors would each spawn a playJob on Meditating → two
+        // ExoPlayers looping the same file. The started-guard prevents it.
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        orchestrator.start() // no-op
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(
+            "second start() must not add a second observer/playback loop",
+            1, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
     // --- fakes ---
 
     private class CapturingSoundscapePlayer : SoundscapePlayer {

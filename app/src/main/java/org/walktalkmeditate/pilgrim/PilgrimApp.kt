@@ -15,7 +15,6 @@ import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder
-import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -87,13 +86,6 @@ class PilgrimApp : Application(), Configuration.Provider {
      * observer above.
      */
     @Inject lateinit var voiceGuideOrchestratorProvider: Provider<VoiceGuideOrchestrator>
-
-    /**
-     * App-scoped orchestrator for soundscape ambient loop playback
-     * during meditation. Watches walk-state + selected-soundscape-id
-     * and plays/stops the looping ExoPlayer-backed player.
-     */
-    @Inject lateinit var soundscapeOrchestratorProvider: Provider<SoundscapeOrchestrator>
 
     /**
      * App-scoped auto-download observer for soundscapes. Matches
@@ -249,10 +241,12 @@ class PilgrimApp : Application(), Configuration.Provider {
         // via per-session scheduler coroutines on VoiceGuidePlaybackScope.
         voiceGuideOrchestratorProvider.get().start()
 
-        // Start the soundscape playback orchestrator. Observes the
-        // walk-state flow + selected-soundscape-id flow and drives
-        // the looping ExoPlayer-backed player during meditation.
-        soundscapeOrchestratorProvider.get().start()
+        // The soundscape playback orchestrator is NOT started here. It
+        // runs in the :tracker process (WalkTrackingService) so the
+        // ambient loop survives a UI-process o-kill mid-meditation;
+        // starting it here too would loop two ExoPlayers on the same
+        // file whenever both processes are alive. (Auto-download below
+        // stays in the UI process — downloads are UI-driven, anytime.)
 
         // Start the soundscape auto-download observer. Triggers a
         // manifest sync and enqueues background downloads for any

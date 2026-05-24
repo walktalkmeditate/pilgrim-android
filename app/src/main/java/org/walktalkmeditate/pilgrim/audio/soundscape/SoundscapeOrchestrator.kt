@@ -65,7 +65,13 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
  *
  * Same start-once / runs-for-process-lifetime shape as the other
  * audio observers (bell 5-B, voice-guide download 5-D, voice-guide
- * orchestrator 5-E). Called from `PilgrimApp.onCreate`.
+ * orchestrator 5-E). Started from `WalkTrackingService.startTracking`
+ * (the `:tracker` process), NOT `PilgrimApp.onCreate` — soundscape
+ * plays only during `Meditating`, which is reachable only from an
+ * Active walk, so `:tracker` is always alive when it matters, and
+ * running it there means the ambient loop survives a UI-process
+ * o-kill mid-meditation. [start] is idempotent so a reused `:tracker`
+ * process doesn't double-wire it.
  */
 @Singleton
 class SoundscapeOrchestrator @Inject constructor(
@@ -80,7 +86,16 @@ class SoundscapeOrchestrator @Inject constructor(
     private val bellDurationResolver: BellDurationResolver,
     @SoundscapePlaybackScope private val scope: CoroutineScope,
 ) {
+    // Guards against double-wiring. The orchestrator is a process-lifetime
+    // @Singleton; under the :tracker process split a cached :tracker
+    // process reused across walks would call start() once per walk, and
+    // two observe() collectors would each spawn a playJob on Meditating →
+    // two ExoPlayers looping the same file.
+    @Volatile private var started = false
+
     fun start() {
+        if (started) return
+        started = true
         scope.launch { observe() }
         // Parallel collector: live-apply user soundscape volume to the
         // player. Runs for the orchestrator's lifetime; the cold spawn
