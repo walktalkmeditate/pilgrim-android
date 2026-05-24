@@ -93,6 +93,7 @@ class SettingsViewModel @Inject constructor(
     val celestialAwarenessEnabled: StateFlow<Boolean> = practicePreferences.celestialAwarenessEnabled
     val zodiacSystem: StateFlow<ZodiacSystem> = practicePreferences.zodiacSystem
     val walkReliquaryEnabled: StateFlow<Boolean> = practicePreferences.walkReliquaryEnabled
+    val autoPlayWhisperOnProximity: StateFlow<Boolean> = practicePreferences.autoPlayWhisperOnProximity
 
     fun setOptIn(value: Boolean) {
         viewModelScope.launch { collectiveRepository.setOptIn(value) }
@@ -155,6 +156,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { practicePreferences.setWalkReliquaryEnabled(value) }
                 .onFailure { Log.w(TAG, "failed to persist walkReliquaryEnabled", it) }
+        }
+    }
+
+    fun setAutoPlayWhisperOnProximity(value: Boolean) {
+        viewModelScope.launch {
+            runCatching { practicePreferences.setAutoPlayWhisperOnProximity(value) }
+                .onFailure { Log.w(TAG, "failed to persist autoPlayWhisperOnProximity", it) }
         }
     }
 

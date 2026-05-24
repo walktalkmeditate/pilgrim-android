@@ -102,6 +102,7 @@ fun WalkShareScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val errNetwork = stringResource(R.string.share_modal_error_network)
     val errRateLimited = stringResource(R.string.share_modal_error_rate_limited)
     val errUnknown = stringResource(R.string.share_modal_error_unknown)
@@ -111,7 +112,20 @@ fun WalkShareScreen(
             when (ev) {
                 is WalkShareEvent.Success -> {
                     // CachedShareStore emission drives the UI into the
-                    // "Shared" layout reactively; nothing else to do.
+                    // "Shared" layout reactively. iOS parity
+                    // (`WalkShareView.triggerRitualIfNeeded`): after a
+                    // ~800ms beat + a soft haptic, auto-present the shared
+                    // scroll so the user doesn't have to tap "View scroll".
+                    // Fires only on a fresh share — the Success event never
+                    // emits on re-entry of an already-shared walk.
+                    kotlinx.coroutines.delay(800)
+                    haptic.performHapticFeedback(
+                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                    )
+                    org.walktalkmeditate.pilgrim.ui.util.CustomTabs.launch(
+                        context,
+                        android.net.Uri.parse(ev.url),
+                    )
                 }
                 WalkShareEvent.RateLimited -> snackbarHostState.showSnackbar(errRateLimited)
                 is WalkShareEvent.Failed -> snackbarHostState.showSnackbar(

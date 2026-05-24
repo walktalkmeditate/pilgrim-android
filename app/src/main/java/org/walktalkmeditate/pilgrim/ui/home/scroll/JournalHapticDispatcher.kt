@@ -85,21 +85,26 @@ class JournalHapticDispatcher internal constructor(
     private fun buildEffect(event: HapticEvent): VibrationEffect? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val composition = VibrationEffect.startComposition()
+        // Strengths tuned to iOS `InkScrollView` `.sensoryFeedback`:
+        // small dot = .impact(.light), large dot = .impact(.medium),
+        // milestone = .impact(.heavy, 0.8). PRIMITIVE_TICK (the previous
+        // small-dot effect) is far weaker than iOS .light — it felt
+        // "too light" — so small dots now use a low-scale CLICK.
         when (event) {
             is HapticEvent.LightDot -> {
-                if (!supports(VibrationEffect.Composition.PRIMITIVE_TICK)) return fallback(0.4f)
-                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 1.0f)
+                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.55f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.5f)
             }
             is HapticEvent.HeavyDot -> {
-                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.7f)
-                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.7f)
+                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.85f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.85f)
             }
             is HapticEvent.Milestone -> {
                 val canHeavy = supports(VibrationEffect.Composition.PRIMITIVE_CLICK)
                 val canLow = supports(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)
-                if (!canHeavy) return fallback(0.9f)
+                if (!canHeavy) return fallback(1.0f)
                 composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f)
-                if (canLow) composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.6f, 30)
+                if (canLow) composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.7f, 30)
             }
             is HapticEvent.None -> return null
         }
