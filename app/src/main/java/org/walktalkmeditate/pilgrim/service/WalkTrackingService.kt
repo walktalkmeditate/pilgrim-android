@@ -31,6 +31,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.location.LocationSource
@@ -61,6 +62,10 @@ class WalkTrackingService : Service() {
     @Inject lateinit var unitsPreferences: UnitsPreferencesRepository
 
     @Inject lateinit var repository: org.walktalkmeditate.pilgrim.data.WalkRepository
+
+    @Inject lateinit var backgroundWhisperAutoPlayer: BackgroundWhisperAutoPlayer
+
+    @Inject lateinit var soundscapeOrchestrator: SoundscapeOrchestrator
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
@@ -105,6 +110,8 @@ class WalkTrackingService : Service() {
             ACTION_FINISH,
             ACTION_DISCARD,
             ACTION_SET_INTENTION -> handleControllerAction(action, intent)
+            ACTION_SET_SOUNDSCAPE,
+            ACTION_SELECT_SOUNDSCAPE -> handleSoundscapeAction(action, intent)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -136,6 +143,16 @@ class WalkTrackingService : Service() {
 
     override fun onDestroy() {
         isRunning.set(false)
+        // Tear down the whisper auto-player before cancelling our scope.
+        // stop() cancelAndJoins its own collectors FIRST (so a buffered
+        // Entered event can't drive a play() mid-teardown), then stops the
+        // detector + clears its dedup. Quick job-cancel + suspend cleanup,
+        // so blocking briefly in onDestroy is acceptable.
+        if (this::backgroundWhisperAutoPlayer.isInitialized) {
+            kotlinx.coroutines.runBlocking {
+                runCatching { backgroundWhisperAutoPlayer.stop() }
+            }
+        }
         scope.cancel()
         // Explicit teardown so the FGS notification is gone the moment
         // the service stops, not whenever the OS gets around to clearing
@@ -308,6 +325,56 @@ class WalkTrackingService : Service() {
                 }
             }
         }
+
+        // Whisper proximity auto-play runs HERE (in :tracker) rather than
+        // in the UI so a nearby whisper plays even when the screen is
+        // locked / the UI process is gone. Fed by the controller's live
+        // state; tears down in onDestroy.
+        backgroundWhisperAutoPlayer.start(scope, controller.state)
+
+        // Soundscape meditation playback ALSO runs HERE, not in the UI.
+        // Soundscape only plays during WalkState.Meditating, which is
+        // reachable only from an Active walk (WalkReducer) — so :tracker
+        // is always alive when it matters, and running it here means the
+        // ambient loop survives a UI-process o-kill mid-meditation. The
+        // orchestrator observes the real WalkControllerImpl.state via its
+        // @SoundscapeObservedWalkState binding (the same controller this
+        // service drives). start() is idempotent so a cached :tracker
+        // process reused across walks doesn't double-wire it. The UI
+        // process no longer starts it (see PilgrimApp) to avoid two
+        // ExoPlayers looping the same file when both processes are alive.
+        soundscapeOrchestrator.start()
+    }
+
+    private fun handleSoundscapeAction(action: String, intent: Intent?) {
+        // Soundscape playback lives in this process's orchestrator. These
+        // commands only make sense while a walk pipeline is live; ignore
+        // them otherwise so a stray intent can't revive a dead service
+        // with no walk to attach soundscape to (unlike controller
+        // actions, there's nothing to restore from Room here).
+        if (locationJob?.isActive != true) {
+            // No live walk — most likely startService spun up a fresh
+            // service instance after the walk ended (or after an OEM kill).
+            // Stop it so we don't leave a started-but-unpromoted service
+            // lingering, matching the null-intent bail path above.
+            Log.w(TAG, "ignoring $action — no active walk pipeline")
+            stopSelf()
+            return
+        }
+        when (action) {
+            ACTION_SET_SOUNDSCAPE ->
+                soundscapeOrchestrator.setManualSoundscapeRequested(
+                    intent?.getBooleanExtra(EXTRA_SOUNDSCAPE_ON, false) == true,
+                )
+            ACTION_SELECT_SOUNDSCAPE -> {
+                val id = intent?.getStringExtra(EXTRA_SOUNDSCAPE_ID)
+                if (id.isNullOrBlank()) {
+                    Log.w(TAG, "SELECT_SOUNDSCAPE with no id")
+                } else {
+                    soundscapeOrchestrator.selectSoundscape(id)
+                }
+            }
+        }
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {
@@ -400,10 +467,15 @@ class WalkTrackingService : Service() {
 
     private fun promoteToForeground(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // location keeps the process alive; mediaPlayback covers the
+            // background whisper / soundscape / voice-guide audio that
+            // plays with the screen locked (see AndroidManifest comment +
+            // BackgroundWhisperAutoPlayer).
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
@@ -625,6 +697,10 @@ class WalkTrackingService : Service() {
         const val ACTION_DISCARD = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.DISCARD"
         const val ACTION_SET_INTENTION =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_INTENTION"
+        const val ACTION_SET_SOUNDSCAPE =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_SOUNDSCAPE"
+        const val ACTION_SELECT_SOUNDSCAPE =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SELECT_SOUNDSCAPE"
 
         /** Extra: starting walk's intention text, or new intention on
          *  [ACTION_SET_INTENTION]. UTF-8 string, ≤140 chars (server-side
@@ -648,6 +724,14 @@ class WalkTrackingService : Service() {
         /** Extra: optional waypoint icon key (UTF-8 string) for
          *  [ACTION_MARK_WAYPOINT]. */
         const val EXTRA_WAYPOINT_ICON = "extra.waypoint_icon"
+
+        /** Extra: desired walk-long soundscape on/off for
+         *  [ACTION_SET_SOUNDSCAPE]. Boolean. */
+        const val EXTRA_SOUNDSCAPE_ON = "extra.soundscape_on"
+
+        /** Extra: soundscape asset id for [ACTION_SELECT_SOUNDSCAPE].
+         *  UTF-8 string. */
+        const val EXTRA_SOUNDSCAPE_ID = "extra.soundscape_id"
 
         private const val TAG = "WalkTrackingService"
         /** Persist `walk.steps` this often while Active so a mid-walk

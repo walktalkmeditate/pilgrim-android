@@ -530,6 +530,13 @@
     <string name="walk_options_stone_locked">Unlocks at 12 minutes</string>
     <string name="walk_options_stone_placed">Placed</string>
     <string name="walk_options_stone_available">Mark this place</string>
+    <!-- Audio section: walk-long soundscape toggle (iOS WalkOptionsSheet) -->
+    <string name="walk_options_audio_section">Audio</string>
+    <string name="walk_options_soundscape_title">Soundscape</string>
+    <string name="walk_options_soundscape_off">Off</string>
+    <string name="walk_options_soundscape_on">On</string>
+    <string name="walk_options_soundscape_pick">Choose soundscape</string>
+    <string name="walk_options_soundscape_selected">Selected</string>
 
     <!-- WhisperPlacementSheet -->
     <string name="whisper_sheet_title">Leave a Whisper</string>

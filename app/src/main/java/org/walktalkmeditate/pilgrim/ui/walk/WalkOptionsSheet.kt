@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,18 +15,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.MusicOff
 import androidx.compose.material.icons.outlined.Terrain
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +42,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -78,6 +91,16 @@ fun WalkOptionsSheet(
     canPlaceStone: Boolean = false,
     stonePlaced: Boolean = false,
     onPlaceStone: () -> Unit = {},
+    // iOS parity `WalkOptionsSheet.swift:130-165@db4196e` — "Audio"
+    // section soundscape row. Shown only in-walk when a soundscape is
+    // selected (`soundscapeName != null`). Tap toggles the walk-long
+    // ambient loop; long-press opens a picker of downloaded soundscapes.
+    soundscapeName: String? = null,
+    isSoundscapePlaying: Boolean = false,
+    selectedSoundscapeId: String? = null,
+    availableSoundscapes: List<SoundscapeChoice> = emptyList(),
+    onToggleSoundscape: () -> Unit = {},
+    onSelectSoundscape: (String) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -159,6 +182,120 @@ fun WalkOptionsSheet(
                     },
                     enabled = canPlaceStone,
                     onClick = onPlaceStone,
+                )
+            }
+            // iOS parity `WalkOptionsSheet.swift:130-165@db4196e` — "Audio"
+            // section. Only in-walk and only when a soundscape is selected.
+            if (canDropWaypoint && soundscapeName != null) {
+                Text(
+                    text = stringResource(R.string.walk_options_audio_section),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    modifier = Modifier.padding(
+                        top = PilgrimSpacing.small,
+                        start = PilgrimSpacing.xs,
+                    ),
+                )
+                SoundscapeOptionRow(
+                    name = soundscapeName,
+                    isPlaying = isSoundscapePlaying,
+                    selectedId = selectedSoundscapeId,
+                    choices = availableSoundscapes,
+                    onToggle = onToggleSoundscape,
+                    onSelect = onSelectSoundscape,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SoundscapeOptionRow(
+    name: String,
+    isPlaying: Boolean,
+    selectedId: String?,
+    choices: List<SoundscapeChoice>,
+    onToggle: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    var pickerOpen by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val onLabel = stringResource(R.string.walk_options_soundscape_on)
+    val offLabel = stringResource(R.string.walk_options_soundscape_off)
+    val pickLabel = stringResource(R.string.walk_options_soundscape_pick)
+    Box {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.4f))
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onToggle,
+                    // iOS uses a contextMenu (long-press) to switch
+                    // soundscapes; mirror that with a long-press picker.
+                    // onLongClickLabel makes the action announce to TalkBack.
+                    onLongClickLabel = pickLabel,
+                    onLongClick = { if (choices.isNotEmpty()) pickerOpen = true },
+                )
+                // Announce the on/off state to screen readers (the subtitle
+                // text carries it visually; semantics carry it for TalkBack).
+                .semantics { stateDescription = if (isPlaying) onLabel else offLabel }
+                .padding(
+                    horizontal = PilgrimSpacing.normal,
+                    vertical = PilgrimSpacing.small,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Outlined.MusicNote else Icons.Outlined.MusicOff,
+                contentDescription = null,
+                tint = if (isPlaying) pilgrimColors.moss else pilgrimColors.fog,
+                modifier = Modifier.size(24.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.walk_options_soundscape_title),
+                    style = pilgrimType.body,
+                    color = pilgrimColors.ink,
+                )
+                Text(
+                    text = if (isPlaying) name else stringResource(R.string.walk_options_soundscape_off),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = pilgrimColors.fog,
+            )
+        }
+        DropdownMenu(
+            expanded = pickerOpen,
+            onDismissRequest = { pickerOpen = false },
+        ) {
+            choices.forEach { choice ->
+                DropdownMenuItem(
+                    text = { Text(choice.displayName) },
+                    leadingIcon = {
+                        if (choice.id == selectedId) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = stringResource(
+                                    R.string.walk_options_soundscape_selected,
+                                ),
+                            )
+                        }
+                    },
+                    onClick = {
+                        pickerOpen = false
+                        onSelect(choice.id)
+                    },
                 )
             }
         }
