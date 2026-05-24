@@ -959,7 +959,9 @@ private fun OverlayCircleButton(
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .size(36.dp)
+            // Sized to the weather/celestial chip height so the control
+            // doesn't out-weigh them in the bottom row.
+            .size(30.dp)
             .clip(CircleShape)
             // Match the bottom-right weather/celestial chips' surface
             // (`parchmentSecondary`) so the control reads as the same
@@ -983,7 +985,7 @@ private fun OverlayCircleButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = pilgrimColors.ink,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }
