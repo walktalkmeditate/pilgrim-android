@@ -138,10 +138,11 @@ class WalkTrackingService : Service() {
 
     override fun onDestroy() {
         isRunning.set(false)
-        // Stop the proximity detector (a @Singleton with its own scope)
-        // before cancelling ours — otherwise its location subscription
-        // outlives the walk. Quick mutex + job-cancel, so blocking briefly
-        // in onDestroy is acceptable.
+        // Tear down the whisper auto-player before cancelling our scope.
+        // stop() cancelAndJoins its own collectors FIRST (so a buffered
+        // Entered event can't drive a play() mid-teardown), then stops the
+        // detector + clears its dedup. Quick job-cancel + suspend cleanup,
+        // so blocking briefly in onDestroy is acceptable.
         if (this::backgroundWhisperAutoPlayer.isInitialized) {
             kotlinx.coroutines.runBlocking {
                 runCatching { backgroundWhisperAutoPlayer.stop() }
@@ -417,10 +418,15 @@ class WalkTrackingService : Service() {
 
     private fun promoteToForeground(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // location keeps the process alive; mediaPlayback covers the
+            // background whisper / soundscape / voice-guide audio that
+            // plays with the screen locked (see AndroidManifest comment +
+            // BackgroundWhisperAutoPlayer).
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)

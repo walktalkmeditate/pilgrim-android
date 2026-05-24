@@ -17,6 +17,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- The `:tracker` FGS also declares `mediaPlayback`: during a walk it
+         plays guided-audio / soundscape / whisper clips while the screen is
+         locked and the UI process is backgrounded. The `location` type keeps
+         the process alive; `mediaPlayback` is the type that legitimately
+         covers the background audio (whisper proximity auto-play). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Required to launch the battery-optimization exemption prompt directly
          via ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. Justified by our
@@ -294,7 +300,7 @@
         <service
             android:name=".service.WalkTrackingService"
             android:exported="false"
-            android:foregroundServiceType="location"
+            android:foregroundServiceType="location|mediaPlayback"
             android:process=":tracker"
             android:stopWithTask="false" />
 
