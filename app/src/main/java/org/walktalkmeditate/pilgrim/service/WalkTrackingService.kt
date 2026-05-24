@@ -353,7 +353,12 @@ class WalkTrackingService : Service() {
         // with no walk to attach soundscape to (unlike controller
         // actions, there's nothing to restore from Room here).
         if (locationJob?.isActive != true) {
+            // No live walk — most likely startService spun up a fresh
+            // service instance after the walk ended (or after an OEM kill).
+            // Stop it so we don't leave a started-but-unpromoted service
+            // lingering, matching the null-intent bail path above.
             Log.w(TAG, "ignoring $action — no active walk pipeline")
+            stopSelf()
             return
         }
         when (action) {

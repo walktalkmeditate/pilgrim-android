@@ -42,6 +42,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -219,6 +221,9 @@ private fun SoundscapeOptionRow(
 ) {
     var pickerOpen by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
+    val onLabel = stringResource(R.string.walk_options_soundscape_on)
+    val offLabel = stringResource(R.string.walk_options_soundscape_off)
+    val pickLabel = stringResource(R.string.walk_options_soundscape_pick)
     Box {
         Row(
             modifier = Modifier
@@ -232,8 +237,13 @@ private fun SoundscapeOptionRow(
                     onClick = onToggle,
                     // iOS uses a contextMenu (long-press) to switch
                     // soundscapes; mirror that with a long-press picker.
+                    // onLongClickLabel makes the action announce to TalkBack.
+                    onLongClickLabel = pickLabel,
                     onLongClick = { if (choices.isNotEmpty()) pickerOpen = true },
                 )
+                // Announce the on/off state to screen readers (the subtitle
+                // text carries it visually; semantics carry it for TalkBack).
+                .semantics { stateDescription = if (isPlaying) onLabel else offLabel }
                 .padding(
                     horizontal = PilgrimSpacing.normal,
                     vertical = PilgrimSpacing.small,
@@ -274,7 +284,12 @@ private fun SoundscapeOptionRow(
                     text = { Text(choice.displayName) },
                     leadingIcon = {
                         if (choice.id == selectedId) {
-                            Icon(Icons.Filled.Check, contentDescription = null)
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = stringResource(
+                                    R.string.walk_options_soundscape_selected,
+                                ),
+                            )
                         }
                     },
                     onClick = {

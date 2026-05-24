@@ -5,6 +5,7 @@ import android.app.Application
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -47,7 +48,9 @@ class BackgroundWhisperAutoPlayerTest {
     private val manifest = FakeWhisperManifestService()
     private val player = FakeWhisperPlayer()
 
-    private fun autoPlayer(
+    // Extension on TestScope so the session collectors run on a dispatcher
+    // tied to this test's scheduler (production uses Dispatchers.Default).
+    private fun TestScope.autoPlayer(
         practice: FakePracticePreferencesRepository = FakePracticePreferencesRepository(),
         sounds: FakeSoundsPreferencesRepository = FakeSoundsPreferencesRepository(),
         clock: () -> Long = { 0L },
@@ -59,6 +62,7 @@ class BackgroundWhisperAutoPlayerTest {
         practicePreferences = practice,
         soundsPreferences = sounds,
         currentTimeMillis = clock,
+        sessionDispatcher = UnconfinedTestDispatcher(testScheduler),
     )
 
     private fun whisperEntered(cacheId: String) = ProximityEvent(

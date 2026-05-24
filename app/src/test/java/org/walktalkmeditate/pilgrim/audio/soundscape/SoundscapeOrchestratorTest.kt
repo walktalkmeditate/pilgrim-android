@@ -972,6 +972,39 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `selectSoundscape mid-meditation swaps to the chosen override asset`() = runTest {
+        // The existing swap test drives selectedAssetId (the DataStore
+        // signal). This drives the override path (selectSoundscape), which
+        // :tracker must honor because the single-process DataStore never
+        // delivers the Settings write.
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        orchestrator.selectSoundscape("forest")
+        runCurrent()
+        assertEquals(2, capturingPlayer.playCount)
+        assertEquals(fileStore.fileFor(forest), capturingPlayer.lastPlayedFile)
+        s.cancel()
+    }
+
     @Test fun `manual toggle off does not affect meditation auto-play`() = runTest {
         val a = asset("rain")
         seedManifest(listOf(a))

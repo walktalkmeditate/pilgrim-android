@@ -243,6 +243,27 @@ class WalkOptionsSheetTest {
     }
 
     @Test
+    fun `soundscape row hidden pre-walk even when a soundscape is selected`() {
+        // The Audio section is gated on canDropWaypoint (in-walk) AND a
+        // selected soundscape. Pre-walk (canDropWaypoint=false) it must
+        // stay hidden even if a name is set.
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = true,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+                soundscapeName = "Rain",
+                isSoundscapePlaying = true,
+            )
+        }
+        composeRule.onNodeWithText("Soundscape").assertDoesNotExist()
+    }
+
+    @Test
     fun `tapping soundscape row fires onToggleSoundscape`() {
         var fired = false
         composeRule.setContent {

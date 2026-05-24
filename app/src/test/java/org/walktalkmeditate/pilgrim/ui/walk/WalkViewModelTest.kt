@@ -985,6 +985,20 @@ class WalkViewModelTest {
         assertEquals(true, vm.soundscapeEnabled.value)
     }
 
+    @Test
+    fun `soundscapeEnabled resets to false when the walk finishes`() = runTest(dispatcher) {
+        // The init-block observer must clear the optimistic toggle on walk
+        // end so the next walk's options sheet opens at Off.
+        viewModel.startWalk(intention = null)
+        runCurrent()
+        viewModel.onToggleSoundscape()
+        assertEquals(true, viewModel.soundscapeEnabled.value)
+
+        viewModel.finishWalk()
+        runCurrent()
+        assertEquals(false, viewModel.soundscapeEnabled.value)
+    }
+
     // --- Stage 10-C: practice prefs passthrough ----------------------
 
     @Test

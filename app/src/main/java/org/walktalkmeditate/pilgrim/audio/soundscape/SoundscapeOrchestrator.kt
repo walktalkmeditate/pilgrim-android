@@ -260,7 +260,9 @@ class SoundscapeOrchestrator @Inject constructor(
         val state: WalkState,
         val soundsEnabled: Boolean,
         val effectiveId: String?,
-        val manualRequested: Boolean,
+        // Named distinctly from the [manualRequested] StateFlow field to
+        // avoid shadowing it inside the collect lambda.
+        val isManualOn: Boolean,
     )
 
     /**

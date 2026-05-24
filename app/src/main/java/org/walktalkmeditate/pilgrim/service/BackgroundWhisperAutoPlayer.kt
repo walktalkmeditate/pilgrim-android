@@ -5,7 +5,9 @@ import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
@@ -79,6 +81,13 @@ class BackgroundWhisperAutoPlayer internal constructor(
     private val practicePreferences: PracticePreferencesRepository,
     private val soundsPreferences: SoundsPreferencesRepository,
     private val currentTimeMillis: () -> Long,
+    // Session collectors run on this dispatcher, NOT the caller's scope
+    // dispatcher. The service scope is Dispatchers.Main.immediate; if the
+    // collectors inherited it, onDestroy's `runBlocking { stop() }` (on the
+    // main thread) would deadlock — cancelAndJoin would wait for Main-
+    // dispatched children that can't run while the main thread is blocked.
+    // Default-dispatched children complete off-thread and let the join return.
+    private val sessionDispatcher: CoroutineDispatcher,
 ) {
     @Inject
     constructor(
@@ -96,6 +105,7 @@ class BackgroundWhisperAutoPlayer internal constructor(
         practicePreferences = practicePreferences,
         soundsPreferences = soundsPreferences,
         currentTimeMillis = System::currentTimeMillis,
+        sessionDispatcher = Dispatchers.Default,
     )
 
     /**
@@ -115,9 +125,13 @@ class BackgroundWhisperAutoPlayer internal constructor(
         // Idempotent: drop any prior session's collectors before
         // re-wiring (START_REDELIVER_INTENT can re-enter startTracking).
         sessionJob?.cancel()
+        // job is a child of the service scope (so service scope.cancel()
+        // cancels it), but the collectors run on [sessionDispatcher]
+        // (Default in production), not the service's Main.immediate — see
+        // the sessionDispatcher field comment for the onDestroy deadlock.
         val job = SupervisorJob(scope.coroutineContext[Job])
         sessionJob = job
-        val sessionScope = CoroutineScope(scope.coroutineContext + job)
+        val sessionScope = CoroutineScope(job + sessionDispatcher)
 
         // Fresh dedup set per walk so a whisper encountered on a prior
         // walk fires again this session.
@@ -179,17 +193,25 @@ class BackgroundWhisperAutoPlayer internal constructor(
         // Keep the proximity target set in sync with the cached whispers.
         sessionScope.launch {
             geoCacheService.whispers.collect { whispers ->
-                proximityService.updateTargets(
-                    whispers.mapTo(mutableSetOf()) { w ->
-                        ProximityTarget(
-                            id = ProximityTarget.whisperId(w.id),
-                            latitude = w.latitude,
-                            longitude = w.longitude,
-                            radius = ProximityDetectionService.WHISPER_RADIUS_M,
-                            type = ProximityTarget.Type.Whisper,
-                        )
-                    },
-                )
+                try {
+                    proximityService.updateTargets(
+                        whispers.mapTo(mutableSetOf()) { w ->
+                            ProximityTarget(
+                                id = ProximityTarget.whisperId(w.id),
+                                latitude = w.latitude,
+                                longitude = w.longitude,
+                                radius = ProximityDetectionService.WHISPER_RADIUS_M,
+                                type = ProximityTarget.Type.Whisper,
+                            )
+                        },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // An updateTargets failure must not kill the collector —
+                    // the next whispers emission re-syncs the target set.
+                    Log.w(TAG, "updateTargets failed: ${e.message}")
+                }
             }
         }
 
