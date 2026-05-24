@@ -46,7 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -962,17 +961,16 @@ private fun OverlayCircleButton(
         modifier = modifier
             .size(36.dp)
             .clip(CircleShape)
-            // iOS uses `.ultraThinMaterial` — a content-adaptive
-            // translucent frost that does NOT flip with the app
-            // palette. Compose has no equivalent, and the previous
-            // `parchmentSecondary` token is constellation-pinned (flat
-            // indigo #141228 in the constellation appearance), which
-            // turned the disc into an opaque dark blob over the map.
-            // A FIXED low-alpha white reads as frost over the dark
-            // Mapbox tiles in every appearance without being sourced
-            // from any palette-overridden token. The icon tint stays
-            // `pilgrimColors.ink` (iOS-correct — flips lavender).
-            .background(Color.White.copy(alpha = 0.12f))
+            // Match the bottom-right weather/celestial chips' surface
+            // (`parchmentSecondary`) so the control reads as the same
+            // material in every appearance mode. The earlier fixed
+            // low-alpha white frost glowed as a light halo over the dark
+            // map in dark/constellation; sourcing the palette token
+            // instead flips with the chips (parchment in light, the
+            // pinned indigo in constellation) — no glow, no mismatch.
+            // Icon tint stays `pilgrimColors.ink` (flips lavender), same
+            // as the chip glyphs.
+            .background(pilgrimColors.parchmentSecondary)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
