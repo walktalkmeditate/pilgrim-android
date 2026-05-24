@@ -55,6 +55,7 @@ class JournalHapticDispatcher internal constructor(
 
     private var lastDotDispatchNs: Long = 0L
     private val minIntervalNs: Long = 50_000_000L // 50 ms
+    private val MAX_AMPLITUDE = 255
 
     fun dispatch(event: HapticEvent) {
         if (event is HapticEvent.None) return
@@ -120,7 +121,11 @@ class JournalHapticDispatcher internal constructor(
     private fun fallback(amplitude: Float): VibrationEffect =
         VibrationEffect.createOneShot(
             12L,
-            (amplitude * VibrationEffect.DEFAULT_AMPLITUDE).toInt().coerceAtLeast(1),
+            // Scale against the real 0..255 amplitude ceiling, NOT
+            // DEFAULT_AMPLITUDE (the sentinel -1): `amplitude * -1` floored
+            // to Int collapses every tier to 1, making the per-tier
+            // fallback strengths indistinguishable.
+            (amplitude * MAX_AMPLITUDE).toInt().coerceIn(1, MAX_AMPLITUDE),
         )
 
     private fun isReduceMotion(): Boolean = try {
