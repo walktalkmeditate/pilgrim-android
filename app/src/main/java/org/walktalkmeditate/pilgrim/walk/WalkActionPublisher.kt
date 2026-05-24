@@ -81,6 +81,31 @@ class WalkActionPublisher @Inject constructor(
         context.startService(intent)
     }
 
+    /**
+     * Toggle the walk-long soundscape (iOS parity
+     * `SoundManagement.toggleSoundscape`). Routed to `:tracker` because
+     * the soundscape player lives there now and `pilgrim_prefs` is
+     * single-process — a UI-side flag wouldn't reach the player.
+     */
+    fun setSoundscapeEnabled(on: Boolean) {
+        val intent = baseIntent(WalkTrackingService.ACTION_SET_SOUNDSCAPE).apply {
+            putExtra(WalkTrackingService.EXTRA_SOUNDSCAPE_ON, on)
+        }
+        context.startService(intent)
+    }
+
+    /**
+     * Pick a soundscape mid-walk (iOS parity `onSelectSoundscape`).
+     * Carries the id to `:tracker` so the player switches immediately;
+     * the UI also persists the selection to DataStore for next time.
+     */
+    fun selectSoundscape(assetId: String) {
+        val intent = baseIntent(WalkTrackingService.ACTION_SELECT_SOUNDSCAPE).apply {
+            putExtra(WalkTrackingService.EXTRA_SOUNDSCAPE_ID, assetId)
+        }
+        context.startService(intent)
+    }
+
     private fun fireService(action: String) {
         context.startService(baseIntent(action))
     }

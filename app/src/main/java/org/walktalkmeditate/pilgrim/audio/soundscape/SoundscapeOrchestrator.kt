@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -93,6 +94,53 @@ class SoundscapeOrchestrator @Inject constructor(
     // two ExoPlayers looping the same file.
     @Volatile private var started = false
 
+    /**
+     * Manual "play soundscape during the active walk" request, driven by
+     * the WalkOptionsSheet toggle (iOS parity `SoundManagement.toggleSoundscape`).
+     * Independent of meditation: when on, the ambient loop plays through
+     * the Active/Paused walk; meditation still auto-plays regardless.
+     * Reset on walk end (Idle/Finished) — matches iOS, where
+     * `onWalkEnd`/`onMeditationEnd` stop the player.
+     *
+     * Lives here (the `:tracker` singleton) rather than DataStore because
+     * `pilgrim_prefs` is single-process: a UI-process write wouldn't reach
+     * `:tracker`. The UI routes the toggle as a service intent, which the
+     * service forwards to [setManualSoundscapeRequested].
+     */
+    private val manualRequested = MutableStateFlow(false)
+
+    /**
+     * Mid-walk soundscape selection override (iOS parity
+     * `onSelectSoundscape`). Same cross-process reasoning as
+     * [manualRequested]: the Settings-tab DataStore write isn't visible
+     * to `:tracker`, so a sheet selection arrives as a service intent and
+     * is applied here. Null → fall back to the [selectedAssetId] read at
+     * walk start.
+     */
+    private val selectionOverride = MutableStateFlow<String?>(null)
+
+    /**
+     * Effective asset id the current/next session should play —
+     * `selectionOverride ?: selectedAssetId`. Captured at spawn time so
+     * the async [attemptPlay] resolves the same asset the spawn decision
+     * used, even if the flows change underneath it.
+     */
+    @Volatile private var currentEffectiveId: String? = null
+
+    /** Service-forwarded toggle from the WalkOptionsSheet. */
+    fun setManualSoundscapeRequested(on: Boolean) {
+        manualRequested.value = on
+    }
+
+    /**
+     * Service-forwarded mid-walk selection. Selecting a soundscape also
+     * turns playback on (iOS `onSelectSoundscape` plays immediately).
+     */
+    fun selectSoundscape(assetId: String) {
+        selectionOverride.value = assetId
+        manualRequested.value = true
+    }
+
     fun start() {
         if (started) return
         started = true
@@ -122,16 +170,18 @@ class SoundscapeOrchestrator @Inject constructor(
         // ignored because `playJob?.isActive == true` for the old one.
         var spawnedAssetId: String? = null
 
-        // Combine three signals:
-        //  - walkState: Meditating triggers spawn; anything else stops.
+        // Combine five signals:
+        //  - walkState: Meditating auto-plays; Active/Paused plays only
+        //    when the manual toggle is on; Idle/Finished always stop.
         //  - soundsEnabled: master mute. Stage 10-B.
-        //  - selectedAssetId: when the user clears their soundscape
-        //    mid-meditation (e.g. "Clear all downloads" in
-        //    SoundSettingsScreen calls deselect()), the orchestrator
-        //    must cancel + stop. WITHOUT this signal, ExoPlayer would
-        //    keep playing from its in-memory buffer until the loop
-        //    wrapped back to the (now-deleted) file and Errored —
-        //    minutes of audio after the user thought they cleared it.
+        //  - selectedAssetId: the DataStore-backed selection (read at
+        //    walk start under the :tracker split). Clearing it
+        //    mid-session must cancel + stop, otherwise ExoPlayer keeps
+        //    looping a deleted file until it Errors.
+        //  - manualRequested: the WalkOptionsSheet toggle (walk-long
+        //    soundscape, iOS parity). Off → no Active/Paused playback.
+        //  - selectionOverride: a mid-walk sheet selection that the
+        //    single-process DataStore can't deliver to :tracker.
         //
         // Spawn decision happens per-emission (not inside
         // runSessionLoop) so the retry-budget logic stays intact for
@@ -140,65 +190,78 @@ class SoundscapeOrchestrator @Inject constructor(
             walkState,
             soundsPreferences.soundsEnabled,
             selectedAssetId,
-        ) { state, enabled, assetId -> Triple(state, enabled, assetId) }
-            .collect { (state, enabled, assetId) ->
-                when (state) {
-                    is WalkState.Meditating -> {
-                        if (!enabled || assetId == null) {
-                            // Either the master toggle is OFF or the
-                            // user cleared their soundscape selection.
-                            // Cancel any in-flight session and stop
-                            // the player. No spawn.
-                            playJob?.cancel(); playJob = null
-                            spawnedAssetId = null
-                            safeStopPlayer()
-                            return@collect
-                        }
-                        // Spawn when (a) no job is active OR (b) the
-                        // user picked a different soundscape and we
-                        // need to swap. Cancel the old job + stop the
-                        // player BEFORE spawning the new one so
-                        // ExoPlayer doesn't briefly play both files.
-                        val needsSwap = playJob?.isActive == true && spawnedAssetId != assetId
-                        if (needsSwap) {
-                            playJob?.cancel()
-                            playJob = null
-                            // iOS parity SoundscapePlayer.swift:30-33 — a
-                            // mid-meditation swap crossfades to the new
-                            // asset WITHOUT re-arming audio focus. Use the
-                            // focus-preserving swap stop so the voice
-                            // guide's focus isn't preempted (BUG A2).
-                            safeStopPlayerForSwap()
-                        }
-                        // `isActive != true` catches (1) first-ever-null,
-                        // (2) cancelled, and (3) completed-but-not-null.
-                        // With the `player.state` observer below keeping
-                        // the job alive for the duration of meditation,
-                        // case (3) is now rare (only if the initial
-                        // eligibility check returns null — e.g., no
-                        // soundscape selected). Stage 5-E lesson.
-                        if (playJob?.isActive != true) {
-                            spawnedAssetId = assetId
-                            // iOS parity SoundManagement.swift:68-78 — the
-                            // bell-duration delay scopes to meditation-start
-                            // ONLY (onMeditationStart). A mid-meditation
-                            // swap (SoundscapePlayer.swift:30-33 crossfade)
-                            // plays immediately. needsSwap=true → no delay.
-                            val applyStartDelay = !needsSwap
-                            playJob = scope.launch { runSessionLoop(applyStartDelay) }
-                        }
-                    }
+            manualRequested,
+            selectionOverride,
+        ) { state, enabled, assetId, manualOn, override ->
+            PlaybackInputs(state, enabled, override ?: assetId, manualOn)
+        }
+            .collect { (state, enabled, effectiveId, manualOn) ->
+                // Decide whether soundscape should play in this state, and
+                // whether the meditation-start bell delay applies.
+                //  - Meditating: auto-play, bell-delayed on first spawn.
+                //  - Active/Paused: play only when the manual toggle is on;
+                //    immediate (no bell delay — the bell is a meditation cue).
+                //  - Idle/Finished: never play; reset the manual request so
+                //    a fresh walk starts silent (iOS onWalkEnd stops + the
+                //    toggle resets).
+                val applyStartDelayIfSpawning: Boolean? = when (state) {
+                    is WalkState.Meditating -> if (enabled && effectiveId != null) true else null
                     is WalkState.Active,
-                    is WalkState.Paused,
+                    is WalkState.Paused -> if (enabled && manualOn && effectiveId != null) false else null
                     WalkState.Idle,
                     is WalkState.Finished -> {
-                        playJob?.cancel(); playJob = null
-                        spawnedAssetId = null
-                        safeStopPlayer()
+                        resetManualRequest()
+                        null
                     }
+                }
+
+                if (applyStartDelayIfSpawning == null) {
+                    playJob?.cancel(); playJob = null
+                    spawnedAssetId = null
+                    safeStopPlayer()
+                    return@collect
+                }
+
+                // Spawn when (a) no job is active OR (b) the effective
+                // asset changed and we need to swap. Cancel the old job +
+                // stop the player BEFORE spawning so ExoPlayer doesn't
+                // briefly play both files.
+                val needsSwap = playJob?.isActive == true && spawnedAssetId != effectiveId
+                if (needsSwap) {
+                    playJob?.cancel()
+                    playJob = null
+                    // iOS parity SoundscapePlayer.swift:30-33 — a swap
+                    // crossfades to the new asset WITHOUT re-arming audio
+                    // focus, so the in-flight voice guide isn't preempted (BUG A2).
+                    safeStopPlayerForSwap()
+                }
+                // `isActive != true` catches (1) first-ever-null,
+                // (2) cancelled, and (3) completed-but-not-null.
+                if (playJob?.isActive != true) {
+                    spawnedAssetId = effectiveId
+                    currentEffectiveId = effectiveId
+                    // Bell delay applies to meditation-start only and never
+                    // to a swap (iOS SoundscapePlayer.swift:30-33 crossfade
+                    // plays immediately).
+                    val applyStartDelay = applyStartDelayIfSpawning && !needsSwap
+                    playJob = scope.launch { runSessionLoop(applyStartDelay) }
                 }
             }
     }
+
+    private fun resetManualRequest() {
+        // StateFlow dedupes, so these are no-ops when already cleared and
+        // won't churn the combine.
+        if (manualRequested.value) manualRequested.value = false
+        if (selectionOverride.value != null) selectionOverride.value = null
+    }
+
+    private data class PlaybackInputs(
+        val state: WalkState,
+        val soundsEnabled: Boolean,
+        val effectiveId: String?,
+        val manualRequested: Boolean,
+    )
 
     /**
      * Per-meditation-session loop: waits the start-delay, dispatches
@@ -292,7 +355,11 @@ class SoundscapeOrchestrator @Inject constructor(
      * on `Dispatchers.Default`, no ANR risk.
      */
     private fun eligibleSoundscapeOrNullSync(): AudioAsset? {
-        val id = selectedAssetId.value ?: return null
+        // Resolve the effective id captured at spawn (override ?: selection)
+        // rather than re-reading selectedAssetId, so a manual mid-walk
+        // selection plays the chosen asset even though :tracker's
+        // single-process DataStore never saw the Settings write.
+        val id = currentEffectiveId ?: return null
         val asset = manifestService.asset(id) ?: return null
         if (asset.type != AudioAssetType.SOUNDSCAPE) return null
         return if (fileStore.isAvailable(asset)) asset else null

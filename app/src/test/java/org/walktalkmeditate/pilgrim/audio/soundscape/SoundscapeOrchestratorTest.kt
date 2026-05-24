@@ -833,6 +833,168 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    // --- manual walk-long soundscape (iOS WalkOptionsSheet toggle) ---
+
+    @Test fun `manual toggle on during Active plays immediately with no bell delay`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        runCurrent()
+        // Active + manual off → silent.
+        assertEquals(0, capturingPlayer.playCount)
+
+        orchestrator.setManualSoundscapeRequested(true)
+        // No virtual time elapses — a walk-time toggle is not a meditation
+        // cue, so it must NOT wait the bell-duration delay.
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+        s.cancel()
+    }
+
+    @Test fun `manual toggle off during Active stops playback`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        orchestrator.setManualSoundscapeRequested(true)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        orchestrator.setManualSoundscapeRequested(false)
+        runCurrent()
+        assertTrue(
+            "expected a stop when the manual toggle is turned off, got ${capturingPlayer.stopCount}",
+            capturingPlayer.stopCount >= 1,
+        )
+        s.cancel()
+    }
+
+    @Test fun `manual soundscape keeps playing across Active to Paused`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        orchestrator.setManualSoundscapeRequested(true)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        walkState.value = WalkState.Paused(acc, pausedAt = 2_000L)
+        runCurrent()
+        // No re-spawn, no stop — the same session carries across the pause.
+        assertEquals(1, capturingPlayer.playCount)
+        assertEquals(0, capturingPlayer.stopCount)
+        s.cancel()
+    }
+
+    @Test fun `walk end resets the manual request so the next Active starts silent`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        orchestrator.setManualSoundscapeRequested(true)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+
+        // Walk ends → stop + reset the toggle (iOS onWalkEnd).
+        walkState.value = WalkState.Finished(acc, endedAt = 5_000L)
+        runCurrent()
+        assertTrue(capturingPlayer.stopCount >= 1)
+
+        // A subsequent Active must NOT auto-resume — the manual request
+        // was reset, so the walk starts silent again.
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+        assertEquals(
+            "manual request must reset on walk end — got an unexpected replay",
+            1, capturingPlayer.playCount,
+        )
+        s.cancel()
+    }
+
+    @Test fun `selectSoundscape during Active plays the chosen asset immediately`() = runTest {
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        runCurrent()
+        assertEquals(0, capturingPlayer.playCount)
+
+        // Selecting a soundscape mid-walk turns playback on AND plays the
+        // chosen override (the :tracker DataStore never saw the Settings
+        // write, so the override id is the source of truth).
+        orchestrator.selectSoundscape("forest")
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+        assertEquals(fileStore.fileFor(forest), capturingPlayer.lastPlayedFile)
+        s.cancel()
+    }
+
+    @Test fun `manual toggle off does not affect meditation auto-play`() = runTest {
+        val a = asset("rain")
+        seedManifest(listOf(a))
+        writeAssetFile(a)
+        // Manual toggle never set (default off) — meditation must still
+        // auto-play, proving the two paths are independent.
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        ).start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, capturingPlayer.playCount)
+        s.cancel()
+    }
+
     // --- fakes ---
 
     private class CapturingSoundscapePlayer : SoundscapePlayer {

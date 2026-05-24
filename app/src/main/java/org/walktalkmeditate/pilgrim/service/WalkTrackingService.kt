@@ -110,6 +110,8 @@ class WalkTrackingService : Service() {
             ACTION_FINISH,
             ACTION_DISCARD,
             ACTION_SET_INTENTION -> handleControllerAction(action, intent)
+            ACTION_SET_SOUNDSCAPE,
+            ACTION_SELECT_SOUNDSCAPE -> handleSoundscapeAction(action, intent)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -342,6 +344,32 @@ class WalkTrackingService : Service() {
         // process no longer starts it (see PilgrimApp) to avoid two
         // ExoPlayers looping the same file when both processes are alive.
         soundscapeOrchestrator.start()
+    }
+
+    private fun handleSoundscapeAction(action: String, intent: Intent?) {
+        // Soundscape playback lives in this process's orchestrator. These
+        // commands only make sense while a walk pipeline is live; ignore
+        // them otherwise so a stray intent can't revive a dead service
+        // with no walk to attach soundscape to (unlike controller
+        // actions, there's nothing to restore from Room here).
+        if (locationJob?.isActive != true) {
+            Log.w(TAG, "ignoring $action — no active walk pipeline")
+            return
+        }
+        when (action) {
+            ACTION_SET_SOUNDSCAPE ->
+                soundscapeOrchestrator.setManualSoundscapeRequested(
+                    intent?.getBooleanExtra(EXTRA_SOUNDSCAPE_ON, false) == true,
+                )
+            ACTION_SELECT_SOUNDSCAPE -> {
+                val id = intent?.getStringExtra(EXTRA_SOUNDSCAPE_ID)
+                if (id.isNullOrBlank()) {
+                    Log.w(TAG, "SELECT_SOUNDSCAPE with no id")
+                } else {
+                    soundscapeOrchestrator.selectSoundscape(id)
+                }
+            }
+        }
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {
@@ -664,6 +692,10 @@ class WalkTrackingService : Service() {
         const val ACTION_DISCARD = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.DISCARD"
         const val ACTION_SET_INTENTION =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_INTENTION"
+        const val ACTION_SET_SOUNDSCAPE =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_SOUNDSCAPE"
+        const val ACTION_SELECT_SOUNDSCAPE =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SELECT_SOUNDSCAPE"
 
         /** Extra: starting walk's intention text, or new intention on
          *  [ACTION_SET_INTENTION]. UTF-8 string, ≤140 chars (server-side
@@ -687,6 +719,14 @@ class WalkTrackingService : Service() {
         /** Extra: optional waypoint icon key (UTF-8 string) for
          *  [ACTION_MARK_WAYPOINT]. */
         const val EXTRA_WAYPOINT_ICON = "extra.waypoint_icon"
+
+        /** Extra: desired walk-long soundscape on/off for
+         *  [ACTION_SET_SOUNDSCAPE]. Boolean. */
+        const val EXTRA_SOUNDSCAPE_ON = "extra.soundscape_on"
+
+        /** Extra: soundscape asset id for [ACTION_SELECT_SOUNDSCAPE].
+         *  UTF-8 string. */
+        const val EXTRA_SOUNDSCAPE_ID = "extra.soundscape_id"
 
         private const val TAG = "WalkTrackingService"
         /** Persist `walk.steps` this often while Active so a mid-walk
