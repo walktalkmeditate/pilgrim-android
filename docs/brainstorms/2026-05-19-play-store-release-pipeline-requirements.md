@@ -126,22 +126,25 @@ Modern Play accounts have Play App Signing enrolled by default for new apps, but
 4. Once enrolled, **the upload key cannot be casually rotated**. Treat `pilgrim-release.keystore` and the `KEYSTORE_BASE64` GHA secret as load-bearing — if either is lost, recovery is a Google support ticket and takes days.
 5. Back up the keystore: store the original `.keystore` file in a password manager (1Password / Bitwarden secure file) AND a second offline location. The base64-in-GHA-secret form is not a backup.
 
-### A.6 Build + bootstrap-upload the first AAB (Internal track)
+### A.6 Publish first AAB to Internal via `internal.yml` (no manual bootstrap)
 
-**Why Internal first, not Production:** the Google Play Developer API cannot perform the *first* upload of a brand-new app — Google requires at least one manual AAB upload through the Console to establish the package before the API (gradle-play-publisher → `internal.yml`) can publish. We satisfy that bootstrap by hand-uploading the first AAB to the **Internal Testing** track. This (a) clears the API first-upload requirement, (b) gives us TestFlight-style internal testing immediately, and (c) lets us validate on-device before any production exposure. After this one manual upload, every subsequent build is fully automated via `internal.yml`.
+**Proven 2026-05-25:** `internal.yml` publishes directly to the Internal track — including the very first upload — entirely via the Play Developer API. No manual Console upload needed. (The long-standing "API can't do a new app's first upload" constraint did not apply to this account.) First successful publish: versionCode 531, versionName 1.0.0.
 
-1. Bump `app/build.gradle.kts` locally: `versionName = "1.0.0"`. versionCode is computed by CI as `git rev-list --count HEAD` (see A.10) — no manual versionCode edit needed.
-2. Commit + push to `main`. Wait for `build.yml` CI to pass.
-3. Tag: `git tag v1.0.0 && git push --tags`. The existing `release.yml` triggers, builds + signs the AAB, attaches it to a GitHub Release.
-4. Download `app-release.aab` from the GitHub Release page.
-5. Console → **Testing → Internal testing** → **Create new release** → upload the AAB.
-6. Add release notes (≤ 500 chars). Draft a 1.0.0 launch note.
-7. Review and roll out to Internal. Play runs the automated pre-launch report (~30 min).
-8. Testers install via the Internal opt-in URL (A.8); validate on-device.
+1. Ensure `app/build.gradle.kts` has `versionName = "1.0.0"`. versionCode is computed by CI as `git rev-list --count HEAD` (see A.10) — no manual versionCode edit.
+2. Prerequisites (all one-time, see A.9 + gotchas below):
+   - Service account active in **Users and permissions** with **Release manager** AND the **Pilgrim app** attached to its grant.
+   - **Google Play Android Developer API** enabled in the GCP project (`gcloud services enable androidpublisher.googleapis.com --project=<id>`).
+   - `PLAY_SERVICE_ACCOUNT_JSON_BASE64` + keystore secrets set.
+3. `gh workflow run internal.yml --field version=1.0.0` (or click Run in the GHA UI).
+4. ~4 min later the signed AAB is live on the Internal track as a completed release.
+5. Testers install via the Internal opt-in URL (A.8); validate on-device.
 
-**After bootstrap — automation takes over:**
-- New builds → `internal.yml` (workflow_dispatch). No more manual uploads. This is the TestFlight-equivalent loop.
-- When ready for the public: `production.yml` promotes/publishes to **Production** at 20 % staged rollout. The original "1.0.0 straight to Production" plan is replaced by "bootstrap to Internal, validate, then promote to Production."
+**Setup gotchas encountered (for future apps):**
+- Play API returns `403 SERVICE_DISABLED` until the Android Developer API is enabled in the GCP project.
+- Play API returns `403 PERMISSION_DENIED` until the service account is invited as a user AND the specific app is attached to its permission grant (account-level Release manager alone was NOT sufficient — the app-scoped grant was the unlock).
+- The Play Console "API access" page is gone in the current console; service accounts are managed entirely through **Users and permissions**.
+
+**Then:** when ready for the public, `production.yml` promotes/publishes to **Production** at 20 % staged rollout (after the "Set up your app" dashboard is green).
 
 ### A.7 NDK debug symbols (do once, before A.6)
 

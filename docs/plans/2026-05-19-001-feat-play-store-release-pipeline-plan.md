@@ -10,7 +10,7 @@ origin: docs/brainstorms/2026-05-19-play-store-release-pipeline-requirements.md
 
 ## Summary
 
-Ship Pilgrim 1.0.0 to Google Play via an internal-first bootstrap: the current `release.yml` builds + signs the AAB, a human hand-uploads it **once** to the Internal Testing track (the Google Play Developer API cannot perform a new app's first upload), then two `workflow_dispatch` GitHub Actions workflows mirroring iOS — `internal.yml` (Play Internal Testing = TestFlight equivalent) + `production.yml` (Play Production with staged rollout) — take over via gradle-play-publisher (GPP). Internal validates on-device through the automated loop; `production.yml` then promotes to Production @ 20%. versionCode is computed per-commit via `git rev-list --count HEAD` (no per-workflow run_number scoping); production bumps commit back to `main` with `[skip ci]`. Plan front-loads all code work so it can land while D-U-N-S issuance (the long pole, ~30 days) processes in parallel.
+Ship Pilgrim 1.0.0 to Google Play via two `workflow_dispatch` GitHub Actions workflows mirroring iOS — `internal.yml` (Play Internal Testing = TestFlight equivalent) + `production.yml` (Play Production with staged rollout) — built on gradle-play-publisher (GPP). `internal.yml` publishes directly to the Internal track including the very first upload (no manual bootstrap needed — the Play Developer API handled the first upload fine; **proven 2026-05-25, versionCode 531**). Internal validates on-device through the automated loop; `production.yml` then promotes to Production @ 20% once the "Set up your app" dashboard is green. versionCode is computed per-commit via `git rev-list --count HEAD` (no per-workflow run_number scoping); production bumps commit back to `main` with `[skip ci]`. Plan front-loads all code work so it can land while D-U-N-S issuance (the long pole, ~30 days) processes in parallel.
 
 ---
 
@@ -389,13 +389,13 @@ Per-unit `**Files:**` lists remain authoritative.
 | Phase | Units | Gate to next phase |
 |---|---|---|
 | **0. Code prep (parallelizes with D-U-N-S)** | U1 (in flight as #126), U2, U3, U4, U5, U6 | All merged to main; debug build green |
-| **1. Play account + app setup** | (Origin Phase A.1–A.5, A.7–A.9: D-U-N-S, Play account, create app, listing, declarations, signing enrollment, internal tester setup, service account JSON) | App created on Play; Internal tester list saved; service account linked + Release manager granted |
-| **2. Bootstrap upload (Internal)** | Origin A.6: tag `v1.0.0` → `release.yml` AAB → **hand-upload to Internal track once** | First AAB live on Internal — clears the Play API first-upload requirement; testers validate on-device |
-| **3. Automation proven** | U8: trigger `internal.yml` for build #2 → confirm fully-automated Internal upload (TestFlight-equivalent loop) | `internal.yml` lands a build on Internal with zero manual file movement |
-| **4. Production launch** | `production.yml` promotes/publishes to Production @ 20% staged rollout | 1.0.0 live on Play Production |
+| **1. Play account + app setup** | (Origin Phase A.1–A.5, A.7–A.9: D-U-N-S, Play account, create app, signing enrollment, internal tester setup, service account) | App created on Play; service account active + Release manager on Pilgrim; Play Android Developer API enabled in the GCP project |
+| **2. Automation proven** ✅ | Trigger `internal.yml` → publishes signed AAB to Internal (incl. first upload) | `internal.yml` lands a build on Internal with zero manual file movement — **DONE 2026-05-25, versionCode 531** |
+| **3. Internal validation** | Settings → Email lists + assign to Internal track → testers install via opt-in URL | On-device smoke-test passes |
+| **4. Production launch** | Complete "Set up your app" dashboard (listing, content rating, data safety, declarations) → `production.yml` promotes to Production @ 20% staged rollout | 1.0.0 live on Play Production |
 | **5. Cleanup** | U9 (delete `release.yml`) | Tag-push test confirms no double-trigger |
 
-**Bootstrap constraint:** the Google Play Developer API cannot perform the *first* upload of a new app — Phase 2's manual Internal upload is mandatory, not optional. Every build after it is automated. This replaces the original "hand-upload 1.0.0 straight to Production" approach: bootstrap to Internal, validate via the TestFlight-style loop, then promote to Production.
+**No manual bootstrap needed.** The original plan assumed the Google Play Developer API cannot perform a new app's *first* upload (a long-standing constraint). Testing on 2026-05-25 disproved it for this account — `internal.yml` published the first AAB directly via the API (versionCode 531). The TestFlight-equivalent loop is fully automated from build #1. Setup gotchas hit along the way (for future reference): (a) enable **Google Play Android Developer API** in the GCP project, (b) invite the service account in **Users and permissions** AND attach the **Pilgrim app** to its grant (account-level Release manager alone was insufficient — the app-scoped grant was the unlock).
 
 ---
 
