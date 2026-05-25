@@ -127,6 +127,9 @@ jobs:
             exit 1
           fi
 
+      - name: Generate release notes
+        run: bash scripts/release-notes.sh "$VERSION_NAME"
+
       - name: Build signed AAB
         run: ./gradlew bundleRelease
 
@@ -140,7 +143,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/build.gradle.kts
+          git add app/build.gradle.kts app/src/main/play/release-notes/en-US/default.txt
           git commit -m "chore(release): bump to v${VERSION_NAME} (code ${VERSION_CODE}) [skip ci]"
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
@@ -163,8 +166,8 @@ jobs:
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3
         with:
           tag_name: v${{ env.VERSION_NAME }}
-          name: v${{ env.VERSION_NAME }}
-          generate_release_notes: true
+          name: Pilgrim ${{ env.VERSION_NAME }}
+          body_path: build/changelog.md
           files: |
             app/build/outputs/bundle/release/app-release.aab
             app/build/outputs/apk/release/app-release.apk
