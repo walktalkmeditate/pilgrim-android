@@ -10,7 +10,7 @@ origin: docs/brainstorms/2026-05-19-play-store-release-pipeline-requirements.md
 
 ## Summary
 
-Ship Pilgrim 1.0.0 to Google Play Production via hybrid path (current `release.yml` builds + signs the AAB; human uploads through Play Console). Then add two `workflow_dispatch`-triggered GitHub Actions workflows mirroring iOS — `internal.yml` (Play Internal Testing) + `production.yml` (Play Production with staged rollout) — using gradle-play-publisher (GPP). versionCode is computed per-commit via `git rev-list --count HEAD` (no per-workflow run_number scoping); bumps commit back to `main` with `[skip ci]`. Plan front-loads all code work so it can land while D-U-N-S issuance (the long pole, ~30 days) processes in parallel.
+Ship Pilgrim 1.0.0 to Google Play via an internal-first bootstrap: the current `release.yml` builds + signs the AAB, a human hand-uploads it **once** to the Internal Testing track (the Google Play Developer API cannot perform a new app's first upload), then two `workflow_dispatch` GitHub Actions workflows mirroring iOS — `internal.yml` (Play Internal Testing = TestFlight equivalent) + `production.yml` (Play Production with staged rollout) — take over via gradle-play-publisher (GPP). Internal validates on-device through the automated loop; `production.yml` then promotes to Production @ 20%. versionCode is computed per-commit via `git rev-list --count HEAD` (no per-workflow run_number scoping); production bumps commit back to `main` with `[skip ci]`. Plan front-loads all code work so it can land while D-U-N-S issuance (the long pole, ~30 days) processes in parallel.
 
 ---
 
@@ -389,10 +389,13 @@ Per-unit `**Files:**` lists remain authoritative.
 | Phase | Units | Gate to next phase |
 |---|---|---|
 | **0. Code prep (parallelizes with D-U-N-S)** | U1 (in flight as #126), U2, U3, U4, U5, U6 | All merged to main; debug build green |
-| **1. Manual 1.0.0 launch** | (Origin Phase A.1–A.9: D-U-N-S, Play account, listing, declarations, signing enrollment, internal tester setup, service account JSON, AAB upload) | 1.0.0 live on Play Production |
-| **2. Wire CI to Play** | U7 (add GHA secret) | Secret set + visible in `gh secret list` |
-| **3. First automated release** | U8 (1.0.1 dry-run) | All 4 U8 test scenarios pass |
-| **4. Cleanup** | U9 (delete `release.yml`) | Tag-push test confirms no double-trigger |
+| **1. Play account + app setup** | (Origin Phase A.1–A.5, A.7–A.9: D-U-N-S, Play account, create app, listing, declarations, signing enrollment, internal tester setup, service account JSON) | App created on Play; Internal tester list saved; service account linked + Release manager granted |
+| **2. Bootstrap upload (Internal)** | Origin A.6: tag `v1.0.0` → `release.yml` AAB → **hand-upload to Internal track once** | First AAB live on Internal — clears the Play API first-upload requirement; testers validate on-device |
+| **3. Automation proven** | U8: trigger `internal.yml` for build #2 → confirm fully-automated Internal upload (TestFlight-equivalent loop) | `internal.yml` lands a build on Internal with zero manual file movement |
+| **4. Production launch** | `production.yml` promotes/publishes to Production @ 20% staged rollout | 1.0.0 live on Play Production |
+| **5. Cleanup** | U9 (delete `release.yml`) | Tag-push test confirms no double-trigger |
+
+**Bootstrap constraint:** the Google Play Developer API cannot perform the *first* upload of a new app — Phase 2's manual Internal upload is mandatory, not optional. Every build after it is automated. This replaces the original "hand-upload 1.0.0 straight to Production" approach: bootstrap to Internal, validate via the TestFlight-style loop, then promote to Production.
 
 ---
 

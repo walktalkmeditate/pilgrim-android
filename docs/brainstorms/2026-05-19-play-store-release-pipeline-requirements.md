@@ -126,16 +126,22 @@ Modern Play accounts have Play App Signing enrolled by default for new apps, but
 4. Once enrolled, **the upload key cannot be casually rotated**. Treat `pilgrim-release.keystore` and the `KEYSTORE_BASE64` GHA secret as load-bearing — if either is lost, recovery is a Google support ticket and takes days.
 5. Back up the keystore: store the original `.keystore` file in a password manager (1Password / Bitwarden secure file) AND a second offline location. The base64-in-GHA-secret form is not a backup.
 
-### A.6 Build + upload 1.0.0 AAB
+### A.6 Build + bootstrap-upload the first AAB (Internal track)
 
-1. Bump `app/build.gradle.kts` locally: `versionCode = 100`, `versionName = "1.0.0"`. (See A.10 for why 100 is the seed; it's a one-time human choice.)
+**Why Internal first, not Production:** the Google Play Developer API cannot perform the *first* upload of a brand-new app — Google requires at least one manual AAB upload through the Console to establish the package before the API (gradle-play-publisher → `internal.yml`) can publish. We satisfy that bootstrap by hand-uploading the first AAB to the **Internal Testing** track. This (a) clears the API first-upload requirement, (b) gives us TestFlight-style internal testing immediately, and (c) lets us validate on-device before any production exposure. After this one manual upload, every subsequent build is fully automated via `internal.yml`.
+
+1. Bump `app/build.gradle.kts` locally: `versionName = "1.0.0"`. versionCode is computed by CI as `git rev-list --count HEAD` (see A.10) — no manual versionCode edit needed.
 2. Commit + push to `main`. Wait for `build.yml` CI to pass.
 3. Tag: `git tag v1.0.0 && git push --tags`. The existing `release.yml` triggers, builds + signs the AAB, attaches it to a GitHub Release.
 4. Download `app-release.aab` from the GitHub Release page.
-5. Console → **Production** → **Create new release** → upload the AAB.
-6. Add release notes (≤ 500 chars per language). Draft a 1.0.0 launch note.
-7. Choose rollout %: start at **20 %** for 1.0.0 (cautious — bumps over the following days as Android Vitals stabilizes).
-8. Review and roll out. Play runs automated pre-launch report (~30 min) before the release goes live.
+5. Console → **Testing → Internal testing** → **Create new release** → upload the AAB.
+6. Add release notes (≤ 500 chars). Draft a 1.0.0 launch note.
+7. Review and roll out to Internal. Play runs the automated pre-launch report (~30 min).
+8. Testers install via the Internal opt-in URL (A.8); validate on-device.
+
+**After bootstrap — automation takes over:**
+- New builds → `internal.yml` (workflow_dispatch). No more manual uploads. This is the TestFlight-equivalent loop.
+- When ready for the public: `production.yml` promotes/publishes to **Production** at 20 % staged rollout. The original "1.0.0 straight to Production" plan is replaced by "bootstrap to Internal, validate, then promote to Production."
 
 ### A.7 NDK debug symbols (do once, before A.6)
 
@@ -153,10 +159,10 @@ Verify: after `./gradlew bundleRelease`, the produced AAB should contain `BUNDLE
 
 ### A.8 Internal Testing track setup
 
-Even though 1.0.0 goes straight to Production, set up Internal Testing now so future workflows have a place to land.
+The Internal track is the bootstrap target (A.6) AND the ongoing TestFlight-equivalent loop, so set it up before the first upload.
 
-1. Console → **Internal testing** → **Testers** → **Create email list**.
-2. Add your own email + 1–2 trusted testers.
+1. Console → **Testing → Internal testing** → **Testers** → **Create email list**.
+2. Add your own email + 1–2 trusted testers. **At least one tester is required** or the track upload is rejected.
 3. Copy the **opt-in URL** Play generates — testers must open it on their device and tap "Become a tester" before they can install internal builds.
 4. Save the email list as default for Internal testing.
 
