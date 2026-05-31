@@ -151,6 +151,27 @@ internal fun shouldAutoPromptIntention(
     intention == null
 
 /**
+ * The intention value the auto-prompt predicate should see for a given
+ * walk state. The VM's `intention` StateFlow surfaces the prior walk's
+ * committed intention while the @Singleton controller sits in
+ * Finished — without this override the next walk's pre-walk surface
+ * would carry the prior walk's value, and `shouldAutoPromptIntention`'s
+ * `intention == null` gate would silently block the prompt.
+ *
+ * Rules:
+ *  - In-progress draft (`preWalkIntention`) always wins.
+ *  - On a Finished surface (controller hasn't been re-started yet),
+ *    ignore the committed intention — the next walk hasn't set one.
+ *  - Otherwise pass the committed intention through.
+ */
+internal fun effectiveIntentionForAutoPrompt(
+    walkState: WalkState,
+    preWalkIntention: String?,
+    intention: String?,
+): String? = preWalkIntention
+    ?: intention.takeUnless { walkState is WalkState.Finished }
+
+/**
  * iOS parity `WalkOptionsSheet.swift:46` — the Set Intention row is
  * shown when `!isRecording` (= `!isInProgress`), true for the pre-walk
  * Idle state AND the post-summary Finished state the @Singleton
@@ -505,12 +526,30 @@ fun ActiveWalkScreen(
         // anything else = we're entering an in-progress walk (recovery).
         navWalkState !is WalkState.Idle
     }
+    // iOS mimics `.onAppear` — the auto-intention prompt fires on every
+    // pre-walk view appearance. Android keeps the same ActiveWalkScreen
+    // composition across walks (post-finish, the user navigates back to
+    // Path then taps Wander into the same NavBackStackEntry), so the
+    // once-per-surface latch has to be reset by hand when the controller
+    // returns to a pre-walk state (Idle, or Finished — the @Singleton
+    // controller stays Finished after a walk until the next startWalk).
+    // Without this reset, every walk after the first in a process opens
+    // without the auto-prompt.
+    val isPreWalkSurface = navWalkState is WalkState.Idle || navWalkState is WalkState.Finished
+    LaunchedEffect(isPreWalkSurface) {
+        if (isPreWalkSurface) hasCheckedAutoIntention.value = false
+    }
     LaunchedEffect(navWalkState::class) {
         if (isRecoveryComposition) return@LaunchedEffect
+        val effectiveIntention = effectiveIntentionForAutoPrompt(
+            walkState = navWalkState,
+            preWalkIntention = preWalkIntention,
+            intention = intention,
+        )
         if (shouldAutoPromptIntention(
                 walkState = navWalkState,
                 beginWithIntention = beginWithIntention,
-                intention = preWalkIntention ?: intention,
+                intention = effectiveIntention,
                 hasCheckedAutoIntention = hasCheckedAutoIntention.value,
             )
         ) {
