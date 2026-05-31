@@ -167,18 +167,17 @@ class WalkLifecycleObserverTest {
         repository.deleteWalkById(walkId)
         stateFlow.value = WalkState.Idle
 
-        // Poll for the observer to react instead of a fixed sleep —
-        // CI runners are slow enough that a hardcoded 1.5s sleep
-        // sometimes lands BEFORE the recorder's stop() completes.
-        // The observer signals completion via audioLevel.value resetting
-        // to 0 (set inside VoiceRecorder.stop()); poll for that.
-        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
-        while (voiceRecorder.audioLevel.value != 0f &&
-            System.currentTimeMillis() < deadline
-        ) {
-            Thread.sleep(20L)
+        // Wait deterministically for the observer's stop() side-effect
+        // to land: audioLevel resets to 0f inside VoiceRecorder.stop().
+        // Earlier this loop polled with Thread.sleep, which busy-burns
+        // CPU and races against the deadline on saturated CI runners
+        // (the flake this replaces). `StateFlow.first { it == 0f }`
+        // subscribes and suspends, returning the instant the recorder
+        // actually stops — yielding to the observer's IO-dispatched
+        // launch instead of competing with it for the JVM scheduler.
+        withTimeout(WAIT_FOR_OBSERVER_MS) {
+            voiceRecorder.audioLevel.first { it == 0f }
         }
-        // Recorder must have actually stopped (audioLevel resets to 0 in stop()).
         assertEquals(0f, voiceRecorder.audioLevel.value, 0.0001f)
         // No VoiceRecording row inserted (parent walk doesn't exist anymore).
         // Use the all-recordings observer to be sure; voiceRecordingsFor(walkId)
@@ -208,12 +207,10 @@ class WalkLifecycleObserverTest {
         repository.deleteWalkById(walkId)
         stateFlow.value = WalkState.Idle
 
-        // Poll for the observer to react instead of a fixed sleep.
-        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
-        while (voiceRecorder.audioLevel.value != 0f &&
-            System.currentTimeMillis() < deadline
-        ) {
-            Thread.sleep(20L)
+        // Deterministic suspending wait (see the Active→Idle test for
+        // the rationale — replaces a flaky wall-clock polling loop).
+        withTimeout(WAIT_FOR_OBSERVER_MS) {
+            voiceRecorder.audioLevel.first { it == 0f }
         }
         assertEquals(0f, voiceRecorder.audioLevel.value, 0.0001f)
         val orphanedRows = repository.voiceRecordingsFor(walkId)
