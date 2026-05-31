@@ -24,3 +24,17 @@
 -keepclasseswithmembers class org.walktalkmeditate.pilgrim.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# ML Kit (Stage 13-XZ): the on-device vision/label/face/text detectors
+# load their flavor implementations reflectively at static init via
+# `MultiFlavorDetectorCreator`. R8 strips the reflectively-loaded
+# classes, leaving its internal HashMap field null, and the first
+# `ImageLabeling.getClient(...)` call NPEs from inside the Hilt graph
+# (observed crash: `MlKitImageLabelerClient.<init>` while resolving a
+# @HiltViewModel during Compose composition on Play release builds).
+# Keep both the public surface and the bundled internal flavors so the
+# reflective registry resolves.
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.internal.mlkit_**
