@@ -185,6 +185,37 @@ class VoiceGuideSchedulerTest {
         assertEquals("a", p3.id)
     }
 
+    @Test fun `playedSnapshot reflects markPlayed and shrinks on cycle`() {
+        val sched = buildWalk(
+            listOf(prompt("a", seq = 0), prompt("b", seq = 1)),
+            density(initialDelaySec = 0, densityMinSec = 1, densityMaxSec = 2),
+            random = { 0 },
+        )
+        sched.start()
+        assertEquals(emptySet<String>(), sched.playedSnapshot())
+
+        val p1 = sched.decide(false, false)!!
+        sched.markPlaybackStarted(); sched.markPlayed(p1.id)
+        assertEquals(setOf(p1.id), sched.playedSnapshot())
+
+        clock.advanceSec(1)
+        val p2 = sched.decide(false, false)!!
+        sched.markPlaybackStarted(); sched.markPlayed(p2.id)
+        assertEquals(setOf(p1.id, p2.id), sched.playedSnapshot())
+
+        // Cycle: every prompt played → decide clears history in memory
+        // and returns pool's first. The orchestrator persists this
+        // snapshot, so the stored set must shrink to match.
+        clock.advanceSec(1)
+        val p3 = sched.decide(false, false)!!
+        sched.markPlaybackStarted(); sched.markPlayed(p3.id)
+        assertEquals(
+            "after cycle, snapshot must be just the freshly-played prompt",
+            setOf(p3.id),
+            sched.playedSnapshot(),
+        )
+    }
+
     @Test fun `setPostMeditationSilence blocks decide for the configured window`() {
         val sched = buildWalk(listOf(prompt("a")), density(initialDelaySec = 0))
         sched.start()
