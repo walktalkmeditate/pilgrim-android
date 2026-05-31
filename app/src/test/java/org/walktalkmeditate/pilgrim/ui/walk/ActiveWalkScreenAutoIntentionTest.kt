@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -124,6 +126,62 @@ class ActiveWalkScreenAutoIntentionTest {
                 beginWithIntention = true,
                 intention = null,
                 hasCheckedAutoIntention = false,
+            ),
+        )
+    }
+
+    // --- effectiveIntentionForAutoPrompt --------------------------------
+
+    @Test
+    fun `effective intention on Idle with no draft or committed is null`() {
+        assertNull(
+            effectiveIntentionForAutoPrompt(
+                walkState = WalkState.Idle,
+                preWalkIntention = null,
+                intention = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `effective intention on Finished with prior committed value is null (the fix)`() {
+        // The bug: the VM's `intention` flow returns the prior walk's
+        // committed value while the @Singleton controller sits in
+        // Finished. The auto-prompt's `intention == null` gate would
+        // silently fail and the prompt wouldn't fire for the next walk.
+        // The next pre-walk surface must be treated as having no
+        // intention yet.
+        assertNull(
+            effectiveIntentionForAutoPrompt(
+                walkState = WalkState.Finished(accumulator, endedAt = 5_000L),
+                preWalkIntention = null,
+                intention = "find peace",
+            ),
+        )
+    }
+
+    @Test
+    fun `effective intention prefers in-progress draft over committed`() {
+        assertEquals(
+            "drafting",
+            effectiveIntentionForAutoPrompt(
+                walkState = WalkState.Idle,
+                preWalkIntention = "drafting",
+                intention = "old value",
+            ),
+        )
+    }
+
+    @Test
+    fun `effective intention passes through committed value on Active`() {
+        // Not a pre-walk surface, but verify pass-through so we don't
+        // accidentally regress the in-walk display.
+        assertEquals(
+            "committed",
+            effectiveIntentionForAutoPrompt(
+                walkState = WalkState.Active(accumulator),
+                preWalkIntention = null,
+                intention = "committed",
             ),
         )
     }
