@@ -158,8 +158,12 @@ object WalkFormat {
         val hours = totalSeconds / 3600
         val minutes = (totalSeconds % 3600) / 60
         val seconds = totalSeconds % 60
+        // Match [duration]'s shape (H:MM:SS over an hour, MM:SS under) so
+        // the Walk/Talk/Meditate sub-stats don't silently drop seconds
+        // when a walk crosses the hour mark — that asymmetry made the
+        // "1:17" sub-stat look stuck while the total kept ticking 1:17:50.
         return if (hours > 0) {
-            String.format(Locale.US, "%d:%02d", hours, minutes)
+            String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
         } else {
             String.format(Locale.US, "%d:%02d", minutes, seconds)
         }

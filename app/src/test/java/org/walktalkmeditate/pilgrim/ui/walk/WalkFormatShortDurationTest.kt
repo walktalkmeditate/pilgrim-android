@@ -25,15 +25,24 @@ class WalkFormatShortDurationTest {
     }
 
     @Test
-    fun `at one hour switches to H_MM`() {
-        assertEquals("1:00", WalkFormat.shortDuration(60 * 60 * 1_000L))
+    fun `at one hour switches to H_MM_SS (matches duration shape)`() {
+        assertEquals("1:00:00", WalkFormat.shortDuration(60 * 60 * 1_000L))
         // 65 minutes = 1h05m, NOT "65:00"
-        assertEquals("1:05", WalkFormat.shortDuration(65 * 60 * 1_000L))
+        assertEquals("1:05:00", WalkFormat.shortDuration(65 * 60 * 1_000L))
     }
 
     @Test
-    fun `multiple hours render as H_MM`() {
-        assertEquals("2:05", WalkFormat.shortDuration(125 * 60 * 1_000L))
-        assertEquals("12:34", WalkFormat.shortDuration((12 * 60 + 34) * 60 * 1_000L))
+    fun `multiple hours render as H_MM_SS`() {
+        assertEquals("2:05:00", WalkFormat.shortDuration(125 * 60 * 1_000L))
+        assertEquals("12:34:00", WalkFormat.shortDuration((12 * 60 + 34) * 60 * 1_000L))
+    }
+
+    @Test
+    fun `seconds survive over the hour mark (user-reported 1_17_50)`() {
+        // 1 hour 17 minutes 50 seconds = 4670s. Previously rendered "1:17"
+        // (dropped seconds) while the total stat showed "1:17:50", which
+        // made the sub-stat look frozen. Sub-stat now matches.
+        val millis = (1L * 3600 + 17 * 60 + 50) * 1_000L
+        assertEquals("1:17:50", WalkFormat.shortDuration(millis))
     }
 }

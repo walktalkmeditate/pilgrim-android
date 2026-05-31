@@ -839,6 +839,16 @@ fun ActiveWalkScreen(
                 onDismiss = { showTurningCard = false },
             )
         }
+        // Pre-walk (Idle / Finished) shares the same screen as in-walk
+        // but must NOT bleed the just-finished walk's accumulated values
+        // into the next "Wander" entry — the @Singleton WalkController
+        // sits in Finished with the prior walk's accumulator until the
+        // next startWalk() call, so the live stat flows still carry the
+        // previous walk's values. Treat the pre-walk surface as fresh
+        // (matches the comment in WalkStatsSheet's pre-walk Idle/Finished
+        // branch — there it shows the Start button, here it shows zero
+        // stats above it).
+        val isPreWalk = navWalkState is WalkState.Idle || navWalkState is WalkState.Finished
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
@@ -849,17 +859,17 @@ fun ActiveWalkScreen(
             // (e.g., End Meditation when the controller is already Active).
             // navWalkState is the hot Singleton passthrough — always fresh.
             walkState = navWalkState,
-            totalElapsedMillis = ui.totalElapsedMillis,
-            distanceMeters = ui.distanceMeters,
-            walkMillis = ui.activeWalkingMillis,
-            talkMillis = talkMillis,
-            meditateMillis = meditateMillis,
+            totalElapsedMillis = if (isPreWalk) 0L else ui.totalElapsedMillis,
+            distanceMeters = if (isPreWalk) 0.0 else ui.distanceMeters,
+            walkMillis = if (isPreWalk) 0L else ui.activeWalkingMillis,
+            talkMillis = if (isPreWalk) 0L else talkMillis,
+            meditateMillis = if (isPreWalk) 0L else meditateMillis,
             recorderState = recorderState,
             audioLevel = audioLevel,
-            recordingsCount = recordingsCount,
+            recordingsCount = if (isPreWalk) 0 else recordingsCount,
             units = distanceUnits,
-            steps = steps,
-            ascendMeters = ascendMeters,
+            steps = if (isPreWalk) null else steps,
+            ascendMeters = if (isPreWalk) null else ascendMeters,
             // Caption display rule: pre-walk shows the typed-but-not-yet-
             // committed draft (preWalkIntention); in-walk shows the value
             // committed to the Walk row (intention StateFlow). The two are
