@@ -81,6 +81,19 @@ class VoiceGuideScheduler(
     }
 
     /**
+     * Snapshot of the in-memory played set. The orchestrator persists
+     * this after every [markPlayed] so the stored set tracks the
+     * scheduler's true state — including cycle resets, where
+     * [nextPrompt] clears [played] when every prompt has been used.
+     * Without snapshot semantics (i.e. incrementally appending played
+     * ids on disk) the stored set could never shrink, and a long-lived
+     * pack would end up permanently "exhausted" on persistence after
+     * one cycle. iOS parity: `VoiceGuideManagement.persistHistory`
+     * writes `Array(scheduler.playedPromptIds)` verbatim.
+     */
+    fun playedSnapshot(): Set<String> = synchronized(played) { played.toSet() }
+
+    /**
      * Completion path. Records the played id, clears the isPlaying
      * flag, advances the last-played timestamp, and draws the next
      * interval.
