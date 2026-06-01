@@ -523,9 +523,16 @@ fun ActiveWalkScreen(
     // controller stays in until the next startWalk()).
     val hasCheckedAutoIntention = remember { mutableStateOf(false) }
     val isRecoveryComposition = remember {
-        // `navWalkState` at first composition: Idle = fresh start;
-        // anything else = we're entering an in-progress walk (recovery).
-        navWalkState !is WalkState.Idle
+        // `navWalkState` at first composition: pre-walk surface (Idle or
+        // Finished) = the user is about to start a fresh walk; anything
+        // else = we're entering an in-progress walk (process-restart
+        // recovery / notification-tap-while-walking). Previously this
+        // treated Finished as recovery, which silenced the auto-intention
+        // popup on the second wander in a session because the @Singleton
+        // controller stays in Finished after the prior walk wraps until
+        // the next startWalk(). Gate on `isInProgress` so only genuinely
+        // in-progress states count as recovery.
+        navWalkState.isInProgress
     }
     // iOS mimics `.onAppear` — the auto-intention prompt fires on every
     // pre-walk view appearance. Android keeps the same ActiveWalkScreen
