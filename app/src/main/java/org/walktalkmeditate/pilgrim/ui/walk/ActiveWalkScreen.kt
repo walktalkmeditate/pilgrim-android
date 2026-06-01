@@ -289,6 +289,7 @@ fun ActiveWalkScreen(
         SHEET_HEIGHT_MINIMIZED_DP
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
+    var showEndConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
     // preWalkIntention persists across rotation, tab-switching (PilgrimNavHost
     // pops Path with saveState=true), AND process death (rememberSaveable
@@ -708,6 +709,15 @@ fun ActiveWalkScreen(
                 onDismiss = { showLeaveConfirm = false },
             )
         }
+        if (showEndConfirm) {
+            EndWalkDialog(
+                onConfirm = {
+                    showEndConfirm = false
+                    viewModel.finishWalk()
+                },
+                onDismiss = { showEndConfirm = false },
+            )
+        }
         if (showOptions) {
             // Gate Drop Waypoint on BOTH (a) walk-is-trackable state AND
             // (b) we have a GPS fix. Without (b), `recordWaypoint` would
@@ -927,7 +937,10 @@ fun ActiveWalkScreen(
             onToggleRecording = viewModel::toggleRecording,
             onPermissionDenied = viewModel::emitPermissionDenied,
             onDismissError = viewModel::dismissRecorderError,
-            onFinish = viewModel::finishWalk,
+            // iOS parity `ActiveWalkView.swift:170-175` — End confirms
+            // before finalizing the walk so a thumb-brush on the End
+            // button can't accidentally close out a session.
+            onFinish = { showEndConfirm = true },
             peekHintTrigger = peekHintTrigger.value,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
@@ -1053,6 +1066,34 @@ private fun LeaveWalkDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Stay") }
+        },
+        containerColor = pilgrimColors.parchment,
+        titleContentColor = pilgrimColors.ink,
+        textContentColor = pilgrimColors.ink,
+    )
+}
+
+/**
+ * iOS parity `ActiveWalkView.swift:170-175@v1.6.0` — tapping End on the
+ * in-walk action surface confirms before finalizing, with destructive
+ * styling on the End button and an explanatory body ("This will save
+ * your walk and show the summary."). Mirrors the [LeaveWalkDialog]
+ * shape since both are AlertDialogs over the same parchment surface.
+ */
+@Composable
+private fun EndWalkDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("End Walk?") },
+        text = { Text("This will save your walk and show the summary.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("End Walk") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
         containerColor = pilgrimColors.parchment,
         titleContentColor = pilgrimColors.ink,

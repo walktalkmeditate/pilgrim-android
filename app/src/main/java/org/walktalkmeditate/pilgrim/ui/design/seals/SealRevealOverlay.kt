@@ -216,15 +216,13 @@ private const val MILESTONE_HOLD_BONUS_MS = 500L
 private const val SPRING_DAMPING = 0.6f
 private const val SPRING_STIFFNESS = 500f
 
-// User feedback (2026-05-14): the goshuin should be shown FIRST,
-// then the post-walk summary. Use fully-opaque parchment so the
-// summary is occluded for the duration of the reveal; the outer
-// Box's `.alpha(opacity)` modifier fades the backdrop + seal
-// together on Dismissing, revealing the summary underneath. The
-// parchment color matches the summary's own background so there's
-// no visible "rectangle on top" — the page transitions cleanly
-// from blank-parchment + seal → summary.
-private const val OVERLAY_BACKGROUND_ALPHA = 1f
+// iOS parity `SealRevealView.swift:22-24` — `Color.parchment.opacity(0.95)`.
+// The summary stays faintly visible through a 5% transparent parchment
+// veil during the reveal, giving the goshuin a brief floating-frosted
+// feel before the outer `.alpha(opacity)` fade hands off to the summary.
+// (Reverses the 2026-05-14 opaque trial after a later side-by-side with
+// iOS — the slight see-through is the parity behavior.)
+private const val OVERLAY_BACKGROUND_ALPHA = 0.95f
 private const val SHADOW_ALPHA_REVEALED = 0.25f
 private const val SHADOW_ELEVATION_DP = 12
 private const val DEFAULT_SEAL_SIZE_DP = 220
