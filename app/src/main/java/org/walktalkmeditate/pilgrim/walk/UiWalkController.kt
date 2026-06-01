@@ -194,14 +194,7 @@ class UiWalkController @Inject constructor(
                 }
                 .collect { tuple ->
                     if (tuple == null) {
-                        // Active walk disappeared. Distinguish finish
-                        // (row exists with end_timestamp) from
-                        // discard (row deleted) by re-reading the
-                        // previously-active walk's row.
                         val newState: WalkState = if (firstEmission || prevActiveWalk == null) {
-                            // App-start with no walk in progress, or
-                            // the prior state was already non-active.
-                            // Plain Idle.
                             WalkState.Idle
                         } else {
                             val finalized = repository.getWalk(prevActiveWalk!!.id)
@@ -210,18 +203,28 @@ class UiWalkController @Inject constructor(
                                 val events = repository.eventsFor(finalized.id)
                                 buildFinishedAccumulatorState(finalized, events, samples)
                             } else {
-                                // Row missing → discard path (PurgeWalk).
                                 WalkState.Idle
                             }
                         }
                         prevActiveWalk = null
                         firstEmission = false
+                        // Log only state-class transitions to keep terminal
+                        // events visible in logcat without flooding it with
+                        // the per-second step-flush re-emissions that step
+                        // through the Active branch below.
+                        if (_state.value::class != newState::class) {
+                            Log.i(TAG, "stateCollector emitting ${newState::class.simpleName}")
+                        }
                         _state.value = newState
                     } else {
                         val (walk, events, samples) = tuple
                         prevActiveWalk = walk
                         firstEmission = false
-                        _state.value = buildActiveState(walk, events, samples)
+                        val built = buildActiveState(walk, events, samples)
+                        if (_state.value::class != built::class) {
+                            Log.i(TAG, "stateCollector observed walkId=${walk.id}, emitting ${built::class.simpleName}")
+                        }
+                        _state.value = built
                     }
                 }
         }

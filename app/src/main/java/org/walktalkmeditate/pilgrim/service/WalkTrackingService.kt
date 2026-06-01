@@ -228,29 +228,48 @@ class WalkTrackingService : Service() {
             //     test-time corner can land here). `restoreActiveWalk`
             //     adopts the existing walk; the `isFreshStart` insert is
             //     skipped.
-            if (controller.state.value is WalkState.Idle) {
-                val restored = runCatching { controller.restoreActiveWalk() }
+            // restoreActiveWalk is only meaningful when the controller
+            // is Idle — Finished walks are already closed in Room.
+            val currentState = controller.state.value
+            val restored = if (currentState is WalkState.Idle) {
+                runCatching { controller.restoreActiveWalk() }
                     .onFailure { Log.w(TAG, "restoreActiveWalk on revival failed", it) }
                     .getOrNull()
-                if (restored == null) {
-                    if (isFreshStart) {
-                        // No walk in Room yet — UI is asking us to
-                        // create one. Failure here (e.g. controller
-                        // already non-Idle from a fast race) is logged
-                        // and swallowed so the pipeline still proceeds
-                        // against whatever state the controller landed in.
-                        try {
-                            controller.startWalk(intentionExtra)
-                        } catch (ce: CancellationException) {
-                            throw ce
-                        } catch (e: IllegalStateException) {
-                            Log.w(TAG, "fresh ACTION_START rejected: ${e.message}")
-                        }
-                    } else {
-                        Log.w(TAG, "revived ACTION_START with no unfinished walk — stopping")
-                        stopSelf()
-                        return@launch
+            } else {
+                null
+            }
+            when (decideStartAction(currentState, isFreshStart, hasRestoredWalk = restored != null)) {
+                StartAction.StartFresh -> {
+                    // No walk in Room yet — UI is asking us to create
+                    // one (either fresh Idle launch or the
+                    // second-walk-in-cached-tracker Finished path).
+                    // Failure here (e.g. controller already non-Idle
+                    // from a fast race) is logged and swallowed so the
+                    // pipeline still proceeds against whatever state
+                    // the controller landed in.
+                    try {
+                        controller.startWalk(intentionExtra)
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (e: IllegalStateException) {
+                        Log.w(TAG, "fresh ACTION_START rejected: ${e.message}")
                     }
+                }
+                StartAction.AdoptRestored -> {
+                    // restoreActiveWalk already adopted an in-progress
+                    // walk — the location collector below will record
+                    // against it. No further dispatch needed.
+                }
+                StartAction.StopNoWalk -> {
+                    Log.w(TAG, "ACTION_START with no actionable walk — stopping (state=$currentState, isFreshStart=$isFreshStart)")
+                    stopSelf()
+                    return@launch
+                }
+                StartAction.IgnoreInProgress -> {
+                    // Controller already in-progress (Active/Paused/
+                    // Meditating). A redundant ACTION_START in this
+                    // state shouldn't double-start; the collector below
+                    // resubscribes to GPS for the live walk.
                 }
             }
             try {
@@ -606,6 +625,31 @@ class WalkTrackingService : Service() {
      */
     internal enum class StateAction { SelfStop, UpdateNotification }
 
+    /**
+     * Decision taken by [startTracking] against the controller's current
+     * state + the intent's `EXTRA_FRESH_START` flag + the result of an
+     * already-attempted `restoreActiveWalk`. Pure shape so the
+     * regression that left `Finished + isFreshStart` un-dispatched can
+     * be locked down by a unit test instead of waiting for on-device QA.
+     */
+    internal enum class StartAction {
+        /** Call `controller.startWalk(intentionExtra)`. */
+        StartFresh,
+
+        /** `restoreActiveWalk` already adopted an in-progress walk —
+         *  the collector below picks up the live state, no further
+         *  controller call is needed (Idle revival path). */
+        AdoptRestored,
+
+        /** Nothing actionable for this intent — stop the service. */
+        StopNoWalk,
+
+        /** Controller already in an in-progress state (e.g., race with
+         *  another ACTION_START); leave it alone and let the collector
+         *  keep recording. */
+        IgnoreInProgress,
+    }
+
     companion object {
         /**
          * Per-process "is the FGS alive in THIS process" flag. Set in
@@ -755,11 +799,25 @@ class WalkTrackingService : Service() {
          * return the new latch value and what the collector should do.
          *
          * Behavior:
-         *  - Finished → always SelfStop (controller has reached terminal).
-         *  - Idle when latch=true → SelfStop (Stage 9.5-C discard path).
-         *  - Idle when latch=false → UpdateNotification (cold-start
-         *    initial Idle, before any walk has been dispatched).
          *  - Active|Paused|Meditating → UpdateNotification + flip latch true.
+         *  - Idle / Finished when latch=true → SelfStop (we entered an
+         *    in-progress state and now left it — the walk is over).
+         *  - Idle / Finished when latch=false → UpdateNotification
+         *    (startup snapshot of the cached @Singleton controller's
+         *    state from a prior walk — locationJob's controller.startWalk
+         *    is about to transition state into the active range).
+         *
+         * The Finished+!hasBeenActive=UpdateNotification arm is critical
+         * for the second-walk-in-cached-tracker case. Without it, the
+         * notificationJob's first emission (Finished, from walk N-1's
+         * @Singleton state) races the locationJob's controller.startWalk
+         * dispatch: SelfStop → onDestroy → scope.cancel() can interrupt
+         * startWalk after `repository.startWalk` (row insert) but before
+         * `_state.value = Active`. The walk row lands in Room but the
+         * controller stays Finished — subsequent ACTION_FINISH no-ops
+         * (`reduceFinished(Finish) → effect=None`) and the walk row's
+         * endTimestamp is never set. The Idle case already used this
+         * latch pattern; Finished needs it too.
          */
         internal fun decideStateAction(
             state: WalkState,
@@ -770,11 +828,40 @@ class WalkTrackingService : Service() {
                 state is WalkState.Paused ||
                 state is WalkState.Meditating
             val action = when {
-                state is WalkState.Finished -> StateAction.SelfStop
-                state is WalkState.Idle && hasBeenActive -> StateAction.SelfStop
+                state is WalkState.Active ||
+                    state is WalkState.Paused ||
+                    state is WalkState.Meditating -> StateAction.UpdateNotification
+                hasBeenActive -> StateAction.SelfStop
                 else -> StateAction.UpdateNotification
             }
             return nextLatch to action
+        }
+
+        /**
+         * Pure decision for [startTracking]: given the controller's
+         * current state, whether the intent carries `EXTRA_FRESH_START`,
+         * and whether `restoreActiveWalk` already adopted an
+         * in-progress Room walk, return the action to apply.
+         *
+         * Crucial Finished case: the `:tracker` process commonly
+         * survives between walks (Android keeps it cached), so the
+         * @Singleton `WalkController` sits in `Finished` until the next
+         * `startWalk`. `WalkReducer.reduceFinished` accepts `Start →
+         * startFresh`, but this service used to gate the dispatch on
+         * `Idle` only — silently dropping the second walk. Treat
+         * `Finished + isFreshStart` the same as the fresh `Idle` path.
+         */
+        internal fun decideStartAction(
+            state: WalkState,
+            isFreshStart: Boolean,
+            hasRestoredWalk: Boolean,
+        ): StartAction = when {
+            state is WalkState.Idle && hasRestoredWalk -> StartAction.AdoptRestored
+            state is WalkState.Idle && isFreshStart -> StartAction.StartFresh
+            state is WalkState.Idle -> StartAction.StopNoWalk
+            state is WalkState.Finished && isFreshStart -> StartAction.StartFresh
+            state is WalkState.Finished -> StartAction.StopNoWalk
+            else -> StartAction.IgnoreInProgress
         }
     }
 }

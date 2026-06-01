@@ -311,8 +311,29 @@ class WalkControllerImpl @Inject constructor(
     }
 
     override suspend fun restoreActiveWalk(): Walk? = dispatchMutex.withLock {
-        if (_state.value !is WalkState.Idle) {
-            Log.i(TAG, "restoreActiveWalk skipped: state=${_state.value::class.simpleName}")
+        // Skip restore only when the controller is already in an
+        // in-progress state — re-running restore over Active/Paused/
+        // Meditating would clobber live in-memory totals (totalPausedMillis,
+        // pendingMeditationAt) with a re-derivation from samples/events
+        // and yank step counting through a redundant start().
+        //
+        // Finished and Idle are BOTH terminal-or-unknown states that may
+        // diverge from Room. Specifically: a fresh `:tracker` service
+        // started for walk N where the cached @Singleton controller is
+        // still in `Finished(walk N-1)` can land here after the
+        // notification-job race interrupted controller.startWalk
+        // mid-dispatch (Room row inserted, state never transitioned to
+        // Active). On the user's next ACTION_FINISH for that orphan, we
+        // need to adopt the Room row instead of skipping — otherwise
+        // `controller.finishWalk()` from `Finished` no-ops via
+        // `reduceFinished(Finish) → effect=None` and the row's
+        // endTimestamp is never set.
+        val current = _state.value
+        if (current is WalkState.Active ||
+            current is WalkState.Paused ||
+            current is WalkState.Meditating
+        ) {
+            Log.i(TAG, "restoreActiveWalk skipped: state=${current::class.simpleName}")
             return@withLock null
         }
         val walk = repository.getActiveWalk()
