@@ -47,7 +47,7 @@ class SoundscapePickerViewModel @Inject constructor(
             is SoundscapeState.NotDownloaded -> catalog.download(state.asset.id)
             is SoundscapeState.Failed -> catalog.retry(state.asset.id)
             is SoundscapeState.Downloading -> Unit
-            is SoundscapeState.Downloaded -> viewModelScope.launch {
+            is SoundscapeState.Downloaded -> {
                 // Cross-process bridge: the catalog's `select`/`deselect`
                 // writes to DataStore in the UI process. DataStore is
                 // single-process by default, so :tracker's orchestrator
@@ -55,16 +55,28 @@ class SoundscapePickerViewModel @Inject constructor(
                 // swap decision in `observe()`) never sees the UI write.
                 // The `actionPublisher` Intent hop is the live notification
                 // — same pattern WalkSoundscapeUiController.select() uses
-                // for the walk-time path. Without it, picking a different
-                // soundscape from the picker (the typical
-                // tap-name-in-MeditationScreen flow) leaves playback
-                // looping the old one until the user exits meditation.
+                // for the walk-time path.
+                //
+                // The Intent fires BEFORE the suspend DataStore write so
+                // a viewModelScope-cancellation race (user swipes away
+                // mid-coroutine — Stage 9-B) or a rare DataStore IOException
+                // can't strand :tracker on the old soundscape. Persistence
+                // is "for next time" and naturally re-syncs from the
+                // picker's catalog flow on the next open.
+                //
+                // Deselect uses `clearSoundscapeSelection()`, NOT
+                // `setSoundscapeEnabled(false)`. The manual toggle only
+                // gates Active/Paused; Meditating's auto-play predicate
+                // is `enabled && effectiveId != null`, which stays true
+                // (DataStore-mirrored `selectedAssetId` still holds the
+                // old id cross-process). Only the orchestrator's
+                // `Selection.cleared` flag masks the predicate.
                 if (state.isSelected) {
-                    catalog.deselect()
-                    actionPublisher.setSoundscapeEnabled(false)
+                    actionPublisher.clearSoundscapeSelection()
+                    viewModelScope.launch { catalog.deselect() }
                 } else {
-                    catalog.select(state.asset.id)
                     actionPublisher.selectSoundscape(state.asset.id)
+                    viewModelScope.launch { catalog.select(state.asset.id) }
                 }
             }
         }

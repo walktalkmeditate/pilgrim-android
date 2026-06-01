@@ -91,7 +91,7 @@ class WalkActionPublisher @Inject constructor(
         val intent = baseIntent(WalkTrackingService.ACTION_SET_SOUNDSCAPE).apply {
             putExtra(WalkTrackingService.EXTRA_SOUNDSCAPE_ON, on)
         }
-        context.startService(intent)
+        safeStartService(intent, WalkTrackingService.ACTION_SET_SOUNDSCAPE)
     }
 
     /**
@@ -103,11 +103,52 @@ class WalkActionPublisher @Inject constructor(
         val intent = baseIntent(WalkTrackingService.ACTION_SELECT_SOUNDSCAPE).apply {
             putExtra(WalkTrackingService.EXTRA_SOUNDSCAPE_ID, assetId)
         }
-        context.startService(intent)
+        safeStartService(intent, WalkTrackingService.ACTION_SELECT_SOUNDSCAPE)
+    }
+
+    /**
+     * Mid-walk explicit deselect (user tapped the currently-selected row
+     * in the soundscape picker). Tells `:tracker`'s orchestrator to set
+     * `selectionOverride` to `Selection.cleared = true` AND clear the
+     * manual toggle, so the Meditating auto-play predicate (which is
+     * insensitive to [setSoundscapeEnabled]) actually stops playback.
+     * Pairs with `SoundscapeCatalogRepository.deselect()` on the UI side
+     * for the persisted next-walk read; the Intent is what reaches the
+     * live session, since `pilgrim_prefs` DataStore is single-process.
+     */
+    fun clearSoundscapeSelection() {
+        safeStartService(
+            baseIntent(WalkTrackingService.ACTION_CLEAR_SOUNDSCAPE_SELECTION),
+            WalkTrackingService.ACTION_CLEAR_SOUNDSCAPE_SELECTION,
+        )
     }
 
     private fun fireService(action: String) {
-        context.startService(baseIntent(action))
+        safeStartService(baseIntent(action), action)
+    }
+
+    /**
+     * `context.startService` from a background context throws
+     * [IllegalStateException] on API 26+ (and the API 31+ subtype
+     * `ForegroundServiceStartNotAllowedException`). The soundscape picker
+     * is reachable from Settings while the app is foregrounded, but a
+     * task switch right before the tap can land us in the background-
+     * start window. Log and swallow rather than crash the UI process —
+     * the orchestrator will resync from DataStore on the next walk start
+     * for selection actions, and the user can retry for toggle actions.
+     */
+    private fun safeStartService(intent: Intent, actionForLog: String) {
+        try {
+            context.startService(intent)
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (e: IllegalStateException) {
+            android.util.Log.w(
+                "WalkActionPublisher",
+                "startService($actionForLog) rejected — likely background-start restriction",
+                e,
+            )
+        }
     }
 
     private fun baseIntent(action: String): Intent =

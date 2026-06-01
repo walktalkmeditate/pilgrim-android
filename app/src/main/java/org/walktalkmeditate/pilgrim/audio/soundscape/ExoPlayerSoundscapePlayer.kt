@@ -30,9 +30,13 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * ExoPlayer-backed [SoundscapePlayer] for long-form looping ambient
- * playback. Single-file loop via `Player.REPEAT_MODE_ONE`; gapless-
- * ness depends on the audio file having appropriate loop metadata
- * (audio-engineering fix, not app-code fix).
+ * playback. Gapless loop via a 2-item playlist of the same source
+ * + `Player.REPEAT_MODE_ALL` — ExoPlayer pre-buffers the next item
+ * ahead of the current one's end, so the cross-item boundary is
+ * seamless. When item 2 ends, REPEAT_MODE_ALL transitions back to
+ * item 0 along the same pre-buffered path. Matches iOS's
+ * `AVAudioPlayer.numberOfLoops = -1` continuous-PCM-buffer loop.
+ * See [play] for the playlist setup.
  *
  * Audio focus: standalone
  * `AudioFocusRequest(AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)` —
@@ -80,6 +84,19 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
     // the thread it was built on.
     private var player: ExoPlayer? = null
 
+    /**
+     * Test-only snapshot of the gapless-loop invariants — current
+     * playlist size + repeat mode. Lets a Robolectric test pin
+     * `mediaItemCount == 2` and `repeatMode == REPEAT_MODE_ALL` after
+     * `play()` so a future refactor that drops the duplicated
+     * MediaItem or flips back to REPEAT_MODE_ONE fails the suite
+     * instead of silently regressing the audible loop boundary.
+     * Returns null when no player is active.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun playbackInvariantSnapshot(): Pair<Int, Int>? =
+        player?.let { it.mediaItemCount to it.repeatMode }
+
     // Cross-thread publication: focus listener fires on the handler
     // thread (we pass mainHandler) but the write happens there too,
     // so @Volatile is mostly defensive. Keep it for clarity.
@@ -102,19 +119,21 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
-            // REPEAT_MODE_ONE loops internally, so STATE_ENDED should
-            // not fire during normal playback. If we see it (rare
-            // codec edge case in which REPEAT_MODE_ONE doesn't
-            // suppress the end event), tear down cleanly — abandon
-            // focus, unregister noisy receiver, and discard the
-            // player so the next play() creates a fresh instance.
-            // Transitioning to Idle here would silently leak the
-            // focus request (Stage 5-F review lesson). Keeping the
-            // same ExoPlayer and calling prepare() on it is
-            // technically legal per ExoPlayer's contract, but
-            // STATE_ENDED is an abnormal terminal for a looping
-            // player and reusing the instance relies on codec/
-            // version-dependent behavior. Replace it.
+            // Under REPEAT_MODE_ALL on the 2-item playlist (see [play]),
+            // ExoPlayer fires `MEDIA_ITEM_TRANSITION_REPEAT` between
+            // items and loops back to item 0 when item 1 ends — so
+            // STATE_ENDED should not fire during normal playback.
+            // If we see it (rare codec edge case in which the
+            // playlist drains without the repeat cycle re-arming),
+            // tear down cleanly — abandon focus, unregister noisy
+            // receiver, and discard the player so the next play()
+            // creates a fresh instance. Transitioning to Idle here
+            // would silently leak the focus request (Stage 5-F
+            // review lesson). Keeping the same ExoPlayer and calling
+            // prepare() on it is technically legal per ExoPlayer's
+            // contract, but STATE_ENDED is an abnormal terminal for
+            // a looping player and reusing the instance relies on
+            // codec/version-dependent behavior. Replace it.
             when (playbackState) {
                 Player.STATE_READY -> {
                     _state.value = SoundscapePlayer.State.Playing

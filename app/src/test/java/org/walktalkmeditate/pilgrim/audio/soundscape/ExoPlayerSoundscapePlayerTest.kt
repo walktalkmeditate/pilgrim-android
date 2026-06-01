@@ -69,6 +69,23 @@ class ExoPlayerSoundscapePlayerTest {
             "expected Playing or Idle, got $state",
             state is SoundscapePlayer.State.Playing || state is SoundscapePlayer.State.Idle,
         )
+        // Pin the gapless-loop invariants the docstring promises:
+        // 2-item playlist + REPEAT_MODE_ALL. A future refactor that
+        // drops the duplicated MediaItem or flips back to
+        // REPEAT_MODE_ONE — silently regressing the audible AAC loop
+        // boundary — fails here instead of shipping.
+        val snapshot = player.playbackInvariantSnapshot()
+        assertNotNull("player should be constructed after play()", snapshot)
+        assertEquals(
+            "gapless loop requires playlist of two same-source MediaItems",
+            2,
+            snapshot!!.first,
+        )
+        assertEquals(
+            "REPEAT_MODE_ALL pre-buffers next item; REPEAT_MODE_ONE re-seeks and exposes AAC padding",
+            androidx.media3.common.Player.REPEAT_MODE_ALL,
+            snapshot.second,
+        )
     }
 
     @Test fun `play with missing file transitions to Error`() {

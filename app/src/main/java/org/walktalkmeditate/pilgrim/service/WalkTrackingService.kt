@@ -111,7 +111,8 @@ class WalkTrackingService : Service() {
             ACTION_DISCARD,
             ACTION_SET_INTENTION -> handleControllerAction(action, intent)
             ACTION_SET_SOUNDSCAPE,
-            ACTION_SELECT_SOUNDSCAPE -> handleSoundscapeAction(action, intent)
+            ACTION_SELECT_SOUNDSCAPE,
+            ACTION_CLEAR_SOUNDSCAPE_SELECTION -> handleSoundscapeAction(action, intent)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -393,6 +394,8 @@ class WalkTrackingService : Service() {
                     soundscapeOrchestrator.selectSoundscape(id)
                 }
             }
+            ACTION_CLEAR_SOUNDSCAPE_SELECTION ->
+                soundscapeOrchestrator.clearSoundscapeSelection()
         }
     }
 
@@ -745,6 +748,8 @@ class WalkTrackingService : Service() {
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_SOUNDSCAPE"
         const val ACTION_SELECT_SOUNDSCAPE =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SELECT_SOUNDSCAPE"
+        const val ACTION_CLEAR_SOUNDSCAPE_SELECTION =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.CLEAR_SOUNDSCAPE_SELECTION"
 
         /** Extra: starting walk's intention text, or new intention on
          *  [ACTION_SET_INTENTION]. UTF-8 string, ≤140 chars (server-side
