@@ -182,8 +182,25 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
                 return@post
             }
             val p = player ?: createPlayer().also { player = it }
-            p.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-            p.repeatMode = Player.REPEAT_MODE_ONE
+            // Gapless loop: AAC files (`<asset>.aac` per SoundscapeBaseUrl)
+            // carry encoder priming + padding samples (~48 ms each at
+            // 44.1 kHz). Under `REPEAT_MODE_ONE`, ExoPlayer re-seeks to
+            // sample 0 of the same decoded MediaItem on STATE_ENDED —
+            // the gap is audible (a soft tick / silence) on every loop
+            // boundary, especially on quiet ambient tracks. iOS doesn't
+            // have this because AVAudioPlayer decodes once to a PCM
+            // buffer and loops the buffer in memory.
+            //
+            // Workaround: queue the same source TWICE and use
+            // `REPEAT_MODE_ALL`. ExoPlayer pre-buffers the next playlist
+            // item ahead of the current one ending, so the boundary
+            // crossfade-in-software is seamless. When item 2 ends,
+            // REPEAT_MODE_ALL transitions back to item 0 — the
+            // already-buffered start of item 0 takes the same gapless
+            // path. Net behavior: continuous ambient loop matching iOS.
+            val uri = Uri.fromFile(file)
+            p.setMediaItems(listOf(MediaItem.fromUri(uri), MediaItem.fromUri(uri)))
+            p.repeatMode = Player.REPEAT_MODE_ALL
             p.volume = userVolume
             p.prepare()
             p.play()

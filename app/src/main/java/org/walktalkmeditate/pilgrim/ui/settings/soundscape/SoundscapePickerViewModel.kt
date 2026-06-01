@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeCatalogRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeState
+import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 
 /**
  * ViewModel for the soundscape picker. Passthrough to
@@ -30,6 +31,7 @@ import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeState
 @HiltViewModel
 class SoundscapePickerViewModel @Inject constructor(
     private val catalog: SoundscapeCatalogRepository,
+    private val actionPublisher: WalkActionPublisher,
 ) : ViewModel() {
 
     init {
@@ -46,7 +48,24 @@ class SoundscapePickerViewModel @Inject constructor(
             is SoundscapeState.Failed -> catalog.retry(state.asset.id)
             is SoundscapeState.Downloading -> Unit
             is SoundscapeState.Downloaded -> viewModelScope.launch {
-                if (state.isSelected) catalog.deselect() else catalog.select(state.asset.id)
+                // Cross-process bridge: the catalog's `select`/`deselect`
+                // writes to DataStore in the UI process. DataStore is
+                // single-process by default, so :tracker's orchestrator
+                // (which reads `selectedSoundscapeId` for its mid-session
+                // swap decision in `observe()`) never sees the UI write.
+                // The `actionPublisher` Intent hop is the live notification
+                // — same pattern WalkSoundscapeUiController.select() uses
+                // for the walk-time path. Without it, picking a different
+                // soundscape from the picker (the typical
+                // tap-name-in-MeditationScreen flow) leaves playback
+                // looping the old one until the user exits meditation.
+                if (state.isSelected) {
+                    catalog.deselect()
+                    actionPublisher.setSoundscapeEnabled(false)
+                } else {
+                    catalog.select(state.asset.id)
+                    actionPublisher.selectSoundscape(state.asset.id)
+                }
             }
         }
     }

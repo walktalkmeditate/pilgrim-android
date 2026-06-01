@@ -26,8 +26,8 @@ import org.robolectric.annotation.Config
  * (Stage 2-F scheduler crash, Stage 5-B MediaPlayer attribute
  * ordering). ShadowAudioManager grants focus by default, so the
  * play path here does not simulate audio output — but it DOES
- * exercise builder chain + REPEAT_MODE_ONE + focus-request
- * construction.
+ * exercise builder chain + REPEAT_MODE_ALL gapless-loop playlist
+ * + focus-request construction.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -57,7 +57,7 @@ class ExoPlayerSoundscapePlayerTest {
         shadowOf(android.os.Looper.getMainLooper()).idle()
     }
 
-    @Test fun `play constructs ExoPlayer + REPEAT_MODE_ONE + focus without crashing`() {
+    @Test fun `play constructs ExoPlayer + REPEAT_MODE_ALL gapless loop + focus without crashing`() {
         player.play(tempFile)
         runMainQueueUntilIdle()
         // ShadowAudioManager grants focus; Robolectric's media stub
