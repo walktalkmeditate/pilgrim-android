@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
@@ -87,7 +88,12 @@ fun JourneyEditorScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // App is edge-to-edge (enableEdgeToEdge), so the WebView's
+                // fixed-bottom "Save tended file" drawer would sit behind the
+                // gesture nav — and Android WebView doesn't expose that inset
+                // to CSS env() (unlike iOS WKWebView). Inset above it here.
+                .navigationBarsPadding(),
             contentAlignment = Alignment.Center,
         ) {
             when (val current = state) {
