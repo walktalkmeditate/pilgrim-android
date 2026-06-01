@@ -117,7 +117,7 @@ class SoundscapeOrchestrator @Inject constructor(
      * is applied here. Null → fall back to the [selectedAssetId] read at
      * walk start.
      */
-    private val selectionOverride = MutableStateFlow<String?>(null)
+    private val selectionOverride = MutableStateFlow(Selection.None)
 
     /**
      * Effective asset id the current/next session should play —
@@ -129,6 +129,7 @@ class SoundscapeOrchestrator @Inject constructor(
 
     /** Service-forwarded toggle from the WalkOptionsSheet. */
     fun setManualSoundscapeRequested(on: Boolean) {
+        if (on) selectionOverride.value = selectionOverride.value.copy(cleared = false)
         manualRequested.value = on
     }
 
@@ -137,8 +138,24 @@ class SoundscapeOrchestrator @Inject constructor(
      * turns playback on (iOS `onSelectSoundscape` plays immediately).
      */
     fun selectSoundscape(assetId: String) {
-        selectionOverride.value = assetId
+        selectionOverride.value = Selection(assetId = assetId, cleared = false)
         manualRequested.value = true
+    }
+
+    /**
+     * Service-forwarded mid-walk explicit deselection. Tells the orchestrator
+     * "play nothing" regardless of what [selectedAssetId] (the cross-process
+     * DataStore mirror) still reports — the UI process's `catalog.deselect()`
+     * write does NOT propagate to `:tracker`'s DataStore reader. Used by
+     * SoundscapePickerViewModel when the user taps the currently-selected
+     * row to deselect. The `cleared` flag specifically masks Meditating's
+     * auto-play predicate (`enabled && effectiveId != null`) which is
+     * otherwise insensitive to [manualRequested]. Re-armed on the next
+     * [selectSoundscape] call or on the Idle/Finished resetManualRequest.
+     */
+    fun clearSoundscapeSelection() {
+        selectionOverride.value = Selection(assetId = null, cleared = true)
+        manualRequested.value = false
     }
 
     fun start() {
@@ -193,7 +210,16 @@ class SoundscapeOrchestrator @Inject constructor(
             manualRequested,
             selectionOverride,
         ) { state, enabled, assetId, manualOn, override ->
-            PlaybackInputs(state, enabled, override ?: assetId, manualOn)
+            // `override.cleared` masks the DataStore-mirrored
+            // [selectedAssetId] for the explicit-deselect path
+            // ([clearSoundscapeSelection]). Without it, Meditating's
+            // `enabled && effectiveId != null` predicate would keep
+            // spawning playback because the UI process's
+            // `catalog.deselect()` write isn't visible to `:tracker`'s
+            // DataStore reader and `selectedAssetId` still holds the
+            // old non-null id.
+            val effective = if (override.cleared) null else (override.assetId ?: assetId)
+            PlaybackInputs(state, enabled, effective, manualOn)
         }
             .collect { (state, enabled, effectiveId, manualOn) ->
                 // Decide whether soundscape should play in this state, and
@@ -253,7 +279,24 @@ class SoundscapeOrchestrator @Inject constructor(
         // StateFlow dedupes, so these are no-ops when already cleared and
         // won't churn the combine.
         if (manualRequested.value) manualRequested.value = false
-        if (selectionOverride.value != null) selectionOverride.value = null
+        if (selectionOverride.value != Selection.None) selectionOverride.value = Selection.None
+    }
+
+    /**
+     * In-process selection state held by the orchestrator. Distinct from
+     * the DataStore-mirrored [selectedAssetId] so a mid-walk picker tap
+     * can override (or explicitly clear) the persisted choice without
+     * waiting on the next walk's reload. The `cleared` flag carries the
+     * "explicit deselect" signal cross-process (UI's DataStore write
+     * doesn't reach :tracker — see [clearSoundscapeSelection]).
+     */
+    internal data class Selection(
+        val assetId: String?,
+        val cleared: Boolean = false,
+    ) {
+        companion object {
+            val None = Selection(assetId = null, cleared = false)
+        }
     }
 
     private data class PlaybackInputs(
