@@ -83,17 +83,31 @@ class WalkTrackingServiceDiscardTest {
     }
 
     @Test
-    fun `Finished always self-stops regardless of latch`() {
-        val (_, fromFresh) = WalkTrackingService.decideStateAction(
-            state = finishedState,
-            hasBeenActive = false,
-        )
-        assertEquals(WalkTrackingService.StateAction.SelfStop, fromFresh)
-        val (_, fromActive) = WalkTrackingService.decideStateAction(
+    fun `Finished after in-progress (finish path) self-stops`() {
+        val (_, action) = WalkTrackingService.decideStateAction(
             state = finishedState,
             hasBeenActive = true,
         )
-        assertEquals(WalkTrackingService.StateAction.SelfStop, fromActive)
+        assertEquals(WalkTrackingService.StateAction.SelfStop, action)
+    }
+
+    @Test
+    fun `Finished without prior in-progress is UpdateNotification (cached-tracker second-walk path)`() {
+        // Regression pin: a fresh `:tracker` service spun up for walk N
+        // on a process whose cached @Singleton controller still sits in
+        // `Finished(walk N-1)` must NOT SelfStop on the notification
+        // collector's first emission. SelfStop here triggers onDestroy
+        // mid-controller.startWalk, leaving the new walk row in Room
+        // with state stuck at Finished — and the next ACTION_FINISH
+        // no-ops (`reduceFinished(Finish) → effect=None`), wedging the
+        // walk in "active" forever. The hasBeenActive latch gates the
+        // terminal-state SelfStop so the startup snapshot doesn't fire
+        // it — same pattern already used for Idle.
+        val (_, action) = WalkTrackingService.decideStateAction(
+            state = finishedState,
+            hasBeenActive = false,
+        )
+        assertEquals(WalkTrackingService.StateAction.UpdateNotification, action)
     }
 
     @Test

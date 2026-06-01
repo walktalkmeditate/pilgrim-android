@@ -9,7 +9,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -115,9 +114,13 @@ fun BreathingLogo(
             // when pulseEnabled is false `shadowAnim` is pinned at 0 so
             // no recompose tax. When enabled, the 1.2s loop runs and
             // Compose handles the throttling.
+            // Shadow shape must match the clip below — iOS's
+            // PilgrimLogoView is a rounded square. The previous
+            // CircleShape drew a circular halo around the rounded-square
+            // logo, making the whole mark read as a circle on Path.
             .shadow(
                 elevation = shadowAnim.dp,
-                shape = CircleShape,
+                shape = RoundedCornerShape(size * 0.18f),
                 ambientColor = stoneColor,
                 spotColor = stoneColor,
             )

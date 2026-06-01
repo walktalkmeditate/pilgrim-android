@@ -289,6 +289,7 @@ fun ActiveWalkScreen(
         SHEET_HEIGHT_MINIMIZED_DP
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
+    var showEndConfirm by rememberSaveable { mutableStateOf(false) }
     var showOptions by rememberSaveable { mutableStateOf(false) }
     // preWalkIntention persists across rotation, tab-switching (PilgrimNavHost
     // pops Path with saveState=true), AND process death (rememberSaveable
@@ -522,9 +523,16 @@ fun ActiveWalkScreen(
     // controller stays in until the next startWalk()).
     val hasCheckedAutoIntention = remember { mutableStateOf(false) }
     val isRecoveryComposition = remember {
-        // `navWalkState` at first composition: Idle = fresh start;
-        // anything else = we're entering an in-progress walk (recovery).
-        navWalkState !is WalkState.Idle
+        // `navWalkState` at first composition: pre-walk surface (Idle or
+        // Finished) = the user is about to start a fresh walk; anything
+        // else = we're entering an in-progress walk (process-restart
+        // recovery / notification-tap-while-walking). Previously this
+        // treated Finished as recovery, which silenced the auto-intention
+        // popup on the second wander in a session because the @Singleton
+        // controller stays in Finished after the prior walk wraps until
+        // the next startWalk(). Gate on `isInProgress` so only genuinely
+        // in-progress states count as recovery.
+        navWalkState.isInProgress
     }
     // iOS mimics `.onAppear` — the auto-intention prompt fires on every
     // pre-walk view appearance. Android keeps the same ActiveWalkScreen
@@ -541,6 +549,18 @@ fun ActiveWalkScreen(
     }
     LaunchedEffect(navWalkState::class) {
         if (isRecoveryComposition) return@LaunchedEffect
+        // Skip when the user just ended/discarded a walk on THIS entry.
+        // hasSeenInProgress.value=true means we observed in-progress
+        // during this composition; the current Idle/Finished is the
+        // terminal transition of that walk, and the nav LaunchedEffect
+        // below is firing onFinished/onDiscarded in parallel. Without
+        // this gate, the auto-intention's 500ms delay completes mid-
+        // nav-transition and `showPreWalkIntention = true` mounts the
+        // IntentionSettingSheet (a ModalBottomSheet) on the outgoing
+        // ActiveWalkScreen — it slides UP from the bottom for the
+        // duration of the nav fade, visible as a flash before the
+        // goshuin seal reveal takes over on walkSummary.
+        if (hasSeenInProgress.value) return@LaunchedEffect
         val effectiveIntention = effectiveIntentionForAutoPrompt(
             walkState = navWalkState,
             preWalkIntention = preWalkIntention,
@@ -706,6 +726,15 @@ fun ActiveWalkScreen(
                     )
                 },
                 onDismiss = { showLeaveConfirm = false },
+            )
+        }
+        if (showEndConfirm) {
+            EndWalkDialog(
+                onConfirm = {
+                    showEndConfirm = false
+                    viewModel.finishWalk()
+                },
+                onDismiss = { showEndConfirm = false },
             )
         }
         if (showOptions) {
@@ -927,7 +956,10 @@ fun ActiveWalkScreen(
             onToggleRecording = viewModel::toggleRecording,
             onPermissionDenied = viewModel::emitPermissionDenied,
             onDismissError = viewModel::dismissRecorderError,
-            onFinish = viewModel::finishWalk,
+            // iOS parity `ActiveWalkView.swift:170-175` — End confirms
+            // before finalizing the walk so a thumb-brush on the End
+            // button can't accidentally close out a session.
+            onFinish = { showEndConfirm = true },
             peekHintTrigger = peekHintTrigger.value,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
@@ -1053,6 +1085,34 @@ private fun LeaveWalkDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Stay") }
+        },
+        containerColor = pilgrimColors.parchment,
+        titleContentColor = pilgrimColors.ink,
+        textContentColor = pilgrimColors.ink,
+    )
+}
+
+/**
+ * iOS parity `ActiveWalkView.swift:170-175@v1.6.0` — tapping End on the
+ * in-walk action surface confirms before finalizing, with destructive
+ * styling on the End button and an explanatory body ("This will save
+ * your walk and show the summary."). Mirrors the [LeaveWalkDialog]
+ * shape since both are AlertDialogs over the same parchment surface.
+ */
+@Composable
+private fun EndWalkDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("End Walk?") },
+        text = { Text("This will save your walk and show the summary.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("End Walk") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
         containerColor = pilgrimColors.parchment,
         titleContentColor = pilgrimColors.ink,
