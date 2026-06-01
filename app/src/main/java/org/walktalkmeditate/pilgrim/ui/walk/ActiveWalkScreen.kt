@@ -549,6 +549,18 @@ fun ActiveWalkScreen(
     }
     LaunchedEffect(navWalkState::class) {
         if (isRecoveryComposition) return@LaunchedEffect
+        // Skip when the user just ended/discarded a walk on THIS entry.
+        // hasSeenInProgress.value=true means we observed in-progress
+        // during this composition; the current Idle/Finished is the
+        // terminal transition of that walk, and the nav LaunchedEffect
+        // below is firing onFinished/onDiscarded in parallel. Without
+        // this gate, the auto-intention's 500ms delay completes mid-
+        // nav-transition and `showPreWalkIntention = true` mounts the
+        // IntentionSettingSheet (a ModalBottomSheet) on the outgoing
+        // ActiveWalkScreen — it slides UP from the bottom for the
+        // duration of the nav fade, visible as a flash before the
+        // goshuin seal reveal takes over on walkSummary.
+        if (hasSeenInProgress.value) return@LaunchedEffect
         val effectiveIntention = effectiveIntentionForAutoPrompt(
             walkState = navWalkState,
             preWalkIntention = preWalkIntention,

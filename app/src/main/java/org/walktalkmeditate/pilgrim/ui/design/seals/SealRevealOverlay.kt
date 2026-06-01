@@ -220,8 +220,11 @@ private const val SPRING_STIFFNESS = 500f
 // The summary stays faintly visible through a 5% transparent parchment
 // veil during the reveal, giving the goshuin a brief floating-frosted
 // feel before the outer `.alpha(opacity)` fade hands off to the summary.
-// (Reverses the 2026-05-14 opaque trial after a later side-by-side with
-// iOS — the slight see-through is the parity behavior.)
+// The seal-reveal sequence itself remains compositionally smooth because
+// nothing pops up on the outgoing ActiveWalkScreen during the nav fade —
+// see ActiveWalkScreen's auto-intention LaunchedEffect, which now skips
+// when `hasSeenInProgress.value` is true so the IntentionSettingSheet
+// can't slide up under the seal mid-transition.
 private const val OVERLAY_BACKGROUND_ALPHA = 0.95f
 private const val SHADOW_ALPHA_REVEALED = 0.25f
 private const val SHADOW_ELEVATION_DP = 12
