@@ -196,15 +196,28 @@ private fun EditorWebView(filename: String, base64Payload: String, isDark: Boole
                         // also injected — overrides anchor[download].click
                         // and forwards the blob to PilgrimSaveBridge.
                         val payload = "${'"'}$filename${'"'}, ${'"'}${escapeJsString(base64Payload)}${'"'}"
-                        // Real gesture-nav height (CSS px). Read raw from the
+                        // Real bottom-safe area (CSS px). Read raw from the
                         // window via ViewCompat rather than Compose WindowInsets
                         // so a parent's inset-consumption can't zero it. Android
                         // WebView reports env(safe-area-inset-bottom) as 0, so the
                         // viewer's fixed-bottom save drawer pads against this
                         // injected --pilgrim-safe-bottom instead.
-                        val navInsetDp = (ViewCompat.getRootWindowInsets(view)
-                            ?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0) /
-                            view.resources.displayMetrics.density
+                        //
+                        // Take the MAX of `navigationBars()` (visible
+                        // gesture-indicator height, ~24dp on OnePlus) and
+                        // `mandatorySystemGestures()` (Android's "leave this
+                        // clear for swipe-up" inset, typically 32-48dp). Using
+                        // just `navigationBars()` cleared the visible indicator
+                        // but the Save-tended-file pill still sat inside the
+                        // swipe-up gesture zone — visually clipped roughly
+                        // halfway by the bottom-edge curvature on landscape.
+                        val rootInsets = ViewCompat.getRootWindowInsets(view)
+                        val navBarPx = rootInsets
+                            ?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+                        val gesturePx = rootInsets
+                            ?.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures())?.bottom ?: 0
+                        val navInsetDp =
+                            maxOf(navBarPx, gesturePx) / view.resources.displayMetrics.density
                         val script = """
                             (function() {
                                 // Drive theme from the app's resolved appearance (before any
