@@ -1005,6 +1005,59 @@ class SoundscapeOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `selectSoundscape mid-meditation does not latch walk-long mode past End Meditation`() = runTest {
+        // Regression for PR #156 follow-up: picking a soundscape from the
+        // picker during meditation (typical tap-soundscape-name flow) used
+        // to set `manualRequested = true` unconditionally. After the user
+        // tapped Done, state transitioned Meditating → Active and the
+        // orchestrator saw `enabled && manualOn(=true) && effectiveId != null`
+        // → kept the soundscape playing through the rest of the walk when
+        // the user only wanted it for meditation. The fix scopes the
+        // manualOn flip to Active/Paused selections; Meditating swaps the
+        // file via `selectionOverride` without latching walk-long mode.
+        val rain = asset("rain")
+        val forest = asset("forest")
+        seedManifest(listOf(rain, forest))
+        writeAssetFile(rain)
+        writeAssetFile(forest)
+        val walkState = MutableStateFlow<WalkState>(
+            WalkState.Meditating(acc, meditationStartedAt = 1_000L),
+        )
+        val selectedAssetId = MutableStateFlow<String?>("rain")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orchestrator = SoundscapeOrchestrator(
+            walkState, selectedAssetId, manifestService, fileStore,
+            capturingPlayer, FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            bellDurationResolver, s,
+        )
+        orchestrator.start()
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals("meditation auto-play started", 1, capturingPlayer.playCount)
+
+        // User opens picker during meditation, taps a different soundscape.
+        orchestrator.selectSoundscape("forest")
+        runCurrent()
+        assertEquals("swap played the new file", 2, capturingPlayer.playCount)
+
+        // User taps Done → state transitions Meditating → Active.
+        walkState.value = WalkState.Active(acc)
+        runCurrent()
+
+        // Walk-long mode was NEVER enabled (the user didn't toggle it via
+        // the WalkOptionsSheet), so the soundscape must stop. Without the
+        // fix, manualRequested=true latched during the meditation pick
+        // would keep `applyStartDelayIfSpawning` non-null and playback
+        // would continue.
+        assertEquals(
+            "soundscape must stop on End Meditation when walk-long was never toggled on",
+            1,
+            capturingPlayer.stopCount,
+        )
+        s.cancel()
+    }
+
     @Test fun `manual toggle off does not affect meditation auto-play`() = runTest {
         val a = asset("rain")
         seedManifest(listOf(a))

@@ -136,10 +136,25 @@ class SoundscapeOrchestrator @Inject constructor(
     /**
      * Service-forwarded mid-walk selection. Selecting a soundscape also
      * turns playback on (iOS `onSelectSoundscape` plays immediately).
+     *
+     * `manualRequested` is flipped on ONLY when the user picks during a
+     * state where it actually gates playback (Active/Paused). Meditating
+     * auto-plays via the `enabled && effectiveId != null` predicate
+     * regardless of `manualOn`, so setting `manualOn = true` here would
+     * silently latch walk-long mode: the user picks a soundscape during
+     * meditation → hits Done → state transitions Meditating → Active →
+     * the latched `manualOn = true` keeps the soundscape playing
+     * through the rest of the walk, when the user only intended it
+     * for the meditation. Leaving `manualOn` untouched during Meditating
+     * preserves the "meditation-only" intent; the swap still happens via
+     * `selectionOverride` driving the combine's `effectiveId` change.
      */
     fun selectSoundscape(assetId: String) {
         selectionOverride.value = Selection(assetId = assetId, cleared = false)
-        manualRequested.value = true
+        val state = walkState.value
+        if (state is WalkState.Active || state is WalkState.Paused) {
+            manualRequested.value = true
+        }
     }
 
     /**
