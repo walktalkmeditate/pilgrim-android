@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,6 +38,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.io.File
@@ -88,12 +89,7 @@ fun JourneyEditorScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                // App is edge-to-edge (enableEdgeToEdge), so the WebView's
-                // fixed-bottom "Save tended file" drawer would sit behind the
-                // gesture nav — and Android WebView doesn't expose that inset
-                // to CSS env() (unlike iOS WKWebView). Inset above it here.
-                .navigationBarsPadding(),
+                .padding(padding),
             contentAlignment = Alignment.Center,
         ) {
             when (val current = state) {
@@ -200,6 +196,15 @@ private fun EditorWebView(filename: String, base64Payload: String, isDark: Boole
                         // also injected — overrides anchor[download].click
                         // and forwards the blob to PilgrimSaveBridge.
                         val payload = "${'"'}$filename${'"'}, ${'"'}${escapeJsString(base64Payload)}${'"'}"
+                        // Real gesture-nav height (CSS px). Read raw from the
+                        // window via ViewCompat rather than Compose WindowInsets
+                        // so a parent's inset-consumption can't zero it. Android
+                        // WebView reports env(safe-area-inset-bottom) as 0, so the
+                        // viewer's fixed-bottom save drawer pads against this
+                        // injected --pilgrim-safe-bottom instead.
+                        val navInsetDp = (ViewCompat.getRootWindowInsets(view)
+                            ?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0) /
+                            view.resources.displayMetrics.density
                         val script = """
                             (function() {
                                 // Drive theme from the app's resolved appearance (before any
@@ -208,6 +213,12 @@ private fun EditorWebView(filename: String, base64Payload: String, isDark: Boole
                                     document.documentElement.setAttribute('data-theme', '$theme');
                                     localStorage.setItem('pilgrim-viewer-theme', '$theme');
                                 } catch (e) {}
+
+                                // Tell the viewer how tall the gesture nav is so its
+                                // fixed-bottom save drawer can pad above it (Android
+                                // WebView's env(safe-area-inset-bottom) is always 0).
+                                try { document.documentElement.style.setProperty('--pilgrim-safe-bottom', '${navInsetDp}px'); } catch (e) {}
+                                console.log('[diag] navInsetDp=${navInsetDp} innerH=' + window.innerHeight);
 
                                 // Android WebView reports a 0-height layout viewport, so the
                                 // web editor's height:100%/vh chain collapses the flex layout

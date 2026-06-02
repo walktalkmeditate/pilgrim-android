@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
@@ -67,11 +66,7 @@ fun JourneyViewerScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                // Edge-to-edge app: inset the WebView above the gesture nav
-                // so the viewer's bottom content isn't drawn behind it
-                // (Android WebView doesn't expose this inset to CSS env()).
-                .navigationBarsPadding(),
+                .padding(padding),
             contentAlignment = Alignment.Center,
         ) {
             when (val current = state) {
