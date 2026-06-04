@@ -891,9 +891,16 @@ class WalkSummaryViewModelTest {
         // races the finally blocks. Instead, await the StateFlow
         // predicate explicitly so we're observing actual completion,
         // not a race-window snapshot.
+        //
+        // 30s real-time timeout because the save runs on a real
+        // `Dispatchers.Default` (escaping the runTest virtual clock),
+        // and a saturated GitHub Actions runner can take >10s to
+        // schedule the finally block. Memory entry "CI real-time
+        // withTimeout flake family" — 10s wasn't enough on the
+        // 2026-06-02 main-branch CI run.
         vm.saveEtegamiToGallery(fixtureEtegamiSpec(walk.uuid))
         withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
-            withTimeout(10_000L) { vm.etegamiBusy.first { it == null } }
+            withTimeout(30_000L) { vm.etegamiBusy.first { it == null } }
         }
         assertNull(vm.etegamiBusy.value)
     }

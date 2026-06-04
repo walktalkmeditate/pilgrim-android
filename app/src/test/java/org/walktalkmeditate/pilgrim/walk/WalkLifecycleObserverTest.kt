@@ -266,10 +266,14 @@ class WalkLifecycleObserverTest {
         // handshake (observedFlow.processed >= 1); it returns the
         // instant the collector consumes the initial Idle, so this only
         // bites on a wedged runner (a real bug — should fail).
-        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 5_000L
-        // 5s upper bound so slow CI runners under heavy load have
+        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 15_000L
+        // Upper bound so slow CI runners under heavy load have
         // headroom; the polling loops above exit as soon as the
         // observer reacts, so on fast machines this never matters.
-        const val WAIT_FOR_OBSERVER_MS = 5_000L
+        // Bumped from 5s after `Active to Idle (discard)` flaked twice
+        // post-PR-#153 — saturated GitHub runners can stall the
+        // `Dispatchers.IO`-launched observer handler past the 5s
+        // deadline before the recorder.stop() side-effect lands.
+        const val WAIT_FOR_OBSERVER_MS = 15_000L
     }
 }
