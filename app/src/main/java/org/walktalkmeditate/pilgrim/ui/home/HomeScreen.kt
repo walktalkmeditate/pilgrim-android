@@ -58,7 +58,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 import kotlinx.coroutines.flow.collectLatest
@@ -77,7 +76,8 @@ import org.walktalkmeditate.pilgrim.ui.home.animation.rememberJournalFadeIn
 import org.walktalkmeditate.pilgrim.ui.home.banner.TurningDayBanner
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDot
 import org.walktalkmeditate.pilgrim.ui.home.dot.WalkDotMath
-import org.walktalkmeditate.pilgrim.ui.home.dot.walkDotBaseColor
+import org.walktalkmeditate.pilgrim.ui.home.dot.walkDotColor
+import org.walktalkmeditate.pilgrim.ui.home.dot.walkThreadColor
 import org.walktalkmeditate.pilgrim.ui.home.empty.EmptyJournalState
 import org.walktalkmeditate.pilgrim.ui.home.expand.ExpandCardSheet
 import org.walktalkmeditate.pilgrim.ui.home.header.JourneySummaryHeader
@@ -91,10 +91,12 @@ import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
 import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
 import org.walktalkmeditate.pilgrim.ui.home.scroll.JournalHapticDispatcher
 import org.walktalkmeditate.pilgrim.ui.home.scroll.ScrollHapticState
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimDarkColors
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 // Mirrors WalkDot.kt's HALO_SCALE = 3.5f / 2 — the box that wraps the
@@ -189,41 +191,42 @@ fun HomeScreen(
             SeasonalInkFlavor.Dawn to dawnBase,
         )
     }
-    val themeColors = pilgrimColors
+    // RAW (un-shifted) palette for per-walk dot/thread coloring. The walk
+    // color must be shifted ONCE at the walk's own date (iOS resolves the
+    // raw asset and shifts `on: snapshot.startDate`), so it cannot start
+    // from `pilgrimColors`, which is already shifted at today.
+    val darkTheme = LocalPilgrimDarkTheme.current
+    val rawBase = remember(darkTheme) {
+        if (darkTheme) pilgrimDarkColors() else pilgrimLightColors()
+    }
     val reduceMotion = LocalReduceMotion.current
 
-    // Push the resolved stone tone into the VM so the FAB-seal renderer
-    // can re-render against the active palette. Without this, the VM
-    // hard-coded `pilgrimLightColors().stone` even in dark mode.
-    val activeStone = pilgrimColors.stone
-    LaunchedEffect(activeStone) { homeViewModel.setFabSealInk(activeStone) }
+    // Push the active theme into the VM so the FAB-seal renderer resolves
+    // the light/dark variant of the favicon-family palette ink.
+    LaunchedEffect(darkTheme) { homeViewModel.setFabSealDark(darkTheme) }
     val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
     val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
     val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()
     val currentTurning = turningMarkerForToday()
-    val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, themeColors) {
+    // Connecting thread: turning accent × 0.85 on solstice/equinox days,
+    // else the season base (moss/rust/dawn/ink) + a Moderate seasonal
+    // shift. iOS InkScrollView.swift:657-674.
+    val strokes: List<CalligraphyStrokeSpec> = remember(snapshots, hemisphere, rawBase) {
         snapshots.map { snap ->
-            val walkDate = Instant.ofEpochMilli(snap.startMs)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            // Walk color rule: moss by default, turning color on
-            // equinox/solstice. Then apply seasonal HSB shift at
-            // moderate intensity for the thread (Stage 3-D).
-            val baseColor = walkDotBaseColor(snap.startMs, themeColors)
-            val tint = SeasonalColorEngine.applySeasonalShift(
-                base = baseColor,
-                intensity = SeasonalColorEngine.Intensity.Moderate,
-                date = walkDate,
-                hemisphere = hemisphere,
-            )
             CalligraphyStrokeSpec(
                 uuid = snap.uuid,
                 startMillis = snap.startMs,
                 distanceMeters = snap.distanceM,
                 averagePaceSecPerKm = snap.averagePaceSecPerKm,
-                ink = tint,
+                ink = walkThreadColor(snap.startMs, rawBase, hemisphere),
             )
         }
+    }
+    // Dots are brighter than the thread: the turning accent at full
+    // opacity, else the season base + a Full seasonal shift. iOS
+    // WalkDotView.swift:166-180.
+    val dotColors: List<Color> = remember(snapshots, hemisphere, rawBase) {
+        snapshots.map { snap -> walkDotColor(snap.startMs, rawBase, hemisphere) }
     }
     val dotYsPx = remember(snapshots, topInsetPx, verticalSpacingPx) {
         snapshots.indices.map {
@@ -468,7 +471,7 @@ fun HomeScreen(
                                                 )
                                             }
                                         }
-                                        val dotColor = strokes.getOrNull(index)?.ink
+                                        val dotColor = dotColors.getOrNull(index)
                                             ?: fallbackInk
                                         WalkDot(
                                             snapshot = snap,
@@ -670,7 +673,7 @@ fun HomeScreen(
                 .zIndex(2f),
         ) {
             renderSnap?.let { snap ->
-                val seasonColor = walkDotBaseColor(snap.startMs, themeColors)
+                val seasonColor = walkDotColor(snap.startMs, rawBase, hemisphere)
                 ExpandCardSheet(
                     snapshot = snap,
                     celestial = expandedCelestial,

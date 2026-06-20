@@ -40,6 +40,7 @@ import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
@@ -205,6 +206,28 @@ class HomeViewModelTest {
             assertEquals(true, loaded.snapshots[0].distanceM > 0.0)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `setFabSealDark re-inks the latest seal spec to the dark palette variant`() = runTest(dispatcher) {
+        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
+
+        val v = newViewModel()
+        v.journalState.test(timeout = 10.seconds) {
+            awaitLoaded(this)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        // Default theme is light, so the FAB seal resolves the light variant.
+        val light = requireNotNull(v.latestSealSpec.value)
+        assertEquals(SealColorPalette.sealInk(light, isDark = false), light.ink)
+
+        // Flipping to dark re-inks the spec to the dark palette variant
+        // (the seal hash ignores ink, so the family selection is stable).
+        v.setFabSealDark(true)
+        val dark = requireNotNull(v.latestSealSpec.value)
+        assertEquals(SealColorPalette.sealInk(dark, isDark = true), dark.ink)
     }
 
     @Test

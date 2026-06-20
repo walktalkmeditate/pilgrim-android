@@ -11,6 +11,8 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
@@ -178,7 +180,12 @@ internal object SharePayloadBuilder {
             mark = null,
             waypoints = waypointsPayload,
             photos = if (options.includePhotos) photos else null,
-            turningDay = null,
+            // iOS WalkShareViewModel.swift:327-343 — turning code derived
+            // from the walk's start date. Like every other Android turning
+            // surface (banner, dot, kanji, seal) this uses the astronomical
+            // (northern-named) marker; hemisphere correction is a separate
+            // system-wide enhancement (see SeasonalMarkerTurnings).
+            turningDay = turningDayCode(turningMarkerForEpochMillis(inputs.walk.startTimestamp)),
         )
     }
 
@@ -186,4 +193,16 @@ internal object SharePayloadBuilder {
         DateTimeFormatter.ISO_OFFSET_DATE_TIME.withLocale(Locale.ROOT)
 
     private const val MILLIS_PER_SECOND = 1_000L
+}
+
+/**
+ * Maps a turning marker to the share-wire code string. Cross-quarter and
+ * non-turning markers carry no code. iOS `WalkShareViewModel.turningDayCode()`.
+ */
+internal fun turningDayCode(marker: SeasonalMarker?): String? = when (marker) {
+    SeasonalMarker.SpringEquinox -> "spring-equinox"
+    SeasonalMarker.SummerSolstice -> "summer-solstice"
+    SeasonalMarker.AutumnEquinox -> "autumn-equinox"
+    SeasonalMarker.WinterSolstice -> "winter-solstice"
+    else -> null
 }

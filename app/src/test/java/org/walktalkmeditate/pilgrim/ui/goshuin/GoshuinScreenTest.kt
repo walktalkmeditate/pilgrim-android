@@ -23,7 +23,6 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 /**
  * Composition smoke tests for [GoshuinScreen] via the internal
@@ -59,7 +58,6 @@ class GoshuinScreenTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     GoshuinScreenContent(
                         uiState = GoshuinUiState.Empty,
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -79,7 +77,6 @@ class GoshuinScreenTest {
                             seals = listOf(seal(1L), seal(2L)),
                             totalCount = 2,
                         ),
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -96,7 +93,6 @@ class GoshuinScreenTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     GoshuinScreenContent(
                         uiState = GoshuinUiState.Loading,
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -113,7 +109,6 @@ class GoshuinScreenTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     GoshuinScreenContent(
                         uiState = GoshuinUiState.Empty,
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -131,7 +126,6 @@ class GoshuinScreenTest {
                 Box(Modifier.size(400.dp, 800.dp)) {
                     GoshuinScreenContent(
                         uiState = GoshuinUiState.Empty,
-                        hemisphere = Hemisphere.Northern,
                         onBack = { backCalls++ },
                         onSealTap = {},
                     )
@@ -157,7 +151,6 @@ class GoshuinScreenTest {
                             seals = listOf(single),
                             totalCount = 1,
                         ),
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = { id -> tappedWalkId = id },
                     )
@@ -185,7 +178,6 @@ class GoshuinScreenTest {
                             seals = listOf(sealWithMilestone),
                             totalCount = 1,
                         ),
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -205,7 +197,6 @@ class GoshuinScreenTest {
                             seals = listOf(seal(1L), seal(2L)),
                             totalCount = 2,
                         ),
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -237,7 +228,6 @@ class GoshuinScreenTest {
                             seals = listOf(flame, leaf),
                             totalCount = 2,
                         ),
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                     )
@@ -265,7 +255,6 @@ class GoshuinScreenTest {
                             seals = listOf(seal(1L), seal(2L)),
                             totalCount = 2,
                         ),
-                        hemisphere = Hemisphere.Northern,
                         onBack = {},
                         onSealTap = {},
                         onShareGoshuin = { shared = it },

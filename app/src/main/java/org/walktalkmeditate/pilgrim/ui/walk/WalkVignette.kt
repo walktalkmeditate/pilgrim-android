@@ -5,6 +5,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -33,11 +36,14 @@ import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.Planet
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
 
 /**
  * Small ambient pill row anchored at the bottom-end of the walk /
@@ -56,6 +62,10 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  *
  * Both are quiet capsule chips on `parchmentSecondary`. Either may be
  * null/absent independently; the row renders nothing when both are.
+ *
+ * On solstice/equinox days the celestial chip gains a soft turning-colored
+ * corona (iOS `CelestialVignetteView.turningHalo`, `:36-51@v1.6.0`).
+ * [turning] defaults to today's marker; callers may inject one for tests.
  */
 @Composable
 fun WalkVignette(
@@ -64,6 +74,7 @@ fun WalkVignette(
     celestialAwarenessEnabled: Boolean,
     units: UnitSystem,
     modifier: Modifier = Modifier,
+    turning: SeasonalMarker? = turningMarkerForToday(),
 ) {
     val showCelestial = celestialAwarenessEnabled && celestial != null
     if (weather == null && !showCelestial) return
@@ -73,7 +84,7 @@ fun WalkVignette(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showCelestial && celestial != null) {
-            CelestialChip(celestial)
+            CelestialChip(celestial, turning)
         }
         if (weather != null) {
             WeatherChip(weather, units)
@@ -138,7 +149,7 @@ private fun WeatherChip(weather: WeatherSnapshot, units: UnitSystem) {
 }
 
 @Composable
-private fun CelestialChip(snapshot: CelestialSnapshot) {
+private fun CelestialChip(snapshot: CelestialSnapshot, turning: SeasonalMarker?) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val planetSymbol = snapshot.planetaryHour.planet.symbol
     val moonGlyph = snapshot.moonZodiacSymbol()
@@ -146,8 +157,9 @@ private fun CelestialChip(snapshot: CelestialSnapshot) {
     val a11yLabel = celestialAccessibilityText(snapshot)
     val a11yHint = stringResource(R.string.celestial_vignette_a11y_hint)
     val summary = celestialCompactSummary(snapshot)
+    val haloAccent = turningAccentColor(turning, pilgrimColors)
     Row(
-        modifier = chipModifier()
+        modifier = chipModifier(haloAccent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -180,11 +192,43 @@ private fun CelestialChip(snapshot: CelestialSnapshot) {
     }
 }
 
+/**
+ * Capsule chip. When [haloAccent] is non-null (a turning day) the chip
+ * gains a turning-colored corona — a 1.5dp stroke at 0.55 opacity plus a
+ * soft colored shadow — matching iOS `CelestialVignetteView.turningHalo`
+ * (`stroke(color.opacity(0.55), 1.5)` + `shadow(color.opacity(0.4), 4)`).
+ */
 @Composable
-private fun chipModifier(): Modifier = Modifier
-    .clip(RoundedCornerShape(percent = 50))
-    .background(pilgrimColors.parchmentSecondary)
-    .padding(horizontal = 10.dp, vertical = 5.dp)
+private fun chipModifier(haloAccent: Color? = null): Modifier {
+    val shape = RoundedCornerShape(percent = 50)
+    return Modifier
+        .then(
+            if (haloAccent != null) {
+                // iOS `shadow(color: color.opacity(0.4), radius: 4)` — the
+                // glow is dimmed to 0.4 so it reads as a soft corona, not a
+                // vivid accent ring.
+                val shadowColor = haloAccent.copy(alpha = 0.4f)
+                Modifier.shadow(
+                    elevation = 4.dp,
+                    shape = shape,
+                    ambientColor = shadowColor,
+                    spotColor = shadowColor,
+                )
+            } else {
+                Modifier
+            },
+        )
+        .clip(shape)
+        .background(pilgrimColors.parchmentSecondary)
+        .then(
+            if (haloAccent != null) {
+                Modifier.border(1.5.dp, haloAccent.copy(alpha = 0.55f), shape)
+            } else {
+                Modifier
+            },
+        )
+        .padding(horizontal = 10.dp, vertical = 5.dp)
+}
 
 private fun formatTemperature(celsius: Double, units: UnitSystem): String =
     if (units == UnitSystem.Imperial) {

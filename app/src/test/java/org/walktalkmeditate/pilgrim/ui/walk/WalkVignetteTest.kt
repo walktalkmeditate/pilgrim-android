@@ -13,6 +13,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.ElementBalance
 import org.walktalkmeditate.pilgrim.core.celestial.Planet
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.PlanetaryHour
 import org.walktalkmeditate.pilgrim.core.celestial.PlanetaryPosition
 import org.walktalkmeditate.pilgrim.core.celestial.ZodiacPosition
@@ -145,5 +146,44 @@ class WalkVignetteTest {
         }
         composeRule.onNodeWithText(Planet.Venus.symbol, substring = true).performClick()
         composeRule.onNodeWithText("Rx", substring = true).assertExists()
+    }
+
+    /**
+     * On a turning day the celestial chip wears a turning-colored corona
+     * (iOS CelestialVignetteView.turningHalo). Robolectric's Canvas is a
+     * stub so the border/shadow pixels can't be asserted; this exercises
+     * the halo modifier path and proves the chip still composes + shows
+     * its symbols when a turning marker is injected.
+     */
+    @Test
+    fun `celestial pill renders with a turning halo injected`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                WalkVignette(
+                    weather = null,
+                    celestial = celestial,
+                    celestialAwarenessEnabled = true,
+                    units = UnitSystem.Metric,
+                    turning = SeasonalMarker.WinterSolstice,
+                )
+            }
+        }
+        composeRule.onNodeWithText(Planet.Venus.symbol, substring = true).assertExists()
+    }
+
+    @Test
+    fun `celestial pill renders without halo on a non-turning day`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                WalkVignette(
+                    weather = null,
+                    celestial = celestial,
+                    celestialAwarenessEnabled = true,
+                    units = UnitSystem.Metric,
+                    turning = null,
+                )
+            }
+        }
+        composeRule.onNodeWithText(Planet.Venus.symbol, substring = true).assertExists()
     }
 }

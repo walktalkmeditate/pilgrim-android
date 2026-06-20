@@ -63,15 +63,14 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSharingButtons
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.time.Instant
-import java.time.ZoneId
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealRevealOverlay
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_INTERVAL_MS
@@ -119,7 +118,6 @@ fun WalkSummaryScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val recordings by viewModel.recordings.collectAsStateWithLifecycle()
     val playbackUiState by viewModel.playbackUiState.collectAsStateWithLifecycle()
-    val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
     val pinnedPhotos by viewModel.pinnedPhotos.collectAsStateWithLifecycle()
     val reliquaryState by viewModel.reliquaryState.collectAsStateWithLifecycle()
     val isPinningInFlight by viewModel.isPinningInFlight.collectAsStateWithLifecycle()
@@ -715,21 +713,12 @@ fun WalkSummaryScreen(
                             stringResource(R.string.share_button_etegami)
                         val shareNoChooserMessage =
                             stringResource(R.string.share_no_chooser)
-                        val baseInk = pilgrimColors.rust
-                        val walkDate = remember(s.summary.walk.startTimestamp) {
-                            java.time.Instant.ofEpochMilli(s.summary.walk.startTimestamp)
-                                .atZone(java.time.ZoneId.systemDefault())
-                                .toLocalDate()
-                        }
-                        val tintedInk = remember(baseInk, walkDate, hemisphere) {
-                            org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
-                                .applySeasonalShift(
-                                    base = baseInk,
-                                    intensity = org.walktalkmeditate.pilgrim.ui.theme.seasonal
-                                        .SeasonalColorEngine.Intensity.Full,
-                                    date = walkDate,
-                                    hemisphere = hemisphere,
-                                )
+                        // iOS SealGenerator colors the seal from the
+                        // favicon-family palette + turning override, RAW
+                        // (no seasonal shift). SealColorPalette.swift@fcd2255.
+                        val sealDarkTheme = LocalPilgrimDarkTheme.current
+                        val tintedInk = remember(s.summary.sealSpec, sealDarkTheme) {
+                            SealColorPalette.sealInk(s.summary.sealSpec, sealDarkTheme)
                         }
                         WalkSharingButtons(
                             hasRoute = s.summary.routePoints.size >= 2,
@@ -823,24 +812,15 @@ fun WalkSummaryScreen(
         // Loading / NotFound branches skip the overlay.
         val loaded = state as? WalkSummaryUiState.Loaded
         if (showReveal && loaded != null) {
-            val baseInk = pilgrimColors.rust
-            val walkDate = remember(loaded.summary.walk.startTimestamp) {
-                Instant.ofEpochMilli(loaded.summary.walk.startTimestamp)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate()
-            }
-            // Cache the seasonal-shifted spec so unrelated recompositions
-            // (e.g., a recordings-flow update while the overlay is
-            // visible) don't re-run the HSV shift + allocate a fresh
-            // SealSpec. Matches Stage 3-E's JournalThread pattern.
-            val specForReveal = remember(loaded.summary.sealSpec, baseInk, walkDate, hemisphere) {
-                val tintedInk = SeasonalColorEngine.applySeasonalShift(
-                    base = baseInk,
-                    intensity = SeasonalColorEngine.Intensity.Full,
-                    date = walkDate,
-                    hemisphere = hemisphere,
+            // Resolve the seal ink from the favicon-family palette +
+            // turning override (iOS SealColorPalette), cached so unrelated
+            // recompositions don't reallocate the spec. Matches Stage 3-E's
+            // JournalThread pattern.
+            val sealDarkTheme = LocalPilgrimDarkTheme.current
+            val specForReveal = remember(loaded.summary.sealSpec, sealDarkTheme) {
+                loaded.summary.sealSpec.copy(
+                    ink = SealColorPalette.sealInk(loaded.summary.sealSpec, sealDarkTheme),
                 )
-                loaded.summary.sealSpec.copy(ink = tintedInk)
             }
             SealRevealOverlay(
                 spec = specForReveal,

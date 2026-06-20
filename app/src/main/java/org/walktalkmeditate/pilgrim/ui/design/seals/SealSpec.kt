@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.design.seals
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 
 /**
  * Per-walk input for the goshuin seal renderer. Same shape as
@@ -23,6 +24,13 @@ data class SealSpec(
     val displayDistance: String,
     val unitLabel: String,
     val ink: Color,
+    /**
+     * The walk's mood tag. Drives the seal-ink color family via
+     * [SealColorPalette] (iOS `SealInput.favicon`). Not part of the
+     * geometry hash. Defaults to null (the neutral family) so existing
+     * call sites and tests compile unchanged.
+     */
+    val favicon: WalkFavicon? = null,
 )
 
 /**
@@ -106,5 +114,6 @@ fun Walk.toSealSpec(
         displayDistance = displayDistance,
         unitLabel = unitLabel,
         ink = ink,
+        favicon = WalkFavicon.fromRawValue(favicon),
     )
 }

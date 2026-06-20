@@ -8,12 +8,14 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 @RunWith(RobolectricTestRunner::class)
@@ -70,5 +72,26 @@ class WalkSummaryTopBarTest {
         composeRule.onAllNodesWithText("January 1, 1970").assertCountEquals(0)
         composeRule.onNodeWithText("Done").performClick()
         assertTrue(doneTaps == 1)
+    }
+
+    // iOS WalkSummaryView.swift:160-170 — ` · <kanji>` suffix on turnings.
+
+    @Test
+    fun cardinalTurnings_appendKanji() {
+        assertEquals("March 20, 2026 · 春分", summaryDateTitle("March 20, 2026", SeasonalMarker.SpringEquinox))
+        assertEquals("June 21, 2026 · 夏至", summaryDateTitle("June 21, 2026", SeasonalMarker.SummerSolstice))
+        assertEquals("September 22, 2026 · 秋分", summaryDateTitle("September 22, 2026", SeasonalMarker.AutumnEquinox))
+        assertEquals("December 21, 2026 · 冬至", summaryDateTitle("December 21, 2026", SeasonalMarker.WinterSolstice))
+    }
+
+    @Test
+    fun crossQuarterMarkers_leaveTitleUnchanged() {
+        assertEquals("May 5, 2026", summaryDateTitle("May 5, 2026", SeasonalMarker.Beltane))
+        assertEquals("August 7, 2026", summaryDateTitle("August 7, 2026", SeasonalMarker.Lughnasadh))
+    }
+
+    @Test
+    fun nonTurningDays_leaveTitleUnchanged() {
+        assertEquals("April 15, 2026", summaryDateTitle("April 15, 2026", null))
     }
 }

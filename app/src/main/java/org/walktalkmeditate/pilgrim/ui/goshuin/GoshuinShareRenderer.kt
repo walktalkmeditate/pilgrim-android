@@ -7,13 +7,13 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
-import androidx.compose.ui.graphics.Color
 import androidx.core.content.res.ResourcesCompat
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.max
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.settings.about.AboutSeasonHelpers
 import org.walktalkmeditate.pilgrim.ui.settings.about.Season
@@ -299,10 +299,15 @@ internal object GoshuinShareRenderer {
                 canvas.drawOval(tintRect, ring)
             }
 
+            // The decorative oval behind the seal uses the representative
+            // family color (`tint`, iOS `tintColor(for:)`), but the seal
+            // ink itself comes from the full favicon-family palette +
+            // turning override (iOS `SealGenerator` → `uiColor(for:)`).
+            // Share images render on a light card, so resolve light.
             EtegamiSealBitmapRenderer.drawCentered(
                 canvas = canvas,
                 spec = seal.sealSpec,
-                ink = Color(tint),
+                ink = SealColorPalette.sealInk(seal.sealSpec, isDark = false),
                 cx = centerX,
                 cy = centerY,
                 sizePx = sealSize,

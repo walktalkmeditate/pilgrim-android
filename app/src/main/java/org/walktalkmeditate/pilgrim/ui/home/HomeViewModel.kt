@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import android.content.Context
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
@@ -39,10 +40,10 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
-import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
@@ -108,32 +109,40 @@ class HomeViewModel internal constructor(
     private val _latestSealSpec = MutableStateFlow<SealSpec?>(null)
     val latestSealSpec: StateFlow<SealSpec?> = _latestSealSpec.asStateFlow()
 
-    // Active FAB-seal ink color, updated from HomeScreen composition
-    // when the resolved palette (light/dark) changes. Default is the
-    // light-mode stone so render is correct before the screen mounts.
-    private val _fabSealInk = MutableStateFlow(pilgrimLightColors().stone)
-    fun setFabSealInk(color: androidx.compose.ui.graphics.Color) {
-        if (_fabSealInk.value == color) return
-        _fabSealInk.value = color
-        // Invalidate cache when ink changes — otherwise the cached light-
-        // mode bitmap renders against dark parchment.
+    // Active theme (dark?), pushed from HomeScreen composition. The FAB
+    // seal ink resolves from the favicon-family palette (iOS
+    // SealColorPalette / SealGenerator), which picks a light/dark variant.
+    private val _fabSealDark = MutableStateFlow(false)
+    fun setFabSealDark(isDark: Boolean) {
+        if (_fabSealDark.value == isDark) return
+        _fabSealDark.value = isDark
+        // Invalidate cache when the theme changes — otherwise the cached
+        // light-mode bitmap renders against dark parchment.
         synchronized(sealCache) { sealCache.clear() }
-        // Re-render with the new ink against the current spec.
+        // Re-render the current spec against the new theme variant.
         _latestSealSpec.value?.let { spec ->
+            val ink = SealColorPalette.sealInk(spec, isDark)
+            val reinked = spec.copy(ink = ink)
+            _latestSealSpec.value = reinked
             val sizePx = (44 * context.resources.displayMetrics.density).toInt()
             sealRenderJob?.cancel()
             sealRenderJob = viewModelScope.launch(defaultDispatcher) {
                 try {
-                    val bmp = EtegamiSealBitmapRenderer.renderToBitmap(spec, color, sizePx, context)
+                    val bmp = EtegamiSealBitmapRenderer.renderToBitmap(reinked, ink, sizePx, context)
                     val img = bmp.asImageBitmap()
                     synchronized(sealCache) {
-                        sealCache[spec to sizePx] = img
+                        sealCache[reinked to sizePx] = img
                     }
                     _latestSealBitmap.value = img
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
-                    android.util.Log.w("HomeViewModel", "seal re-render on ink change failed", t)
+                    android.util.Log.w("HomeViewModel", "seal re-render on theme change failed", t)
+                    // Cache was cleared above; drop the stale wrong-theme
+                    // bitmap so the FAB falls back to the compass rather than
+                    // showing a light seal on dark parchment (matches
+                    // scheduleSealRender's failure path).
+                    _latestSealBitmap.value = null
                 }
             }
         }
@@ -148,6 +157,10 @@ class HomeViewModel internal constructor(
         java.util.Collections.synchronizedMap(
             LinkedHashMap<Pair<SealSpec, Int>, ImageBitmap>(8, 0.75f, true),
         )
+    // @Volatile: written from both Main (setFabSealDark) and the IO/Default
+    // combine frame (scheduleSealRender); without it a stale read could miss
+    // a cancel and let two render coroutines race on _latestSealBitmap.
+    @Volatile
     private var sealRenderJob: Job? = null
 
     // celestialAwarenessEnabled is intentionally NOT in the combine —
@@ -256,7 +269,7 @@ class HomeViewModel internal constructor(
             JournalUiState.Loaded(newestFirst, summary)
         }
 
-        scheduleSealRender(walks, units, hemisphere)
+        scheduleSealRender(walks, units)
         return loaded
     }
 
@@ -290,7 +303,6 @@ class HomeViewModel internal constructor(
     private fun scheduleSealRender(
         walks: List<Walk>,
         units: UnitSystem,
-        hemisphere: Hemisphere,
     ) {
         // Filter to FINISHED walks before pickup — Walk.toSealSpec
         // requires non-null endTimestamp. An in-progress walk at the
@@ -305,13 +317,15 @@ class HomeViewModel internal constructor(
             return
         }
         val distance = newest.distanceMeters ?: 0.0
-        // iOS GoshuinFAB renders the thumbnail with `Color.stone`. The
-        // resolved palette is pushed in via [setFabSealInk] from
-        // HomeScreen composition so dark mode picks the dark-tuned
-        // stone instead of forcing the light-mode tone.
-        val ink = _fabSealInk.value
         val label = WalkFormat.distanceLabel(distance, units)
-        val spec = newest.toSealSpec(distance, ink, label.value, label.unit)
+        // iOS GoshuinFAB renders the seal thumbnail via SealGenerator →
+        // the favicon-family palette + turning override (SealColorPalette).
+        // The light/dark variant comes from the theme pushed in via
+        // [setFabSealDark]. Resolve against the placeholder spec (the seal
+        // hash ignores ink), then bake the result in.
+        val spec0 = newest.toSealSpec(distance, Color.Transparent, label.value, label.unit)
+        val ink = SealColorPalette.sealInk(spec0, _fabSealDark.value)
+        val spec = spec0.copy(ink = ink)
         _latestSealSpec.value = spec
 
         val sizePx = (44 * context.resources.displayMetrics.density).toInt()
