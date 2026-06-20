@@ -97,4 +97,20 @@ class WalkSummaryTopBarTest {
     fun nonTurningDays_leaveTitleUnchanged() {
         assertEquals("April 15, 2026", summaryDateTitle("April 15, 2026", null))
     }
+
+    @Test
+    fun southernHemisphere_rendersSummerKanjiOnDecemberSolstice() {
+        // 2025-12-21 noon UTC: astronomical winter solstice (北 冬至); a
+        // southern observer sees the summer solstice (夏至). Exercises the
+        // formatLongDate -> forHemisphere path end-to-end.
+        val ts = java.time.LocalDate.of(2025, 12, 21)
+            .atTime(12, 0).atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        composeRule.setContent {
+            PilgrimTheme {
+                WalkSummaryTopBar(startTimestamp = ts, hemisphere = Hemisphere.Southern, onDone = {})
+            }
+        }
+        composeRule.onNodeWithText("夏至", substring = true).assertIsDisplayed()
+        composeRule.onAllNodesWithText("冬至", substring = true).assertCountEquals(0)
+    }
 }
