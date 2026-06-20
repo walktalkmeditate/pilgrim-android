@@ -37,7 +37,7 @@ detection but left several consumers stubbed.
 **iOS ref**: `CelestialVignetteView.swift:36-51` @fcd2255 (`stroke(color.opacity(0.55), 1.5)` + shadow).
 **Changes**: `WalkVignette.kt` — overlay a turning-colored capsule stroke on the celestial chip when today is a turning day.
 **Tests**: halo present on turning day, absent otherwise (Robolectric or extracted color helper).
-**Status**: Not Started
+**Status**: Complete (6 tests pass)
 
 ## Stage 5: Goshuin seal color parity
 **Goal**: Replace `rust × seasonal-shift` seal ink with the iOS palette system.

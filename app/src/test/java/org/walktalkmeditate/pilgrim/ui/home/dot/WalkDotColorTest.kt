@@ -16,6 +16,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
 
 /**
  * iOS parity `WalkDotView.swift:166-180` (dot) + `InkScrollView.swift:

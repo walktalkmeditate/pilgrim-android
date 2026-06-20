@@ -10,6 +10,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
 
 /**
  * Walk-dot + connecting-thread color, ported from iOS
@@ -37,19 +38,6 @@ private const val THREAD_TURNING_OPACITY = 0.85f
 
 /** Dot keeps the turning accent fully opaque. */
 private const val DOT_TURNING_OPACITY = 1.0f
-
-/**
- * Raw cardinal accent for the four turnings; null for cross-quarter
- * markers and non-turning days (iOS only colors the four cardinals).
- */
-internal fun turningAccentColor(marker: SeasonalMarker?, base: PilgrimColors): Color? =
-    when (marker) {
-        SeasonalMarker.SpringEquinox -> base.turningJade
-        SeasonalMarker.SummerSolstice -> base.turningGold
-        SeasonalMarker.AutumnEquinox -> base.turningClaret
-        SeasonalMarker.WinterSolstice -> base.turningIndigo
-        else -> null
-    }
 
 /**
  * Season base token by calendar month. NOT hemisphere-adjusted — iOS
