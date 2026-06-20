@@ -16,20 +16,6 @@ fun SeasonalMarker.isTurning(): Boolean = when (this) {
     else -> false
 }
 
-/**
- * iOS `TurningDayService.mapping` — astronomical markers are always named
- * for the northern hemisphere (a December solstice is `WinterSolstice`),
- * but a southern observer experiences the opposite season. Swaps
- * spring↔autumn and summer↔winter; cross-quarter markers are unchanged.
- */
-fun SeasonalMarker.forSouthernHemisphere(): SeasonalMarker = when (this) {
-    SeasonalMarker.SpringEquinox -> SeasonalMarker.AutumnEquinox
-    SeasonalMarker.SummerSolstice -> SeasonalMarker.WinterSolstice
-    SeasonalMarker.AutumnEquinox -> SeasonalMarker.SpringEquinox
-    SeasonalMarker.WinterSolstice -> SeasonalMarker.SummerSolstice
-    else -> this
-}
-
 /** Verbatim 春分 / 夏至 / 秋分 / 冬至 for the four cardinal turnings; null otherwise. */
 fun SeasonalMarker.kanji(): String? = when (this) {
     SeasonalMarker.SpringEquinox -> "春分"

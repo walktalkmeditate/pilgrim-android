@@ -20,25 +20,17 @@ class SharePayloadTurningDayTest {
 
     // --- pure code mapping ---
 
-    @Test fun `cardinal turnings map to wire codes (northern)`() {
-        assertEquals("spring-equinox", turningDayCode(SeasonalMarker.SpringEquinox, southern = false))
-        assertEquals("summer-solstice", turningDayCode(SeasonalMarker.SummerSolstice, southern = false))
-        assertEquals("autumn-equinox", turningDayCode(SeasonalMarker.AutumnEquinox, southern = false))
-        assertEquals("winter-solstice", turningDayCode(SeasonalMarker.WinterSolstice, southern = false))
-    }
-
-    @Test fun `southern hemisphere swaps the season`() {
-        // A December (astronomical winter) solstice is summer below the equator.
-        assertEquals("summer-solstice", turningDayCode(SeasonalMarker.WinterSolstice, southern = true))
-        assertEquals("winter-solstice", turningDayCode(SeasonalMarker.SummerSolstice, southern = true))
-        assertEquals("autumn-equinox", turningDayCode(SeasonalMarker.SpringEquinox, southern = true))
-        assertEquals("spring-equinox", turningDayCode(SeasonalMarker.AutumnEquinox, southern = true))
+    @Test fun `cardinal turnings map to wire codes`() {
+        assertEquals("spring-equinox", turningDayCode(SeasonalMarker.SpringEquinox))
+        assertEquals("summer-solstice", turningDayCode(SeasonalMarker.SummerSolstice))
+        assertEquals("autumn-equinox", turningDayCode(SeasonalMarker.AutumnEquinox))
+        assertEquals("winter-solstice", turningDayCode(SeasonalMarker.WinterSolstice))
     }
 
     @Test fun `cross-quarter and null markers produce no code`() {
-        assertNull(turningDayCode(SeasonalMarker.Beltane, southern = false))
-        assertNull(turningDayCode(SeasonalMarker.Samhain, southern = true))
-        assertNull(turningDayCode(null, southern = false))
+        assertNull(turningDayCode(SeasonalMarker.Beltane))
+        assertNull(turningDayCode(SeasonalMarker.Samhain))
+        assertNull(turningDayCode(null))
     }
 
     // --- end-to-end through build() ---
@@ -75,14 +67,17 @@ class SharePayloadTurningDayTest {
         includeWaypoints = false,
     )
 
-    @Test fun `build emits winter-solstice for a northern December solstice walk`() {
+    @Test fun `build emits winter-solstice for a December solstice walk`() {
         val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, lat = 45.0), options)
         assertEquals("winter-solstice", payload.turningDay)
     }
 
-    @Test fun `build hemisphere-corrects a southern December solstice walk to summer`() {
+    @Test fun `build uses the astronomical marker regardless of latitude`() {
+        // Consistent with every other Android turning surface (banner, dot,
+        // kanji, seal): the astronomical (northern-named) marker is used,
+        // independent of hemisphere.
         val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, lat = -33.0), options)
-        assertEquals("summer-solstice", payload.turningDay)
+        assertEquals("winter-solstice", payload.turningDay)
     }
 
     @Test fun `build emits null on a non-turning day`() {

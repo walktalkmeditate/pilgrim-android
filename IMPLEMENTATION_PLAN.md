@@ -49,6 +49,7 @@ detection but left several consumers stubbed.
 **Status**: Complete (10 palette tests + 775 regression tests pass). Migrated all real seal surfaces: WalkSummary reveal + goshuin-share button, Goshuin grid cells, GoshuinShareRenderer collection seal, HomeViewModel FAB. Removed dead `hemisphere` threading from GoshuinScreen + scheduleSealRender. NOTE: existing seals re-color (favicon-family palette instead of rust-shift) — intended parity change.
 
 ## Notes / decisions
+- **Hemisphere (known limitation):** every Android turning surface (banner, watermark, dot/thread, summary kanji, vignette, seal, share) uses the *astronomical* (northern-named) marker. iOS hemisphere-corrects (a December solstice reads as summer below the equator). Making Android hemisphere-aware is a separate system-wide change (thread the device hemisphere through ~7 surfaces incl. the already-shipped banner/watermark). For now all surfaces are consistently astronomical — identical to iOS for northern users, internally consistent for southern ones. Stage 3 briefly hemisphere-corrected only the share, which was reverted to keep the whole system consistent.
 - Month→season base bucket is NOT hemisphere-adjusted on iOS (only the HSB shift is). Port faithfully.
 - iOS turning seal returns `.light` even in dark mode — replicate with a comment (variants are near-identical).
 - Per project rule: any new platform-builder path needs a Robolectric `.build()` test (none expected here — pure color logic).

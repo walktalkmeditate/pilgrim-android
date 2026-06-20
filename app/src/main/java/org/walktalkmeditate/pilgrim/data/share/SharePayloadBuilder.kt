@@ -12,8 +12,6 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
-import org.walktalkmeditate.pilgrim.core.celestial.forSouthernHemisphere
-import org.walktalkmeditate.pilgrim.core.celestial.isTurning
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -183,12 +181,11 @@ internal object SharePayloadBuilder {
             waypoints = waypointsPayload,
             photos = if (options.includePhotos) photos else null,
             // iOS WalkShareViewModel.swift:327-343 — turning code derived
-            // from the walk's start date, hemisphere-corrected via the
-            // first route coordinate (no route → northern by convention).
-            turningDay = turningDayCode(
-                astronomical = turningMarkerForEpochMillis(inputs.walk.startTimestamp),
-                southern = (inputs.routePoints.firstOrNull()?.latitude ?: 0.0) < 0.0,
-            ),
+            // from the walk's start date. Like every other Android turning
+            // surface (banner, dot, kanji, seal) this uses the astronomical
+            // (northern-named) marker; hemisphere correction is a separate
+            // system-wide enhancement (see SeasonalMarkerTurnings).
+            turningDay = turningDayCode(turningMarkerForEpochMillis(inputs.walk.startTimestamp)),
         )
     }
 
@@ -199,18 +196,13 @@ internal object SharePayloadBuilder {
 }
 
 /**
- * Maps an astronomical (northern-named) turning marker to the share-wire
- * code string, hemisphere-corrected. Cross-quarter and non-turning
- * markers carry no code. iOS `WalkShareViewModel.turningDayCode()`.
+ * Maps a turning marker to the share-wire code string. Cross-quarter and
+ * non-turning markers carry no code. iOS `WalkShareViewModel.turningDayCode()`.
  */
-internal fun turningDayCode(astronomical: SeasonalMarker?, southern: Boolean): String? {
-    if (astronomical == null || !astronomical.isTurning()) return null
-    val marker = if (southern) astronomical.forSouthernHemisphere() else astronomical
-    return when (marker) {
-        SeasonalMarker.SpringEquinox -> "spring-equinox"
-        SeasonalMarker.SummerSolstice -> "summer-solstice"
-        SeasonalMarker.AutumnEquinox -> "autumn-equinox"
-        SeasonalMarker.WinterSolstice -> "winter-solstice"
-        else -> null
-    }
+internal fun turningDayCode(marker: SeasonalMarker?): String? = when (marker) {
+    SeasonalMarker.SpringEquinox -> "spring-equinox"
+    SeasonalMarker.SummerSolstice -> "summer-solstice"
+    SeasonalMarker.AutumnEquinox -> "autumn-equinox"
+    SeasonalMarker.WinterSolstice -> "winter-solstice"
+    else -> null
 }
