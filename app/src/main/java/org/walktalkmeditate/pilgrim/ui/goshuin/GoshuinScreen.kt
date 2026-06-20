@@ -54,14 +54,14 @@ import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealRenderer
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.share.EtegamiShareIntentFactory
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SealShareBitmapWriter
 
@@ -100,7 +100,6 @@ fun GoshuinScreen(
     viewModel: GoshuinViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
     val distanceUnits by viewModel.distanceUnits.collectAsStateWithLifecycle()
     val isImperial = distanceUnits == UnitSystem.Imperial
 
@@ -112,7 +111,6 @@ fun GoshuinScreen(
 
     GoshuinScreenContent(
         uiState = uiState,
-        hemisphere = hemisphere,
         isImperial = isImperial,
         isSharing = isSharing,
         onBack = onBack,
@@ -162,7 +160,6 @@ fun GoshuinScreen(
 @Composable
 internal fun GoshuinScreenContent(
     uiState: GoshuinUiState,
-    hemisphere: Hemisphere,
     onBack: () -> Unit,
     onSealTap: (Long) -> Unit,
     isImperial: Boolean = false,
@@ -223,7 +220,6 @@ internal fun GoshuinScreenContent(
                     }
                     GoshuinGrid(
                         seals = filtered,
-                        hemisphere = hemisphere,
                         onSealTap = onSealTap,
                         modifier = Modifier.weight(1f),
                     )
@@ -481,7 +477,6 @@ private fun GoshuinEmpty() {
 @Composable
 private fun GoshuinGrid(
     seals: List<GoshuinSeal>,
-    hemisphere: Hemisphere,
     onSealTap: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -507,7 +502,6 @@ private fun GoshuinGrid(
         ) { seal ->
             GoshuinSealCell(
                 seal = seal,
-                hemisphere = hemisphere,
                 onClick = { onSealTap(seal.walkId) },
             )
         }
@@ -517,25 +511,17 @@ private fun GoshuinGrid(
 @Composable
 private fun GoshuinSealCell(
     seal: GoshuinSeal,
-    hemisphere: Hemisphere,
     onClick: () -> Unit,
 ) {
-    val baseInk = pilgrimColors.rust
     val frameColor = pilgrimColors.ink.copy(alpha = SEAL_FRAME_ALPHA)
     val haloColor = pilgrimColors.dawn.copy(alpha = CELL_HALO_ALPHA)
 
-    // Per-cell seasonal tint — matches
-    // `WalkSummaryScreen.specForReveal`. Keyed on the full set of
-    // inputs so a hemisphere flip OR a theme change recomputes
-    // exactly once per cell.
-    val tintedSpec = remember(seal.sealSpec, baseInk, seal.walkDate, hemisphere) {
-        val tintedInk = SeasonalColorEngine.applySeasonalShift(
-            base = baseInk,
-            intensity = SeasonalColorEngine.Intensity.Full,
-            date = seal.walkDate,
-            hemisphere = hemisphere,
-        )
-        seal.sealSpec.copy(ink = tintedInk)
+    // Seal ink from the favicon-family palette + turning override (iOS
+    // SealColorPalette / SealGenerator), resolved to the active theme.
+    // Keyed on (spec, theme) so it recomputes exactly once per cell.
+    val sealDarkTheme = LocalPilgrimDarkTheme.current
+    val tintedSpec = remember(seal.sealSpec, sealDarkTheme) {
+        seal.sealSpec.copy(ink = SealColorPalette.sealInk(seal.sealSpec, sealDarkTheme))
     }
 
     // `indication = null` + no-ripple MutableInteractionSource — the

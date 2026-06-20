@@ -201,11 +201,9 @@ fun HomeScreen(
     }
     val reduceMotion = LocalReduceMotion.current
 
-    // Push the resolved stone tone into the VM so the FAB-seal renderer
-    // can re-render against the active palette. Without this, the VM
-    // hard-coded `pilgrimLightColors().stone` even in dark mode.
-    val activeStone = pilgrimColors.stone
-    LaunchedEffect(activeStone) { homeViewModel.setFabSealInk(activeStone) }
+    // Push the active theme into the VM so the FAB-seal renderer resolves
+    // the light/dark variant of the favicon-family palette ink.
+    LaunchedEffect(darkTheme) { homeViewModel.setFabSealDark(darkTheme) }
     val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
     val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
     val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()

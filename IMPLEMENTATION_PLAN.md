@@ -46,7 +46,7 @@ detection but left several consumers stubbed.
 - New `SealColorPalette.kt`: 16 base colors (warm/cool/accent/neutral, light+dark hex), 4 turning colors, `color(favicon, hashByte)` category map, `sealInk(spec, favicon, startMs, coord, isDark)` entry that turning-overrides then falls back to favicon+`hashByte[30]`. NO seasonal shift.
 - Route all seal-ink call sites (`WalkSummaryScreen` reveal, `GoshuinScreen`, `GoshuinViewModel`, `HomeViewModel` FAB) through the palette. Use the Android FNV/SplitMix `sealHashBytes` byte[30] (geometry already diverges cross-platform by design — match the color *system*, not byte-exact color).
 **Tests**: favicon→category, hashByte modulo selection, turning override precedence, dark/light variant, no-shift invariant.
-**Status**: Not Started
+**Status**: Complete (10 palette tests + 775 regression tests pass). Migrated all real seal surfaces: WalkSummary reveal + goshuin-share button, Goshuin grid cells, GoshuinShareRenderer collection seal, HomeViewModel FAB. Removed dead `hemisphere` threading from GoshuinScreen + scheduleSealRender. NOTE: existing seals re-color (favicon-family palette instead of rust-shift) — intended parity change.
 
 ## Notes / decisions
 - Month→season base bucket is NOT hemisphere-adjusted on iOS (only the HSB shift is). Port faithfully.
