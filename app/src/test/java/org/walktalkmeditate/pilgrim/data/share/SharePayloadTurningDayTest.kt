@@ -42,9 +42,9 @@ class SharePayloadTurningDayTest {
     private val midSummerMs =
         LocalDate.of(2025, 7, 15).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
 
-    private fun inputs(startMs: Long, lat: Double) = ShareInputs(
+    private fun inputs(startMs: Long, southern: Boolean = false) = ShareInputs(
         walk = Walk(id = 1L, startTimestamp = startMs, endTimestamp = startMs + 3_600_000L),
-        routePoints = listOf(LocationPoint(timestamp = startMs, latitude = lat, longitude = 10.0)),
+        routePoints = listOf(LocationPoint(timestamp = startMs, latitude = 10.0, longitude = 10.0)),
         altitudeSamples = emptyList(),
         activityIntervals = emptyList(),
         voiceRecordings = emptyList(),
@@ -56,6 +56,7 @@ class SharePayloadTurningDayTest {
         elevationAscentMeters = 0.0,
         elevationDescentMeters = 0.0,
         steps = null,
+        southernHemisphere = southern,
     )
 
     private val options = WalkShareOptions(
@@ -69,21 +70,18 @@ class SharePayloadTurningDayTest {
         includeWaypoints = false,
     )
 
-    @Test fun `build emits winter-solstice for a December solstice walk`() {
-        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, lat = 45.0), options)
+    @Test fun `build emits winter-solstice for a northern December solstice walk`() {
+        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs), options)
         assertEquals("winter-solstice", payload.turningDay)
     }
 
-    @Test fun `build uses the astronomical marker regardless of latitude`() {
-        // Consistent with every other Android turning surface (banner, dot,
-        // kanji, seal): the astronomical (northern-named) marker is used,
-        // independent of hemisphere.
-        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, lat = -33.0), options)
-        assertEquals("winter-solstice", payload.turningDay)
+    @Test fun `build hemisphere-corrects a southern December solstice walk to summer`() {
+        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, southern = true), options)
+        assertEquals("summer-solstice", payload.turningDay)
     }
 
     @Test fun `build emits null on a non-turning day`() {
-        val payload = SharePayloadBuilder.build(inputs(midSummerMs, lat = 45.0), options)
+        val payload = SharePayloadBuilder.build(inputs(midSummerMs), options)
         assertNull(payload.turningDay)
     }
 }

@@ -281,6 +281,8 @@ fun WalkSummaryScreen(
     // `viewModel.markSealRevealed()` which writes the uuid to the
     // store + flips the flow false.
     val showReveal by viewModel.showSealReveal.collectAsStateWithLifecycle()
+    // Device hemisphere for the turning kanji in the title bar.
+    val hemisphere by viewModel.hemisphere.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -298,6 +300,7 @@ fun WalkSummaryScreen(
                 ?.summary?.walk?.startTimestamp
             WalkSummaryTopBar(
                 startTimestamp = titleTimestamp,
+                hemisphere = hemisphere,
                 onDone = onDone,
             )
             Column(

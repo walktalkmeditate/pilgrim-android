@@ -108,6 +108,7 @@ class GoshuinViewModel @Inject constructor(
                     mapToSeal(
                         walk = walk,
                         distance = distances.getValue(walk.id),
+                        hemisphere = currentHemisphere,
                         milestone = GoshuinMilestones.detect(
                             walkIndex = index,
                             walk = milestoneInputs[index],
@@ -166,6 +167,7 @@ class GoshuinViewModel @Inject constructor(
     private fun mapToSeal(
         walk: Walk,
         distance: Double,
+        hemisphere: Hemisphere,
         milestone: GoshuinMilestone?,
     ): GoshuinSeal {
         // Seal artwork stays metric (TODO stage 10-Z; see [distanceUnits]).
@@ -175,6 +177,7 @@ class GoshuinViewModel @Inject constructor(
             ink = Color.Transparent,
             displayDistance = distanceLabel.value,
             unitLabel = distanceLabel.unit,
+            southernHemisphere = hemisphere == Hemisphere.Southern,
         )
         val walkDate = Instant.ofEpochMilli(walk.startTimestamp)
             .atZone(ZoneId.systemDefault())

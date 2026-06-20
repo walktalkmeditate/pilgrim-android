@@ -214,6 +214,16 @@ val LocalPilgrimDarkTheme = compositionLocalOf { false }
  */
 val LocalIsConstellation = compositionLocalOf { false }
 
+/**
+ * The device hemisphere PilgrimTheme was built with (from
+ * [org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository]).
+ * Read by turning surfaces that lack a VM hemisphere flow (e.g. the
+ * active-walk watermark/vignette) so the solstice/equinox is seasonally
+ * correct below the equator. Defaults to northern.
+ */
+val LocalPilgrimHemisphere =
+    compositionLocalOf { org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Northern }
+
 val pilgrimColors: PilgrimColors
     @Composable
     @ReadOnlyComposable

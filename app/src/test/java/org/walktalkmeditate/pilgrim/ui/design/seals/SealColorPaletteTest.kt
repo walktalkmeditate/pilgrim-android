@@ -2,6 +2,8 @@
 package org.walktalkmeditate.pilgrim.ui.design.seals
 
 import androidx.compose.ui.graphics.Color
+import java.time.LocalDate
+import java.time.ZoneOffset
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
@@ -114,5 +116,25 @@ class SealColorPaletteTest {
             isDark = false,
         )
         assertEquals(expected, SealColorPalette.sealInk(spec, isDark = false))
+    }
+
+    @Test fun `southern hemisphere flips the turning seal color`() {
+        // 2025-12-21 noon UTC — astronomical winter solstice (→ indigo);
+        // below the equator it is the summer solstice (→ gold).
+        val decSolsticeMs = LocalDate.of(2025, 12, 21)
+            .atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
+        fun spec(southern: Boolean) = SealSpec(
+            uuid = "solstice",
+            startMillis = decSolsticeMs,
+            distanceMeters = 1_000.0,
+            durationSeconds = 600.0,
+            displayDistance = "1.00",
+            unitLabel = "km",
+            ink = Color.Transparent,
+            favicon = WalkFavicon.FLAME,
+            southernHemisphere = southern,
+        )
+        assertEquals(SealColorPalette.turningIndigo.light, SealColorPalette.sealInk(spec(false), isDark = false))
+        assertEquals(SealColorPalette.turningGold.light, SealColorPalette.sealInk(spec(true), isDark = false))
     }
 }

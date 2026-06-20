@@ -1515,11 +1515,12 @@ class WalkSummaryViewModel @Inject constructor(
             // text and the summary stats share a single source of
             // truth (future accuracy-filter changes apply uniformly).
             distanceMeters = distance,
-            // Placeholder — resolved to a seasonal tint in the
-            // @Composable layer where LocalPilgrimColors is available.
+            // Placeholder — resolved to the favicon-family palette ink in
+            // the @Composable layer (SealColorPalette).
             ink = Color.Transparent,
             displayDistance = distanceLabel.value,
             unitLabel = distanceLabel.unit,
+            southernHemisphere = hemisphere.value == Hemisphere.Southern,
         )
 
         // Stage 4-D: detect milestone for THIS walk against the user's
