@@ -126,6 +126,7 @@ fun PilgrimTheme(
         LocalPilgrimColors provides colors,
         LocalPilgrimDarkTheme provides darkTheme,
         LocalIsConstellation provides constellation,
+        LocalPilgrimHemisphere provides hemisphere,
         LocalPilgrimTypography provides type,
         LocalReduceMotion provides reducedMotion,
         // User-directed: Pilgrim has no Material tap ripples. Two

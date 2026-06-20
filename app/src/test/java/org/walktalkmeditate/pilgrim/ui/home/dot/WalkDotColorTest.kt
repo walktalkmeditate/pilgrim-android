@@ -144,6 +144,28 @@ class WalkDotColorTest {
         assertNotEquals("dots must change color across seasons", summer, winter)
     }
 
+    @Test fun `southern hemisphere flips a December solstice walk dot to gold`() {
+        val zone = ZoneId.systemDefault()
+        // 2025-12-21 noon UTC — astronomical winter solstice; in the south
+        // it is the summer solstice → turningGold, not turningIndigo.
+        val decSolsticeMs = LocalDate.of(2025, 12, 21)
+            .atTime(12, 0).atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        val north = walkDotColor(decSolsticeMs, base, Hemisphere.Northern)
+        val south = walkDotColor(decSolsticeMs, base, Hemisphere.Southern)
+        assertEquals(base.turningIndigo, north)
+        assertEquals(base.turningGold, south)
+    }
+
+    @Test fun `southern hemisphere flips a December solstice walk thread to gold`() {
+        val decSolsticeMs = LocalDate.of(2025, 12, 21)
+            .atTime(12, 0).atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        val north = walkThreadColor(decSolsticeMs, base, Hemisphere.Northern)
+        val south = walkThreadColor(decSolsticeMs, base, Hemisphere.Southern)
+        // Thread dims the turning accent to 0.85 opacity (iOS path color).
+        assertEquals(base.turningIndigo.copy(alpha = 0.85f), north)
+        assertEquals(base.turningGold.copy(alpha = 0.85f), south)
+    }
+
     @Test fun `walkThreadColor uses the rust season base at Moderate intensity in summer`() {
         val zone = ZoneId.systemDefault()
         val summerMs = LocalDate.of(2026, 7, 15).atStartOfDay(zone).toInstant().toEpochMilli()

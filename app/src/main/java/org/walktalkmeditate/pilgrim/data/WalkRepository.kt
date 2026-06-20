@@ -174,6 +174,21 @@ open class WalkRepository @Inject constructor(
 
     suspend fun lastLocationSampleFor(walkId: Long): RouteDataSample? = routeDao.getLastForWalk(walkId)
 
+    /**
+     * First GPS sample (by timestamp). The walk's location hemisphere is
+     * derived from this latitude for the seal / share / milestone, matching
+     * iOS which keys those off `routeData.first` (not the device hemisphere).
+     */
+    open suspend fun firstLocationSampleFor(walkId: Long): RouteDataSample? =
+        routeDao.getFirstForWalk(walkId)
+
+    /**
+     * First-sample latitude per walk, in a single query (no N+1). Used by
+     * milestone detection to compute each walk's location-hemisphere season.
+     */
+    open suspend fun firstRouteLatitudesByWalk(): Map<Long, Double> =
+        routeDao.firstLatitudePerWalk().associate { it.walkId to it.latitude }
+
     fun observeLocationSamples(walkId: Long): Flow<List<RouteDataSample>> =
         routeDao.observeForWalk(walkId)
 

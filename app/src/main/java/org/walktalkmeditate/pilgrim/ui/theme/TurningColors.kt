@@ -3,6 +3,20 @@ package org.walktalkmeditate.pilgrim.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.forSouthernHemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
+
+/**
+ * Hemisphere-corrects a turning marker to the observer's seasons. Returns
+ * the marker unchanged in the northern hemisphere (and for null / cross-
+ * quarter markers). The single seam every UI turning surface uses so the
+ * device hemisphere is applied consistently (iOS `TurningDayService`).
+ */
+fun SeasonalMarker?.forHemisphere(hemisphere: Hemisphere): SeasonalMarker? =
+    when (hemisphere) {
+        Hemisphere.Northern -> this
+        Hemisphere.Southern -> this?.forSouthernHemisphere()
+    }
 
 /**
  * The raw cardinal accent for a turning marker — jade (spring equinox),

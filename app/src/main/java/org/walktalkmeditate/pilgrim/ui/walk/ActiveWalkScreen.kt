@@ -65,6 +65,8 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.kanji
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
+import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimHemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
@@ -379,7 +381,8 @@ fun ActiveWalkScreen(
     // mid-walk would not flip the visible kanji until they re-enter the
     // screen). `kanji()` returns null for cross-quarter markers so the
     // watermark renders only on the four cardinal turnings (春分/夏至/秋分/冬至).
-    val activeTurning = remember { turningMarkerForToday() }
+    val hemisphere = LocalPilgrimHemisphere.current
+    val activeTurning = remember(hemisphere) { turningMarkerForToday().forHemisphere(hemisphere) }
     var showTurningCard by rememberSaveable { mutableStateOf(false) }
     // Composition-scoped scope for the 300ms sheet handoff delay
     // (D9). Tied to the screen's composition lifetime — cancels on

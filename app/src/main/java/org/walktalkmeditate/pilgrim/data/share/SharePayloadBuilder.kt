@@ -12,6 +12,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.forSouthernHemisphere
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -180,12 +181,17 @@ internal object SharePayloadBuilder {
             mark = null,
             waypoints = waypointsPayload,
             photos = if (options.includePhotos) photos else null,
-            // iOS WalkShareViewModel.swift:327-343 — turning code derived
-            // from the walk's start date. Like every other Android turning
-            // surface (banner, dot, kanji, seal) this uses the astronomical
-            // (northern-named) marker; hemisphere correction is a separate
-            // system-wide enhancement (see SeasonalMarkerTurnings).
-            turningDay = turningDayCode(turningMarkerForEpochMillis(inputs.walk.startTimestamp)),
+            // iOS WalkShareViewModel.swift:327-343 — turning code from the
+            // walk's start date, hemisphere-corrected from the walk's FIRST
+            // ROUTE COORDINATE (iOS `turning(for:at:firstCoord)`), not the
+            // device. No route → northern by convention.
+            turningDay = run {
+                val southern = (inputs.routePoints.firstOrNull()?.latitude ?: 0.0) < 0.0
+                turningDayCode(
+                    turningMarkerForEpochMillis(inputs.walk.startTimestamp)
+                        .let { if (southern) it?.forSouthernHemisphere() else it },
+                )
+            },
         )
     }
 

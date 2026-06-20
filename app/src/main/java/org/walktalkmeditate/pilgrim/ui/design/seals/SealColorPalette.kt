@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.design.seals
 
 import androidx.compose.ui.graphics.Color
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.forSouthernHemisphere
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 
@@ -94,13 +95,16 @@ object SealColorPalette {
      * [SealSpec.startMillis] and the family index from the seal hash's
      * 31st byte (iOS `bytes[30]`). iOS `SealColorPalette.uiColor(for:)`.
      */
-    fun sealInk(spec: SealSpec, isDark: Boolean): Color =
-        sealInk(
+    fun sealInk(spec: SealSpec, isDark: Boolean): Color {
+        val astronomical = turningMarkerForEpochMillis(spec.startMillis)
+        val marker = if (spec.southernHemisphere) astronomical?.forSouthernHemisphere() else astronomical
+        return sealInk(
             favicon = spec.favicon,
-            marker = turningMarkerForEpochMillis(spec.startMillis),
+            marker = marker,
             hashByte = sealHashBytes(spec).u(SEAL_COLOR_HASH_INDEX),
             isDark = isDark,
         )
+    }
 
     /** iOS `bytes[30]` — the hash byte driving family selection. */
     private const val SEAL_COLOR_HASH_INDEX = 30

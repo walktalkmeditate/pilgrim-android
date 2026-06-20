@@ -55,4 +55,10 @@ data class GoshuinSeal(
     val distanceMeters: Double = 0.0,
     /** Walk start epoch millis — share seal-selection ordering + season. */
     val startMillis: Long = 0L,
+    /**
+     * Latitude of the walk's first GPS sample (0.0 if no route). Drives the
+     * share season label's hemisphere, matching iOS
+     * `GoshuinShareRenderer.deriveSeasonLabel` (`routePoints.first?.lat`).
+     */
+    val firstRouteLatitude: Double = 0.0,
 )

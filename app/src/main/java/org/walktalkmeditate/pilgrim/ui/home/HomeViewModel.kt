@@ -172,14 +172,13 @@ class HomeViewModel internal constructor(
         repository.observeAllWalks(),
         unitsPreferences.distanceUnits,
         cachedShareStore.observeAll(),
-        hemisphereRepository.hemisphere,
         archivedRegistry.archivedRegistry,
-    ) { walks, units, shareCache, hemisphere, archivedMap ->
+    ) { walks, units, shareCache, archivedMap ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
             JournalUiState.Empty
         } else {
-            buildSnapshots(finished, units, shareCache, hemisphere, archivedMap.keys, clock.now())
+            buildSnapshots(finished, units, shareCache, archivedMap.keys, clock.now())
         }
     }
         .flowOn(ioDispatcher)
@@ -189,7 +188,6 @@ class HomeViewModel internal constructor(
         walks: List<Walk>,
         units: UnitSystem,
         shareCache: Map<String, CachedShare>,
-        hemisphere: Hemisphere,
         archivedUuids: Set<String>,
         nowMs: Long,
     ): JournalUiState.Loaded {
@@ -300,7 +298,7 @@ class HomeViewModel internal constructor(
         }
     }
 
-    private fun scheduleSealRender(
+    private suspend fun scheduleSealRender(
         walks: List<Walk>,
         units: UnitSystem,
     ) {
@@ -320,10 +318,18 @@ class HomeViewModel internal constructor(
         val label = WalkFormat.distanceLabel(distance, units)
         // iOS GoshuinFAB renders the seal thumbnail via SealGenerator →
         // the favicon-family palette + turning override (SealColorPalette).
-        // The light/dark variant comes from the theme pushed in via
-        // [setFabSealDark]. Resolve against the placeholder spec (the seal
-        // hash ignores ink), then bake the result in.
-        val spec0 = newest.toSealSpec(distance, Color.Transparent, label.value, label.unit)
+        // The walk-location hemisphere comes from its first route coordinate
+        // (iOS `routePoints.first`), not the device; the light/dark variant
+        // from the theme pushed in via [setFabSealDark]. Resolve against the
+        // placeholder spec (the seal hash ignores ink), then bake the result.
+        val firstLat = repository.firstLocationSampleFor(newest.id)?.latitude ?: 0.0
+        val spec0 = newest.toSealSpec(
+            distanceMeters = distance,
+            ink = Color.Transparent,
+            displayDistance = label.value,
+            unitLabel = label.unit,
+            southernHemisphere = Hemisphere.fromLatitude(firstLat) == Hemisphere.Southern,
+        )
         val ink = SealColorPalette.sealInk(spec0, _fabSealDark.value)
         val spec = spec0.copy(ink = ink)
         _latestSealSpec.value = spec

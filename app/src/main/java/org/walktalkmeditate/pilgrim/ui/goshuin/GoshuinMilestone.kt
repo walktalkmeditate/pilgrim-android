@@ -26,8 +26,9 @@ sealed class GoshuinMilestone {
 }
 
 /**
- * Hemisphere-aware season. Computed from the walk's start month +
- * device hemisphere via [GoshuinMilestones.seasonFor]. Mirrors iOS's
+ * Hemisphere-aware season. Computed from the walk's start month + the
+ * walk's own first-route-coordinate latitude via
+ * [GoshuinMilestones.seasonFor]. Mirrors iOS's
  * `SealTimeHelpers.season(for:latitude:)`.
  */
 enum class Season { Spring, Summer, Autumn, Winter }

@@ -57,6 +57,41 @@ class WalkDataLayerTest {
     }
 
     @Test
+    fun `firstLocationSampleFor returns the earliest-timestamp sample`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 3_000L, latitude = 10.0, longitude = 1.0))
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 1_000L, latitude = -33.0, longitude = 2.0))
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 2_000L, latitude = 20.0, longitude = 3.0))
+        assertEquals(-33.0, repository.firstLocationSampleFor(walk.id)!!.latitude, 0.0)
+    }
+
+    @Test
+    fun `firstRouteLatitudesByWalk maps each walk to its earliest latitude and omits routeless walks`() = runTest {
+        val a = repository.startWalk(startTimestamp = 1_000L)
+        val b = repository.startWalk(startTimestamp = 2_000L)
+        val routeless = repository.startWalk(startTimestamp = 3_000L)
+        repository.recordLocation(RouteDataSample(walkId = a.id, timestamp = 5_000L, latitude = 10.0, longitude = 1.0))
+        repository.recordLocation(RouteDataSample(walkId = a.id, timestamp = 1_000L, latitude = 48.0, longitude = 1.0))
+        repository.recordLocation(RouteDataSample(walkId = b.id, timestamp = 1_000L, latitude = -33.0, longitude = 2.0))
+
+        val map = repository.firstRouteLatitudesByWalk()
+        assertEquals(48.0, map.getValue(a.id), 0.0)
+        assertEquals(-33.0, map.getValue(b.id), 0.0)
+        assertNull("routeless walk has no entry", map[routeless.id])
+    }
+
+    @Test
+    fun `first-sample queries agree and are deterministic on tied timestamps`() = runTest {
+        val walk = repository.startWalk(startTimestamp = 1_000L)
+        // Two samples sharing the minimum timestamp: the lower id (inserted
+        // first) wins via the id tiebreaker, and both query paths agree.
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 1_000L, latitude = 45.0, longitude = 1.0))
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 1_000L, latitude = -33.0, longitude = 2.0))
+        assertEquals(45.0, repository.firstRouteLatitudesByWalk().getValue(walk.id), 0.0)
+        assertEquals(45.0, repository.firstLocationSampleFor(walk.id)!!.latitude, 0.0)
+    }
+
+    @Test
     fun `start walk persists and can be retrieved`() = runTest {
         val walk = repository.startWalk(startTimestamp = 1_000L, intention = "silence")
 

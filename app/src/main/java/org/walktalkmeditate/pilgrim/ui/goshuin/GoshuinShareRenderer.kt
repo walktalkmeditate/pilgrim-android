@@ -217,10 +217,10 @@ internal object GoshuinShareRenderer {
     private fun seasonLabel(context: Context, selected: List<GoshuinSeal>): String {
         val latest = selected.maxByOrNull { it.startMillis } ?: return ""
         val instant = Instant.ofEpochMilli(latest.startMillis)
-        // Per-walk GPS latitude isn't carried into GoshuinSeal; the
-        // season label is decorative, so resolve against the northern
-        // hemisphere (latitude 0). iOS uses the route's first point.
-        val season = AboutSeasonHelpers.season(instant, latitude = 0.0)
+        // iOS `deriveSeasonLabel` keys the season off the latest walk's
+        // first route coordinate (`routePoints.first?.lat`), so a southern
+        // walk reads "Summer" in December.
+        val season = AboutSeasonHelpers.season(instant, latitude = latest.firstRouteLatitude)
         val year = instant.atZone(ZoneId.systemDefault()).year
         val res = when (season) {
             Season.Spring -> R.string.practice_summary_season_spring

@@ -271,10 +271,10 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
-     * Proxied from [HemisphereRepository] for milestone detection in
-     * [buildState] (read via `hemisphere.value`). A hemisphere flip is
-     * picked up on the next walk-repository emission rather than forcing
-     * a re-emission of the full [WalkSummaryUiState.Loaded] payload.
+     * Device hemisphere, proxied from [HemisphereRepository], for the
+     * turning-kanji in the title bar ([WalkSummaryTopBar]) — iOS uses
+     * `.current` there. It does NOT drive the seal color or milestone
+     * season; those come from each walk's first route coordinate.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 
@@ -1515,11 +1515,15 @@ class WalkSummaryViewModel @Inject constructor(
             // text and the summary stats share a single source of
             // truth (future accuracy-filter changes apply uniformly).
             distanceMeters = distance,
-            // Placeholder — resolved to a seasonal tint in the
-            // @Composable layer where LocalPilgrimColors is available.
+            // Placeholder — resolved to the favicon-family palette ink in
+            // the @Composable layer (SealColorPalette).
             ink = Color.Transparent,
             displayDistance = distanceLabel.value,
             unitLabel = distanceLabel.unit,
+            // Walk-location hemisphere from the first route coordinate (iOS
+            // SealColorPalette uses `routePoints.first`), not the device.
+            southernHemisphere =
+                Hemisphere.fromLatitude(points.firstOrNull()?.latitude ?: 0.0) == Hemisphere.Southern,
         )
 
         // Stage 4-D: detect milestone for THIS walk against the user's
@@ -1755,6 +1759,9 @@ class WalkSummaryViewModel @Inject constructor(
                     .thenByDescending { it.id },
             )
         if (finished.isEmpty()) return null
+        // First-route latitude per walk (one query) so each walk's season is
+        // computed against its own location, matching iOS GoshuinMilestones.
+        val firstLats = repository.firstRouteLatitudesByWalk()
         val inputs = finished.map { walk ->
             // For the current walk, use the live event-replay total
             // (currentDistance) — Walk.distanceMeters is populated by
@@ -1792,6 +1799,7 @@ class WalkSummaryViewModel @Inject constructor(
                 startTimestamp = walk.startTimestamp,
                 distanceMeters = d,
                 meditateDurationMillis = medMillis,
+                latitude = firstLats[walk.id] ?: 0.0,
             )
         }
         val currentIndex = finished.indexOfFirst { it.id == currentWalk.id }
@@ -1800,7 +1808,6 @@ class WalkSummaryViewModel @Inject constructor(
             walkIndex = currentIndex,
             walk = inputs[currentIndex],
             allFinished = inputs,
-            hemisphere = hemisphere.value,
         )
     }
 

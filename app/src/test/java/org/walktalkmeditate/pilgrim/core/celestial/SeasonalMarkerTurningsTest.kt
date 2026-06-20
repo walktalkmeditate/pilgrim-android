@@ -34,6 +34,22 @@ class SeasonalMarkerTurningsTest {
     }
 
     @Test
+    fun southern_hemisphere_swaps_solstices_and_equinoxes() {
+        assertEquals(SeasonalMarker.AutumnEquinox, SeasonalMarker.SpringEquinox.forSouthernHemisphere())
+        assertEquals(SeasonalMarker.WinterSolstice, SeasonalMarker.SummerSolstice.forSouthernHemisphere())
+        assertEquals(SeasonalMarker.SpringEquinox, SeasonalMarker.AutumnEquinox.forSouthernHemisphere())
+        assertEquals(SeasonalMarker.SummerSolstice, SeasonalMarker.WinterSolstice.forSouthernHemisphere())
+    }
+
+    @Test
+    fun southern_hemisphere_leaves_cross_quarter_unchanged() {
+        assertEquals(SeasonalMarker.Imbolc, SeasonalMarker.Imbolc.forSouthernHemisphere())
+        assertEquals(SeasonalMarker.Beltane, SeasonalMarker.Beltane.forSouthernHemisphere())
+        assertEquals(SeasonalMarker.Lughnasadh, SeasonalMarker.Lughnasadh.forSouthernHemisphere())
+        assertEquals(SeasonalMarker.Samhain, SeasonalMarker.Samhain.forSouthernHemisphere())
+    }
+
+    @Test
     fun cross_quarter_markers_have_no_kanji() {
         assertNull(SeasonalMarker.Imbolc.kanji())
         assertNull(SeasonalMarker.Beltane.kanji())
