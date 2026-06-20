@@ -43,6 +43,7 @@ import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
 @RunWith(RobolectricTestRunner::class)
@@ -142,6 +143,23 @@ class WalkShareViewModelTest {
             var item = awaitItem()
             while (item is WalkShareUiState.Loading) item = awaitItem()
             assertTrue(item is WalkShareUiState.Loaded)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `ShareInputs carries the southern hemisphere resolved from the repository`() = runTest(dispatcher) {
+        // setOverride writes DataStore; resolvedHemisphere() reads it directly,
+        // so this passes WITHOUT a hot `hemisphere` subscriber — the bug the
+        // old `hemisphere.value` read would have (returning Northern) is gone.
+        hemisphereRepo.setOverride(Hemisphere.Southern)
+        val walkId = seedWalkWithRoute()
+        val vm = vm(walkId)
+        vm.uiState.test(timeout = 10.seconds) {
+            var item = awaitItem()
+            while (item is WalkShareUiState.Loading) item = awaitItem()
+            assertTrue(item is WalkShareUiState.Loaded)
+            assertTrue((item as WalkShareUiState.Loaded).inputs.southernHemisphere)
             cancelAndIgnoreRemainingEvents()
         }
     }

@@ -12,6 +12,7 @@ import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -63,8 +64,10 @@ class GoshuinViewModel @Inject constructor(
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 
-    val uiState: StateFlow<GoshuinUiState> = repository.observeAllWalks()
-        .map { walks ->
+    val uiState: StateFlow<GoshuinUiState> = combine(
+        repository.observeAllWalks(),
+        hemisphereRepository.hemisphere,
+    ) { walks, currentHemisphere ->
             // iOS parity v1.6.0: archived walks are filtered from
             // `selectSeals` candidates so they don't receive individual
             // seals in the Goshuin share renderer. computeStats
@@ -97,13 +100,10 @@ class GoshuinViewModel @Inject constructor(
                         meditateDurationMillis = (walk.meditationSeconds ?: 0L) * 1000L,
                     )
                 }
-                // Snapshot the hemisphere at flow-emission time. A
-                // subsequent hemisphere flip (rare — user crosses
-                // equator) recomputes milestones on the next emission.
-                // Acceptable: a "First of Spring" cell flipping to
-                // "First of Autumn" matches the rest of the app's
-                // seasonal-color hemisphere-change behavior.
-                val currentHemisphere = hemisphere.value
+                // currentHemisphere is a combine source above, so a
+                // hemisphere flip — or the cold-start DataStore resolve —
+                // re-fires this and recolors/relabels the grid (rather than
+                // waiting for the next Room emission).
                 val seals = finished.mapIndexed { index, walk ->
                     mapToSeal(
                         walk = walk,
