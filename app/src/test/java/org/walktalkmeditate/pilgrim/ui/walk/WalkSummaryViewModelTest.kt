@@ -495,6 +495,25 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
+    fun `sealSpec hemisphere comes from the walk's first route coordinate`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 5_100_000L, latitude = -33.8688, longitude = 151.2093),
+        )
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+
+        val vm = newViewModel(walkId = walk.id)
+        vm.state.test(timeout = 10.seconds) {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            // Southern route point → southern seal hemisphere, regardless of
+            // the device hemisphere (iOS keys the seal off routePoints.first).
+            assertTrue((item as WalkSummaryUiState.Loaded).summary.sealSpec.southernHemisphere)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `Loaded state carries a LightReading computed from first location`() = runTest(dispatcher) {
         // Stage 6-B: the VM wraps LightReading.from in runCatching, so a
         // regression that breaks the factory would silently set
