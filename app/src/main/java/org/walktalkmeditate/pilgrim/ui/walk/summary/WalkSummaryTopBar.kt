@@ -25,6 +25,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.kanji
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -120,7 +123,20 @@ private fun formatLongDate(epochMillis: Long): String {
     // matches the iOS reference, which uses an `en_US`-equivalent
     // .dateStyle = .long. When a real translation lands, switch to
     // Locale.getDefault() in the same change that ships fr strings.
-    return DateTimeFormatter
+    val base = DateTimeFormatter
         .ofPattern("MMMM d, yyyy", Locale.ENGLISH)
         .format(date)
+    // iOS WalkSummaryView.swift:160-170 — append the turning kanji on the
+    // four cardinal solstice/equinox days.
+    return summaryDateTitle(base, turningMarkerForEpochMillis(epochMillis))
+}
+
+/**
+ * Appends ` · <kanji>` to the formatted date when the walk fell on a
+ * cardinal turning (春分/夏至/秋分/冬至). Cross-quarter and non-turning
+ * days return the date unchanged. iOS `WalkSummaryView.dateTitle`.
+ */
+internal fun summaryDateTitle(base: String, marker: SeasonalMarker?): String {
+    val kanji = marker?.kanji() ?: return base
+    return "$base · $kanji"
 }

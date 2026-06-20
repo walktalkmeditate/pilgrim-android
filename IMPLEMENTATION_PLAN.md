@@ -23,7 +23,7 @@ detection but left several consumers stubbed.
 **iOS ref**: `WalkSummaryView.swift:160-170` @fcd2255.
 **Changes**: compute walk turning in `WalkSummaryViewModel`; append kanji to the date-title string the screen renders.
 **Tests**: VM emits kanji-suffixed title on a turning date, plain title otherwise.
-**Status**: Not Started
+**Status**: Complete (6 tests pass)
 
 ## Stage 3: Share payload turning_day
 **Goal**: Send `turning_day` = `spring-equinox|summer-solstice|autumn-equinox|winter-solstice` instead of hardcoded null.
