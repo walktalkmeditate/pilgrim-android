@@ -269,7 +269,7 @@ class HomeViewModel internal constructor(
             JournalUiState.Loaded(newestFirst, summary)
         }
 
-        scheduleSealRender(walks, units, hemisphere)
+        scheduleSealRender(walks, units)
         return loaded
     }
 
@@ -300,10 +300,9 @@ class HomeViewModel internal constructor(
         }
     }
 
-    private fun scheduleSealRender(
+    private suspend fun scheduleSealRender(
         walks: List<Walk>,
         units: UnitSystem,
-        hemisphere: Hemisphere,
     ) {
         // Filter to FINISHED walks before pickup — Walk.toSealSpec
         // requires non-null endTimestamp. An in-progress walk at the
@@ -321,15 +320,17 @@ class HomeViewModel internal constructor(
         val label = WalkFormat.distanceLabel(distance, units)
         // iOS GoshuinFAB renders the seal thumbnail via SealGenerator →
         // the favicon-family palette + turning override (SealColorPalette).
-        // The light/dark variant comes from the theme pushed in via
-        // [setFabSealDark]. Resolve against the placeholder spec (the seal
-        // hash ignores ink), then bake the result in.
+        // The walk-location hemisphere comes from its first route coordinate
+        // (iOS `routePoints.first`), not the device; the light/dark variant
+        // from the theme pushed in via [setFabSealDark]. Resolve against the
+        // placeholder spec (the seal hash ignores ink), then bake the result.
+        val firstLat = repository.firstLocationSampleFor(newest.id)?.latitude ?: 0.0
         val spec0 = newest.toSealSpec(
             distanceMeters = distance,
             ink = Color.Transparent,
             displayDistance = label.value,
             unitLabel = label.unit,
-            southernHemisphere = hemisphere == Hemisphere.Southern,
+            southernHemisphere = Hemisphere.fromLatitude(firstLat) == Hemisphere.Southern,
         )
         val ink = SealColorPalette.sealInk(spec0, _fabSealDark.value)
         val spec = spec0.copy(ink = ink)

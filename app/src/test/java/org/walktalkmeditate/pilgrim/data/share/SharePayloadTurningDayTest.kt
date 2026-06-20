@@ -42,9 +42,9 @@ class SharePayloadTurningDayTest {
     private val midSummerMs =
         LocalDate.of(2025, 7, 15).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
 
-    private fun inputs(startMs: Long, southern: Boolean = false) = ShareInputs(
+    private fun inputs(startMs: Long, firstLat: Double = 45.0) = ShareInputs(
         walk = Walk(id = 1L, startTimestamp = startMs, endTimestamp = startMs + 3_600_000L),
-        routePoints = listOf(LocationPoint(timestamp = startMs, latitude = 10.0, longitude = 10.0)),
+        routePoints = listOf(LocationPoint(timestamp = startMs, latitude = firstLat, longitude = 10.0)),
         altitudeSamples = emptyList(),
         activityIntervals = emptyList(),
         voiceRecordings = emptyList(),
@@ -56,7 +56,6 @@ class SharePayloadTurningDayTest {
         elevationAscentMeters = 0.0,
         elevationDescentMeters = 0.0,
         steps = null,
-        southernHemisphere = southern,
     )
 
     private val options = WalkShareOptions(
@@ -70,13 +69,15 @@ class SharePayloadTurningDayTest {
         includeWaypoints = false,
     )
 
-    @Test fun `build emits winter-solstice for a northern December solstice walk`() {
-        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs), options)
+    @Test fun `build emits winter-solstice for a northern-route December solstice walk`() {
+        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, firstLat = 45.0), options)
         assertEquals("winter-solstice", payload.turningDay)
     }
 
-    @Test fun `build hemisphere-corrects a southern December solstice walk to summer`() {
-        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, southern = true), options)
+    @Test fun `build hemisphere-corrects a southern-route December solstice walk to summer`() {
+        // First route coordinate below the equator → summer in December (iOS
+        // keys turning_day off the walk's route, not the device).
+        val payload = SharePayloadBuilder.build(inputs(winterSolsticeMs, firstLat = -33.0), options)
         assertEquals("summer-solstice", payload.turningDay)
     }
 

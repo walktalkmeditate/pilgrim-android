@@ -16,6 +16,12 @@ data class WalkMilestoneInput(
     val startTimestamp: Long,
     val distanceMeters: Double,
     val meditateDurationMillis: Long = 0L,
+    /**
+     * Latitude of the walk's first GPS sample (0.0 if no route). The
+     * walk's season is computed against THIS, matching iOS
+     * `GoshuinMilestones` (`walk.routeData.first?.latitude`).
+     */
+    val latitude: Double = 0.0,
 )
 
 /**
@@ -53,7 +59,6 @@ object GoshuinMilestones {
         walkIndex: Int,
         walk: WalkMilestoneInput,
         allFinished: List<WalkMilestoneInput>,
-        hemisphere: Hemisphere,
     ): GoshuinMilestone? {
         // Defensive guard: the function's two production callers
         // already filter to non-empty `finished` lists, but keeping
@@ -108,12 +113,12 @@ object GoshuinMilestones {
         // before this one. iOS's `Calendar.current.component` uses the
         // local-time year; we mirror with `ZoneId.systemDefault()`.
         val zone = ZoneId.systemDefault()
-        val walkSeason = seasonFor(walk.startTimestamp, hemisphere)
+        val walkSeason = seasonFor(walk.startTimestamp, walk.latitude)
         val walkYear = Instant.ofEpochMilli(walk.startTimestamp).atZone(zone).year
         val hasEarlierInSeason = allFinished.any { other ->
             other.walkId != walk.walkId &&
                 other.startTimestamp < walk.startTimestamp &&
-                seasonFor(other.startTimestamp, hemisphere) == walkSeason &&
+                seasonFor(other.startTimestamp, other.latitude) == walkSeason &&
                 Instant.ofEpochMilli(other.startTimestamp).atZone(zone).year == walkYear
         }
         if (!hasEarlierInSeason) {
@@ -125,17 +130,17 @@ object GoshuinMilestones {
 
     /**
      * Month-based season selector. Mirrors iOS's
-     * `SealTimeHelpers.season(for:latitude:)`. Uses the device-level
-     * [hemisphere] (not the walk's own latitude) so a walk that
-     * happened on the user's vacation in Sydney still computes its
-     * season against the user's home hemisphere — matches the rest of
-     * this app's seasonal-color and journal-tinting behavior.
+     * `SealTimeHelpers.season(for:latitude:)`: the season is computed
+     * against the walk's OWN [latitude] (its first route coordinate), so a
+     * walk recorded in Sydney reads as summer in December even when the
+     * user's home device is northern — full iOS parity. The device/home
+     * hemisphere still drives the journal dots, summary kanji, and palette.
      */
-    fun seasonFor(timestampMs: Long, hemisphere: Hemisphere): Season {
+    fun seasonFor(timestampMs: Long, latitude: Double): Season {
         val month = Instant.ofEpochMilli(timestampMs)
             .atZone(ZoneId.systemDefault())
             .monthValue
-        val northern = hemisphere == Hemisphere.Northern
+        val northern = Hemisphere.fromLatitude(latitude) == Hemisphere.Northern
         return when (month) {
             3, 4, 5 -> if (northern) Season.Spring else Season.Autumn
             6, 7, 8 -> if (northern) Season.Summer else Season.Winter

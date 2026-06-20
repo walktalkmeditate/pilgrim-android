@@ -10,7 +10,6 @@ class FakeHemisphereStore(
 ) : HemisphereStore {
     private val state = MutableStateFlow(initial)
     override val hemisphere: StateFlow<Hemisphere> = state.asStateFlow()
-    override suspend fun resolvedHemisphere(): Hemisphere = state.value
     override suspend fun setOverride(hemisphere: Hemisphere) {
         state.value = hemisphere
     }

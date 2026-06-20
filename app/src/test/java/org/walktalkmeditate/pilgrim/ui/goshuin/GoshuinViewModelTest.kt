@@ -4,27 +4,17 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 import android.app.Application
 import android.content.Context
 import androidx.compose.ui.graphics.Color
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -39,9 +29,6 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
-import org.walktalkmeditate.pilgrim.location.FakeLocationSource
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -51,10 +38,6 @@ class GoshuinViewModelTest {
     private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
-    private lateinit var hemisphereDataStore: DataStore<Preferences>
-    private lateinit var fakeLocation: FakeLocationSource
-    private lateinit var hemisphereRepo: HemisphereRepository
-    private lateinit var hemisphereScope: CoroutineScope
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -75,27 +58,17 @@ class GoshuinViewModelTest {
             voiceRecordingDao = db.voiceRecordingDao(),
             walkPhotoDao = db.walkPhotoDao(),
         )
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
-        hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
-        )
-        fakeLocation = FakeLocationSource()
-        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        hemisphereRepo = HemisphereRepository(hemisphereDataStore, fakeLocation, hemisphereScope)
     }
 
     @After
     fun tearDown() {
         db.close()
-        hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
         Dispatchers.resetMain()
     }
 
     private fun newViewModel(): GoshuinViewModel =
         GoshuinViewModel(
             repository,
-            hemisphereRepo,
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
         )
@@ -157,6 +130,29 @@ class GoshuinViewModelTest {
                 assertEquals(walk.uuid, seal.uuid)
                 assertEquals(5_000_000L, seal.startMillis)
                 assertTrue("distance >= 0", seal.distanceMeters >= 0.0)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `seal hemisphere + season latitude come from the walk's first route coordinate`() =
+        runTest(dispatcher) {
+            val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+            runBlocking {
+                repository.recordLocation(
+                    RouteDataSample(walkId = walk.id, timestamp = 5_000_000L, latitude = -33.0, longitude = 151.0),
+                )
+                repository.finishWalk(walk, endTimestamp = 5_600_000L)
+            }
+
+            val vm = newViewModel()
+            vm.uiState.test(timeout = 10.seconds) {
+                val loaded = awaitLoaded(this)
+                val seal = loaded.seals.first { it.walkId == walk.id }
+                // Southern route point → southern seal hemisphere (iOS parity),
+                // independent of the device hemisphere.
+                assertTrue("seal should be southern", seal.sealSpec.southernHemisphere)
+                assertEquals(-33.0, seal.firstRouteLatitude, 0.0001)
                 cancelAndIgnoreRemainingEvents()
             }
         }
@@ -236,21 +232,6 @@ class GoshuinViewModelTest {
         }
     }
 
-    @Test
-    fun `hemisphere StateFlow proxies repository`() = runTest(dispatcher) {
-        val vm = newViewModel()
-        assertEquals(Hemisphere.Northern, vm.hemisphere.value)
-        hemisphereRepo.setOverride(Hemisphere.Southern)
-        // Repository's StateFlow collects on real Dispatchers.Default;
-        // bridge to wall-clock same as HomeViewModelTest.
-        val observed = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
-            withTimeout(10_000L) {
-                vm.hemisphere.first { it == Hemisphere.Southern }
-            }
-        }
-        assertEquals(Hemisphere.Southern, observed)
-    }
-
     // --- Stage 4-D: milestone propagation -------------------------
 
     @Test
@@ -316,9 +297,5 @@ class GoshuinViewModelTest {
         }
         assertNotNull(item)
         return item as GoshuinUiState.Loaded
-    }
-
-    private companion object {
-        const val HEMISPHERE_STORE_NAME = "goshuin-vm-hemisphere-test"
     }
 }

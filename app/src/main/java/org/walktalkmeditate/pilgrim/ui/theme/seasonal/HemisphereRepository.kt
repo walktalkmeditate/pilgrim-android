@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.location.LocationSource
@@ -40,18 +39,6 @@ import org.walktalkmeditate.pilgrim.location.LocationSource
  */
 interface HemisphereStore {
     val hemisphere: StateFlow<Hemisphere>
-
-    /**
-     * One-shot resolved read straight from DataStore. Unlike
-     * `hemisphere.value` (a `WhileSubscribed` StateFlow that returns the
-     * un-resolved [Hemisphere.Northern] initial value until a subscriber
-     * triggers the disk read), this awaits the actual persisted value.
-     * Use it in suspend / one-shot logic — building a seal/share spec —
-     * where there is no active [hemisphere] subscriber to rely on. (Stage
-     * 7-A lesson: bypass the StateFlow with a direct repo read.)
-     */
-    suspend fun resolvedHemisphere(): Hemisphere
-
     suspend fun setOverride(hemisphere: Hemisphere)
 }
 
@@ -96,21 +83,6 @@ class HemisphereRepository @Inject constructor(
                 started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
                 initialValue = Hemisphere.Northern,
             )
-
-    override suspend fun resolvedHemisphere(): Hemisphere =
-        dataStore.data
-            .catch { throwable ->
-                if (throwable is CancellationException) throw throwable
-                Log.w(TAG, "DataStore read failed; resolving Northern fallback", throwable)
-                emit(androidx.datastore.preferences.core.emptyPreferences())
-            }
-            .map { prefs ->
-                when (prefs[KEY_HEMISPHERE]) {
-                    INT_SOUTHERN -> Hemisphere.Southern
-                    else -> Hemisphere.Northern
-                }
-            }
-            .first()
 
     /**
      * Explicit user override. Persists; survives re-inference. No UI

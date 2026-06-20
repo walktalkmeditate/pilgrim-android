@@ -2,8 +2,6 @@
 package org.walktalkmeditate.pilgrim.ui.walk.share
 
 import android.app.Application
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -12,7 +10,6 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.flow.first
@@ -42,9 +39,6 @@ import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
-import org.walktalkmeditate.pilgrim.location.FakeLocationSource
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -56,7 +50,6 @@ class WalkShareViewModelTest {
     private lateinit var server: MockWebServer
     private lateinit var service: ShareService
     private lateinit var cachedStore: CachedShareStore
-    private lateinit var hemisphereRepo: HemisphereRepository
     private val dispatcher = UnconfinedTestDispatcher()
     private val nextTs = AtomicLong(1_700_000_000_000L)
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -90,12 +83,6 @@ class WalkShareViewModelTest {
             baseUrl = server.url("").toString().trimEnd('/'),
         )
         cachedStore = CachedShareStore(context, json)
-        val hemisphereDataStore = PreferenceDataStoreFactory.create {
-            context.preferencesDataStoreFile("hemisphere_share_test")
-        }
-        hemisphereRepo = HemisphereRepository(
-            hemisphereDataStore, FakeLocationSource(), CoroutineScope(dispatcher),
-        )
     }
 
     @After
@@ -105,7 +92,6 @@ class WalkShareViewModelTest {
         Dispatchers.resetMain()
         File(context.filesDir, "datastore/share_device_token.preferences_pb").delete()
         File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
-        File(context.filesDir, "datastore/hemisphere_share_test.preferences_pb").delete()
     }
 
     private val fakePhotoEncoder = object : SharePhotoEncoder {
@@ -117,7 +103,6 @@ class WalkShareViewModelTest {
         shareService = service,
         cachedShareStore = cachedStore,
         photoEncoder = fakePhotoEncoder,
-        hemisphereRepository = hemisphereRepo,
         unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     )
@@ -143,23 +128,6 @@ class WalkShareViewModelTest {
             var item = awaitItem()
             while (item is WalkShareUiState.Loading) item = awaitItem()
             assertTrue(item is WalkShareUiState.Loaded)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `ShareInputs carries the southern hemisphere resolved from the repository`() = runTest(dispatcher) {
-        // setOverride writes DataStore; resolvedHemisphere() reads it directly,
-        // so this passes WITHOUT a hot `hemisphere` subscriber — the bug the
-        // old `hemisphere.value` read would have (returning Northern) is gone.
-        hemisphereRepo.setOverride(Hemisphere.Southern)
-        val walkId = seedWalkWithRoute()
-        val vm = vm(walkId)
-        vm.uiState.test(timeout = 10.seconds) {
-            var item = awaitItem()
-            while (item is WalkShareUiState.Loading) item = awaitItem()
-            assertTrue(item is WalkShareUiState.Loaded)
-            assertTrue((item as WalkShareUiState.Loaded).inputs.southernHemisphere)
             cancelAndIgnoreRemainingEvents()
         }
     }

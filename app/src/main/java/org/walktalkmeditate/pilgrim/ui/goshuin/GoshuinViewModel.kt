@@ -12,7 +12,6 @@ import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -25,7 +24,6 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
 /**
@@ -50,24 +48,12 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 @HiltViewModel
 class GoshuinViewModel @Inject constructor(
     private val repository: WalkRepository,
-    hemisphereRepository: HemisphereRepository,
     unitsPreferences: UnitsPreferencesRepository,
     private val archivedRegistry: ArchivedWalkRegistry,
 ) : ViewModel() {
 
-    /**
-     * Proxy of [HemisphereRepository.hemisphere], read via `hemisphere.value`
-     * at emission time to snapshot the hemisphere for milestone detection
-     * ([mapToSeal] / [GoshuinMilestones]). A hemisphere flip is picked up on
-     * the next Room emission. (Seal ink no longer depends on hemisphere — it
-     * resolves from the favicon-family palette.)
-     */
-    val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
-
-    val uiState: StateFlow<GoshuinUiState> = combine(
-        repository.observeAllWalks(),
-        hemisphereRepository.hemisphere,
-    ) { walks, currentHemisphere ->
+    val uiState: StateFlow<GoshuinUiState> = repository.observeAllWalks()
+        .map { walks ->
             // iOS parity v1.6.0: archived walks are filtered from
             // `selectSeals` candidates so they don't receive individual
             // seals in the Goshuin share renderer. computeStats
@@ -85,12 +71,14 @@ class GoshuinViewModel @Inject constructor(
             if (finished.isEmpty()) {
                 GoshuinUiState.Empty
             } else {
-                // Compute distance per finished walk once. mapToSeal
-                // uses it for the SealSpec; the milestone detector uses
-                // it to find LongestWalk across the full snapshot.
-                val distances = finished.associate { walk ->
-                    walk.id to walkDistanceMeters(samplesFor(walk.id))
-                }
+                // Load each finished walk's GPS samples once: distance for
+                // the seal + milestone, and the first coordinate's latitude
+                // for the walk's location hemisphere. iOS keys the seal
+                // color, milestone season, and share off `routeData.first`,
+                // not the device hemisphere.
+                val samplesByWalk = finished.associate { it.id to samplesFor(it.id) }
+                val distances = samplesByWalk.mapValues { walkDistanceMeters(it.value) }
+                val firstLats = samplesByWalk.mapValues { it.value.firstOrNull()?.latitude ?: 0.0 }
                 val milestoneInputs = finished.map { walk ->
                     WalkMilestoneInput(
                         walkId = walk.id,
@@ -98,22 +86,18 @@ class GoshuinViewModel @Inject constructor(
                         startTimestamp = walk.startTimestamp,
                         distanceMeters = distances.getValue(walk.id),
                         meditateDurationMillis = (walk.meditationSeconds ?: 0L) * 1000L,
+                        latitude = firstLats.getValue(walk.id),
                     )
                 }
-                // currentHemisphere is a combine source above, so a
-                // hemisphere flip — or the cold-start DataStore resolve —
-                // re-fires this and recolors/relabels the grid (rather than
-                // waiting for the next Room emission).
                 val seals = finished.mapIndexed { index, walk ->
                     mapToSeal(
                         walk = walk,
                         distance = distances.getValue(walk.id),
-                        hemisphere = currentHemisphere,
+                        firstRouteLatitude = firstLats.getValue(walk.id),
                         milestone = GoshuinMilestones.detect(
                             walkIndex = index,
                             walk = milestoneInputs[index],
                             allFinished = milestoneInputs,
-                            hemisphere = currentHemisphere,
                         ),
                     )
                 }
@@ -167,7 +151,7 @@ class GoshuinViewModel @Inject constructor(
     private fun mapToSeal(
         walk: Walk,
         distance: Double,
-        hemisphere: Hemisphere,
+        firstRouteLatitude: Double,
         milestone: GoshuinMilestone?,
     ): GoshuinSeal {
         // Seal artwork stays metric (TODO stage 10-Z; see [distanceUnits]).
@@ -177,7 +161,9 @@ class GoshuinViewModel @Inject constructor(
             ink = Color.Transparent,
             displayDistance = distanceLabel.value,
             unitLabel = distanceLabel.unit,
-            southernHemisphere = hemisphere == Hemisphere.Southern,
+            // Walk-location hemisphere from the first route coordinate (iOS
+            // SealColorPalette uses `routePoints.first`), not the device.
+            southernHemisphere = Hemisphere.fromLatitude(firstRouteLatitude) == Hemisphere.Southern,
         )
         val walkDate = Instant.ofEpochMilli(walk.startTimestamp)
             .atZone(ZoneId.systemDefault())
@@ -198,6 +184,7 @@ class GoshuinViewModel @Inject constructor(
             uuid = walk.uuid,
             distanceMeters = distance,
             startMillis = walk.startTimestamp,
+            firstRouteLatitude = firstRouteLatitude,
         )
     }
 

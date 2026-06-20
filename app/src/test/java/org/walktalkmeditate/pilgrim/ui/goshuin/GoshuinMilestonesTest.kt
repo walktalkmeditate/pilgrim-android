@@ -6,7 +6,6 @@ import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
-import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 class GoshuinMilestonesTest {
 
@@ -15,6 +14,7 @@ class GoshuinMilestonesTest {
         date: LocalDate,
         distance: Double = 1_000.0,
         meditateDurationMillis: Long = 0L,
+        latitude: Double = 0.0,
     ): WalkMilestoneInput {
         val ts = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         return WalkMilestoneInput(
@@ -23,7 +23,20 @@ class GoshuinMilestonesTest {
             startTimestamp = ts,
             distanceMeters = distance,
             meditateDurationMillis = meditateDurationMillis,
+            latitude = latitude,
         )
+    }
+
+    @Test fun `per-walk latitude drives season - southern January walk is First of Summer`() {
+        // walk1: northern January (winter). walk2: southern January (summer).
+        // walk2's season comes from ITS OWN route latitude, so it is the
+        // first Summer walk even though walk1 (same month) preceded it —
+        // proving detect uses per-walk latitude, not a single device value.
+        val w1 = walk(1L, LocalDate.of(2026, 1, 1), distance = 9_999.0, latitude = 45.0)
+        val w2 = walk(2L, LocalDate.of(2026, 1, 15), distance = 1_000.0, latitude = -33.0)
+        val list = listOf(w2, w1)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list)
+        assertEquals(GoshuinMilestone.FirstOfSeason(Season.Summer), m)
     }
 
     @Test fun `empty allFinished - returns null without crashing`() {
@@ -35,14 +48,13 @@ class GoshuinMilestonesTest {
             walkIndex = 0,
             walk = walk(1L, LocalDate.of(2026, 4, 19)),
             allFinished = emptyList(),
-            hemisphere = Hemisphere.Northern,
         )
         assertNull(m)
     }
 
     @Test fun `first walk - is FirstWalk milestone`() {
         val w = walk(1L, LocalDate.of(2026, 4, 19))
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = w, allFinished = listOf(w), hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = w, allFinished = listOf(w))
         assertEquals(GoshuinMilestone.FirstWalk, m)
     }
 
@@ -55,7 +67,7 @@ class GoshuinMilestonesTest {
             walk(i.toLong(), LocalDate.of(2026, 1, i), distance = if (i == 5) 9_999.0 else 1_000.0)
         }.reversed()
         val tenth = list.first()
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = tenth, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = tenth, allFinished = list)
         assertEquals(GoshuinMilestone.NthWalk(10), m)
     }
 
@@ -66,7 +78,7 @@ class GoshuinMilestonesTest {
             walk(i.toLong(), LocalDate.of(2026, 1, 1).plusDays((i - 1).toLong()), distance = if (i == 5) 9_999.0 else 1_000.0)
         }.reversed()
         val twentieth = list.first()
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = twentieth, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = twentieth, allFinished = list)
         assertEquals(GoshuinMilestone.NthWalk(20), m)
     }
 
@@ -80,7 +92,7 @@ class GoshuinMilestonesTest {
         // earlier in the same Winter 2026 season).
         val list = (1..7).map { walk(it.toLong(), LocalDate.of(2026, 1, 1).plusDays((it - 1).toLong()), distance = 1000.0) }.reversed()
         val middle = list[3]
-        val m = GoshuinMilestones.detect(walkIndex = 3, walk = middle, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 3, walk = middle, allFinished = list)
         assertNull(m)
     }
 
@@ -88,7 +100,7 @@ class GoshuinMilestonesTest {
         val w1 = walk(1L, LocalDate.of(2026, 1, 1))
         val w2 = walk(2L, LocalDate.of(2026, 1, 2))
         val list = listOf(w2, w1)
-        val mOlder = GoshuinMilestones.detect(walkIndex = 1, walk = w1, allFinished = list, hemisphere = Hemisphere.Northern)
+        val mOlder = GoshuinMilestones.detect(walkIndex = 1, walk = w1, allFinished = list)
         // w1 IS the firstWalk (oldest, walkNumber == 1)
         assertEquals(GoshuinMilestone.FirstWalk, mOlder)
     }
@@ -98,7 +110,7 @@ class GoshuinMilestonesTest {
         val long = walk(2L, LocalDate.of(2026, 1, 2), distance = 5_000.0)
         val medium = walk(3L, LocalDate.of(2026, 1, 3), distance = 2_000.0)
         val list = listOf(medium, long, short)
-        val m = GoshuinMilestones.detect(walkIndex = 1, walk = long, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = long, allFinished = list)
         assertEquals(GoshuinMilestone.LongestWalk, m)
     }
 
@@ -109,9 +121,9 @@ class GoshuinMilestonesTest {
         val newer = walk(2L, LocalDate.of(2026, 1, 2), distance = 5_000.0)
         val older = walk(1L, LocalDate.of(2026, 1, 1), distance = 5_000.0)
         val list = listOf(newer, older)
-        val mNewer = GoshuinMilestones.detect(walkIndex = 0, walk = newer, allFinished = list, hemisphere = Hemisphere.Northern)
+        val mNewer = GoshuinMilestones.detect(walkIndex = 0, walk = newer, allFinished = list)
         assertEquals(GoshuinMilestone.LongestWalk, mNewer)
-        val mOlder = GoshuinMilestones.detect(walkIndex = 1, walk = older, allFinished = list, hemisphere = Hemisphere.Northern)
+        val mOlder = GoshuinMilestones.detect(walkIndex = 1, walk = older, allFinished = list)
         // Older is NOT the longest by tiebreaker, so falls through.
         // 2 walks total, walkNumber for older = 1 → FirstWalk wins precedence.
         assertEquals(GoshuinMilestone.FirstWalk, mOlder)
@@ -132,9 +144,9 @@ class GoshuinMilestonesTest {
         //   list[2] = spring1 (Mar 21) — should get FirstOfSeason(Spring)
         //   list[3] = winter  (Jan 15) — gets FirstWalk (walkNumber == 1)
         val list = listOf(spring2, winter2, spring1, winter)
-        val mSpring1 = GoshuinMilestones.detect(walkIndex = 2, walk = spring1, allFinished = list, hemisphere = Hemisphere.Northern)
+        val mSpring1 = GoshuinMilestones.detect(walkIndex = 2, walk = spring1, allFinished = list)
         assertEquals(GoshuinMilestone.FirstOfSeason(Season.Spring), mSpring1)
-        val mSpring2 = GoshuinMilestones.detect(walkIndex = 0, walk = spring2, allFinished = list, hemisphere = Hemisphere.Northern)
+        val mSpring2 = GoshuinMilestones.detect(walkIndex = 0, walk = spring2, allFinished = list)
         assertNull(mSpring2)
     }
 
@@ -143,10 +155,10 @@ class GoshuinMilestonesTest {
         val winter2027 = walk(2L, LocalDate.of(2027, 1, 1), distance = 9_999.0)
         val s2027 = walk(3L, LocalDate.of(2027, 3, 21), distance = 100.0)
         val list = listOf(s2027, winter2027, s2026)
-        val m2026 = GoshuinMilestones.detect(walkIndex = 2, walk = s2026, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m2026 = GoshuinMilestones.detect(walkIndex = 2, walk = s2026, allFinished = list)
         // s2026 is the FIRST walk overall — FirstWalk wins precedence.
         assertEquals(GoshuinMilestone.FirstWalk, m2026)
-        val m2027 = GoshuinMilestones.detect(walkIndex = 0, walk = s2027, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m2027 = GoshuinMilestones.detect(walkIndex = 0, walk = s2027, allFinished = list)
         // s2027 is the first spring walk of year 2027 (s2026 was a
         // different year). FirstOfSeason fires.
         assertEquals(GoshuinMilestone.FirstOfSeason(Season.Spring), m2027)
@@ -154,7 +166,7 @@ class GoshuinMilestonesTest {
 
     @Test fun `precedence - FirstWalk overrides LongestWalk on a single walk`() {
         val solo = walk(1L, LocalDate.of(2026, 1, 1), distance = 5_000.0)
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = solo, allFinished = listOf(solo), hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = solo, allFinished = listOf(solo))
         assertEquals(GoshuinMilestone.FirstWalk, m)
     }
 
@@ -167,7 +179,7 @@ class GoshuinMilestonesTest {
         val w1 = walk(1L, LocalDate.of(2026, 1, 1), distance = 0.0)
         val w2 = walk(2L, LocalDate.of(2026, 1, 2), distance = 0.0)
         val list = listOf(w2, w1)
-        val mNewer = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list, hemisphere = Hemisphere.Northern)
+        val mNewer = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list)
         // w2 is not the firstWalk (walkNumber=2) and not LongestWalk
         // (max distance is 0). Falls through to FirstOfSeason check:
         // both walks in Jan 2026 (Winter); w1 is earlier in same
@@ -182,26 +194,26 @@ class GoshuinMilestonesTest {
             walk(i.toLong(), LocalDate.of(2026, 1, i), distance = if (i == 10) 9_999.0 else 1_000.0)
         }.reversed()
         val tenth = list.first()
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = tenth, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = tenth, allFinished = list)
         assertEquals(GoshuinMilestone.LongestWalk, m)
     }
 
     @Test fun `seasonFor - northern hemisphere months map correctly`() {
         val zone = ZoneId.systemDefault()
         fun ts(year: Int, month: Int) = LocalDate.of(year, month, 15).atStartOfDay(zone).toInstant().toEpochMilli()
-        assertEquals(Season.Spring, GoshuinMilestones.seasonFor(ts(2026, 4), Hemisphere.Northern))
-        assertEquals(Season.Summer, GoshuinMilestones.seasonFor(ts(2026, 7), Hemisphere.Northern))
-        assertEquals(Season.Autumn, GoshuinMilestones.seasonFor(ts(2026, 10), Hemisphere.Northern))
-        assertEquals(Season.Winter, GoshuinMilestones.seasonFor(ts(2026, 1), Hemisphere.Northern))
+        assertEquals(Season.Spring, GoshuinMilestones.seasonFor(ts(2026, 4), 45.0))
+        assertEquals(Season.Summer, GoshuinMilestones.seasonFor(ts(2026, 7), 45.0))
+        assertEquals(Season.Autumn, GoshuinMilestones.seasonFor(ts(2026, 10), 45.0))
+        assertEquals(Season.Winter, GoshuinMilestones.seasonFor(ts(2026, 1), 45.0))
     }
 
     @Test fun `seasonFor - southern hemisphere flips`() {
         val zone = ZoneId.systemDefault()
         fun ts(year: Int, month: Int) = LocalDate.of(year, month, 15).atStartOfDay(zone).toInstant().toEpochMilli()
-        assertEquals(Season.Autumn, GoshuinMilestones.seasonFor(ts(2026, 4), Hemisphere.Southern))
-        assertEquals(Season.Winter, GoshuinMilestones.seasonFor(ts(2026, 7), Hemisphere.Southern))
-        assertEquals(Season.Spring, GoshuinMilestones.seasonFor(ts(2026, 10), Hemisphere.Southern))
-        assertEquals(Season.Summer, GoshuinMilestones.seasonFor(ts(2026, 1), Hemisphere.Southern))
+        assertEquals(Season.Autumn, GoshuinMilestones.seasonFor(ts(2026, 4), -33.0))
+        assertEquals(Season.Winter, GoshuinMilestones.seasonFor(ts(2026, 7), -33.0))
+        assertEquals(Season.Spring, GoshuinMilestones.seasonFor(ts(2026, 10), -33.0))
+        assertEquals(Season.Summer, GoshuinMilestones.seasonFor(ts(2026, 1), -33.0))
     }
 
     @Test fun `ordinal - teens use th`() {
@@ -234,7 +246,7 @@ class GoshuinMilestonesTest {
         val newer = walk(3L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 300_000L)
         // most-recent-first: newer=0, longer=1, oldest=2
         val list = listOf(newer, longer, oldest)
-        val m = GoshuinMilestones.detect(walkIndex = 1, walk = longer, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = longer, allFinished = list)
         assertEquals(GoshuinMilestone.LongestMeditation, m)
     }
 
@@ -247,7 +259,7 @@ class GoshuinMilestonesTest {
         val current = walk(3L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 120_000L)
         // most-recent-first: current=0, longer=1, oldest=2
         val list = listOf(current, longer, oldest)
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = current, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = current, allFinished = list)
         // current has the smallest meditation and is not LongestWalk — null
         assertNull(m)
     }
@@ -259,7 +271,7 @@ class GoshuinMilestonesTest {
         val w2 = walk(2L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 0L)
         // most-recent-first: w2=0, w1=1
         val list = listOf(w2, w1)
-        val m = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 0, walk = w2, allFinished = list)
         // No candidates with meditation > 0 — LongestMeditation must not fire.
         // w2 is walkNumber=2 (not FirstWalk), not LongestWalk, not a multiple
         // of 10 — falls through to FirstOfSeason. Both walks are in the same
@@ -277,7 +289,7 @@ class GoshuinMilestonesTest {
         val noMed3 = walk(3L, LocalDate.of(2026, 4, 19), distance = 1_000.0, meditateDurationMillis = 0L)
         // most-recent-first: noMed3=0, meditates=1, noMed1=2
         val list = listOf(noMed3, meditates, noMed1)
-        val m = GoshuinMilestones.detect(walkIndex = 1, walk = meditates, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = meditates, allFinished = list)
         assertEquals(GoshuinMilestone.LongestMeditation, m)
     }
 
@@ -290,7 +302,7 @@ class GoshuinMilestonesTest {
         val other = walk(3L, LocalDate.of(2026, 4, 20), distance = 1_000.0, meditateDurationMillis = 300_000L)
         // most-recent-first: other=0, champion=1, oldest=2
         val list = listOf(other, champion, oldest)
-        val m = GoshuinMilestones.detect(walkIndex = 1, walk = champion, allFinished = list, hemisphere = Hemisphere.Northern)
+        val m = GoshuinMilestones.detect(walkIndex = 1, walk = champion, allFinished = list)
         assertEquals(GoshuinMilestone.LongestWalk, m)
     }
 
