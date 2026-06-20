@@ -66,6 +66,8 @@ class WalkShareViewModel @Inject constructor(
     private val shareService: ShareService,
     private val cachedShareStore: CachedShareStore,
     private val photoEncoder: SharePhotoEncoder,
+    private val hemisphereRepository:
+        org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository,
     unitsPreferences: UnitsPreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -322,6 +324,8 @@ class WalkShareViewModel @Inject constructor(
             // always null for 8-A. Backend accepts null.
             steps = null,
             pinnedPhotos = pinnedPhotos,
+            southernHemisphere = hemisphereRepository.hemisphere.value ==
+                org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere.Southern,
         )
         _uiState.value = WalkShareUiState.Loaded(inputs = inputs)
     }

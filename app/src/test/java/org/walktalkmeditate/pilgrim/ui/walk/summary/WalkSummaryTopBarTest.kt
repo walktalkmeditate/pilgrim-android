@@ -17,6 +17,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -36,7 +37,7 @@ class WalkSummaryTopBarTest {
             .toEpochMilli()
         composeRule.setContent {
             PilgrimTheme {
-                WalkSummaryTopBar(startTimestamp = ts, onDone = {})
+                WalkSummaryTopBar(startTimestamp = ts, hemisphere = Hemisphere.Northern, onDone = {})
             }
         }
         composeRule.onNodeWithText("March 16, 2026").assertIsDisplayed()
@@ -49,6 +50,7 @@ class WalkSummaryTopBarTest {
             PilgrimTheme {
                 WalkSummaryTopBar(
                     startTimestamp = 1_700_000_000_000L,
+                    hemisphere = Hemisphere.Northern,
                     onDone = { doneTaps += 1 },
                 )
             }
@@ -64,6 +66,7 @@ class WalkSummaryTopBarTest {
             PilgrimTheme {
                 WalkSummaryTopBar(
                     startTimestamp = null,
+                    hemisphere = Hemisphere.Northern,
                     onDone = { doneTaps += 1 },
                 )
             }

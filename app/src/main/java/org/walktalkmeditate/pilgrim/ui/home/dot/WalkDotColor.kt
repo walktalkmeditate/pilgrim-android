@@ -8,6 +8,7 @@ import java.time.ZoneId
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
+import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.SeasonalColorEngine
 import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
@@ -75,7 +76,7 @@ private fun walkLocalDate(walkStartMs: Long): LocalDate =
 /** Dot color — turning accent (raw) or season base + Full shift. */
 fun walkDotColor(walkStartMs: Long, base: PilgrimColors, hemisphere: Hemisphere): Color =
     walkInkColor(
-        marker = turningMarkerForEpochMillis(walkStartMs),
+        marker = turningMarkerForEpochMillis(walkStartMs).forHemisphere(hemisphere),
         date = walkLocalDate(walkStartMs),
         base = base,
         hemisphere = hemisphere,
@@ -86,7 +87,7 @@ fun walkDotColor(walkStartMs: Long, base: PilgrimColors, hemisphere: Hemisphere)
 /** Connecting-thread color — turning accent × 0.85 or season base + Moderate shift. */
 fun walkThreadColor(walkStartMs: Long, base: PilgrimColors, hemisphere: Hemisphere): Color =
     walkInkColor(
-        marker = turningMarkerForEpochMillis(walkStartMs),
+        marker = turningMarkerForEpochMillis(walkStartMs).forHemisphere(hemisphere),
         date = walkLocalDate(walkStartMs),
         base = base,
         hemisphere = hemisphere,

@@ -269,7 +269,7 @@ class HomeViewModel internal constructor(
             JournalUiState.Loaded(newestFirst, summary)
         }
 
-        scheduleSealRender(walks, units)
+        scheduleSealRender(walks, units, hemisphere)
         return loaded
     }
 
@@ -303,6 +303,7 @@ class HomeViewModel internal constructor(
     private fun scheduleSealRender(
         walks: List<Walk>,
         units: UnitSystem,
+        hemisphere: Hemisphere,
     ) {
         // Filter to FINISHED walks before pickup — Walk.toSealSpec
         // requires non-null endTimestamp. An in-progress walk at the
@@ -323,7 +324,13 @@ class HomeViewModel internal constructor(
         // The light/dark variant comes from the theme pushed in via
         // [setFabSealDark]. Resolve against the placeholder spec (the seal
         // hash ignores ink), then bake the result in.
-        val spec0 = newest.toSealSpec(distance, Color.Transparent, label.value, label.unit)
+        val spec0 = newest.toSealSpec(
+            distanceMeters = distance,
+            ink = Color.Transparent,
+            displayDistance = label.value,
+            unitLabel = label.unit,
+            southernHemisphere = hemisphere == Hemisphere.Southern,
+        )
         val ink = SealColorPalette.sealInk(spec0, _fabSealDark.value)
         val spec = spec0.copy(ink = ink)
         _latestSealSpec.value = spec

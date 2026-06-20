@@ -29,6 +29,8 @@ import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.kanji
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
+import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
@@ -53,10 +55,13 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 @Composable
 fun WalkSummaryTopBar(
     startTimestamp: Long?,
+    hemisphere: Hemisphere,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val dateText = remember(startTimestamp) { startTimestamp?.let(::formatLongDate) }
+    val dateText = remember(startTimestamp, hemisphere) {
+        startTimestamp?.let { formatLongDate(it, hemisphere) }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -112,7 +117,7 @@ fun WalkSummaryTopBar(
     }
 }
 
-private fun formatLongDate(epochMillis: Long): String {
+private fun formatLongDate(epochMillis: Long, hemisphere: Hemisphere): String {
     val date = Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .toLocalDate()
@@ -127,8 +132,8 @@ private fun formatLongDate(epochMillis: Long): String {
         .ofPattern("MMMM d, yyyy", Locale.ENGLISH)
         .format(date)
     // iOS WalkSummaryView.swift:160-170 — append the turning kanji on the
-    // four cardinal solstice/equinox days.
-    return summaryDateTitle(base, turningMarkerForEpochMillis(epochMillis))
+    // four cardinal solstice/equinox days, hemisphere-corrected.
+    return summaryDateTitle(base, turningMarkerForEpochMillis(epochMillis).forHemisphere(hemisphere))
 }
 
 /**

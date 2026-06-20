@@ -12,6 +12,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.forSouthernHemisphere
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -38,6 +39,12 @@ data class ShareInputs(
     val steps: Int?,
     /** Pinned reliquary photos for this walk (every `walk_photos` row IS a pin). */
     val pinnedPhotos: List<WalkPhoto> = emptyList(),
+    /**
+     * Device hemisphere, so the wire `turning_day` is seasonally correct
+     * below the equator (a December solstice shares as "summer-solstice"
+     * there). Matches the rest of the app's turning surfaces.
+     */
+    val southernHemisphere: Boolean = false,
 )
 
 /** User-selected share options surfaced by the modal. */
@@ -180,12 +187,13 @@ internal object SharePayloadBuilder {
             mark = null,
             waypoints = waypointsPayload,
             photos = if (options.includePhotos) photos else null,
-            // iOS WalkShareViewModel.swift:327-343 — turning code derived
-            // from the walk's start date. Like every other Android turning
-            // surface (banner, dot, kanji, seal) this uses the astronomical
-            // (northern-named) marker; hemisphere correction is a separate
-            // system-wide enhancement (see SeasonalMarkerTurnings).
-            turningDay = turningDayCode(turningMarkerForEpochMillis(inputs.walk.startTimestamp)),
+            // iOS WalkShareViewModel.swift:327-343 — turning code from the
+            // walk's start date, hemisphere-corrected like every other
+            // turning surface (banner/dot/kanji/seal).
+            turningDay = turningDayCode(
+                turningMarkerForEpochMillis(inputs.walk.startTimestamp)
+                    .let { if (inputs.southernHemisphere) it?.forSouthernHemisphere() else it },
+            ),
         )
     }
 

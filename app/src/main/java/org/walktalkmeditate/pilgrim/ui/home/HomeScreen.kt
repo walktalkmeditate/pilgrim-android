@@ -96,6 +96,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimDarkColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
+import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
@@ -207,7 +208,7 @@ fun HomeScreen(
     val fadeInState = rememberJournalFadeIn(reduceMotion = reduceMotion)
     val expandedId by homeViewModel.expandedSnapshotId.collectAsStateWithLifecycle()
     val expandedCelestial by homeViewModel.expandedCelestialSnapshot.collectAsStateWithLifecycle()
-    val currentTurning = turningMarkerForToday()
+    val currentTurning = turningMarkerForToday().forHemisphere(hemisphere)
     // Connecting thread: turning accent × 0.85 on solstice/equinox days,
     // else the season base (moss/rust/dawn/ink) + a Moderate seasonal
     // shift. iOS InkScrollView.swift:657-674.

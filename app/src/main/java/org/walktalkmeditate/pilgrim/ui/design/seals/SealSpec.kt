@@ -31,6 +31,13 @@ data class SealSpec(
      * call sites and tests compile unchanged.
      */
     val favicon: WalkFavicon? = null,
+    /**
+     * Device hemisphere at spec-build time, so [SealColorPalette] can
+     * hemisphere-correct the turning-day seal color (a December solstice
+     * is summer below the equator). Set by the VMs that build specs; not
+     * part of the geometry hash. Defaults to northern.
+     */
+    val southernHemisphere: Boolean = false,
 )
 
 /**
@@ -101,6 +108,7 @@ fun Walk.toSealSpec(
     ink: Color,
     displayDistance: String,
     unitLabel: String,
+    southernHemisphere: Boolean = false,
 ): SealSpec {
     val endMs = requireNotNull(endTimestamp) {
         "toSealSpec called on an unfinished walk (uuid=$uuid); filter before calling."
@@ -115,5 +123,6 @@ fun Walk.toSealSpec(
         unitLabel = unitLabel,
         ink = ink,
         favicon = WalkFavicon.fromRawValue(favicon),
+        southernHemisphere = southernHemisphere,
     )
 }
