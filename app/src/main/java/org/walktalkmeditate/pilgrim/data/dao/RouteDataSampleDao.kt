@@ -7,6 +7,9 @@ import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 
+/** Projection: a walk id paired with its first GPS sample's latitude. */
+data class WalkFirstLatitude(val walkId: Long, val latitude: Double)
+
 @Dao
 interface RouteDataSampleDao {
     @Insert
@@ -30,6 +33,25 @@ interface RouteDataSampleDao {
             "ORDER BY timestamp DESC LIMIT 1",
     )
     suspend fun getLastForWalk(walkId: Long): RouteDataSample?
+
+    @Query(
+        "SELECT * FROM route_data_samples WHERE walk_id = :walkId " +
+            "ORDER BY timestamp ASC LIMIT 1",
+    )
+    suspend fun getFirstForWalk(walkId: Long): RouteDataSample?
+
+    /**
+     * First-sample latitude for every walk, in one query — used to compute
+     * each walk's location hemisphere for milestone season detection
+     * without an N+1 over [getFirstForWalk]. The correlated subquery picks
+     * the earliest-timestamp row per walk; GROUP BY dedups timestamp ties.
+     */
+    @Query(
+        "SELECT walk_id AS walkId, latitude FROM route_data_samples " +
+            "WHERE timestamp = (SELECT MIN(timestamp) FROM route_data_samples r " +
+            "WHERE r.walk_id = route_data_samples.walk_id) GROUP BY walk_id",
+    )
+    suspend fun firstLatitudePerWalk(): List<WalkFirstLatitude>
 
     @Query("DELETE FROM route_data_samples WHERE walk_id = :walkId")
     suspend fun deleteByWalkId(walkId: Long): Int

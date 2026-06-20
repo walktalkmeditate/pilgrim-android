@@ -250,7 +250,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val playback: VoicePlaybackController,
     private val sweeper: OrphanRecordingSweeper,
     private val photoAnalysisScheduler: PhotoAnalysisScheduler,
-    private val hemisphereRepository: HemisphereRepository,
+    hemisphereRepository: HemisphereRepository,
     private val cachedShareStore: CachedShareStore,
     unitsPreferences: UnitsPreferencesRepository,
     private val practicePreferences: PracticePreferencesRepository,
@@ -1457,10 +1457,6 @@ class WalkSummaryViewModel @Inject constructor(
 
     private suspend fun buildState(): WalkSummaryUiState {
         val walk = repository.getWalk(walkId) ?: return WalkSummaryUiState.NotFound
-        // Resolve the hemisphere via a direct DataStore read — this one-shot
-        // builder has no active `hemisphere` subscriber, so `hemisphere.value`
-        // could be the un-resolved Northern default (Stage 7-A trap).
-        val resolvedHemisphere = hemisphereRepository.resolvedHemisphere()
         // Production never navigates to WalkSummary for an unfinished
         // walk — ActiveWalkScreen's `onFinished` callback only fires on
         // WalkState.Finished, which requires `endTimestamp` to be set.
@@ -1524,7 +1520,10 @@ class WalkSummaryViewModel @Inject constructor(
             ink = Color.Transparent,
             displayDistance = distanceLabel.value,
             unitLabel = distanceLabel.unit,
-            southernHemisphere = resolvedHemisphere == Hemisphere.Southern,
+            // Walk-location hemisphere from the first route coordinate (iOS
+            // SealColorPalette uses `routePoints.first`), not the device.
+            southernHemisphere =
+                Hemisphere.fromLatitude(points.firstOrNull()?.latitude ?: 0.0) == Hemisphere.Southern,
         )
 
         // Stage 4-D: detect milestone for THIS walk against the user's
@@ -1534,7 +1533,7 @@ class WalkSummaryViewModel @Inject constructor(
         // per row. Same N+1 cost as `GoshuinViewModel`; acceptable
         // here because milestone detection is a once-per-summary-load
         // computation, not a hot path.
-        val milestone = detectMilestoneFor(walk, distance, totals.totalMeditatedMillis, resolvedHemisphere)
+        val milestone = detectMilestoneFor(walk, distance, totals.totalMeditatedMillis)
 
         // Stage 6-B: compute Light Reading. Pure, deterministic from
         // walkId + startedAt + first GPS location. `runCatching` is
@@ -1752,7 +1751,6 @@ class WalkSummaryViewModel @Inject constructor(
         currentWalk: Walk,
         currentDistance: Double,
         currentMeditationMillis: Long,
-        resolvedHemisphere: Hemisphere,
     ): GoshuinMilestone? {
         val finished = repository.allWalks()
             .filter { it.endTimestamp != null }
@@ -1761,6 +1759,9 @@ class WalkSummaryViewModel @Inject constructor(
                     .thenByDescending { it.id },
             )
         if (finished.isEmpty()) return null
+        // First-route latitude per walk (one query) so each walk's season is
+        // computed against its own location, matching iOS GoshuinMilestones.
+        val firstLats = repository.firstRouteLatitudesByWalk()
         val inputs = finished.map { walk ->
             // For the current walk, use the live event-replay total
             // (currentDistance) — Walk.distanceMeters is populated by
@@ -1798,6 +1799,7 @@ class WalkSummaryViewModel @Inject constructor(
                 startTimestamp = walk.startTimestamp,
                 distanceMeters = d,
                 meditateDurationMillis = medMillis,
+                latitude = firstLats[walk.id] ?: 0.0,
             )
         }
         val currentIndex = finished.indexOfFirst { it.id == currentWalk.id }
@@ -1806,7 +1808,6 @@ class WalkSummaryViewModel @Inject constructor(
             walkIndex = currentIndex,
             walk = inputs[currentIndex],
             allFinished = inputs,
-            hemisphere = resolvedHemisphere,
         )
     }
 
