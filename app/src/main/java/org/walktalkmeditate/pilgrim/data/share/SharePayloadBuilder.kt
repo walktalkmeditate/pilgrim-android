@@ -11,6 +11,10 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.forSouthernHemisphere
+import org.walktalkmeditate.pilgrim.core.celestial.isTurning
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
@@ -178,7 +182,13 @@ internal object SharePayloadBuilder {
             mark = null,
             waypoints = waypointsPayload,
             photos = if (options.includePhotos) photos else null,
-            turningDay = null,
+            // iOS WalkShareViewModel.swift:327-343 — turning code derived
+            // from the walk's start date, hemisphere-corrected via the
+            // first route coordinate (no route → northern by convention).
+            turningDay = turningDayCode(
+                astronomical = turningMarkerForEpochMillis(inputs.walk.startTimestamp),
+                southern = (inputs.routePoints.firstOrNull()?.latitude ?: 0.0) < 0.0,
+            ),
         )
     }
 
@@ -186,4 +196,21 @@ internal object SharePayloadBuilder {
         DateTimeFormatter.ISO_OFFSET_DATE_TIME.withLocale(Locale.ROOT)
 
     private const val MILLIS_PER_SECOND = 1_000L
+}
+
+/**
+ * Maps an astronomical (northern-named) turning marker to the share-wire
+ * code string, hemisphere-corrected. Cross-quarter and non-turning
+ * markers carry no code. iOS `WalkShareViewModel.turningDayCode()`.
+ */
+internal fun turningDayCode(astronomical: SeasonalMarker?, southern: Boolean): String? {
+    if (astronomical == null || !astronomical.isTurning()) return null
+    val marker = if (southern) astronomical.forSouthernHemisphere() else astronomical
+    return when (marker) {
+        SeasonalMarker.SpringEquinox -> "spring-equinox"
+        SeasonalMarker.SummerSolstice -> "summer-solstice"
+        SeasonalMarker.AutumnEquinox -> "autumn-equinox"
+        SeasonalMarker.WinterSolstice -> "winter-solstice"
+        else -> null
+    }
 }

@@ -30,7 +30,7 @@ detection but left several consumers stubbed.
 **iOS ref**: `WalkShareViewModel.swift:327-343` @fcd2255 (hemisphere-aware via first route coord).
 **Changes**: `SharePayloadBuilder.kt` — compute turning from walk start + first route coord; map to iOS code strings; cross-quarter → null.
 **Tests**: builder sets correct code on a turning walk, null otherwise.
-**Status**: Not Started
+**Status**: Complete (6+17 tests pass)
 
 ## Stage 4: Celestial vignette turning halo
 **Goal**: Soft turning-colored corona ring around the vignette pill on turning days.
