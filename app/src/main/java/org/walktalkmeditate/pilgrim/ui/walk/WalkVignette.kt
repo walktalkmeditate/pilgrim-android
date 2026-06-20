@@ -204,11 +204,15 @@ private fun chipModifier(haloAccent: Color? = null): Modifier {
     return Modifier
         .then(
             if (haloAccent != null) {
+                // iOS `shadow(color: color.opacity(0.4), radius: 4)` — the
+                // glow is dimmed to 0.4 so it reads as a soft corona, not a
+                // vivid accent ring.
+                val shadowColor = haloAccent.copy(alpha = 0.4f)
                 Modifier.shadow(
                     elevation = 4.dp,
                     shape = shape,
-                    ambientColor = haloAccent,
-                    spotColor = haloAccent,
+                    ambientColor = shadowColor,
+                    spotColor = shadowColor,
                 )
             } else {
                 Modifier
