@@ -55,10 +55,11 @@ class GoshuinViewModel @Inject constructor(
 ) : ViewModel() {
 
     /**
-     * Proxy of [HemisphereRepository.hemisphere]. Separate from
-     * [uiState] so a hemisphere flip doesn't re-emit the whole seal
-     * list — the `@Composable` re-keys per-cell on hemisphere change
-     * via its `remember(...)` block.
+     * Proxy of [HemisphereRepository.hemisphere], read via `hemisphere.value`
+     * at emission time to snapshot the hemisphere for milestone detection
+     * ([mapToSeal] / [GoshuinMilestones]). A hemisphere flip is picked up on
+     * the next Room emission. (Seal ink no longer depends on hemisphere — it
+     * resolves from the favicon-family palette.)
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 

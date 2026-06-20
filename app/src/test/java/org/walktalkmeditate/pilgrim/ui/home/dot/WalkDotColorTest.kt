@@ -143,4 +143,16 @@ class WalkDotColorTest {
         val winter: Color = walkDotColor(winterMs, base, Hemisphere.Northern)
         assertNotEquals("dots must change color across seasons", summer, winter)
     }
+
+    @Test fun `walkThreadColor uses the rust season base at Moderate intensity in summer`() {
+        val zone = ZoneId.systemDefault()
+        val summerMs = LocalDate.of(2026, 7, 15).atStartOfDay(zone).toInstant().toEpochMilli()
+        val thread = walkThreadColor(summerMs, base, Hemisphere.Northern)
+        val expected = SeasonalColorEngine.applySeasonalShift(
+            base.rust, SeasonalColorEngine.Intensity.Moderate, julyDate, Hemisphere.Northern,
+        )
+        assertEquals(expected, thread)
+        // The dot uses Full intensity, so it must differ from the Moderate thread.
+        assertNotEquals(walkDotColor(summerMs, base, Hemisphere.Northern), thread)
+    }
 }

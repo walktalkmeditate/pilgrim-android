@@ -698,6 +698,9 @@ fun ActiveWalkScreen(
                 celestial = activeCelestialSnapshot,
                 celestialAwarenessEnabled = celestialAwareness,
                 units = vignetteUnits,
+                // Pass the already-remembered turning so the halo doesn't
+                // recompute solar-longitude trig on every GPS-tick recompose.
+                turning = activeTurning,
             )
         }
         // iOS-parity overlay row at the top of the map: ellipsis (options)

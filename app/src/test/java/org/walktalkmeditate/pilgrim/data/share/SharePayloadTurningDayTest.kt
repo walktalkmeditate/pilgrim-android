@@ -30,6 +30,8 @@ class SharePayloadTurningDayTest {
     @Test fun `cross-quarter and null markers produce no code`() {
         assertNull(turningDayCode(SeasonalMarker.Beltane))
         assertNull(turningDayCode(SeasonalMarker.Samhain))
+        assertNull(turningDayCode(SeasonalMarker.Imbolc))
+        assertNull(turningDayCode(SeasonalMarker.Lughnasadh))
         assertNull(turningDayCode(null))
     }
 

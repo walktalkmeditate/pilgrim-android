@@ -138,6 +138,11 @@ class HomeViewModel internal constructor(
                     throw ce
                 } catch (t: Throwable) {
                     android.util.Log.w("HomeViewModel", "seal re-render on theme change failed", t)
+                    // Cache was cleared above; drop the stale wrong-theme
+                    // bitmap so the FAB falls back to the compass rather than
+                    // showing a light seal on dark parchment (matches
+                    // scheduleSealRender's failure path).
+                    _latestSealBitmap.value = null
                 }
             }
         }
@@ -152,6 +157,10 @@ class HomeViewModel internal constructor(
         java.util.Collections.synchronizedMap(
             LinkedHashMap<Pair<SealSpec, Int>, ImageBitmap>(8, 0.75f, true),
         )
+    // @Volatile: written from both Main (setFabSealDark) and the IO/Default
+    // combine frame (scheduleSealRender); without it a stale read could miss
+    // a cancel and let two render coroutines race on _latestSealBitmap.
+    @Volatile
     private var sealRenderJob: Job? = null
 
     // celestialAwarenessEnabled is intentionally NOT in the combine —

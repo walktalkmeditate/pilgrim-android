@@ -45,6 +45,9 @@ class GoshuinShareRendererTest {
             displayDistance = "5.00",
             unitLabel = "km",
             ink = Color.Transparent,
+            // Match production (Walk.toSealSpec sets this) so the renderer
+            // exercises the favicon-family palette, not just the neutral one.
+            favicon = favicon,
         ),
         walkDate = LocalDate.of(2026, 4, 19),
         shortDateLabel = "Apr 19",

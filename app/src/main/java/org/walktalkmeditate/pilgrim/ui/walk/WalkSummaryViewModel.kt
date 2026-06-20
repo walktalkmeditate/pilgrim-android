@@ -271,10 +271,10 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
-     * Proxied from [HemisphereRepository] so the summary screen can
-     * resolve the seal's seasonal tint. Separate from [state] so a
-     * rare hemisphere flip doesn't force a re-emission of the full
-     * [WalkSummaryUiState.Loaded] payload.
+     * Proxied from [HemisphereRepository] for milestone detection in
+     * [buildState] (read via `hemisphere.value`). A hemisphere flip is
+     * picked up on the next walk-repository emission rather than forcing
+     * a re-emission of the full [WalkSummaryUiState.Loaded] payload.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 

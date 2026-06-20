@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.design.seals
 
+import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForEpochMillis
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 
 /**
@@ -90,5 +92,27 @@ class SealColorPaletteTest {
             SealColorPalette.rust.light,
             SealColorPalette.sealInk(WalkFavicon.FLAME, SeasonalMarker.Beltane, 0, false),
         )
+    }
+
+    // --- SealSpec convenience overload: routes through hash byte[30] + favicon ---
+
+    @Test fun `sealInk from SealSpec routes through hash byte 30 and favicon`() {
+        val spec = SealSpec(
+            uuid = "deadbeef-cafe",
+            startMillis = 1_700_000_000_000L,
+            distanceMeters = 4_200.0,
+            durationSeconds = 1_500.0,
+            displayDistance = "4.20",
+            unitLabel = "km",
+            ink = Color.Transparent,
+            favicon = WalkFavicon.LEAF,
+        )
+        val expected = SealColorPalette.sealInk(
+            favicon = WalkFavicon.LEAF,
+            marker = turningMarkerForEpochMillis(spec.startMillis),
+            hashByte = sealHashBytes(spec).u(30),
+            isDark = false,
+        )
+        assertEquals(expected, SealColorPalette.sealInk(spec, isDark = false))
     }
 }
