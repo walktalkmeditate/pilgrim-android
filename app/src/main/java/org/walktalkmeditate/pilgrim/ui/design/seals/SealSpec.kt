@@ -32,10 +32,12 @@ data class SealSpec(
      */
     val favicon: WalkFavicon? = null,
     /**
-     * Device hemisphere at spec-build time, so [SealColorPalette] can
-     * hemisphere-correct the turning-day seal color (a December solstice
-     * is summer below the equator). Set by the VMs that build specs; not
-     * part of the geometry hash. Defaults to northern.
+     * Walk-location hemisphere — derived from the walk's FIRST ROUTE
+     * COORDINATE (iOS `SealColorPalette` uses `routePoints.first`), not the
+     * device — so [SealColorPalette] hemisphere-corrects the turning-day
+     * seal color (a December solstice is summer below the equator). Set by
+     * the VMs that build specs; not part of the geometry hash. Defaults to
+     * northern (no route → no coordinate).
      */
     val southernHemisphere: Boolean = false,
 )

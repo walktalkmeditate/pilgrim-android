@@ -71,14 +71,18 @@ class GoshuinViewModel @Inject constructor(
             if (finished.isEmpty()) {
                 GoshuinUiState.Empty
             } else {
-                // Load each finished walk's GPS samples once: distance for
-                // the seal + milestone, and the first coordinate's latitude
-                // for the walk's location hemisphere. iOS keys the seal
-                // color, milestone season, and share off `routeData.first`,
-                // not the device hemisphere.
-                val samplesByWalk = finished.associate { it.id to samplesFor(it.id) }
-                val distances = samplesByWalk.mapValues { walkDistanceMeters(it.value) }
-                val firstLats = samplesByWalk.mapValues { it.value.firstOrNull()?.latitude ?: 0.0 }
+                // Load each finished walk's GPS samples once, derive its
+                // distance + first-coordinate latitude, and drop the sample
+                // list (don't retain every walk's samples in memory at once).
+                // iOS keys the seal color, milestone season, and share off
+                // `routeData.first`, not the device hemisphere.
+                val distances = HashMap<Long, Double>(finished.size)
+                val firstLats = HashMap<Long, Double>(finished.size)
+                finished.forEach { walk ->
+                    val samples = samplesFor(walk.id)
+                    distances[walk.id] = walkDistanceMeters(samples)
+                    firstLats[walk.id] = samples.firstOrNull()?.latitude ?: 0.0
+                }
                 val milestoneInputs = finished.map { walk ->
                     WalkMilestoneInput(
                         walkId = walk.id,

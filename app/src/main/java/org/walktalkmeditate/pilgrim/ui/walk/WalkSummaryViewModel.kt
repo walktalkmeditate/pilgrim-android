@@ -271,10 +271,10 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
-     * Proxied from [HemisphereRepository] for milestone detection in
-     * [buildState] (read via `hemisphere.value`). A hemisphere flip is
-     * picked up on the next walk-repository emission rather than forcing
-     * a re-emission of the full [WalkSummaryUiState.Loaded] payload.
+     * Device hemisphere, proxied from [HemisphereRepository], for the
+     * turning-kanji in the title bar ([WalkSummaryTopBar]) — iOS uses
+     * `.current` there. It does NOT drive the seal color or milestone
+     * season; those come from each walk's first route coordinate.
      */
     val hemisphere: StateFlow<Hemisphere> = hemisphereRepository.hemisphere
 

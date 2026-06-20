@@ -172,14 +172,13 @@ class HomeViewModel internal constructor(
         repository.observeAllWalks(),
         unitsPreferences.distanceUnits,
         cachedShareStore.observeAll(),
-        hemisphereRepository.hemisphere,
         archivedRegistry.archivedRegistry,
-    ) { walks, units, shareCache, hemisphere, archivedMap ->
+    ) { walks, units, shareCache, archivedMap ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
             JournalUiState.Empty
         } else {
-            buildSnapshots(finished, units, shareCache, hemisphere, archivedMap.keys, clock.now())
+            buildSnapshots(finished, units, shareCache, archivedMap.keys, clock.now())
         }
     }
         .flowOn(ioDispatcher)
@@ -189,7 +188,6 @@ class HomeViewModel internal constructor(
         walks: List<Walk>,
         units: UnitSystem,
         shareCache: Map<String, CachedShare>,
-        hemisphere: Hemisphere,
         archivedUuids: Set<String>,
         nowMs: Long,
     ): JournalUiState.Loaded {
