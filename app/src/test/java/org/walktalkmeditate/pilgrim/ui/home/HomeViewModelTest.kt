@@ -4,9 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.home
 import android.app.Application
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -31,6 +29,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -84,14 +83,19 @@ class HomeViewModelTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = FakeHomeClock(initial = 10_000_000L)
-        // Hemisphere setup — start clean each test so a prior Southern
-        // override from a previous run doesn't leak through.
-        context.preferencesDataStoreFile(hemisphereStoreName).delete()
-        hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
-        )
+        // Hemisphere setup. FakePreferencesDataStore is in-memory
+        // (MutableStateFlow-backed), so the override → DataStore → map →
+        // stateIn → VM.hemisphere chain resolves synchronously in runTest's
+        // virtual time — no real disk I/O and no Dispatchers.Default to be
+        // starved. This is the canonical fix for the ci-realtime-withtimeout
+        // flake family (a real PreferenceDataStore + Default scope let the
+        // hemisphere Turbine `.test(timeout=…)` race a saturated CI runner);
+        // see [FakePreferencesDataStore] + HemisphereRepositoryTest. The
+        // stateIn scope runs on the test dispatcher so WhileSubscribed
+        // re-emits in virtual time too.
+        hemisphereScope = CoroutineScope(SupervisorJob() + dispatcher)
+        hemisphereDataStore = FakePreferencesDataStore()
         fakeLocation = FakeLocationSource()
-        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, fakeLocation, hemisphereScope)
     }
 
@@ -102,7 +106,6 @@ class HomeViewModelTest {
         vm?.viewModelScope?.coroutineContext?.get(Job)?.cancel()
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         Dispatchers.resetMain()
     }
 
@@ -283,15 +286,12 @@ class HomeViewModelTest {
         return item as JournalUiState.Loaded
     }
 
-    private val hemisphereStoreName: String = "home-vm-hemisphere-test-${java.util.UUID.randomUUID()}"
-
     private companion object {
-        // Pure failsafe for the hemisphere-flip Turbine await. The test
-        // subscribes before mutating so the WhileSubscribed proxy is
-        // already hot — the flip is a normal emission, not a cold-start
-        // DataStore read racing this bound. Generous because it never
-        // bites on a healthy run (the await returns the instant Southern
-        // emits); only a true hang reaches it.
+        // Pure failsafe for the hemisphere-flip Turbine await. With the
+        // in-memory [FakePreferencesDataStore] the override → stateIn →
+        // VM.hemisphere chain re-emits synchronously in runTest virtual
+        // time, so the await returns the instant Southern emits; this
+        // wall-clock bound only bites on a true hang.
         val HEMISPHERE_OBSERVE_TIMEOUT = 15.seconds
     }
 }

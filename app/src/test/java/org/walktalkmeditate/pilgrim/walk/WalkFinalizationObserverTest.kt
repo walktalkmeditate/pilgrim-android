@@ -4,9 +4,7 @@ package org.walktalkmeditate.pilgrim.walk
 import android.app.Application
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +15,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -28,7 +27,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
@@ -68,7 +69,6 @@ class WalkFinalizationObserverTest {
     private lateinit var hemisphereDataStore: DataStore<Preferences>
     private lateinit var hemisphereRepo: HemisphereRepository
     private lateinit var hemisphereScope: CoroutineScope
-    private lateinit var collectiveDataStoreScope: CoroutineScope
     private lateinit var collectiveDataStore: DataStore<Preferences>
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
@@ -77,6 +77,7 @@ class WalkFinalizationObserverTest {
     private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
     private lateinit var walkMetricsCache: RecordingWalkMetricsCache
     private lateinit var stateFlow: MutableStateFlow<WalkState>
+    private lateinit var observedFlow: CountingStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
     private lateinit var observer: WalkFinalizationObserver
 
@@ -98,19 +99,16 @@ class WalkFinalizationObserverTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         transcriptionScheduler = FakeTranscriptionScheduler()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
-        hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME) },
-        )
-        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        // In-memory DataStores + never-starved scopes — canonical fix for
+        // the ci-realtime-withtimeout flake family (see [FakePreferencesDataStore]
+        // + [TestRealTimeDispatcher]). Removes real disk I/O and the
+        // Default/IO-pool contention that let the observer's launched
+        // side-effects miss their wall-clock waits on saturated runners.
+        hemisphereDataStore = FakePreferencesDataStore()
+        hemisphereScope = CoroutineScope(SupervisorJob() + TestRealTimeDispatcher.instance)
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, FakeLocationSource(), hemisphereScope)
 
-        val unique = "test_collective_${java.util.UUID.randomUUID()}"
-        collectiveDataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        collectiveDataStore = PreferenceDataStoreFactory.create(
-            scope = collectiveDataStoreScope,
-            produceFile = { context.preferencesDataStoreFile(unique) },
-        )
+        collectiveDataStore = FakePreferencesDataStore()
         val collectiveJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
         collectiveCacheStore = CollectiveCacheStore(collectiveDataStore, collectiveJson)
         fakeCollectiveService = FakeCollectiveCounterService(context, collectiveJson)
@@ -125,9 +123,10 @@ class WalkFinalizationObserverTest {
         walkMetricsCache = RecordingWalkMetricsCache()
 
         stateFlow = MutableStateFlow(WalkState.Idle)
-        observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        observedFlow = CountingStateFlow(stateFlow)
+        observerScope = CoroutineScope(SupervisorJob() + TestRealTimeDispatcher.instance)
         observer = WalkFinalizationObserver(
-            walkState = stateFlow,
+            walkState = observedFlow,
             scope = observerScope,
             repository = repository,
             transcriptionScheduler = transcriptionScheduler,
@@ -137,14 +136,30 @@ class WalkFinalizationObserverTest {
             voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
             walkMetricsCache = walkMetricsCache,
         )
-        // The observer's `init { scope.launch { walkState.collect } }`
-        // attaches asynchronously on Dispatchers.IO. If a test mutates
-        // stateFlow.value before that collector attaches, the collector's
-        // first observed value is the LATEST set (StateFlow conflation),
-        // and the firstEmission skip eats it — side-effects never fire.
-        // Sleep briefly so the collector definitely attaches and consumes
-        // the initial Idle value.
-        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
+        // Deterministic collector-attach handshake (replaces a blind
+        // Thread.sleep that flaked when a saturated runner hadn't
+        // subscribed in the window — StateFlow conflation then fed the
+        // post-mutation value as emission #1 and the firstEmission latch
+        // ate the real transition). processed increments only AFTER the
+        // collector returns from a value, so awaiting >= 1 proves the
+        // initial Idle was consumed + the latch is spent.
+        awaitCollectorAttached(observedFlow)
+    }
+
+    /** Block until [flow]'s downstream collector has consumed its first value. */
+    private fun awaitCollectorAttached(flow: CountingStateFlow<*>) = runBlocking {
+        withTimeout(COLLECTOR_SUBSCRIBE_TIMEOUT_MS) { flow.processed.first { it >= 1 } }
+    }
+
+    /**
+     * Poll until [predicate] holds or [timeoutMs] elapses. The observer
+     * runs on [TestRealTimeDispatcher] (never starved), so the awaited
+     * side effect lands in milliseconds and this returns the instant it
+     * does; the bound is a failsafe, not a tuned grace window.
+     */
+    private fun awaitUntil(timeoutMs: Long = WAIT_FOR_OBSERVER_MS, predicate: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!predicate() && System.currentTimeMillis() < deadline) Thread.sleep(20L)
     }
 
     @After
@@ -152,15 +167,16 @@ class WalkFinalizationObserverTest {
         observerScope.coroutineContext[Job]?.cancel()
         hemisphereScope.coroutineContext[Job]?.cancel()
         collectiveScope.coroutineContext[Job]?.cancel()
-        collectiveDataStoreScope.cancel()
         db.close()
-        context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
     }
 
     @Test
     fun `Idle initial emission does not fire side-effects`() = runBlocking {
-        // Wait beyond GRACE so any spurious launch would have completed.
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        // setUp's handshake already proved the initial Idle was consumed
+        // and the firstEmission latch spent; no transition fires in this
+        // test, so nothing can launch. A brief settle guards against an
+        // erroneous spurious launch.
+        Thread.sleep(SETTLE_MS)
         assertEquals(0, widgetRefreshScheduler.callCount)
         assertEquals(0, transcriptionScheduler.scheduledWalkIds.size)
     }
@@ -178,7 +194,10 @@ class WalkFinalizationObserverTest {
             ),
             endedAt = 5_000L,
         )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        awaitUntil {
+            transcriptionScheduler.scheduledWalkIds.isNotEmpty() &&
+                widgetRefreshScheduler.callCount >= 1
+        }
         assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
         assertEquals(1, widgetRefreshScheduler.callCount)
     }
@@ -198,7 +217,10 @@ class WalkFinalizationObserverTest {
         // dedup-by-walkId guard.
         stateFlow.value = active
         stateFlow.value = finished
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        awaitUntil { widgetRefreshScheduler.callCount >= 1 }
+        // Settle so a (buggy) second fire would have landed before we
+        // assert the dedup-by-walkId guard held it to exactly one.
+        Thread.sleep(SETTLE_MS)
         assertEquals(
             "transcription scheduled exactly once per walkId",
             listOf(walkId),
@@ -235,12 +257,7 @@ class WalkFinalizationObserverTest {
             ),
             endedAt = 200_000L,
         )
-        val deadline = System.currentTimeMillis() + 3_000L
-        while (fakeCollectiveService.recordedPosts.isEmpty() &&
-            System.currentTimeMillis() < deadline
-        ) {
-            Thread.sleep(50L)
-        }
+        awaitUntil { fakeCollectiveService.recordedPosts.isNotEmpty() }
         assertEquals(1, fakeCollectiveService.recordedPosts.size)
         val posted = fakeCollectiveService.recordedPosts.single()
         assertEquals(1, posted.walks)
@@ -266,7 +283,10 @@ class WalkFinalizationObserverTest {
             ),
             endedAt = 5_000L,
         )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        awaitUntil {
+            walkMetricsCache.computedWalkIds.isNotEmpty() &&
+                widgetRefreshScheduler.callCount >= 1
+        }
         assertEquals(listOf(walkId), walkMetricsCache.computedWalkIds)
         assertEquals(1, widgetRefreshScheduler.callCount)
     }
@@ -278,11 +298,16 @@ class WalkFinalizationObserverTest {
         // observer built in setUp() is fine to discard — we never
         // exercise it in this test.
         observerScope.coroutineContext[Job]?.cancel()
-        observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        observerScope = CoroutineScope(SupervisorJob() + TestRealTimeDispatcher.instance)
         val throwingCache = ThrowingWalkMetricsCache()
+        // Fresh CountingStateFlow over the same source so this rebuilt
+        // observer gets its own collector-attach handshake (independent
+        // processed counter; the setUp observer's collector is cancelled
+        // above).
+        val throwingObserved = CountingStateFlow(stateFlow)
         @Suppress("UNUSED_VARIABLE")
         val throwingObserver = WalkFinalizationObserver(
-            walkState = stateFlow,
+            walkState = throwingObserved,
             scope = observerScope,
             repository = repository,
             transcriptionScheduler = transcriptionScheduler,
@@ -292,14 +317,14 @@ class WalkFinalizationObserverTest {
             voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
             walkMetricsCache = throwingCache,
         )
-        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
+        awaitCollectorAttached(throwingObserved)
         val walkId = 271L
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
             endedAt = 1_000L,
         )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        awaitUntil { throwingCache.invocationCount >= 1 && widgetRefreshScheduler.callCount >= 1 }
         // The cache was invoked (and threw), but the rest of the
         // bundle still ran — widget refresh fires AFTER the cache hook
         // would have completed in the no-throw case, but it's BEFORE
@@ -324,7 +349,11 @@ class WalkFinalizationObserverTest {
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
             endedAt = 1_000L,
         )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        // Wait for the firing side-effect (widget refresh), proving
+        // runFinalize ran; the collective POST is separately gated by
+        // opt-in. Settle so a (buggy) POST would have landed too.
+        awaitUntil { widgetRefreshScheduler.callCount >= 1 }
+        Thread.sleep(SETTLE_MS)
         assertTrue(
             "collective should not POST when opt-in OFF; recorded=${fakeCollectiveService.recordedPosts}",
             fakeCollectiveService.recordedPosts.isEmpty(),
@@ -334,20 +363,20 @@ class WalkFinalizationObserverTest {
     }
 
     private companion object {
-        const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize"
-        // Cushion for VOICE_INSERT_GRACE_MS (200 ms) + collective-repo's
-        // launched POST coroutine + any CI thread contention. Bumped to
-        // 3 s in Stage 10-D after observing whichever test JUnit happens
-        // to run first in the class pays Robolectric class-init cost
-        // (~5 s on a cold JVM), eating into the in-flight runFinalize's
-        // hemisphere refresh + collective POST + widget schedule.
-        const val WAIT_FOR_GRACE_MS = 3_000L
-        // The observer's collector attaches asynchronously on
-        // Dispatchers.IO. Removing this delay (or shortening it
-        // significantly) WILL break tests on CI as the collector
-        // misses its first emission via StateFlow conflation. Verified
-        // against the regression — do not lower without re-testing.
-        const val COLLECTOR_ATTACH_WAIT_MS = 300L
+        // Failsafe ceiling for awaitUntil. The observer runs on
+        // [TestRealTimeDispatcher] (never starved), so side-effects land in
+        // milliseconds and awaitUntil returns the instant the predicate
+        // holds; this bound only bites on a real hang. Do NOT treat it as a
+        // tuned grace window — a wider bound can't fix a starvation race
+        // (that's what the dispatcher swap is for).
+        const val WAIT_FOR_OBSERVER_MS = 5_000L
+        // Brief settle to let a (buggy) duplicate/ungated side-effect land
+        // before a dedup/negative assertion checks the exact count.
+        const val SETTLE_MS = 150L
+        // Failsafe for the deterministic collector-attach handshake
+        // (CountingStateFlow.processed >= 1); returns the instant the
+        // initial Idle is consumed and the firstEmission latch is spent.
+        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 15_000L
     }
 }
 
