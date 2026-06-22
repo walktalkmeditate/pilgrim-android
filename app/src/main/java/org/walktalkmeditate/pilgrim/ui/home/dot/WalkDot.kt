@@ -17,8 +17,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -31,6 +34,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 private const val HALO_SCALE = 3.5f
 private const val HALO_PEAK_ALPHA = 0.15f
+// Padding around the core's own Canvas for the blurred drop shadow, so the
+// 2dp Gaussian blur + (1,2)dp offset render without clipping.
+private const val SHADOW_PAD_DP = 4f
 private const val ACTIVITY_RING_OFFSET_DP = 5f
 private const val ACTIVITY_STROKE_DP = 2f
 private const val SHARED_RING_OFFSET_DP = 12f
@@ -153,29 +159,36 @@ fun WalkDot(
             )
         }
 
-        // 3. Core dot — radial gradient from full color to 70% alpha,
-        // origin biased upper-left to read as 3D. Drop shadow drawn
-        // BEHIND the core matches iOS `.shadow(color: .ink.opacity(0.15),
-        // radius: 2, x: 1, y: 2)` — Compose Modifier.shadow doesn't
-        // apply to Canvas content directly, so we paint a soft ink
-        // circle offset (1, 2) before the core.
-        val shadowColor = pilgrimColors.ink.copy(alpha = 0.15f)
+        // 3a. Drop shadow — iOS `.shadow(color: .ink.opacity(0.15),
+        // radius: 2, x: 1, y: 2)`: a REAL Gaussian blur via
+        // BlurMaskFilter, not the old two-hard-circle approximation
+        // (which read as a crisp taupe disc behind the dot — the "ring"
+        // — and made the dot look like a 3D sticker rather than ink on
+        // paper). Drawn in its own slightly-larger Canvas so the blur +
+        // offset aren't clipped by the core's bounds, and BEFORE the core
+        // so it sits behind.
+        val shadowArgb = pilgrimColors.ink.copy(alpha = 0.15f).toArgb()
+        Canvas(Modifier.size((sizeDp + SHADOW_PAD_DP * 2f).dp)) {
+            val coreR = sizeDp.dp.toPx() / 2f
+            val cx = size.width / 2f + 1.dp.toPx()
+            val cy = size.height / 2f + 2.dp.toPx()
+            drawIntoCanvas { canvas ->
+                val paint = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    setColor(shadowArgb)
+                    maskFilter = android.graphics.BlurMaskFilter(
+                        2.dp.toPx(),
+                        android.graphics.BlurMaskFilter.Blur.NORMAL,
+                    )
+                }
+                canvas.nativeCanvas.drawCircle(cx, cy, coreR, paint)
+            }
+        }
+        // 3b. Core dot — radial gradient from full color to 70% alpha,
+        // origin biased upper-left to read as a soft 3D bulge (iOS parity).
         Canvas(Modifier.size(sizeDp.dp)) {
             val coreR = size.minDimension / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
-            // Drop shadow: opacity 0.15, offset (1, 2), soft 2px feather
-            // approximated by drawing two slightly larger faded circles.
-            val shadowCenter = Offset(center.x + 1.dp.toPx(), center.y + 2.dp.toPx())
-            drawCircle(
-                color = shadowColor.copy(alpha = 0.07f),
-                radius = coreR + 1.dp.toPx(),
-                center = shadowCenter,
-            )
-            drawCircle(
-                color = shadowColor,
-                radius = coreR,
-                center = shadowCenter,
-            )
             val biasedCenter = Offset(size.width * 0.4f, size.height * 0.35f)
             drawCircle(
                 brush = Brush.radialGradient(
