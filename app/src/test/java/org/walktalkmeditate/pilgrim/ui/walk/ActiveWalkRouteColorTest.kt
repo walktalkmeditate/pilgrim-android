@@ -8,8 +8,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.ui.theme.pilgrimDarkColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
-import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 
 /**
@@ -52,16 +52,23 @@ class ActiveWalkRouteColorTest {
         assertEquals(RouteSegmentColors.Fixed.walking, activeWalkRouteColor(SeasonalMarker.Imbolc, colors))
     }
 
-    @Test fun `route accent matches the vignette halo accent on a turning day`() {
-        SeasonalMarker.entries.forEach { marker ->
-            val haloAccent = turningAccentColor(marker, colors)
-            if (haloAccent != null) {
-                assertEquals(
-                    "route + halo must share one color on $marker",
-                    haloAccent,
-                    activeWalkRouteColor(marker, colors),
-                )
-            }
-        }
+    // The route accent equals the halo accent by construction —
+    // [activeWalkRouteColor] delegates to the same `turningAccentColor` the
+    // halo uses, so they cannot diverge. The per-cardinal assertions above
+    // pin the route to each `colors.turning*` token; the halo is pinned to
+    // the same tokens by `WalkDotColorTest` / `TurningColors` tests. No
+    // separate equality test is needed (an X-vs-X sweep would be tautological).
+
+    @Test fun `dark palette resolves each cardinal to its dark turning token`() {
+        // The resolver takes [PilgrimColors] as a parameter rather than
+        // reading the live theme, so it must honor whichever palette it is
+        // handed. The dark `turning*` tokens differ from the light ones;
+        // this proves the pass-through doesn't collapse to the light palette.
+        val dark = pilgrimDarkColors()
+        assertEquals(dark.turningJade, activeWalkRouteColor(SeasonalMarker.SpringEquinox, dark))
+        assertEquals(dark.turningGold, activeWalkRouteColor(SeasonalMarker.SummerSolstice, dark))
+        assertEquals(dark.turningClaret, activeWalkRouteColor(SeasonalMarker.AutumnEquinox, dark))
+        assertEquals(dark.turningIndigo, activeWalkRouteColor(SeasonalMarker.WinterSolstice, dark))
+        assertEquals(RouteSegmentColors.Fixed.walking, activeWalkRouteColor(null, dark))
     }
 }
