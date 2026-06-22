@@ -88,7 +88,16 @@ class WalkLifecycleObserverTest {
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observedFlow = CountingStateFlow(stateFlow)
-        observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // Unconfined (not Dispatchers.IO) so the observer's collector and
+        // its launched `handleVoiceStop` run synchronously on the thread
+        // that mutates `stateFlow.value`. The side effect therefore lands
+        // before the mutating line returns, so the deterministic waits
+        // below resolve immediately. On Dispatchers.IO the stop()+reset
+        // was a real background hop, and the wall-clock `withTimeout`
+        // raced IO-thread starvation on saturated CI runners (#161 bumped
+        // the bound 5s→15s and it still flaked — a wider timeout can't fix
+        // a starvation race; removing the hop does).
+        observerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val sweeper = OrphanRecordingSweeper(
             context = context,
             repository = repository,
@@ -225,7 +234,13 @@ class WalkLifecycleObserverTest {
         // Mirror the cold-start scenario: process boot, controller's state
         // is Idle, no recording was ever started. The observer's
         // firstEmission latch must skip this without invoking stop().
-        Thread.sleep(WAIT_FOR_OBSERVER_MS)
+        //
+        // setUp already awaited the firstEmission handshake (processed >= 1)
+        // and the observer runs on Unconfined, so the initial Idle has been
+        // consumed-and-skipped synchronously by the time we get here — no
+        // pending async stop can exist. (Previously this slept the full
+        // WAIT_FOR_OBSERVER_MS = 15s "to be sure," which the determinism
+        // change makes pointless dead time.)
         // No transition fired; nothing to stop. audioLevel stays 0 (the
         // recorder was never started). The real assertion: stop() was NOT
         // called as a side-effect — proven indirectly by no exception

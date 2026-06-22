@@ -87,11 +87,21 @@ class HomeViewModelTest {
         // Hemisphere setup — start clean each test so a prior Southern
         // override from a previous run doesn't leak through.
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
+        // Run BOTH the DataStore IO and the repository's WhileSubscribed
+        // stateIn on the test dispatcher so the whole
+        // override → DataStore → map → stateIn → VM.hemisphere chain
+        // resolves in runTest's virtual time. Previously the scope was
+        // Dispatchers.Default and the DataStore used its own real IO
+        // dispatcher, so emission delivery was wall-clock-bound and the
+        // Turbine `.test(timeout=…)` failsafe fired on saturated CI
+        // runners (the ci-realtime-withtimeout flake family). Determinism,
+        // not a wider timeout, is the fix.
+        hemisphereScope = CoroutineScope(SupervisorJob() + dispatcher)
         hemisphereDataStore = PreferenceDataStoreFactory.create(
+            scope = hemisphereScope,
             produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
         )
         fakeLocation = FakeLocationSource()
-        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         hemisphereRepo = HemisphereRepository(hemisphereDataStore, fakeLocation, hemisphereScope)
     }
 
