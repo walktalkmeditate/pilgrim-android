@@ -8,7 +8,6 @@ import android.media.AudioManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -31,6 +30,7 @@ import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -88,16 +88,17 @@ class WalkLifecycleObserverTest {
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observedFlow = CountingStateFlow(stateFlow)
-        // Unconfined (not Dispatchers.IO) so the observer's collector and
-        // its launched `handleVoiceStop` run synchronously on the thread
-        // that mutates `stateFlow.value`. The side effect therefore lands
-        // before the mutating line returns, so the deterministic waits
-        // below resolve immediately. On Dispatchers.IO the stop()+reset
-        // was a real background hop, and the wall-clock `withTimeout`
-        // raced IO-thread starvation on saturated CI runners (#161 bumped
-        // the bound 5s→15s and it still flaked — a wider timeout can't fix
-        // a starvation race; removing the hop does).
-        observerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        // TestRealTimeDispatcher (not Dispatchers.IO) — a cached pool of
+        // dedicated daemon threads that Default/IO-pool saturation can't
+        // starve. The observer's launched stop()+reset runs promptly even
+        // when Gradle saturates the runner with sibling test classes, so
+        // the wall-clock waits below resolve well within their failsafe
+        // bound. On Dispatchers.IO the wait raced pool starvation (#161
+        // bumped the bound 5s→15s and it still flaked — a wider timeout
+        // can't fix a starvation race; a never-starved dispatcher does).
+        // Canonical fix for the ci-realtime-withtimeout flake family — see
+        // [TestRealTimeDispatcher].
+        observerScope = CoroutineScope(SupervisorJob() + TestRealTimeDispatcher.instance)
         val sweeper = OrphanRecordingSweeper(
             context = context,
             repository = repository,
@@ -111,8 +112,8 @@ class WalkLifecycleObserverTest {
             orphanSweeper = sweeper,
         )
         // The observer's `init { scope.launch { walkState.collect } }`
-        // subscribes asynchronously on Dispatchers.IO and swallows its
-        // FIRST collected value unconditionally (the firstEmission latch
+        // subscribes asynchronously on its scope dispatcher and swallows
+        // its FIRST collected value unconditionally (the firstEmission latch
         // — at app start that's the cold-process Idle no-op). If a test
         // mutates stateFlow.value before the collector has consumed that
         // first value, StateFlow conflation collapses the real
@@ -235,12 +236,12 @@ class WalkLifecycleObserverTest {
         // is Idle, no recording was ever started. The observer's
         // firstEmission latch must skip this without invoking stop().
         //
-        // setUp already awaited the firstEmission handshake (processed >= 1)
-        // and the observer runs on Unconfined, so the initial Idle has been
-        // consumed-and-skipped synchronously by the time we get here — no
-        // pending async stop can exist. (Previously this slept the full
-        // WAIT_FOR_OBSERVER_MS = 15s "to be sure," which the determinism
-        // change makes pointless dead time.)
+        // setUp already awaited the firstEmission handshake (processed >= 1),
+        // so the initial Idle has been consumed-and-skipped before we get
+        // here — the latch is spent, and no terminal transition fires in
+        // this test, so no stop() can be pending. (Previously this slept the
+        // full WAIT_FOR_OBSERVER_MS = 15s "to be sure"; the handshake already
+        // guarantees it, so that was pure dead time.)
         // No transition fired; nothing to stop. audioLevel stays 0 (the
         // recorder was never started). The real assertion: stop() was NOT
         // called as a side-effect — proven indirectly by no exception
@@ -251,8 +252,9 @@ class WalkLifecycleObserverTest {
         // it must still be active (the observer must NOT have stopped it).
         val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
         startLiveRecordingFor(walkId)
-        Thread.sleep(50L)
-        // Recorder is still capturing (audioLevel > 0 after burst arrives).
+        // startLiveRecordingFor already blocks until audioLevel > 0 (it
+        // checks the burst arrived), so the recorder is provably capturing
+        // here — no sleep needed.
         assertTrue(
             "Cold-start observer must not interfere with subsequent recordings",
             voiceRecorder.audioLevel.value > 0f,
@@ -282,13 +284,13 @@ class WalkLifecycleObserverTest {
         // instant the collector consumes the initial Idle, so this only
         // bites on a wedged runner (a real bug — should fail).
         const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 15_000L
-        // Upper bound so slow CI runners under heavy load have
-        // headroom; the polling loops above exit as soon as the
-        // observer reacts, so on fast machines this never matters.
-        // Bumped from 5s after `Active to Idle (discard)` flaked twice
-        // post-PR-#153 — saturated GitHub runners can stall the
-        // `Dispatchers.IO`-launched observer handler past the 5s
-        // deadline before the recorder.stop() side-effect lands.
+        // Failsafe upper bound for the observer's side-effect waits
+        // (`audioLevel.first { it == 0f }` and the Finished-path INSERT
+        // poll). With the observer on [TestRealTimeDispatcher] its handler
+        // runs on a never-starved pool, so these resolve in milliseconds;
+        // the bound only bites if a side effect never lands (a real bug).
+        // Do NOT bump it — #161 tried 5s→15s and it flaked again; a wider
+        // timeout can't fix a starvation race, the dispatcher swap does.
         const val WAIT_FOR_OBSERVER_MS = 15_000L
     }
 }
