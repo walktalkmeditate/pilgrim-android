@@ -85,15 +85,17 @@
     <string name="home_journey_talked">%1$s talked</string>
     <string name="home_journey_meditated">%1$s meditated</string>
     <string name="home_journey_subtitle_walks">%1$s · %2$s</string>
-    <!-- iOS InkScrollView uses literal "<n> walks · <m> months" — never
-         singularized. Both quantities use the plural-word form to match
-         iOS verbatim while keeping the locale-substitution seam. -->
+    <!-- iOS InkScrollView.swift:168 renders the literal
+         "<n> walks · <m> months" with no singular form (so iOS shows
+         "1 walks · 1 months"). We deliberately diverge for correct English
+         grammar: the `one` form singularizes. The plural seam is kept for
+         locale substitution. -->
     <plurals name="home_journey_walks_count">
-        <item quantity="one">%1$d walks</item>
+        <item quantity="one">%1$d walk</item>
         <item quantity="other">%1$d walks</item>
     </plurals>
     <plurals name="home_journey_months">
-        <item quantity="one">%1$d months</item>
+        <item quantity="one">%1$d month</item>
         <item quantity="other">%1$d months</item>
     </plurals>
     <plurals name="home_journey_walks_with_talk">
