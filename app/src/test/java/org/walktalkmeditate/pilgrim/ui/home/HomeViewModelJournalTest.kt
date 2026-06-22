@@ -4,9 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.home
 import android.app.Application
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -31,6 +29,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -73,11 +72,11 @@ class HomeViewModelJournalTest {
             voiceRecordingDao = db.voiceRecordingDao(),
             walkPhotoDao = db.walkPhotoDao(),
         )
-        context.preferencesDataStoreFile(hemisphereStoreName).delete()
-        hemisphereDataStore = PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(hemisphereStoreName) },
-        )
-        hemisphereScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        // In-memory DataStore + test-dispatcher scope so the hemisphere
+        // chain resolves in runTest virtual time — canonical fix for the
+        // ci-realtime-withtimeout flake family (see [FakePreferencesDataStore]).
+        hemisphereScope = CoroutineScope(SupervisorJob() + dispatcher)
+        hemisphereDataStore = FakePreferencesDataStore()
         hemisphereRepo = HemisphereRepository(
             hemisphereDataStore,
             FakeLocationSource(),
@@ -91,7 +90,6 @@ class HomeViewModelJournalTest {
         vm?.viewModelScope?.coroutineContext?.get(Job)?.cancel()
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
-        context.preferencesDataStoreFile(hemisphereStoreName).delete()
         Dispatchers.resetMain()
     }
 
@@ -144,7 +142,4 @@ class HomeViewModelJournalTest {
             ioDispatcher = dispatcher,
         )
     }
-
-    private val hemisphereStoreName: String =
-        "home-vm-journal-hemi-${java.util.UUID.randomUUID()}"
 }
