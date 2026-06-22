@@ -610,6 +610,11 @@ fun ActiveWalkScreen(
         PilgrimMap(
             points = routePoints,
             followLatest = true,
+            // iOS parity `ActiveWalkView.swift:597@v1.6.0` — tint the live
+            // route the turning's cardinal accent on a solstice/equinox
+            // (the same color the celestial-vignette halo wears); fixed
+            // walking moss otherwise.
+            walkingColor = activeWalkRouteColor(activeTurning, pilgrimColors),
             initialCenter = initialCameraCenter,
             // Match map bottom-inset to the visible sheet height so the
             // user puck stays just above the sheet in BOTH detents.

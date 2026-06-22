@@ -32,8 +32,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Terrain
+import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
+import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -108,6 +111,14 @@ internal fun PilgrimMap(
     // Caller opt-in to keep ActiveWalk + WalkShare on the faster
     // SurfaceView backend by default.
     textureBackend: Boolean = false,
+    // iOS parity `ActiveWalkView.swift:597@v1.6.0` —
+    // `walkingColor: activeTurning?.uiColor ?? .moss`. The single-polyline
+    // (live walk) route line draws in this color; defaults to the fixed
+    // walking moss. Active Walk passes the turning's cardinal accent on a
+    // solstice/equinox so the route matches the celestial-vignette halo.
+    // Ignored by the segment path (Summary / Share), which colors per
+    // activity via [segmentColors].
+    walkingColor: Color = RouteSegmentColors.Fixed.walking,
     // iOS parity `ActiveWalkView.swift:574-659@db4196e` — proximity pin
     // layer (whisper + cairn). Already-filtered list from
     // [ProximityPinFilter]; this composable just renders + wires the tap
@@ -143,10 +154,11 @@ internal fun PilgrimMap(
     val darkMode = LocalPilgrimDarkTheme.current
     val styleUri = if (darkMode) Style.DARK else Style.LIGHT
     // iOS parity `PilgrimMapView.swift:321-329@v1.6.0` — the route line
-    // is the FIXED walking color (`UIColor.moss`), constant across
-    // light/dark/constellation. Was a darkMode-dependent stone hex pair
-    // that drifted the route color with appearance.
-    val lineColor = 0xFF7A8B6F.toInt()
+    // is constant across light/dark/constellation (was a darkMode-
+    // dependent stone hex pair that drifted with appearance). Defaults to
+    // the fixed walking moss; on a turning day Active Walk hands us the
+    // cardinal accent via [walkingColor] (`ActiveWalkView.swift:597`).
+    val lineColor = walkingColor.toArgb()
     // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — the user puck
     // is the seasonal/appearance `stone` color, NOT Mapbox blue. Read
     // it from the live theme (`pilgrimColors.stone`) rather than the
@@ -1093,6 +1105,22 @@ private fun cameraOptionsForFitBounds(
     val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
     return camera.toBuilder().zoom(clampedZoom).build()
 }
+
+/**
+ * iOS parity `ActiveWalkView.swift:597@v1.6.0` —
+ * `walkingColor: activeTurning?.uiColor ?? .moss`. The live walk's route
+ * walking color is the turning's cardinal accent on a solstice/equinox
+ * (the SAME color the celestial-vignette halo wears, so the route and the
+ * chip corona read as one), and the fixed walking moss on every other day.
+ * Cross-quarter and non-turning days return null from [turningAccentColor]
+ * and fall through to moss.
+ *
+ * [turning] should already be hemisphere-corrected by the caller (the
+ * Active Walk screen resolves it via `turningMarkerForToday().forHemisphere`),
+ * matching the device-hemisphere source used by the watermark + halo.
+ */
+internal fun activeWalkRouteColor(turning: SeasonalMarker?, colors: PilgrimColors): Color =
+    turningAccentColor(turning, colors) ?: RouteSegmentColors.Fixed.walking
 
 private const val POLYLINE_WIDTH_DP = 4.0
 private const val FOLLOW_ZOOM = 16.0
