@@ -206,16 +206,37 @@ class TranscriptionRunnerTest {
         assertNull(rows.getValue(second.id).transcription)
     }
 
-    // The all-failed signal is gated on `pending.isNotEmpty()`: a walk
-    // with nothing left to transcribe is a no-op success, not a failure.
+    // The all-failed signal is gated on `attempted > 0`: a walk with
+    // nothing to transcribe is a no-op success, not a failure. No
+    // recordings at all → pending is structurally empty (not a filtering
+    // artifact of an already-transcribed row).
     @Test
-    fun `no pending recordings returns success zero, not failure`() = runBlocking {
+    fun `empty pending returns success zero, not failure`() = runBlocking {
         val walk = repository.startWalk(startTimestamp = 0L)
-        insertRecording(walk.id, transcription = "already done")
 
         val outcome = runner.transcribePending(walk.id)
 
         assertEquals(Result.success(0), outcome)
+    }
+
+    // A batch where every row is SKIPPED for a data-integrity reason
+    // (blank path here; the path-escape guard behaves identically) never
+    // reaches the engine, so attempted==0 → success(0), NOT the all-failed
+    // path. Reporting "all failed" + terminal WorkManager failure for rows
+    // that were never attempted would be a false signal.
+    @Test
+    fun `all recordings skipped for blank path report success, not all-failed`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id, fileRelativePath = "")
+        insertRecording(walk.id, fileRelativePath = "")
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertEquals(Result.success(0), outcome)
+        assertTrue(
+            "engine must not be reached for blank-path rows",
+            engine.transcribeCalls.isEmpty(),
+        )
     }
 
     // No-speech is a *successful* transcription (commits the placeholder
@@ -240,6 +261,7 @@ class TranscriptionRunnerTest {
         walkId: Long,
         transcription: String? = null,
         durationMillis: Long = 5_000L,
+        fileRelativePath: String? = null,
     ): VoiceRecording = runBlocking {
         // Strictly-monotonic timestamps so the DAO's
         // ORDER BY start_timestamp ASC produces deterministic batch
@@ -251,7 +273,7 @@ class TranscriptionRunnerTest {
             startTimestamp = start,
             endTimestamp = end,
             durationMillis = durationMillis,
-            fileRelativePath = "recordings/test-${start}.wav",
+            fileRelativePath = fileRelativePath ?: "recordings/test-${start}.wav",
             transcription = transcription,
         )
         val id = repository.recordVoice(recording)

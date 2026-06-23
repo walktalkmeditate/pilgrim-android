@@ -6,6 +6,7 @@ import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 
 /**
@@ -25,11 +26,17 @@ class TranscriptionRunner @Inject constructor(
     suspend fun transcribePending(walkId: Long): Result<Int> {
         val pending = try {
             repository.voiceRecordingsFor(walkId).filter { it.transcription == null }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (t: Throwable) {
             return Result.failure(t)
         }
         val filesRoot = context.filesDir.toPath().toAbsolutePath().normalize()
         var count = 0
+        // Recordings that actually reached the engine. A row skipped for a
+        // data-integrity reason (blank/escaping path) is NOT an attempt, so
+        // it must not make an all-skipped batch look like an all-failed one.
+        var attempted = 0
         for (recording in pending) {
             if (recording.fileRelativePath.isBlank()) {
                 // A blank path resolves to filesDir itself (a directory),
@@ -47,6 +54,7 @@ class TranscriptionRunner @Inject constructor(
                 Log.w(TAG, "skipping recording ${recording.id}: path escapes filesDir")
                 continue
             }
+            attempted++
             val outcome = engine.transcribe(absolute)
             outcome.fold(
                 onSuccess = { result ->
@@ -58,6 +66,8 @@ class TranscriptionRunner @Inject constructor(
                             recording.copy(transcription = text, wordsPerMinute = wpm),
                         )
                         count++
+                    } catch (ce: CancellationException) {
+                        throw ce
                     } catch (t: Throwable) {
                         Log.w(TAG, "DB update failed for recording ${recording.id}", t)
                     }
@@ -74,14 +84,17 @@ class TranscriptionRunner @Inject constructor(
                 },
             )
         }
-        // Honest feedback (AF32): pending work that produced zero
+        // Honest feedback (AF32): work that was attempted but produced zero
         // successes is a failure, not a `success(0)` that reads as
-        // "completed". A no-speech recording counts as a success (it
-        // commits the placeholder), so this only fires when every
-        // recording genuinely failed to transcribe or persist.
-        return if (count == 0 && pending.isNotEmpty()) {
-            Log.w(TAG, "all ${pending.size} pending transcriptions failed")
-            Result.failure(AllRecordingsFailedException(pending.size))
+        // "completed". A no-speech recording counts as a success (it commits
+        // the placeholder), so this only fires when every *attempted*
+        // recording failed to transcribe or persist. Gating on `attempted`
+        // (not `pending`) means an all-skipped batch (every row had a
+        // blank/escaping path) reports success(0) — those are data-integrity
+        // skips already logged per-row, not transcription failures.
+        return if (count == 0 && attempted > 0) {
+            Log.w(TAG, "all $attempted attempted transcriptions failed")
+            Result.failure(AllRecordingsFailedException(attempted))
         } else {
             Result.success(count)
         }
@@ -103,11 +116,12 @@ class TranscriptionRunner @Inject constructor(
 }
 
 /**
- * Raised by [TranscriptionRunner.transcribePending] when there were
- * pending recordings but EVERY one failed to transcribe (or persist).
- * Surfaced as a [Result.failure] so [TranscriptionWorker] reports the
- * work as failed rather than silently succeeded — iOS PR #45 AF24/AF32
- * honest-feedback parity.
+ * Raised by [TranscriptionRunner.transcribePending] when at least one
+ * recording was attempted but EVERY attempt failed to transcribe (or
+ * persist). Surfaced as a [Result.failure] so [TranscriptionWorker]
+ * reports the work as failed rather than silently succeeded — iOS PR #45
+ * AF32 honest-feedback parity. [attempted] is the number of recordings
+ * that reached the engine (skipped data-integrity rows are excluded).
  */
-class AllRecordingsFailedException(val attempted: Int) :
-    Exception("all $attempted pending transcriptions failed")
+internal class AllRecordingsFailedException(val attempted: Int) :
+    Exception("all $attempted attempted transcriptions failed")
