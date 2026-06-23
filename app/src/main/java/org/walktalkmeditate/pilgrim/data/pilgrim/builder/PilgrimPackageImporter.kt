@@ -120,12 +120,6 @@ class PilgrimPackageImporter @Inject constructor(
         }
     }
 
-    /**
-     * Backwards-compat shim for callers that still want a plain Int.
-     * iOS callers using v1.5 import flow continue working unchanged.
-     */
-    suspend fun importCount(uri: Uri): Int = import(uri).total
-
     /** Stream-copy + unzip. Throws `InvalidPackage` if the URI can't be opened or the ZIP is malformed. */
     private fun unzipTo(uri: Uri, tempDir: File) {
         val inputStream = context.contentResolver.openInputStream(uri)
