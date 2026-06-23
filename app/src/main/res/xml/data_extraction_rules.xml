@@ -8,5 +8,12 @@
     <device-transfer>
         <include domain="database" path="."/>
         <include domain="file" path="."/>
+        <!-- The collective-counter device token is a persistent per-install
+             identifier used for server-side rate-limit fairness. Letting it
+             survive a device-to-device transfer would carry the old
+             install's identity onto the new device (and defeat the
+             fairness). Exclude it so the new device re-mints a fresh token.
+             (exclude takes precedence over the include above.) -->
+        <exclude domain="file" path="datastore/share_device_token.preferences_pb"/>
     </device-transfer>
 </data-extraction-rules>
