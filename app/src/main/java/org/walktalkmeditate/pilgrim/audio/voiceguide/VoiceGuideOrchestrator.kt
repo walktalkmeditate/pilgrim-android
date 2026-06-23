@@ -192,13 +192,16 @@ class VoiceGuideOrchestrator @Inject constructor(
                             val silenceSec =
                                 if (exitingMeditation) randomPostMeditationSilenceSec() else 0
                             exitingMeditation = false
-                            // iOS parity `VoiceGuideManagement.startGuiding`
-                            // sets `isActive = true; isPaused = false` and
-                            // `packName` resolves to the pack name. A fresh
-                            // walk scheduler must start un-paused so the
-                            // pause flag from a prior walk doesn't carry
-                            // over (iOS `stopGuiding` also resets it).
-                            _isPaused.value = false
+                            // Do NOT reset `_isPaused` here. The walk-end
+                            // branch (Idle/Finished/Paused, below) already
+                            // clears it so a fresh walk starts un-paused
+                            // (iOS `stopGuiding` parity). Resetting on every
+                            // Active spawn ALSO fired on a Meditating → Active
+                            // resume, force-resuming a guide the user had
+                            // manually paused (AF24). `_isPaused` is only ever
+                            // set by the user — meditation cancels the walk
+                            // job, it never pauses — so a pause surviving into
+                            // this spawn is a user pause to preserve.
                             _activePackName.value = pack.name
                             walkJob = scope.launch {
                                 try {

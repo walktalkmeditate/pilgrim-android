@@ -223,6 +223,86 @@ class VoiceGuideOrchestratorPauseTest {
         }
     }
 
+    // AF24 (iOS PR #45): ending a meditation must not force-resume a voice
+    // guide the user had manually paused. The Meditating→Active resume used
+    // to reset isPaused on the fresh walk-scheduler spawn; walk-end already
+    // clears it for fresh-walk parity, so the spawn-time reset only clobbered
+    // a live user pause.
+    @Test fun `ending meditation preserves a user-initiated pause`() = runTest {
+        val pk = pack()
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orch = orchestrator(walkState, selectedPackId, s)
+        try {
+            orch.start()
+            runCurrent()
+            assertFalse(orch.isPaused.value)
+
+            // User manually pauses the guide mid-walk.
+            orch.pause()
+            runCurrent()
+            assertTrue(orch.isPaused.value)
+
+            // User starts a meditation, then returns to the walk.
+            walkState.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+            runCurrent()
+            walkState.value = WalkState.Active(acc)
+            runCurrent()
+
+            // The pause must survive the meditation round-trip.
+            assertTrue(
+                "ending meditation force-resumed a user-paused guide",
+                orch.isPaused.value,
+            )
+        } finally {
+            s.cancel()
+        }
+    }
+
+    // AF24 companion: removing the spawn-time reset makes the walk-end branch
+    // (Idle/Finished/Paused) the *sole* thing that clears `_isPaused` for a
+    // fresh walk. That invariant is load-bearing — pin it so a future edit to
+    // the walk-end reset breaks a test instead of silently shipping walks that
+    // start paused. (iOS `stopGuiding` resets the pause at the session boundary.)
+    @Test fun `finishing a paused walk resets isPaused so the next walk starts un-paused`() = runTest {
+        val pk = pack()
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orch = orchestrator(walkState, selectedPackId, s)
+        try {
+            orch.start()
+            runCurrent()
+
+            // User pauses, then the walk ends.
+            orch.pause()
+            runCurrent()
+            assertTrue(orch.isPaused.value)
+
+            walkState.value = WalkState.Finished(acc, endedAt = 5_000L)
+            runCurrent()
+            assertFalse(
+                "walk-end must clear the user pause (iOS stopGuiding parity)",
+                orch.isPaused.value,
+            )
+
+            // A fresh walk begins — it must start un-paused.
+            walkState.value = WalkState.Active(acc)
+            runCurrent()
+            assertFalse(
+                "a fresh walk after a paused-then-finished walk must start un-paused",
+                orch.isPaused.value,
+            )
+        } finally {
+            s.cancel()
+        }
+    }
+
     private class FixedClock(private var millis: Long = 1_700_000_000_000L) : Clock {
         override fun now(): Long = millis
     }
