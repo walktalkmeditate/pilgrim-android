@@ -74,7 +74,17 @@ class TranscriptionRunner @Inject constructor(
                 },
             )
         }
-        return Result.success(count)
+        // Honest feedback (AF32): pending work that produced zero
+        // successes is a failure, not a `success(0)` that reads as
+        // "completed". A no-speech recording counts as a success (it
+        // commits the placeholder), so this only fires when every
+        // recording genuinely failed to transcribe or persist.
+        return if (count == 0 && pending.isNotEmpty()) {
+            Log.w(TAG, "all ${pending.size} pending transcriptions failed")
+            Result.failure(AllRecordingsFailedException(pending.size))
+        } else {
+            Result.success(count)
+        }
     }
 
     private fun computeWpm(text: String, durationMillis: Long): Double? {
@@ -91,3 +101,13 @@ class TranscriptionRunner @Inject constructor(
         private val WORD_SPLIT = Regex("\\s+")
     }
 }
+
+/**
+ * Raised by [TranscriptionRunner.transcribePending] when there were
+ * pending recordings but EVERY one failed to transcribe (or persist).
+ * Surfaced as a [Result.failure] so [TranscriptionWorker] reports the
+ * work as failed rather than silently succeeded — iOS PR #45 AF24/AF32
+ * honest-feedback parity.
+ */
+class AllRecordingsFailedException(val attempted: Int) :
+    Exception("all $attempted pending transcriptions failed")

@@ -180,6 +180,60 @@ class TranscriptionRunnerTest {
         assertEquals(3, outcome.getOrNull())
     }
 
+    // AF32 (iOS PR #45): when EVERY pending recording fails, the batch
+    // must not report success(0) — that reads as "completed" and the
+    // worker would mark the work succeeded. Report a failure carrying the
+    // attempted count so the worker surfaces it honestly instead.
+    @Test
+    fun `all pending failing returns failure, not success-zero`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val first = insertRecording(walk.id)
+        val second = insertRecording(walk.id)
+        engine.failure = IOException("boom") // every transcribe fails
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertTrue("expected failure, was $outcome", outcome.isFailure)
+        val error = outcome.exceptionOrNull()
+        assertTrue(
+            "expected AllRecordingsFailedException, was $error",
+            error is AllRecordingsFailedException,
+        )
+        assertEquals(2, (error as AllRecordingsFailedException).attempted)
+        // Nothing was written.
+        val rows = repository.voiceRecordingsFor(walk.id).associateBy { it.id }
+        assertNull(rows.getValue(first.id).transcription)
+        assertNull(rows.getValue(second.id).transcription)
+    }
+
+    // The all-failed signal is gated on `pending.isNotEmpty()`: a walk
+    // with nothing left to transcribe is a no-op success, not a failure.
+    @Test
+    fun `no pending recordings returns success zero, not failure`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id, transcription = "already done")
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertEquals(Result.success(0), outcome)
+    }
+
+    // No-speech is a *successful* transcription (commits the placeholder
+    // + increments the count), so an all-no-speech batch is success, not
+    // the all-failed path.
+    @Test
+    fun `all no-speech recordings still report success`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id)
+        insertRecording(walk.id)
+        engine.resultText = "" // blank → NO_SPEECH_PLACEHOLDER, counts as processed
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertTrue("no-speech must not be treated as failure", outcome.isSuccess)
+        assertEquals(2, outcome.getOrNull())
+    }
+
     private val timestampCounter = AtomicLong(1_000_000L)
 
     private fun insertRecording(
