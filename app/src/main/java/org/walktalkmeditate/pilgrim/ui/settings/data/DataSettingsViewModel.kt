@@ -234,6 +234,7 @@ class DataSettingsViewModel @Inject constructor(
                 added = summary.added,
                 replaced = summary.replaced,
                 archived = summary.archived,
+                skipped = summary.skipped,
             )
         }
     }
@@ -278,6 +279,12 @@ sealed interface PilgrimImportState {
         val added: Int,
         val replaced: Int,
         val archived: Int,
+        /**
+         * Walk files that couldn't be decoded and were skipped. Appended
+         * to the success Snackbar so a partial import isn't reported as an
+         * unqualified success (iOS PR #45 AF28).
+         */
+        val skipped: Int = 0,
     ) : PilgrimImportState {
         val walkCount: Int get() = added + replaced + archived
     }
