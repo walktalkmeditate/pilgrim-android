@@ -223,6 +223,45 @@ class VoiceGuideOrchestratorPauseTest {
         }
     }
 
+    // AF24 (iOS PR #45): ending a meditation must not force-resume a voice
+    // guide the user had manually paused. The Meditating→Active resume used
+    // to reset isPaused on the fresh walk-scheduler spawn; walk-end already
+    // clears it for fresh-walk parity, so the spawn-time reset only clobbered
+    // a live user pause.
+    @Test fun `ending meditation preserves a user-initiated pause`() = runTest {
+        val pk = pack()
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val orch = orchestrator(walkState, selectedPackId, s)
+        try {
+            orch.start()
+            runCurrent()
+            assertFalse(orch.isPaused.value)
+
+            // User manually pauses the guide mid-walk.
+            orch.pause()
+            runCurrent()
+            assertTrue(orch.isPaused.value)
+
+            // User starts a meditation, then returns to the walk.
+            walkState.value = WalkState.Meditating(acc, meditationStartedAt = 2_000L)
+            runCurrent()
+            walkState.value = WalkState.Active(acc)
+            runCurrent()
+
+            // The pause must survive the meditation round-trip.
+            assertTrue(
+                "ending meditation force-resumed a user-paused guide",
+                orch.isPaused.value,
+            )
+        } finally {
+            s.cancel()
+        }
+    }
+
     private class FixedClock(private var millis: Long = 1_700_000_000_000L) : Clock {
         override fun now(): Long = millis
     }
