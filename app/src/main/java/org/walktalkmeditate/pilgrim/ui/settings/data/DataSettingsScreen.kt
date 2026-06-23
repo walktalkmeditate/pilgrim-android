@@ -66,6 +66,7 @@ fun DataSettingsScreen(
     val pilgrimExportPartialMsg = stringResource(R.string.data_pilgrim_export_partial)
     val pilgrimImportImportedOne = stringResource(R.string.data_pilgrim_import_imported_one)
     val pilgrimImportImportedManyTpl = stringResource(R.string.data_pilgrim_import_imported_many)
+    val pilgrimImportSkippedSuffixTpl = stringResource(R.string.data_pilgrim_import_skipped_suffix)
     val pilgrimImportUnsupportedMsg = stringResource(R.string.data_pilgrim_import_failed_unsupported_version)
     val pilgrimImportGenericFailedMsg = stringResource(R.string.data_pilgrim_import_failed_generic)
 
@@ -153,9 +154,14 @@ fun DataSettingsScreen(
     LaunchedEffect(pilgrimImportState) {
         when (val state = pilgrimImportState) {
             is PilgrimImportState.Imported -> {
-                val message = when (state.walkCount) {
+                val base = when (state.walkCount) {
                     1 -> pilgrimImportImportedOne
                     else -> String.format(java.util.Locale.US, pilgrimImportImportedManyTpl, state.walkCount)
+                }
+                val message = if (state.skipped > 0) {
+                    base + String.format(java.util.Locale.US, pilgrimImportSkippedSuffixTpl, state.skipped)
+                } else {
+                    base
                 }
                 scope.launch { snackbarHostState.showSnackbar(message) }
             }

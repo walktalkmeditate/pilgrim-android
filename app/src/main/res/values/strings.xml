@@ -784,6 +784,7 @@
     <string name="data_pilgrim_export_partial">Some photos couldn\'t be embedded — they may have been deleted.</string>
     <string name="data_pilgrim_import_imported_one">1 walk imported.</string>
     <string name="data_pilgrim_import_imported_many">%1$d walks imported.</string>
+    <string name="data_pilgrim_import_skipped_suffix">" (%1$d skipped)"</string>
     <string name="data_pilgrim_import_failed_unsupported_version">Unsupported file version. Update Pilgrim and try again.</string>
     <string name="data_pilgrim_import_failed_generic">Couldn\'t read the archive — please try again.</string>
     <!-- Stage 10-I: Journey viewer -->

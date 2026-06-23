@@ -66,6 +66,13 @@ class PilgrimPackageImporter @Inject constructor(
         val added: Int,
         val replaced: Int,
         val archived: Int,
+        /**
+         * Walk files present in the archive that could not be decoded and
+         * were skipped. Surfaced so a partial import isn't reported as an
+         * unqualified success — iOS PR #45 AF28 honest-feedback parity.
+         * Excluded from [total] (those are the walks that actually landed).
+         */
+        val skipped: Int = 0,
     ) {
         val total: Int get() = added + replaced + archived
     }
@@ -88,10 +95,10 @@ class PilgrimPackageImporter @Inject constructor(
             if (manifest.schemaVersion != PilgrimSchema.VERSION) {
                 throw PilgrimPackageError.UnsupportedSchemaVersion(manifest.schemaVersion)
             }
-            val walks = readWalks(tempDir)
+            val readResult = readWalks(tempDir)
             val archivedEntries = manifest.archived ?: emptyList()
             val isTended = manifest.isTended
-            val insertResult = insertWalks(walks, overwriteByUuid = isTended)
+            val insertResult = insertWalks(readResult.walks, overwriteByUuid = isTended)
             val archivedCount = if (archivedEntries.isNotEmpty()) {
                 applyArchivedEntries(archivedEntries)
             } else 0
@@ -99,6 +106,7 @@ class PilgrimPackageImporter @Inject constructor(
                 added = insertResult.added,
                 replaced = insertResult.replaced,
                 archived = archivedCount,
+                skipped = readResult.decodeFailures,
             )
         } catch (e: CancellationException) {
             throw e
@@ -173,22 +181,16 @@ class PilgrimPackageImporter @Inject constructor(
         }
     }
 
-    private fun readWalks(tempDir: File): List<PilgrimWalk> {
+    private fun readWalks(tempDir: File): ReadWalksResult {
         val walksDir = File(tempDir, "walks")
         if (!walksDir.exists() || !walksDir.isDirectory) {
             // No walks dir — opted-into-import an empty archive.
             // Treat as zero walks rather than InvalidPackage.
-            return emptyList()
+            return ReadWalksResult(emptyList(), decodeFailures = 0)
         }
-        val files = walksDir.listFiles { _, name -> name.endsWith(".json") } ?: return emptyList()
-        return files.mapNotNull { file ->
-            try {
-                json.decodeFromString(PilgrimWalk.serializer(), file.readText())
-            } catch (e: Throwable) {
-                Log.w(TAG, "Skipping ${file.name}: ${e.message}")
-                null
-            }
-        }
+        val files = walksDir.listFiles { _, name -> name.endsWith(".json") }
+            ?: return ReadWalksResult(emptyList(), decodeFailures = 0)
+        return decodeWalkFiles(files.toList(), json)
     }
 
     /** Tracks per-uuid insertion outcome from [insertWalks]. */
@@ -380,4 +382,32 @@ class PilgrimPackageImporter @Inject constructor(
         const val TAG = "PilgrimPackageImporter"
         const val COPY_BUFFER_BYTES = 8 * 1024
     }
+}
+
+/** Outcome of decoding the JSON files in an archive's `walks/` directory. */
+internal data class ReadWalksResult(
+    val walks: List<PilgrimWalk>,
+    val decodeFailures: Int,
+)
+
+/**
+ * Decode each walk JSON file, counting the ones that fail. A failed
+ * decode is skipped (not fatal) so a single corrupt file doesn't abort
+ * the whole import — but the count is returned so the caller can report
+ * the partial import honestly (AF28) instead of silently dropping walks.
+ * Extracted from [PilgrimPackageImporter.readWalks] so the skip-counting
+ * is unit-testable without building a full archive.
+ */
+internal fun decodeWalkFiles(files: List<File>, json: Json): ReadWalksResult {
+    var decodeFailures = 0
+    val walks = files.mapNotNull { file ->
+        try {
+            json.decodeFromString(PilgrimWalk.serializer(), file.readText())
+        } catch (e: Throwable) {
+            Log.w("PilgrimPackageImporter", "Skipping ${file.name}: ${e.message}")
+            decodeFailures++
+            null
+        }
+    }
+    return ReadWalksResult(walks, decodeFailures)
 }
