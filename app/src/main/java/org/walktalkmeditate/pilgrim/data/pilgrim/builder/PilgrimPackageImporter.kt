@@ -44,7 +44,9 @@ import org.walktalkmeditate.pilgrim.di.PilgrimJson
  *   customPromptStyles) are dropped silently.
  * - Per-file decode failures inside the archive's `walks/` directory skip the file
  *   with a log; the import continues with the rest.
- * - Duplicate uuid (already-imported walk) → skipped silently.
+ * - Duplicate uuid (already in the DB, or repeated within the archive) →
+ *   skipped silently, not counted. A walk that decodes but fails to INSERT
+ *   is counted in `ImportSummary.skipped` (honest partial-import reporting).
  */
 @Singleton
 class PilgrimPackageImporter @Inject constructor(
@@ -67,10 +69,12 @@ class PilgrimPackageImporter @Inject constructor(
         val replaced: Int,
         val archived: Int,
         /**
-         * Walk files present in the archive that could not be decoded and
-         * were skipped. Surfaced so a partial import isn't reported as an
-         * unqualified success — iOS PR #45 AF28 honest-feedback parity.
-         * Excluded from [total] (those are the walks that actually landed).
+         * Walks present in the archive that did NOT land: files that
+         * couldn't be decoded PLUS walks that decoded but failed to insert
+         * (child-invariant violation, unique-uuid clash, etc.). Surfaced so
+         * a partial import isn't reported as an unqualified success — iOS
+         * PR #45 AF28 honest-feedback parity. Excluded from [total] (those
+         * are the walks that actually landed).
          */
         val skipped: Int = 0,
     ) {
@@ -106,7 +110,7 @@ class PilgrimPackageImporter @Inject constructor(
                 added = insertResult.added,
                 replaced = insertResult.replaced,
                 archived = archivedCount,
-                skipped = readResult.decodeFailures,
+                skipped = readResult.decodeFailures + insertResult.failed,
             )
         } catch (e: CancellationException) {
             throw e
@@ -187,91 +191,112 @@ class PilgrimPackageImporter @Inject constructor(
         return decodeWalkFiles(files.toList(), json)
     }
 
-    /** Tracks per-uuid insertion outcome from [insertWalks]. */
-    private data class InsertResult(val added: Int, val replaced: Int)
+    /**
+     * Tracks per-uuid insertion outcome from [insertWalks]. [failed] is
+     * walks that decoded but could not be inserted (a child-entity invariant
+     * violation, a degenerate insert id, etc.); surfaced via
+     * [ImportSummary.skipped] so they aren't silently dropped.
+     */
+    private data class InsertResult(val added: Int, val replaced: Int, val failed: Int)
 
     /**
-     * Single Room transaction. Each walk:
+     * Each walk is imported in its OWN top-level Room transaction (see the
+     * inline note on why nesting under one batch transaction is unsafe on
+     * framework SQLite). Per walk:
      *  - If [overwriteByUuid] (tended file) and uuid already in DB:
-     *    delete the existing walk first, then insert the new version.
-     *    Counts as `replaced`. iOS parity v1.6.0 — the web editor
-     *    already applied modifications to the per-walk JSON payload,
-     *    so on import we honor those edits by replacing in place.
+     *    delete the existing walk first, then insert the new version, both
+     *    inside the same transaction. Counts as `replaced`. iOS parity
+     *    v1.6.0 — the web editor already applied modifications to the per-walk
+     *    JSON payload, so on import we honor those edits by replacing in place.
      *  - Otherwise, skip if uuid already in DB (idempotent re-import).
      *  - Insert walk row (Room returns the autogen id).
      *  - Bulk-insert child entities with `walkId = newId`.
+     * A walk whose transaction throws is rolled back in full and counted in
+     * `failed`; sibling walks already committed are unaffected.
      */
     private suspend fun insertWalks(walks: List<PilgrimWalk>, overwriteByUuid: Boolean): InsertResult {
-        if (walks.isEmpty()) return InsertResult(0, 0)
+        if (walks.isEmpty()) return InsertResult(0, 0, 0)
+
+        val walkDao = database.walkDao()
+        val routeDao = database.routeDataSampleDao()
+        val waypointDao = database.waypointDao()
+        val eventDao = database.walkEventDao()
+        val activityDao = database.activityIntervalDao()
+        val voiceDao = database.voiceRecordingDao()
+        val photoDao = database.walkPhotoDao()
+
+        // uuids already in the DB (skip / replace decision) and uuids handled
+        // earlier in THIS archive (so a malformed archive listing the same
+        // uuid twice is handled once, not double-replaced).
+        val existingUuids = walkDao.getAllUuids().toHashSet()
+        val processedInBatch = HashSet<String>()
 
         var added = 0
         var replaced = 0
-        database.withTransaction {
-            val walkDao = database.walkDao()
-            val routeDao = database.routeDataSampleDao()
-            val waypointDao = database.waypointDao()
-            val eventDao = database.walkEventDao()
-            val activityDao = database.activityIntervalDao()
-            val voiceDao = database.voiceRecordingDao()
-            val photoDao = database.walkPhotoDao()
+        var failed = 0
 
-            // Pre-fetch existing uuids to skip duplicates without
-            // per-walk DB hits.
-            val existingUuids = walkDao.getAllUuids().toHashSet()
-
-            for (pilgrimWalk in walks) {
-                val alreadyPresent = pilgrimWalk.id in existingUuids
-                if (alreadyPresent && !overwriteByUuid) {
-                    Log.d(TAG, "Skipping duplicate walk uuid=${pilgrimWalk.id}")
-                    continue
-                }
-                if (alreadyPresent && overwriteByUuid) {
-                    // Tended file: the editor applied edits to the JSON
-                    // payload; delete the stale Room row(s) so child
-                    // entities cascade away, then re-insert the new
-                    // version. Schema FKs handle the child cascade.
-                    walkDao.deleteByUuids(listOf(pilgrimWalk.id))
-                }
-                val isReplacement = alreadyPresent && overwriteByUuid
-                val didInsert = try {
-                    // Nested transaction: inner failure rolls back JUST this
-                    // walk's inserts via SQLite savepoints, leaving the outer
-                    // batch transaction free to commit good walks. Without
-                    // this, a child-insert throw (e.g. WalkPhoto's pinnedAt > 0
-                    // invariant from Stage 7-A, VoiceRecording's endTimestamp
-                    // >= startTimestamp invariant) would leave an orphan Walk
-                    // row already inserted before the throw.
-                    database.withTransaction {
-                        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
-                        val newWalkId = walkDao.insert(pending.walk)
-                        if (newWalkId <= 0) {
-                            Log.w(TAG, "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}; skipping children")
-                            return@withTransaction false
-                        }
-                        insertChildEntities(
-                            pending = pending,
-                            newWalkId = newWalkId,
-                            routeDao = routeDao,
-                            waypointDao = waypointDao,
-                            eventDao = eventDao,
-                            activityDao = activityDao,
-                            voiceDao = voiceDao,
-                            photoDao = photoDao,
-                        )
-                        true
+        for (pilgrimWalk in walks) {
+            if (!processedInBatch.add(pilgrimWalk.id)) {
+                Log.d(TAG, "Skipping in-archive duplicate walk uuid=${pilgrimWalk.id}")
+                continue
+            }
+            val alreadyPresent = pilgrimWalk.id in existingUuids
+            if (alreadyPresent && !overwriteByUuid) {
+                Log.d(TAG, "Skipping duplicate walk uuid=${pilgrimWalk.id}")
+                continue
+            }
+            val isReplacement = alreadyPresent && overwriteByUuid
+            val didInsert = try {
+                // Each walk is its OWN top-level transaction. Framework SQLite
+                // does NOT turn nested withTransaction blocks into savepoints —
+                // a failed inner transaction dooms the entire enclosing one
+                // (verified: a sibling's failure silently rolled back already-
+                // imported walks). A per-walk top-level transaction is the only
+                // way to (a) roll a failed walk back in full — the tended delete
+                // + re-insert are atomic, so the user's original survives a bad
+                // payload — while (b) leaving already-imported walks committed.
+                //
+                // Every preserve-the-original exit must THROW so the transaction
+                // rolls back; a bare `return@withTransaction false` would COMMIT
+                // the partial state (incl. the delete). Hence `check()`, not a
+                // false return, on the degenerate insert.
+                database.withTransaction {
+                    if (isReplacement) {
+                        // Editor applied edits to the JSON payload; delete the
+                        // stale Room row(s) so child entities cascade away, then
+                        // re-insert the edited version (atomic with the delete).
+                        walkDao.deleteByUuids(listOf(pilgrimWalk.id))
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Skipping walk uuid=${pilgrimWalk.id}: ${e.message}", e)
-                    false
+                    val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+                    val newWalkId = walkDao.insert(pending.walk)
+                    check(newWalkId > 0) {
+                        "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}"
+                    }
+                    insertChildEntities(
+                        pending = pending,
+                        newWalkId = newWalkId,
+                        routeDao = routeDao,
+                        waypointDao = waypointDao,
+                        eventDao = eventDao,
+                        activityDao = activityDao,
+                        voiceDao = voiceDao,
+                        photoDao = photoDao,
+                    )
+                    true
                 }
-                if (didInsert) {
-                    if (isReplacement) replaced += 1 else added += 1
-                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "Skipping walk uuid=${pilgrimWalk.id}: ${e.message}", e)
+                false
+            }
+            if (didInsert) {
+                if (isReplacement) replaced += 1 else added += 1
+            } else {
+                failed += 1
             }
         }
-        return InsertResult(added, replaced)
+        return InsertResult(added, replaced, failed)
     }
 
     /**
