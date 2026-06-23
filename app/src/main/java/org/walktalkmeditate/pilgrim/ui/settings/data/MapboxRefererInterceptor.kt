@@ -6,6 +6,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.walktalkmeditate.pilgrim.BuildConfig
 
 /**
  * The Journey Viewer/Editor web apps render walks on a Mapbox-GL map
@@ -57,7 +58,11 @@ internal object MapboxRefererInterceptor {
             builder.header("Referer", pageOrigin)
 
             val response = client.newCall(builder.get().build()).execute()
-            Log.d("MapboxReferer", "intercepted ${request.url.host}${request.url.encodedPath} -> ${response.code}")
+            // Debug-only: the tile URL path can be sensitive (and Log.* is
+            // not ProGuard-stripped), so don't emit it in release builds.
+            if (BuildConfig.DEBUG) {
+                Log.d("MapboxReferer", "intercepted ${request.url.host}${request.url.encodedPath} -> ${response.code}")
+            }
             val body = response.body ?: run { response.close(); return null }
             val contentType = response.header("Content-Type") ?: "application/octet-stream"
             val mime = contentType.substringBefore(';').trim().ifEmpty { "application/octet-stream" }
