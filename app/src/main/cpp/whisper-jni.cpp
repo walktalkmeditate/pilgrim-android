@@ -127,9 +127,16 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
     return env->NewStringUTF(out.c_str());
 }
 
-// Note: a `nativeRelease` symbol is intentionally not exported. The
-// engine is @Singleton and the loaded whisper context lives for the
-// process lifetime; native heap is reclaimed by the OS on exit. If a
-// future stage needs lifecycle teardown (memory pressure handler, app
-// background unload), wire whisper_free(ctx) through a new JNI symbol
-// then.
+// Frees a whisper_context so its ~75 MB of model weights are released
+// back to the OS without waiting for process exit. Called after a
+// transcription batch (AF33). The Kotlin side serializes this against
+// nativeTranscribe via nativeLock, so the context is never freed mid-
+// inference. A 0 handle (never loaded) is a no-op.
+extern "C" JNIEXPORT void JNICALL
+Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeFree(
+    JNIEnv* /*env*/, jobject /*this*/, jlong ctxHandle) {
+    auto ctx = reinterpret_cast<whisper_context*>(ctxHandle);
+    if (!ctx) return;
+    whisper_free(ctx);
+    LOGI("whisper context freed");
+}

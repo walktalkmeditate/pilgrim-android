@@ -21,10 +21,18 @@ class FakeWhisperEngine(
 
     val transcribeCalls: MutableList<Path> = Collections.synchronizedList(mutableListOf())
 
+    @Volatile
+    var unloadModelCalls: Int = 0
+        private set
+
     override suspend fun transcribe(wavPath: Path): Result<TranscriptionResult> {
         transcribeCalls.add(wavPath)
         if (delayMs > 0) delay(delayMs)
         failure?.let { return Result.failure(it) }
         return Result.success(TranscriptionResult(text = resultText, wordsPerMinute = null))
+    }
+
+    override fun unloadModel() {
+        unloadModelCalls++
     }
 }

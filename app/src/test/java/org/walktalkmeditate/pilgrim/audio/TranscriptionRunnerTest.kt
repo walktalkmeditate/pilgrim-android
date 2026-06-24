@@ -7,7 +7,10 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -81,6 +84,48 @@ class TranscriptionRunnerTest {
         assertEquals("previously transcribed text", rows.getValue(alreadyDone.id).transcription)
     }
 
+    // AF33: the ~75 MB model must be released after the batch so it doesn't
+    // stay resident while the user keeps using the app.
+    @Test
+    fun `transcribePending unloads the model after the batch`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id)
+        insertRecording(walk.id)
+
+        runner.transcribePending(walk.id)
+
+        assertEquals(
+            "model must be unloaded exactly once after the batch",
+            1,
+            engine.unloadModelCalls,
+        )
+    }
+
+    @Test
+    fun `transcribePending unloads the model even when model load fails mid-batch`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id)
+        insertRecording(walk.id)
+        engine.failure = WhisperError.ModelLoadFailed()
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertTrue("ModelLoadFailed aborts the batch as a failure", outcome.isFailure)
+        // ModelLoadFailed must abort the batch early via the non-local return
+        // through the inline Result.fold — the second recording is never
+        // attempted (every remaining one would fail the same way).
+        assertEquals(
+            "batch aborts after the first ModelLoadFailed",
+            1,
+            engine.transcribeCalls.size,
+        )
+        assertEquals(
+            "the finally must still unload (no-op when nothing loaded)",
+            1,
+            engine.unloadModelCalls,
+        )
+    }
+
     @Test
     fun `empty whisper text becomes NO_SPEECH_PLACEHOLDER`() = runBlocking {
         val walk = repository.startWalk(startTimestamp = 0L)
@@ -107,6 +152,7 @@ class TranscriptionRunnerTest {
                 return if (calls == 1) Result.failure(IOException("boom"))
                 else Result.success(TranscriptionResult("second one worked", null))
             }
+            override fun unloadModel() {}
         }
         val customRunner = TranscriptionRunner(context, repository, sequencedEngine)
 
@@ -217,6 +263,9 @@ class TranscriptionRunnerTest {
         val outcome = runner.transcribePending(walk.id)
 
         assertEquals(Result.success(0), outcome)
+        // The finally fires for an empty batch too (the loop body never runs),
+        // proving unloadModel is structurally outside the loop.
+        assertEquals(1, engine.unloadModelCalls)
     }
 
     // A batch where every row is SKIPPED for a data-integrity reason
@@ -237,6 +286,7 @@ class TranscriptionRunnerTest {
             "engine must not be reached for blank-path rows",
             engine.transcribeCalls.isEmpty(),
         )
+        assertEquals("all-skipped batch still unloads in the finally", 1, engine.unloadModelCalls)
     }
 
     // No-speech is a *successful* transcription (commits the placeholder
@@ -253,6 +303,26 @@ class TranscriptionRunnerTest {
 
         assertTrue("no-speech must not be treated as failure", outcome.isSuccess)
         assertEquals(2, outcome.getOrNull())
+    }
+
+    // AF33: the try/finally must release the model even when the batch is
+    // cancelled mid-transcribe (the comment claims this; pin it). unloadModel
+    // is non-suspend so the finally runs on the cancelled coroutine.
+    @Test
+    fun `transcribePending unloads the model when the batch is cancelled mid-flight`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id)
+        engine.delayMs = 10_000L // transcribe parks in delay() so we can cancel mid-flight
+
+        val job = launch { runner.transcribePending(walk.id) }
+        while (engine.transcribeCalls.isEmpty()) yield() // wait until transcribe started
+        job.cancelAndJoin()
+
+        assertEquals(
+            "cancellation still triggers unload via the finally",
+            1,
+            engine.unloadModelCalls,
+        )
     }
 
     private val timestampCounter = AtomicLong(1_000_000L)
