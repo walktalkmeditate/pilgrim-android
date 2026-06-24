@@ -17,9 +17,9 @@ import kotlinx.coroutines.withContext
  * notes never pays the ~75 MB RAM cost.
  *
  * Singleton-scoped so the loaded model survives across multiple
- * transcriptions; the native heap is reclaimed by the OS when the
- * process exits — there is intentionally no explicit teardown path
- * (see whisper-jni.cpp note).
+ * transcriptions within one batch; [unloadModel] frees the native
+ * context after the batch (AF33) so the ~75 MB doesn't stay resident
+ * while the user keeps using the app. The next [transcribe] reloads.
  */
 @Singleton
 class WhisperCppEngine @Inject constructor(
@@ -77,8 +77,18 @@ class WhisperCppEngine @Inject constructor(
             }
         }
 
+    override fun unloadModel() {
+        synchronized(nativeLock) {
+            val handle = nativeHandle
+            if (handle == 0L) return
+            nativeHandle = 0L
+            nativeFree(handle)
+        }
+    }
+
     private external fun nativeInit(modelPath: String): Long
     private external fun nativeTranscribe(ctx: Long, wavPath: String): String?
+    private external fun nativeFree(ctx: Long)
 
     private companion object {
         const val TAG = "WhisperCppEngine"
