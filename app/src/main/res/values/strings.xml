@@ -644,6 +644,11 @@
     <string name="settings_bell_picker_none">None</string>
     <string name="settings_breath_rhythm_picker_title">Choose breath rhythm</string>
     <string name="meditation_options_title">Meditation Options</string>
+    <!-- TalkBack custom-action label for the breathing-circle / soundscape
+         long-press that opens meditation options (AF47). -->
+    <string name="meditation_options_action">Meditation options</string>
+    <!-- TalkBack label for the breathing-circle focal element (AF47). -->
+    <string name="meditation_breathing_circle_description">Breathing circle</string>
     <string name="meditation_options_voice_guide_section">VOICE GUIDE</string>
     <string name="meditation_options_breath_section">BREATH RHYTHM</string>
     <string name="meditation_options_voice_guide_off_name">Off</string>
