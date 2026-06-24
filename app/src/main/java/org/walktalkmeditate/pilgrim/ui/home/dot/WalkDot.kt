@@ -22,7 +22,10 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.sin
@@ -93,7 +96,14 @@ fun WalkDot(
             modifier = modifier
                 .size(sizeDp.dp)
                 .graphicsLayer { alpha = opacity }
-                .semantics { this.contentDescription = contentDescription }
+                .semantics {
+                    this.contentDescription = contentDescription
+                    // detectTapGestures (below) is invisible to TalkBack —
+                    // declare the role + an activation action so the dot is
+                    // announced as a button and openable via double-tap.
+                    role = Role.Button
+                    onClick { onTap(); true }
+                }
                 .pointerInput(onTap, onLongPress) {
                     detectTapGestures(
                         onTap = { onTap() },
@@ -119,7 +129,14 @@ fun WalkDot(
         modifier = modifier
             .size(haloSizeDp.dp)
             .graphicsLayer { alpha = opacity }
-            .semantics { this.contentDescription = contentDescription }
+            .semantics {
+                this.contentDescription = contentDescription
+                // detectTapGestures (below) is invisible to TalkBack —
+                // declare the role + an activation action so the dot is
+                // announced as a button and openable via double-tap.
+                role = Role.Button
+                onClick { onTap(); true }
+            }
             .pointerInput(onTap, onLongPress) {
                 detectTapGestures(
                     onTap = { onTap() },

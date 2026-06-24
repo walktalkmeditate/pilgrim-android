@@ -2,9 +2,13 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.ui.test.assertTouchHeightIsEqualTo
+import androidx.compose.ui.test.assertTouchWidthIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
@@ -91,5 +95,43 @@ class VoiceRecordingsSectionTranscriptionTest {
             }
         }
         composeRule.onNodeWithText("Show more").assertExists()
+    }
+
+    // AF66 (iOS PR #45) ACCEPTANCE check: the play/pause icon's touch target
+    // meets the 48dp a11y minimum. NOTE: Compose's framework
+    // minimumTouchTargetSize already inflates ANY clickable's touch bounds to
+    // 48dp, so this passes regardless of minimumInteractiveComponentSize — it
+    // documents the requirement is met, it does NOT pin the modifier (whose
+    // real job is reserving 48dp of LAYOUT, on a non-semantics wrapper, so the
+    // adjacent transcription icons don't share hit areas). Overlap/spacing of
+    // the adjacent icons is confirmed on-device (matrix needs-device).
+    @Test
+    fun playPauseIcon_meets48dpTouchTarget() {
+        composeRule.setContent {
+            PilgrimTheme {
+                VoiceRecordingsSection(
+                    walkStartTimestamp = baseRecording.startTimestamp,
+                    recordings = listOf(baseRecording),
+                    playbackUiState = PlaybackUiState(
+                        playingRecordingId = null,
+                        isPlaying = false,
+                        errorMessage = null,
+                    ),
+                    playbackSpeed = 1.0f,
+                    playbackPositionMillisFlow = MutableStateFlow(0L),
+                    waveforms = emptyMap(),
+                    onPlay = {},
+                    onPause = {},
+                    onCycleSpeed = {},
+                    onSeek = {},
+                    onSaveTranscription = { _, _ -> },
+                    onRetranscribe = {},
+                    onEnsureWaveform = { _, _ -> },
+                )
+            }
+        }
+        composeRule.onNodeWithContentDescription("Play")
+            .assertTouchWidthIsEqualTo(48.dp)
+            .assertTouchHeightIsEqualTo(48.dp)
     }
 }

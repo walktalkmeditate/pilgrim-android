@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -181,6 +182,7 @@ private fun VoiceRecordingRow(
                 ),
                 tint = pilgrimColors.stone,
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
                     .size(32.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .clickable(onClick = if (isPlaying) onPause else onPlay)
@@ -410,6 +412,7 @@ private fun EditableTranscription(
                     ),
                     tint = pilgrimColors.fog,
                     modifier = Modifier
+                        .minimumInteractiveComponentSize()
                         .size(32.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .clickable {
@@ -425,6 +428,7 @@ private fun EditableTranscription(
                     ),
                     tint = pilgrimColors.fog,
                     modifier = Modifier
+                        .minimumInteractiveComponentSize()
                         .size(32.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .clickable { clipboard.setText(AnnotatedString(text)) }
@@ -437,6 +441,7 @@ private fun EditableTranscription(
                     ),
                     tint = pilgrimColors.fog,
                     modifier = Modifier
+                        .minimumInteractiveComponentSize()
                         .size(32.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .clickable(onClick = onRetranscribe)
