@@ -11,6 +11,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -413,7 +415,7 @@ private fun ModeSelector(
 }
 
 @Composable
-private fun ModeButton(
+internal fun ModeButton(
     mode: WalkMode,
     selected: Boolean,
     footprintActive: Boolean,
@@ -425,9 +427,14 @@ private fun ModeButton(
     // bounded grey ripple over the label area reads as broken UX.
     val interactionSource = remember { MutableInteractionSource() }
     Column(
-        modifier = modifier.clickable(
+        // selectable (not clickable) so TalkBack announces the tab role +
+        // the selected state — the selection is otherwise conveyed only by
+        // text color + the underline gradient (AF58).
+        modifier = modifier.selectable(
+            selected = selected,
             interactionSource = interactionSource,
             indication = null,
+            role = Role.Tab,
             onClick = onClick,
         ),
         horizontalAlignment = Alignment.CenterHorizontally,

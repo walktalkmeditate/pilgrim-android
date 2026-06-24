@@ -9,6 +9,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 
 /**
  * Compose Canvas waveform with continuous tap+drag seek.
@@ -29,10 +34,21 @@ fun WaveformBar(
     inactiveColor: Color,
     activeColor: Color,
     onSeek: (Float) -> Unit,
+    contentDescription: String,
     modifier: Modifier = Modifier,
 ) {
     Canvas(
         modifier = modifier
+            // detectTapGestures/detectDragGestures (pointerInput) are invisible
+            // to TalkBack. Expose the scrubber as an adjustable progress control
+            // so it's announced (label + percent) and seekable via TalkBack's
+            // swipe-up/down adjust gesture (AF63). Compose has no Role.Slider —
+            // progressBarRangeInfo + setProgress is the slider-semantics contract.
+            .semantics {
+                this.contentDescription = contentDescription
+                progressBarRangeInfo = ProgressBarRangeInfo(progress.coerceIn(0f, 1f), 0f..1f)
+                setProgress { target -> onSeek(target.coerceIn(0f, 1f)); true }
+            }
             .pointerInput(samples) {
                 detectTapGestures { offset ->
                     val frac = (offset.x / size.width).coerceIn(0f, 1f)

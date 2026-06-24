@@ -3,17 +3,27 @@ package org.walktalkmeditate.pilgrim.ui.path
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.isSelectable
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 /**
  * Unit tests for [pickRandomQuote]. The full Composable is exercised
@@ -28,9 +38,46 @@ class WalkStartScreenTest {
 
     private lateinit var context: Context
 
+    @get:Rule
+    val composeRule = createComposeRule()
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+    }
+
+    // AF58: the mode tab conveys selection only by color/underline; it must
+    // expose Role.Tab + the selected state so TalkBack announces it.
+    @Test
+    fun `selected mode tab reports Tab role and selected state`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                ModeButton(
+                    mode = WalkMode.Wander,
+                    selected = true,
+                    footprintActive = false,
+                    onClick = {},
+                )
+            }
+        }
+        composeRule.onNode(isSelectable())
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab))
+            .assertIsSelected()
+    }
+
+    @Test
+    fun `unselected mode tab reports not-selected`() {
+        composeRule.setContent {
+            PilgrimTheme {
+                ModeButton(
+                    mode = WalkMode.Seek,
+                    selected = false,
+                    footprintActive = false,
+                    onClick = {},
+                )
+            }
+        }
+        composeRule.onNode(isSelectable()).assertIsNotSelected()
     }
 
     @Test

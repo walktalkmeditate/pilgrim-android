@@ -6,9 +6,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -88,6 +92,36 @@ class SealRevealOverlayTest {
         }
         composeRule.waitForIdle()
         composeRule.onRoot().assertExists()
+    }
+
+    // AF62: the Canvas-drawn seal must be labeled so TalkBack doesn't focus a
+    // blank node. (The tap-to-dismiss onClickLabel is verified by reading +
+    // device pass; the seal label is the unit-assertable pin.)
+    @Test fun `seal is labeled for TalkBack`() {
+        composeRule.setContent {
+            Box(Modifier.size(400.dp, 800.dp)) {
+                SealRevealOverlay(spec = testSpec(), onDismiss = {})
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("Walk seal").assertExists()
+    }
+
+    // AF62: the tap-anywhere-to-dismiss action must carry a label so TalkBack
+    // announces "double-tap to dismiss". autoAdvance=false pins the phase
+    // before the auto-dismiss timer (which disables the clickable), keeping the
+    // OnClick action present so its label is assertable.
+    @Test fun `tap-to-dismiss overlay exposes the dismiss click label`() {
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            Box(Modifier.size(400.dp, 800.dp)) {
+                SealRevealOverlay(spec = testSpec(), onDismiss = {})
+            }
+        }
+        val label = composeRule.onNode(hasClickAction())
+            .fetchSemanticsNode()
+            .config[SemanticsActions.OnClick].label
+        assertEquals("Dismiss", label)
     }
 
     @Test fun `overlay renders with isMilestone flag set`() {
