@@ -280,9 +280,10 @@ sealed interface PilgrimImportState {
         val replaced: Int,
         val archived: Int,
         /**
-         * Walk files that couldn't be decoded and were skipped. Appended
-         * to the success Snackbar so a partial import isn't reported as an
-         * unqualified success (iOS PR #45 AF28).
+         * Walks that didn't land: files that couldn't be decoded plus walks
+         * that decoded but failed to insert. Appended to the success Snackbar
+         * so a partial import isn't reported as an unqualified success (iOS
+         * PR #45 AF28).
          */
         val skipped: Int = 0,
     ) : PilgrimImportState {
