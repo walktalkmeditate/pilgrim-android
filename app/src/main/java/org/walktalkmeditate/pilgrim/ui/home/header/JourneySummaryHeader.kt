@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.util.Locale
@@ -87,9 +89,15 @@ fun JourneySummaryHeader(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // Merge the two stat lines so TalkBack reads one focusable button
+            // ("…, double-tap to show next stat") instead of two trait-less
+            // text nodes with no discoverable action.
+            .semantics(mergeDescendants = true) {}
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
+                onClickLabel = stringResource(R.string.home_journey_stat_cycle_action),
+                role = Role.Button,
                 onClick = { mode = nextMode(mode) },
             )
             .padding(vertical = 8.dp),

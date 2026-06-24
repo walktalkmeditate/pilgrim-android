@@ -85,6 +85,9 @@
     <string name="home_journey_talked">%1$s talked</string>
     <string name="home_journey_meditated">%1$s meditated</string>
     <string name="home_journey_subtitle_walks">%1$s · %2$s</string>
+    <!-- TalkBack onClickLabel for the tappable journey stat header that
+         cycles distance → talk → meditation. -->
+    <string name="home_journey_stat_cycle_action">Show next statistic</string>
     <!-- iOS InkScrollView.swift:168 renders the literal
          "<n> walks · <m> months" with no singular form (so iOS shows
          "1 walks · 1 months"). We deliberately diverge for correct English
@@ -105,6 +108,12 @@
     <plurals name="home_journey_walks_with_meditate">
         <item quantity="one">1 walk with meditation</item>
         <item quantity="other">%1$d walks with meditation</item>
+    </plurals>
+    <!-- TalkBack contentDescription for the meditation breath counter, which
+         renders as a bare number visually (AF49). -->
+    <plurals name="meditation_breaths">
+        <item quantity="one">%1$d breath</item>
+        <item quantity="other">%1$d breaths</item>
     </plurals>
 
     <string name="walk_stat_distance">Distance</string>

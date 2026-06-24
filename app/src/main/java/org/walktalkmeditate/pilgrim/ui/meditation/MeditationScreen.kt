@@ -44,7 +44,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -692,8 +695,14 @@ internal fun MeditationScreenContent(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     if (!breathRhythm.isNone) {
+                        val breathCountDescription = pluralStringResource(
+                            R.plurals.meditation_breaths, breathCount, breathCount,
+                        )
                         Text(
                             text = "$breathCount",
+                            modifier = Modifier.semantics {
+                                contentDescription = breathCountDescription
+                            },
                             style = pilgrimType.caption,
                             color = pilgrimColors.fog.copy(alpha = 0.4f),
                         )
