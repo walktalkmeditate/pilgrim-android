@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 
 /**
  * A soft moss-glow circle that breathes — scales 0.45 → 1.0 and back
@@ -70,10 +71,12 @@ internal fun BreathingCircle(
         )
     }
 
-    val scale = if (breathRhythm.isNone) {
-        // No-cadence mode: hold the inhaled scale. No animation, no
-        // recomposition driver, no jitter. The circle is a still focal
-        // point — matches iOS's open-meditation interpretation.
+    val reduceMotion = LocalReduceMotion.current
+    val scale = if (breathRhythm.isNone || reduceMotion) {
+        // No-cadence mode OR reduce-motion: hold the inhaled scale. No
+        // animation, no recomposition driver, no jitter. The circle is a
+        // still focal point — matches iOS's open-meditation interpretation
+        // and honors the system Remove Animations setting (AF48).
         SCALE_INHALED
     } else {
         rememberBreathScale(breathRhythm, breathSpeedMultiplier)

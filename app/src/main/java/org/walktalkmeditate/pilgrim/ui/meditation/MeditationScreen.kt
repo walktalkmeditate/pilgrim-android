@@ -6,7 +6,9 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
@@ -46,7 +48,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -58,6 +65,7 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.sounds.BreathRhythm
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -561,13 +569,24 @@ internal fun MeditationScreenContent(
     onSoundscapeLongPress: () -> Unit = {},
     onCircleLongPress: (() -> Unit)? = null,
 ) {
-    // Animated phase-driven opacities. Reduce-motion users get the
-    // values pinned to their target so the screen still transitions
-    // cleanly without playing the cross-fade tweens.
+    val reduceMotion = LocalReduceMotion.current
+    val optionsActionLabel = stringResource(R.string.meditation_options_action)
+    val circleDescription = stringResource(R.string.meditation_breathing_circle_description)
+    // Animated phase-driven opacities. Reduce-motion users get the values
+    // pinned to their target (snap) so the screen still transitions cleanly
+    // without playing the 1.5s cross-fade tweens (AF48 — honors the system
+    // Remove Animations setting; the breathing pulse is likewise held static
+    // in BreathingCircle).
     val ceremonyActive = closingPhase != ClosingPhase.None
+    // Memoized for the session — MeditationScreenContent recomposes every
+    // second (timer tick); reduceMotion only flips on a system-settings
+    // change, so a per-recompose spec allocation would be pure waste.
+    val ceremonySpec: AnimationSpec<Float> = remember(reduceMotion) {
+        if (reduceMotion) snap() else tween(durationMillis = 1500)
+    }
     val breathingAlpha = androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (ceremonyActive) 0f else 1f,
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1500),
+        animationSpec = ceremonySpec,
         label = "ceremony-breathing-alpha",
     ).value
     val summaryAlpha = androidx.compose.animation.core.animateFloatAsState(
@@ -576,12 +595,12 @@ internal fun MeditationScreenContent(
             ClosingPhase.FadeOut -> 1f
             else -> 0f
         },
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1500),
+        animationSpec = ceremonySpec,
         label = "ceremony-summary-alpha",
     ).value
     val fadeOverlayAlpha = androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (closingPhase == ClosingPhase.FadeOut) 1f else 0f,
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1500),
+        animationSpec = ceremonySpec,
         label = "ceremony-fadeout-alpha",
     ).value
     Box(
@@ -649,9 +668,23 @@ internal fun MeditationScreenContent(
                         // slowdown while voice-guide prompt narrates.
                         breathSpeedMultiplier = if (voicePlaying) 2.0f else 1.0f,
                         modifier = if (onCircleLongPress != null) {
-                            Modifier.pointerInput(Unit) {
-                                detectTapGestures(onLongPress = { onCircleLongPress() })
-                            }
+                            Modifier
+                                .pointerInput(Unit) {
+                                    detectTapGestures(onLongPress = { onCircleLongPress() })
+                                }
+                                // detectTapGestures is invisible to TalkBack —
+                                // expose the long-press options as a custom
+                                // accessibility action, and label the node so
+                                // TalkBack announces it rather than focusing an
+                                // unlabeled element with a bare action (AF47).
+                                .semantics {
+                                    contentDescription = circleDescription
+                                    customActions = listOf(
+                                        CustomAccessibilityAction(optionsActionLabel) {
+                                            onCircleLongPress(); true
+                                        },
+                                    )
+                                }
                         } else {
                             Modifier
                         },
@@ -730,12 +763,25 @@ internal fun MeditationScreenContent(
                         text = labelText,
                         style = pilgrimType.caption,
                         color = pilgrimColors.fog.copy(alpha = labelAlpha),
-                        modifier = Modifier.pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { onSoundscapeTap() },
-                                onLongPress = { onSoundscapeLongPress() },
-                            )
-                        },
+                        modifier = Modifier
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = { onSoundscapeTap() },
+                                    onLongPress = { onSoundscapeLongPress() },
+                                )
+                            }
+                            // The pointerInput tap + long-press are invisible to
+                            // TalkBack — expose tap as a button action and the
+                            // long-press options as a custom action (AF47).
+                            .semantics {
+                                role = Role.Button
+                                onClick { onSoundscapeTap(); true }
+                                customActions = listOf(
+                                    CustomAccessibilityAction(optionsActionLabel) {
+                                        onSoundscapeLongPress(); true
+                                    },
+                                )
+                            },
                     )
                 }
             }
