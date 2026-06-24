@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.content.Context
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -593,6 +594,20 @@ class WalkViewModel @Inject constructor(
                 }
             }
         }
+        // Finalize + surface recordings the OS interrupted (incoming call,
+        // another capture app). Guard each iteration so one failure can't
+        // kill the observer for the rest of the process.
+        viewModelScope.launch {
+            voiceRecorder.interruptions.collect { result ->
+                try {
+                    handleRecordingInterruption(result)
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    Log.w(TAG, "recording-interruption handling failed", t)
+                }
+            }
+        }
     }
 
     /**
@@ -856,6 +871,43 @@ class WalkViewModel @Inject constructor(
         result.fold(
             onSuccess = { _voiceRecorderState.value = VoiceRecorderUiState.Recording },
             onFailure = { _voiceRecorderState.value = mapStartFailure(it) },
+        )
+    }
+
+    /**
+     * The recorder finalized an in-flight recording because the OS
+     * reclaimed audio focus (incoming call, another capture app). Persist
+     * the audio captured up to the interruption — best-effort; the Stage
+     * 2-E sweeper reclaims an orphaned .wav if the insert fails — and
+     * surface an Interrupted banner so the user knows recording stopped.
+     * Exactly-once finalize in VoiceRecorder means this never double-fires
+     * with a user-initiated stop for the same session.
+     *
+     * `internal` for a deterministic unit test: the recorder finalizes on a
+     * real executor thread, so bridging the live `interruptions` emit to the
+     * VM's test dispatcher would be flaky — the recorder-level tests cover
+     * the emit; this covers the persist + surface handling.
+     */
+    @VisibleForTesting
+    internal suspend fun handleRecordingInterruption(result: Result<VoiceRecording>) {
+        val recording = result.getOrNull()
+        if (recording != null) {
+            try {
+                repository.recordVoice(recording)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Exception) {
+                // Orphan .wav with no DB row — the sweeper reclaims it. Log so
+                // an interrupted-but-not-saved recording is diagnosable rather
+                // than silently lost (e.g. the walk was purged mid-interruption).
+                Log.w(TAG, "failed to persist interrupted recording", t)
+            }
+        }
+        // Whether or not any PCM was captured before the interruption, tell
+        // the user recording stopped (a failure payload is EmptyRecording).
+        _voiceRecorderState.value = errorState(
+            "recording interrupted",
+            VoiceRecorderUiState.Kind.Interrupted,
         )
     }
 

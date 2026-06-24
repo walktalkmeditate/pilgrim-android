@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,6 +27,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
 import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -216,6 +218,53 @@ class WalkViewModelVoiceRecordingsTest {
             )
             assertEquals(2 to 8_000L, awaitItem())
 
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // AF11: an OS audio-focus loss finalizes the in-flight recording; the VM
+    // persists the captured audio and surfaces an Interrupted banner. The
+    // recorder emits on a real executor thread (covered by VoiceRecorderTest),
+    // so this drives the VM handler directly for determinism.
+    @Test
+    fun `interruption with audio persists the recording and surfaces Interrupted`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+        val recording = VoiceRecording(
+            walkId = walkId,
+            startTimestamp = 1_000L,
+            endTimestamp = 3_000L,
+            durationMillis = 2_000L,
+            fileRelativePath = "recordings/x/interrupted.wav",
+        )
+
+        viewModel.handleRecordingInterruption(Result.success(recording))
+
+        val state = viewModel.voiceRecorderState.value
+        assertTrue("expected Error state, got $state", state is VoiceRecorderUiState.Error)
+        assertEquals(
+            VoiceRecorderUiState.Kind.Interrupted,
+            (state as VoiceRecorderUiState.Error).kind,
+        )
+        viewModel.recordingsCount.test(timeout = 10.seconds) {
+            assertEquals(1, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `interruption before any audio surfaces Interrupted without persisting`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+
+        viewModel.handleRecordingInterruption(Result.failure(VoiceRecorderError.EmptyRecording))
+
+        val state = viewModel.voiceRecorderState.value
+        assertEquals(
+            VoiceRecorderUiState.Kind.Interrupted,
+            (state as VoiceRecorderUiState.Error).kind,
+        )
+        viewModel.recordingsCount.test(timeout = 10.seconds) {
+            assertEquals(0, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }

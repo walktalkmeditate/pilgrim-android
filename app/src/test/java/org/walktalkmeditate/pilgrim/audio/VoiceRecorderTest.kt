@@ -284,6 +284,67 @@ class VoiceRecorderTest {
         }
     }
 
+    @Test
+    fun `audio focus loss finalizes the recording and emits it on interruptions`() = runBlocking<Unit> {
+        recorder.interruptions.test(timeout = 10.seconds) {
+            val started = recorder.start(walkId = 7L, walkUuid = walkUuidA)
+            assertTrue("start should succeed", started.isSuccess)
+            val path = started.getOrThrow()
+            waitForCaptureProgress()
+            clock.advanceTo(2_500L)
+
+            recorder.simulateAudioFocusLoss()
+
+            val emitted = awaitItem()
+            assertTrue(
+                "interruption should yield a recording: ${emitted.exceptionOrNull()}",
+                emitted.isSuccess,
+            )
+            val recording = emitted.getOrThrow()
+            assertEquals(7L, recording.walkId)
+            assertEquals(1_000L, recording.startTimestamp)
+            assertEquals(2_500L, recording.endTimestamp)
+            assertTrue("captured audio should be kept on disk", Files.exists(path))
+            assertEquals("level resets after finalize", 0f, recorder.audioLevel.value)
+            cancelAndIgnoreRemainingEvents()
+        }
+        // The interruption consumed the session — a user stop() now no-ops
+        // rather than double-finalizing (exactly-once).
+        val stopped = recorder.stop()
+        assertTrue(stopped.isFailure)
+        assertEquals(VoiceRecorderError.NoActiveRecording, stopped.exceptionOrNull())
+    }
+
+    @Test
+    fun `audio focus loss before any audio emits EmptyRecording and deletes file`() = runBlocking<Unit> {
+        // No bursts → read() returns -1 immediately → capture loop exits
+        // without writing PCM, same as the user-stop EmptyRecording path.
+        audioCapture = FakeAudioCapture(bursts = emptyList())
+        recorder = VoiceRecorder(context, audioCapture, focus, clock)
+
+        recorder.interruptions.test(timeout = 10.seconds) {
+            val started = recorder.start(walkId = 1L, walkUuid = walkUuidA)
+            assertTrue("start should succeed", started.isSuccess)
+            val path = started.getOrThrow()
+
+            recorder.simulateAudioFocusLoss()
+
+            val emitted = awaitItem()
+            assertTrue(emitted.isFailure)
+            assertEquals(VoiceRecorderError.EmptyRecording, emitted.exceptionOrNull())
+            assertTrue("empty .wav should be deleted, still exists at $path", !Files.exists(path))
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `simulateAudioFocusLoss with no active recording is a no-op`() = runBlocking<Unit> {
+        // Should not throw or emit; the active session is null.
+        recorder.simulateAudioFocusLoss()
+        val stopped = recorder.stop()
+        assertEquals(VoiceRecorderError.NoActiveRecording, stopped.exceptionOrNull())
+    }
+
     private companion object {
         // 5 seconds is generous — FakeAudioCapture returns its first
         // burst on the initial read() call, so the capture loop should

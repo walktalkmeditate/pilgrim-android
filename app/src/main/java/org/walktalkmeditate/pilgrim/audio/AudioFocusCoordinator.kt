@@ -30,8 +30,20 @@ class AudioFocusCoordinator @Inject constructor(
      * Request transient focus for voice CAPTURE (the recorder). Uses
      * USAGE_VOICE_COMMUNICATION which ducks media playback during the
      * recording window. Returns true if focus was granted.
+     *
+     * The optional [onLossListener] is invoked when the OS reclaims focus
+     * mid-recording (incoming call, another capture app). The recorder
+     * finalizes the in-flight recording when notified. A transient
+     * CAN_DUCK loss (a notification ding) deliberately does NOT trigger
+     * it — a recording shouldn't abort for something it can simply talk
+     * over.
      */
-    fun requestTransient(): Boolean = request(usage = AudioAttributes.USAGE_VOICE_COMMUNICATION)
+    fun requestTransient(onLossListener: (() -> Unit)? = null): Boolean =
+        request(
+            usage = AudioAttributes.USAGE_VOICE_COMMUNICATION,
+            onLossListener = onLossListener,
+            treatDuckAsLoss = false,
+        )
 
     /**
      * Request transient focus for voice PLAYBACK. Uses USAGE_MEDIA so
@@ -46,9 +58,17 @@ class AudioFocusCoordinator @Inject constructor(
      * coordinator stays the single owner.
      */
     fun requestMediaPlayback(onLossListener: (() -> Unit)? = null): Boolean =
-        request(usage = AudioAttributes.USAGE_MEDIA, onLossListener = onLossListener)
+        request(
+            usage = AudioAttributes.USAGE_MEDIA,
+            onLossListener = onLossListener,
+            treatDuckAsLoss = true,
+        )
 
-    private fun request(usage: Int, onLossListener: (() -> Unit)? = null): Boolean {
+    private fun request(
+        usage: Int,
+        onLossListener: (() -> Unit)? = null,
+        treatDuckAsLoss: Boolean = true,
+    ): Boolean {
         abandonIfHeld()
         val attrs = AudioAttributes.Builder()
             .setUsage(usage)
@@ -60,10 +80,7 @@ class AudioFocusCoordinator @Inject constructor(
             .setAcceptsDelayedFocusGain(false)
         if (onLossListener != null) {
             builder.setOnAudioFocusChangeListener { focusChange ->
-                if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
-                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
-                    focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
-                ) {
+                if (isFinalizingFocusLoss(focusChange, treatDuckAsLoss)) {
                     onLossListener.invoke()
                 }
             }
@@ -88,5 +105,20 @@ class AudioFocusCoordinator @Inject constructor(
         // abandonAudioFocusRequest.
         val req = activeRequest.getAndSet(null) ?: return
         audioManager.abandonAudioFocusRequest(req)
+    }
+
+    internal companion object {
+        /**
+         * Whether an [AudioManager] focus-change code means the holder
+         * should give up the audio. A permanent or transient LOSS always
+         * counts; a transient CAN_DUCK loss counts only when
+         * [treatDuckAsLoss] is set — playback ducks/pauses for it, but a
+         * capture session keeps recording through a momentary duck (a
+         * notification) rather than aborting the take.
+         */
+        internal fun isFinalizingFocusLoss(focusChange: Int, treatDuckAsLoss: Boolean): Boolean =
+            focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+                (treatDuckAsLoss && focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
     }
 }
