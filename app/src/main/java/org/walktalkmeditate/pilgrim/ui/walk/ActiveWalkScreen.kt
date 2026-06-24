@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import android.Manifest
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.animation.AnimatedVisibility
@@ -29,8 +32,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -62,6 +67,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.kanji
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
@@ -373,6 +379,57 @@ fun ActiveWalkScreen(
                     )
                 }
             }
+        }
+    }
+    // AF45: starting a walk needs ACCESS_FINE_LOCATION, or the :tracker
+    // service would hit SecurityException and finish the walk silently. The
+    // VM refuses to start without it and emits the intention here; request
+    // the permission, then retry on grant or deep-link to Settings on denial.
+    // This is a safety-net ask — the Settings PermissionsCard is the canonical
+    // grant flow that maintains PermissionAskedStore, so we deliberately don't
+    // touch the asked-store here.
+    val locationDeniedMessage = stringResource(R.string.walk_location_permission_required)
+    val locationSettingsAction = stringResource(R.string.walk_location_permission_settings_action)
+    val permissionSnackbarScope = rememberCoroutineScope()
+    // rememberSaveable so the pending intention survives an Activity
+    // recreation while the system permission dialog is up — otherwise the
+    // grant-retry would start the walk with a null intention (drops the
+    // user's pre-walk intention draft).
+    var pendingStartIntention by rememberSaveable { mutableStateOf<String?>(null) }
+    // Re-entrancy guard: a double-tap on Start (permission still missing)
+    // emits twice; without this the second event launches a second system
+    // dialog (stacked/crashing) and clobbers pendingStartIntention.
+    var locationRequestInFlight by remember { mutableStateOf(false) }
+    // Hoisted so the launcher's DisposableEffect keeps a stable contract
+    // identity across recompositions (Stage 7-A picker-race precedent).
+    val locationPermissionContract = remember { ActivityResultContracts.RequestPermission() }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(locationPermissionContract) { granted ->
+        locationRequestInFlight = false
+        if (granted) {
+            viewModel.startWalk(intention = pendingStartIntention)
+        } else {
+            permissionSnackbarScope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = locationDeniedMessage,
+                    actionLabel = locationSettingsAction,
+                    duration = SnackbarDuration.Long,
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    // ACTION_APPLICATION_DETAILS_SETTINGS is effectively
+                    // universal, but can be absent/blocked on MDM or custom
+                    // ROMs — don't crash if so; the denial message already showed.
+                    runCatching { context.startActivity(AppSettings.openDetailsIntent(context)) }
+                }
+            }
+        }
+        pendingStartIntention = null
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.locationPermissionRequired.collect { intention ->
+            if (locationRequestInFlight) return@collect
+            locationRequestInFlight = true
+            pendingStartIntention = intention
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
     }
     // iOS parity `ActiveWalkView.swift:68-70, 138-141, 334-341@db4196e`:

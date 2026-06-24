@@ -585,6 +585,9 @@
     <string name="placement_whisper_placed">Whisper left along the way.</string>
     <string name="placement_stone_placed">A stone for your cairn.</string>
     <string name="placement_failed">Couldn\'t place — %1$s</string>
+    <!-- AF45: shown when the user starts a walk without location permission. -->
+    <string name="walk_location_permission_required">Location access is needed to track your walk.</string>
+    <string name="walk_location_permission_settings_action">Settings</string>
 
     <!-- iOS parity ProximityNotificationView.swift@db4196e — proximity banners -->
     <string name="proximity_whisper">A whisper lingers nearby…</string>
