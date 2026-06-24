@@ -9,12 +9,14 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -43,7 +45,7 @@ class WalkStatsSheetActionRowTest {
                 distanceMeters = 0.0,
                 walkMillis = 0L, talkMillis = 0L, meditateMillis = 0L,
                 recorderState = recorderState,
-                audioLevel = 0f,
+                audioLevelFlow = MutableStateFlow(0f),
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
                 onStartWalk = {},
@@ -101,6 +103,20 @@ class WalkStatsSheetActionRowTest {
         )
         nodeInExpandedWithText("Meditate").performClick()
         assertTrue(fired)
+    }
+
+    // AF10: the Recording branch of MicActionButton is the sole production
+    // call site of LiveAudioWaveform (other states show the Mic icon).
+    @Test
+    fun `Recording state renders the live waveform`() {
+        render(
+            WalkState.Active(WalkAccumulator(1L, 0L)),
+            recorderState = VoiceRecorderUiState.Recording,
+        )
+        // useUnmergedTree: the bars live inside the mic button's clickable
+        // node, which merges its descendants' semantics.
+        composeRule.onAllNodesWithTag(WAVEFORM_BAR_TEST_TAG, useUnmergedTree = true)
+            .assertCountEquals(5)
     }
 
     @Test

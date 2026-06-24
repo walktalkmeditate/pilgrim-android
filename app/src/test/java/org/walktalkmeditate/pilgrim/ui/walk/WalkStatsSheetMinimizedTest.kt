@@ -15,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -40,7 +41,7 @@ class WalkStatsSheetMinimizedTest {
                 talkMillis = 0L,
                 meditateMillis = 0L,
                 recorderState = VoiceRecorderUiState.Idle,
-                audioLevel = 0f,
+                audioLevelFlow = MutableStateFlow(0f),
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
                 onStartWalk = {},
@@ -73,7 +74,7 @@ class WalkStatsSheetMinimizedTest {
                 talkMillis = 0L,
                 meditateMillis = 0L,
                 recorderState = VoiceRecorderUiState.Idle,
-                audioLevel = 0f,
+                audioLevelFlow = MutableStateFlow(0f),
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
                 steps = 1234,
@@ -99,7 +100,7 @@ class WalkStatsSheetMinimizedTest {
                 totalElapsedMillis = 0L,
                 distanceMeters = 0.0,
                 walkMillis = 0L, talkMillis = 0L, meditateMillis = 0L,
-                recorderState = VoiceRecorderUiState.Idle, audioLevel = 0f,
+                recorderState = VoiceRecorderUiState.Idle, audioLevelFlow = MutableStateFlow(0f),
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
                 onStartWalk = {},

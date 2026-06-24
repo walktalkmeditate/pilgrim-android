@@ -5,6 +5,9 @@ import android.app.Application
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -39,6 +42,25 @@ class AudioWaveformViewTest {
         composeRule.setContent {
             AudioWaveformView(level = 1f)
         }
+        composeRule.onAllNodesWithTag(WAVEFORM_BAR_TEST_TAG).assertCountEquals(5)
+    }
+
+    @Test
+    fun `LiveAudioWaveform reflects the collected level and re-renders on emission`() {
+        val level = MutableStateFlow(1f)
+        composeRule.setContent {
+            LiveAudioWaveform(levelFlow = level)
+        }
+        val bars = composeRule.onAllNodesWithTag(WAVEFORM_BAR_TEST_TAG)
+        bars.assertCountEquals(5)
+        // Center bar (weight 1.0) at level 1f → 4 + 1*20 = 24dp. Asserting a
+        // height well above the 4dp floor proves the flow value actually
+        // reached the bars — a wrapper that ignored the flow (drew level 0)
+        // would render the 4dp minimum.
+        bars[2].assertHeightIsAtLeast(20.dp)
+
+        level.value = 0f
+        composeRule.waitForIdle()
         composeRule.onAllNodesWithTag(WAVEFORM_BAR_TEST_TAG).assertCountEquals(5)
     }
 }
