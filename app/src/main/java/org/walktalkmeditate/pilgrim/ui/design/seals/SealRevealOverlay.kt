@@ -7,6 +7,10 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import org.walktalkmeditate.pilgrim.R
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -159,6 +163,7 @@ fun SealRevealOverlay(
     // summary content (e.g., the Done button) land on the button
     // rather than being swallowed by the fading overlay.
     val overlayInteractive = phase != SealRevealPhase.Dismissing
+    val sealContentDescription = stringResource(R.string.seal_reveal_cd)
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -168,6 +173,9 @@ fun SealRevealOverlay(
                 interactionSource = interactionSource,
                 indication = null,
                 enabled = overlayInteractive,
+                // Tap-anywhere-to-dismiss is gesture-only; label it so
+                // TalkBack announces "double-tap to dismiss" (AF62).
+                onClickLabel = stringResource(R.string.seal_reveal_dismiss_action),
             ) {
                 if (phase != SealRevealPhase.Dismissing) {
                     phase = SealRevealPhase.Dismissing
@@ -179,6 +187,9 @@ fun SealRevealOverlay(
             modifier = Modifier
                 .size(sealSizeDp.dp)
                 .scale(scale)
+                // The seal is Canvas-drawn (SealRenderer) — label it so it
+                // isn't an unannounced blank node for TalkBack (AF62).
+                .semantics { contentDescription = sealContentDescription }
                 // shape = CircleShape so the elevation shadow renders as
                 // a circular halo behind the seal. Without an explicit
                 // shape, Compose falls back to RectangleShape and draws

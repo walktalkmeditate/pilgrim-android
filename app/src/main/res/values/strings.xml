@@ -65,6 +65,10 @@
     <string name="goshuin_title">Goshuin</string>
     <string name="goshuin_empty_caption">Your goshuin will fill as you walk</string>
     <string name="goshuin_back_content_description">Back</string>
+    <!-- Seal-reveal overlay a11y (AF62): label the Canvas-drawn seal and the
+         tap-anywhere-to-dismiss action. -->
+    <string name="seal_reveal_cd">Walk seal</string>
+    <string name="seal_reveal_dismiss_action">Dismiss</string>
     <string name="goshuin_filter_all">All</string>
     <string name="goshuin_share_action">Share Goshuin</string>
     <string name="goshuin_share_title">My Goshuin</string>
@@ -211,6 +215,9 @@
     <string name="transcription_pending">Transcribing\u2026</string>
     <string name="recording_play">Play</string>
     <string name="recording_pause">Pause</string>
+    <!-- TalkBack label for the Canvas waveform scrubber, exposed as an
+         adjustable slider for the recording playback position (AF63). -->
+    <string name="recording_waveform_scrubber_cd">Recording playback position</string>
     <string name="recording_wpm_caption">%1$d wpm</string>
 
     <string name="settings_title">Settings</string>

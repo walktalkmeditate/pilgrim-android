@@ -8,10 +8,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertRangeInfoEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
@@ -52,6 +57,7 @@ class WaveformBarTest {
                     inactiveColor = Color.Gray,
                     activeColor = Color.Black,
                     onSeek = {},
+                    contentDescription = "scrubber",
                 )
             }
         }
@@ -69,6 +75,7 @@ class WaveformBarTest {
                     inactiveColor = Color.Gray,
                     activeColor = Color.Black,
                     onSeek = {},
+                    contentDescription = "scrubber",
                 )
             }
         }
@@ -87,6 +94,7 @@ class WaveformBarTest {
                     inactiveColor = Color.Gray,
                     activeColor = Color.Black,
                     onSeek = { seeks += it },
+                    contentDescription = "scrubber",
                     modifier = Modifier
                         .testTag("waveform")
                         .size(width = 200.dp, height = 32.dp),
@@ -116,6 +124,7 @@ class WaveformBarTest {
                     inactiveColor = Color.Gray,
                     activeColor = Color.Black,
                     onSeek = { seeks += it },
+                    contentDescription = "scrubber",
                     modifier = Modifier
                         .testTag("waveform")
                         .size(width = 200.dp, height = 32.dp),
@@ -148,5 +157,33 @@ class WaveformBarTest {
         seeks.forEach { f ->
             assertTrue("fraction $f outside [0,1]", f in 0f..1f)
         }
+    }
+
+    // AF57/AF63: the Canvas gestures are invisible to TalkBack. The scrubber
+    // must expose slider semantics (range info reflecting progress) and a
+    // SetProgress action so TalkBack's adjust gesture seeks.
+    @Test
+    fun `exposes slider range info and TalkBack set-progress seeks`() {
+        val seeks = mutableListOf<Float>()
+        composeRule.setContent {
+            Box(modifier = Modifier.size(width = 200.dp, height = 32.dp)) {
+                WaveformBar(
+                    samples = sampleSamples,
+                    progress = 0.25f,
+                    inactiveColor = Color.Gray,
+                    activeColor = Color.Black,
+                    onSeek = { seeks += it },
+                    contentDescription = "scrubber",
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        val scrubber = composeRule.onNodeWithContentDescription("scrubber")
+        scrubber.assertRangeInfoEquals(ProgressBarRangeInfo(current = 0.25f, range = 0f..1f, steps = 0))
+        scrubber.performSemanticsAction(SemanticsActions.SetProgress) { it(0.8f) }
+        composeRule.waitForIdle()
+
+        assertEquals(0.8f, seeks.last(), 0.001f)
     }
 }

@@ -304,6 +304,7 @@ private fun WaveformLine(
                 inactiveColor = colors.fog.copy(alpha = 0.4f),
                 activeColor = colors.stone,
                 onSeek = onSeek,
+                contentDescription = stringResource(R.string.recording_waveform_scrubber_cd),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp, max = 32.dp),
             )
         }
