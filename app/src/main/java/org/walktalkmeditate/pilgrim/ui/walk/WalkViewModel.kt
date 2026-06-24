@@ -54,6 +54,7 @@ import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
+import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
@@ -188,6 +189,19 @@ class WalkViewModel @Inject constructor(
      */
     private val _placementEvents = MutableSharedFlow<PlacementEvent>(extraBufferCapacity = 4)
     val placementEvents: SharedFlow<PlacementEvent> = _placementEvents.asSharedFlow()
+
+    private val _locationPermissionRequired = MutableSharedFlow<String?>(extraBufferCapacity = 1)
+
+    /**
+     * Emits when [startWalk] is asked to begin tracking but
+     * `ACCESS_FINE_LOCATION` isn't granted. Without this gate the walk
+     * would fail silently — the `:tracker` service hits a SecurityException
+     * on `requestLocationUpdates` and finishes the walk with no user
+     * feedback (AF45). The payload is the intention to retry with once the
+     * permission is granted; [ActiveWalkScreen] requests the permission and
+     * either retries [startWalk] or surfaces a Settings deep-link.
+     */
+    val locationPermissionRequired: SharedFlow<String?> = _locationPermissionRequired.asSharedFlow()
 
     /**
      * iOS parity `ActiveWalkView.swift:handleProximityEvent@db4196e`.
@@ -1144,6 +1158,18 @@ class WalkViewModel @Inject constructor(
 
     fun startWalk(intention: String? = null) {
         viewModelScope.launch {
+            // AF45: don't begin a doomed walk without location permission —
+            // the :tracker service would hit SecurityException on
+            // requestLocationUpdates and finish the walk with no feedback.
+            // Hand the intention to the UI so it can request the permission
+            // and retry (or deep-link to Settings on a hard denial).
+            if (!PermissionChecks.isFineLocationGranted(context)) {
+                // Suspending emit (we're already in a coroutine) so the event
+                // is never dropped by the 1-slot buffer; the UI collector is
+                // always subscribed (the Start control lives on the same screen).
+                _locationPermissionRequired.emit(intention)
+                return@launch
+            }
             // Two separate try blocks with different semantics. Catching
             // both in one block would let an IllegalStateException from
             // the controller trigger the service-start rollback, which

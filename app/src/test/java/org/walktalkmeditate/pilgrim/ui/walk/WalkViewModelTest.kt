@@ -117,6 +117,10 @@ class WalkViewModelTest {
         Dispatchers.setMain(dispatcher)
         context = ApplicationProvider.getApplicationContext()
         shadowOf(context as Application).grantPermissions(Manifest.permission.RECORD_AUDIO)
+        // AF45: viewModel.startWalk now prechecks ACCESS_FINE_LOCATION and
+        // refuses to start without it. These tests exercise the post-grant
+        // walk lifecycle, so grant it here.
+        shadowOf(context as Application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
         // Pipe Room's query + transaction executors through the test
         // dispatcher so in-flight Room coroutines are drained before
         // @After's db.close() runs — otherwise a suspended
@@ -221,6 +225,43 @@ class WalkViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // AF45: starting a walk without ACCESS_FINE_LOCATION must not begin a
+    // doomed walk (the :tracker service would hit SecurityException and
+    // finish it silently). Instead it emits locationPermissionRequired
+    // carrying the intention so the UI can request the permission and retry.
+    @Test
+    fun `startWalk without location permission emits locationPermissionRequired and does not start`() =
+        runTest(dispatcher) {
+            shadowOf(context as Application)
+                .denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+
+            viewModel.locationPermissionRequired.test(timeout = 10.seconds) {
+                viewModel.startWalk(intention = "silence")
+                assertEquals("silence", awaitItem())
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertTrue(
+                "walk must not start without location permission",
+                controller.state.value is WalkState.Idle,
+            )
+        }
+
+    // The no-intention path (startWalk() default) carries null through the
+    // event so the grant-retry preserves "no intention" rather than a stale value.
+    @Test
+    fun `startWalk without location permission or intention emits null`() =
+        runTest(dispatcher) {
+            shadowOf(context as Application)
+                .denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+
+            viewModel.locationPermissionRequired.test(timeout = 10.seconds) {
+                viewModel.startWalk()
+                assertNull(awaitItem())
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertTrue(controller.state.value is WalkState.Idle)
+        }
 
     @Test
     fun `pauseWalk and resumeWalk transition controller state correctly`() = runTest(dispatcher) {
