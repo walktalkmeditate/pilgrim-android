@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.audio
 
 import android.content.Context
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.nio.file.Files
@@ -16,8 +17,12 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.sqrt
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -48,6 +53,27 @@ class VoiceRecorder @Inject constructor(
 
     private val _audioLevel = MutableStateFlow(0f)
     val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
+
+    // replay = 0 is safe: a recording can only START via WalkViewModel, which
+    // subscribes to this flow in its init (eagerly, on Main.immediate) before
+    // any recording is started — so no interruption can be emitted before the
+    // sole consumer is collecting. extraBufferCapacity = 1 + DROP_OLDEST keeps
+    // tryEmit non-suspending from the executor thread.
+    private val _interruptions = MutableSharedFlow<Result<VoiceRecording>>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * Emits when an in-flight recording is finalized because the OS
+     * reclaimed audio focus mid-recording (incoming call, another capture
+     * app) — NOT on a normal user-initiated [stop]. On success the payload
+     * carries the [VoiceRecording] for the audio captured up to the
+     * interruption (the consumer persists it and tells the user recording
+     * stopped); a failure payload means the interruption landed before any
+     * PCM was written ([VoiceRecorderError.EmptyRecording]).
+     */
+    val interruptions: SharedFlow<Result<VoiceRecording>> = _interruptions.asSharedFlow()
 
     fun start(walkId: Long, walkUuid: String): Result<Path> {
         // Defensive path-component check: the caller is always a trusted
@@ -86,7 +112,6 @@ class VoiceRecorder @Inject constructor(
                 runCatching { Files.deleteIfExists(absolute) }
                 return Result.failure(VoiceRecorderError.AudioCaptureInitFailed(e))
             }
-            audioFocus.requestTransient()
             val startedAt = clock.now()
             val s = ActiveSession(
                 walkId = walkId,
@@ -97,7 +122,19 @@ class VoiceRecorder @Inject constructor(
                 stopRequested = AtomicBoolean(false),
             )
             session.set(s)
+            // Enqueue the capture loop BEFORE registering the focus-loss
+            // listener. The listener (delivered on the main Looper) calls
+            // onAudioFocusLost, which submits finalizeSession to this same
+            // single-thread executor; finalizeSession blocks on doneLatch,
+            // which only the capture loop's `finally` counts down. If the
+            // listener could fire before the capture loop were enqueued, the
+            // finalize task would sit AHEAD of the capture loop in the FIFO
+            // and deadlock the executor permanently. Enqueuing capture first
+            // guarantees it always drains (and releases the latch) before any
+            // finalize task runs. The listener captures THIS session so a
+            // stale callback can't tear down a later recording.
             executor.execute { runCaptureLoop(s) }
+            audioFocus.requestTransient(onLossListener = { onAudioFocusLost(s) })
             return Result.success(absolute)
         }
     }
@@ -117,6 +154,18 @@ class VoiceRecorder @Inject constructor(
             session.getAndSet(null)
                 ?: return Result.failure(VoiceRecorderError.NoActiveRecording)
         }
+        return finalizeSession(s)
+    }
+
+    /**
+     * Shared teardown for both the user [stop] and the focus-loss
+     * interruption path: signals the capture loop to stop, blocks until it
+     * drains its last buffer (~100 ms), abandons focus, and either builds
+     * the [VoiceRecording] entity or returns
+     * [VoiceRecorderError.EmptyRecording] (deleting the header-only file).
+     * Blocks on the done latch — must run off the main thread.
+     */
+    private fun finalizeSession(s: ActiveSession): Result<VoiceRecording> {
         s.stopRequested.set(true)
         // Block until the capture loop finishes — it reads one more
         // buffer at most (~100 ms), then closes the writer.
@@ -147,6 +196,41 @@ class VoiceRecorder @Inject constructor(
                 fileRelativePath = s.relativePath,
             ),
         )
+    }
+
+    /**
+     * Invoked on the AudioManager focus-callback thread when the OS
+     * reclaims audio focus during a recording (incoming call, another
+     * capture app). Claims [expected] exactly once via `compareAndSet` —
+     * a concurrent user [stop] races for the same session (whoever wins
+     * finalizes; the loser no-ops), and a stale callback from an
+     * already-finalized recording (or a re-sent OS event) can't tear down
+     * a later one. Then finalizes the recording exactly like [stop] does,
+     * via the shared [finalizeSession] (which abandons focus), and
+     * publishes the result on [interruptions].
+     */
+    private fun onAudioFocusLost(expected: ActiveSession) {
+        if (!session.compareAndSet(expected, null)) return
+        // Signal the capture loop to stop BEFORE handing finalizeSession to
+        // the executor: the loop must exit (and count down its latch) for the
+        // queued-behind-it finalize task to unblock on the same single thread.
+        expected.stopRequested.set(true)
+        // finalizeSession blocks on the done latch — never run it on the focus
+        // callback thread. The executor runs it right after the capture loop
+        // exits; abandoning focus is left to finalizeSession so this path stays
+        // symmetric with stop().
+        executor.execute { _interruptions.tryEmit(finalizeSession(expected)) }
+    }
+
+    /**
+     * Test hook: drive the exact focus-loss path the coordinator's
+     * listener triggers for the active recording, without depending on the
+     * OS to deliver a real focus-loss callback (Robolectric can't). No-op
+     * when nothing is recording.
+     */
+    @VisibleForTesting
+    internal fun simulateAudioFocusLoss() {
+        session.get()?.let { onAudioFocusLost(it) }
     }
 
     private fun runCaptureLoop(s: ActiveSession) {

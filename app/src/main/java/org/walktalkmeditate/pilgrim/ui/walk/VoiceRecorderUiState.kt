@@ -28,6 +28,12 @@ sealed class VoiceRecorderUiState {
         CaptureInitFailed,
         /** User tapped stop before any PCM was captured. Silent path — do not banner. */
         Cancelled,
+        /**
+         * The OS reclaimed audio focus mid-recording (incoming call,
+         * another capture app). The recording was finalized and the audio
+         * captured so far was saved; the banner tells the user it stopped.
+         */
+        Interrupted,
         /** Anything else (FS error, Room insert failure, concurrent state). */
         Other,
     }
