@@ -177,7 +177,7 @@
 | AF36 | match-by-reading | `@Volatile` on all cross-thread fields; tested (`StepCounter.kt:65`); minor `+=` compound-op (safe: writer runs post-unregister) | optional harden |
 | AF42 | n-a | No infinite button pulse (static `OverlayCircleButton`) | none |
 | AF43 | match | Proximity pins via `combine(...).distinctUntilChanged().stateIn` (`WalkViewModel.kt:230`) | none |
-| **AF51 / AF52** | **close-the-gap** | Home is `Column(verticalScroll)` + `forEachIndexed` — eager whole-history + per-item animations (`HomeScreen.kt:140`); virtualization deferred ("bucket 14-D") | port to `LazyColumn` + cull off-screen scenery |
+| **AF51 / AF52** | **descoped** | Home is `Column(verticalScroll)` + `forEachIndexed` — eager whole-history + per-item animations (`HomeScreen.kt:140`); virtualization deferred ("bucket 14-D") | **DESCOPED (user, 2026-06-25)** — large continuous-canvas rewrite for a min-severity gain the code already deems acceptable for typical (<100-walk) users |
 | AF61 | n-a | All VMs via `hiltViewModel()`; no inline-constructed root coordinator | none |
 | AF70 | match | `onRelease` → `onDestroy()` + nulls refs (`PilgrimMap.kt:817`) | none |
 | CU2 | n-a | Pipeline serialized via `dispatchMutex` (`WalkControllerImpl.kt:401`) | none |
@@ -265,7 +265,7 @@
 **Perf (medium; some already TODO)**
 - **AF9 / AF46** — incremental live-route append (stop full re-map/upload per GPS sample).
 - **AF33** — unload the whisper model after a transcription batch (~75 MB resident).
-- **AF51 / AF52** — virtualize the home journal (`LazyColumn` + cull off-screen scenery) — already the acknowledged "bucket 14-D".
+- ~~**AF51 / AF52** — virtualize the home journal (`LazyColumn` + cull off-screen scenery).~~ **DESCOPED (user decision, 2026-06-25):** a large rewrite of the continuous-canvas home screen (one `CalligraphyPath` through all dots + absolute-positioned scenery/markers + scroll-haptic math) for a "min"-severity gain the code already deems acceptable (`HomeScreen.kt`: "Typical user has < 100 walks, so the eager-render cost is acceptable"). Not pursuing.
 - **AF10** — hoist the 20 Hz metering read into the waveform leaf.
 
 ### Deferred behind the gate (not code / not desk)
