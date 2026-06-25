@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.onboarding
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -33,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -196,11 +196,19 @@ fun WelcomeScreen(
                 animationSpec = tween(durationMillis = 1500),
                 label = "logo-fade",
             )
+            // #43 Wander Zoom: on Begin the logo zooms 1.0 → 1.4 (easeOut,
+            // 0.4s) as it fades — a "step into the journey" beat. Skipped
+            // under reduce-motion (the exit is an instant 300ms hold there).
+            val exitZoom by animateFloatAsState(
+                targetValue = welcomeLogoExitZoom(isExiting, reduceMotion),
+                animationSpec = tween(durationMillis = 400, easing = LinearOutSlowInEasing),
+                label = "logo-exit-zoom",
+            )
             Box(
                 modifier = Modifier
                     .graphicsLayer {
                         alpha = logoAnim
-                        val scale = 0.85f + 0.15f * logoAnim
+                        val scale = (0.85f + 0.15f * logoAnim) * exitZoom
                         scaleX = scale
                         scaleY = scale
                     },
@@ -291,6 +299,10 @@ fun WelcomeScreen(
         }
     }
 }
+
+/** #43 Wander-Zoom factor: 1.4× on Begin, 1.0× at rest or under reduce-motion. */
+internal fun welcomeLogoExitZoom(isExiting: Boolean, reduceMotion: Boolean): Float =
+    if (isExiting && !reduceMotion) 1.4f else 1.0f
 
 @Composable
 private fun AmbientYellowDrift() {
