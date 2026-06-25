@@ -176,6 +176,13 @@ internal fun PilgrimMap(
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var segmentPolylines by remember { mutableStateOf<List<PolylineAnnotation>>(emptyList()) }
+    // AF46: cache the prior domain points + their projected Mapbox points so
+    // the live polyline maps only the new tail per GPS fix instead of
+    // re-projecting the whole growing list on the main thread. Reset alongside
+    // `polyline` whenever the route is torn down (boundary check falls back to
+    // a full remap on any mismatch, so this is purely to release memory).
+    var liveRoutePoints by remember { mutableStateOf<List<LocationPoint>>(emptyList()) }
+    var liveMapboxPoints by remember { mutableStateOf<List<Point>>(emptyList()) }
     // Snapshot of the segments + colors that produced the current polyline
     // set, so subsequent recompositions (e.g. revealPhase transitions) skip
     // the delete-and-recreate when the segments themselves haven't changed.
@@ -363,6 +370,8 @@ internal fun PilgrimMap(
         polylineManager = null
         polyline = null
         segmentPolylines = emptyList()
+        liveRoutePoints = emptyList()
+        liveMapboxPoints = emptyList()
         renderedSegments = null
         renderedSegmentColors = null
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
@@ -557,7 +566,16 @@ internal fun PilgrimMap(
                     renderedSegmentColors = segmentColors
                 }
             } else if (points.size >= 2) {
-                val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
+                // AF46: project only the new tail; reuse the cached prefix.
+                val mapboxPoints = incrementalMap(
+                    prevSource = liveRoutePoints,
+                    prevMapped = liveMapboxPoints,
+                    newSource = points,
+                    sameElement = { a, b -> a == b },
+                    transform = { Point.fromLngLat(it.longitude, it.latitude) },
+                )
+                liveRoutePoints = points
+                liveMapboxPoints = mapboxPoints
                 val existing = polyline
                 if (existing == null) {
                     polyline = manager.create(
@@ -832,6 +850,8 @@ internal fun PilgrimMap(
                 polylineManager = null
                 polyline = null
                 segmentPolylines = emptyList()
+                liveRoutePoints = emptyList()
+                liveMapboxPoints = emptyList()
                 renderedSegments = null
                 renderedSegmentColors = null
                 waypointManager = null
