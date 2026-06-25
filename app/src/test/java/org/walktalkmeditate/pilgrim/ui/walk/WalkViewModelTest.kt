@@ -36,6 +36,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -389,6 +390,37 @@ class WalkViewModelTest {
             assertEquals(139.001, mapped[1].longitude, 1e-9)
             assertEquals(5.0f, mapped[0].horizontalAccuracyMeters)
             assertEquals(1.2f, mapped[0].speedMetersPerSecond)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `routePoints appends new samples incrementally (AF9)`() = runTest(dispatcher) {
+        viewModel.routePoints.test(timeout = 10.seconds) {
+            assertTrue(awaitItem().isEmpty())
+
+            controller.startWalk(intention = null)
+            val walkId = requireActiveWalkId()
+
+            repository.recordLocation(
+                RouteDataSample(walkId = walkId, timestamp = 1_100L, latitude = 35.0, longitude = 139.0),
+            )
+            val first = awaitItem()
+            assertEquals(1, first.size)
+            assertEquals(35.0, first[0].latitude, 1e-9)
+
+            repository.recordLocation(
+                RouteDataSample(walkId = walkId, timestamp = 1_200L, latitude = 35.5, longitude = 139.5),
+            )
+            val second = awaitItem()
+            // Output matches a full remap…
+            assertEquals(2, second.size)
+            assertEquals(35.0, second[0].latitude, 1e-9)
+            assertEquals(35.5, second[1].latitude, 1e-9)
+            // …but the prefix point is the SAME instance — proof the prefix was
+            // reused, not re-mapped (a regression to full remap fails here).
+            assertSame(first[0], second[0])
 
             cancelAndIgnoreRemainingEvents()
         }

@@ -20,8 +20,13 @@ interface RouteDataSampleDao {
     @Query("SELECT * FROM route_data_samples WHERE walk_id = :walkId ORDER BY timestamp ASC, id ASC")
     suspend fun getForWalk(walkId: Long): List<RouteDataSample>
 
-    /** Live-updating flow for the Active Walk map polyline. */
-    @Query("SELECT * FROM route_data_samples WHERE walk_id = :walkId ORDER BY timestamp ASC")
+    /**
+     * Live-updating flow for the Active Walk map polyline. `id ASC` tiebreaks
+     * equal timestamps so the order is deterministic across emissions (matches
+     * [getForWalk]) — the live-route incremental mapping relies on a stable
+     * prefix between successive emissions.
+     */
+    @Query("SELECT * FROM route_data_samples WHERE walk_id = :walkId ORDER BY timestamp ASC, id ASC")
     fun observeForWalk(walkId: Long): Flow<List<RouteDataSample>>
 
     @Query("SELECT COUNT(*) FROM route_data_samples WHERE walk_id = :walkId")

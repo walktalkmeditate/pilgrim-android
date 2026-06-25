@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -51,6 +52,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
@@ -488,6 +490,12 @@ class WalkViewModel @Inject constructor(
      * → Active emissions (triggered by every LocationSampled updating the
      * accumulator) would otherwise cancel and re-subscribe the DAO flow
      * on every GPS fix, which is wasteful on long walks.
+     *
+     * AF9: the DAO re-emits the full sample list per fix; rather than re-map
+     * the whole growing list each time, [incrementalMap] reuses the prior
+     * points and maps only the new tail (samples are insert-only and
+     * chronological — keyed by `id`). `scan` carries the prior (samples,
+     * points) per walk; flatMapLatest resets it on every walk change.
      */
     val routePoints: StateFlow<List<LocationPoint>> = controller.state
         .map { walkIdOrNull(it) }
@@ -496,17 +504,26 @@ class WalkViewModel @Inject constructor(
             if (walkId == null) {
                 flowOf(emptyList())
             } else {
-                repository.observeLocationSamples(walkId).map { samples ->
-                    samples.map { sample ->
-                        LocationPoint(
-                            timestamp = sample.timestamp,
-                            latitude = sample.latitude,
-                            longitude = sample.longitude,
-                            horizontalAccuracyMeters = sample.horizontalAccuracyMeters,
-                            speedMetersPerSecond = sample.speedMetersPerSecond,
+                repository.observeLocationSamples(walkId)
+                    .scan(emptyList<RouteDataSample>() to emptyList<LocationPoint>()) { acc, samples ->
+                        val (prevSamples, prevPoints) = acc
+                        samples to incrementalMap(
+                            prevSource = prevSamples,
+                            prevMapped = prevPoints,
+                            newSource = samples,
+                            sameElement = { a, b -> a.id == b.id },
+                            transform = { sample ->
+                                LocationPoint(
+                                    timestamp = sample.timestamp,
+                                    latitude = sample.latitude,
+                                    longitude = sample.longitude,
+                                    horizontalAccuracyMeters = sample.horizontalAccuracyMeters,
+                                    speedMetersPerSecond = sample.speedMetersPerSecond,
+                                )
+                            },
                         )
                     }
-                }
+                    .map { it.second }
             }
         }.stateIn(
             scope = viewModelScope,
