@@ -13,6 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -38,7 +39,7 @@ class WalkStatsSheetExpandedTest {
                 talkMillis = 90_000L,
                 meditateMillis = 0L,
                 recorderState = VoiceRecorderUiState.Idle,
-                audioLevel = 0f,
+                audioLevelFlow = MutableStateFlow(0f),
                 recordingsCount = 0,
                 units = UnitSystem.Metric,
                 onStartWalk = {},

@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
@@ -102,7 +103,7 @@ fun WalkStatsSheet(
     talkMillis: Long,
     meditateMillis: Long,
     recorderState: VoiceRecorderUiState,
-    audioLevel: Float,
+    audioLevelFlow: StateFlow<Float>,
     recordingsCount: Int,
     units: UnitSystem,
     steps: Int? = null,
@@ -282,7 +283,7 @@ fun WalkStatsSheet(
                         talkMillis = talkMillis,
                         meditateMillis = meditateMillis,
                         recorderState = recorderState,
-                        audioLevel = audioLevel,
+                        audioLevelFlow = audioLevelFlow,
                         recordingsCount = recordingsCount,
                         units = units,
                         steps = steps,
@@ -419,7 +420,7 @@ private fun ExpandedContent(
     talkMillis: Long,
     meditateMillis: Long,
     recorderState: VoiceRecorderUiState,
-    audioLevel: Float,
+    audioLevelFlow: StateFlow<Float>,
     recordingsCount: Int,
     units: UnitSystem,
     steps: Int?,
@@ -520,7 +521,7 @@ private fun ExpandedContent(
         ActionButtonRow(
             walkState = walkState,
             recorderState = recorderState,
-            audioLevel = audioLevel,
+            audioLevelFlow = audioLevelFlow,
             recordingsCount = recordingsCount,
             onStartWalk = onStartWalk,
             onStartMeditation = onStartMeditation,
@@ -579,7 +580,7 @@ private fun TimeChip(
 private fun ActionButtonRow(
     walkState: WalkState,
     recorderState: VoiceRecorderUiState,
-    audioLevel: Float,
+    audioLevelFlow: StateFlow<Float>,
     recordingsCount: Int,
     onStartWalk: () -> Unit,
     onStartMeditation: () -> Unit,
@@ -684,7 +685,7 @@ private fun ActionButtonRow(
         }
         MicActionButton(
             recorderState = recorderState,
-            audioLevel = audioLevel,
+            audioLevelFlow = audioLevelFlow,
             walkState = walkState,
             onToggle = onToggleRecording,
             onPermissionDenied = onPermissionDenied,
@@ -760,7 +761,7 @@ private fun CircularActionButton(
 @Composable
 private fun MicActionButton(
     recorderState: VoiceRecorderUiState,
-    audioLevel: Float,
+    audioLevelFlow: StateFlow<Float>,
     walkState: WalkState,
     onToggle: () -> Unit,
     onPermissionDenied: () -> Unit,
@@ -842,7 +843,7 @@ private fun MicActionButton(
                 contentAlignment = Alignment.Center,
             ) {
                 if (isRecording) {
-                    AudioWaveformView(level = audioLevel)
+                    LiveAudioWaveform(levelFlow = audioLevelFlow)
                 } else {
                     Icon(
                         imageVector = Icons.Filled.Mic,

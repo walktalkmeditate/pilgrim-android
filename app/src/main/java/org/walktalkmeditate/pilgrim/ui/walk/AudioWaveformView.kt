@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 internal const val WAVEFORM_BAR_TEST_TAG = "audio-waveform-bar"
@@ -64,6 +66,24 @@ fun AudioWaveformView(
             )
         }
     }
+}
+
+/**
+ * Live wrapper that collects the metering [levelFlow] at THIS leaf. The
+ * Active Walk screen passes the flow down WITHOUT reading its value, so a
+ * ~10–20 Hz level emission invalidates only this leaf (and the
+ * [AudioWaveformView] it draws) — not the screen body, the WalkStatsSheet
+ * chain, or the Mapbox map that recomposed when the level was read at screen
+ * scope (AF10). The chain still re-runs at its normal (≈1 Hz timer) cadence;
+ * AF10 only removes the 20 Hz metering tick from that path.
+ */
+@Composable
+internal fun LiveAudioWaveform(
+    levelFlow: StateFlow<Float>,
+    modifier: Modifier = Modifier,
+) {
+    val current by levelFlow.collectAsStateWithLifecycle()
+    AudioWaveformView(level = current, modifier = modifier)
 }
 
 internal fun audioWaveformBarHeightDp(level: Float, weight: Float): Float {

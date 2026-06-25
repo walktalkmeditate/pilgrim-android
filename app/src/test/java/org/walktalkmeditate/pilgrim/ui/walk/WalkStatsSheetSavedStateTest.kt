@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -41,7 +42,7 @@ class WalkStatsSheetSavedStateTest {
             walkState = WalkState.Active(WalkAccumulator(1L, 0L)),
             totalElapsedMillis = 0L, distanceMeters = 0.0,
             walkMillis = 0L, talkMillis = 0L, meditateMillis = 0L,
-            recorderState = VoiceRecorderUiState.Idle, audioLevel = 0f,
+            recorderState = VoiceRecorderUiState.Idle, audioLevelFlow = MutableStateFlow(0f),
             recordingsCount = 0,
                 units = UnitSystem.Metric,
             onStartWalk = {},

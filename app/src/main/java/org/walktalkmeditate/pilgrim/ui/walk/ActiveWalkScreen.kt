@@ -244,7 +244,6 @@ fun ActiveWalkScreen(
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
     val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
-    val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
     val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
@@ -1001,7 +1000,10 @@ fun ActiveWalkScreen(
             talkMillis = if (isPreWalk) 0L else talkMillis,
             meditateMillis = if (isPreWalk) 0L else meditateMillis,
             recorderState = recorderState,
-            audioLevel = audioLevel,
+            // AF10: pass the flow (not the collected value) so a ~20 Hz metering
+            // tick doesn't invalidate this screen / the Mapbox map — only the
+            // waveform leaf (LiveAudioWaveform) collects it.
+            audioLevelFlow = viewModel.audioLevel,
             recordingsCount = if (isPreWalk) 0 else recordingsCount,
             units = distanceUnits,
             steps = if (isPreWalk) null else steps,
