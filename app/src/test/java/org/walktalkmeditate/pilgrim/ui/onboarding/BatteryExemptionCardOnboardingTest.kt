@@ -28,9 +28,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.permissions.PermissionsRepository
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
+
+private object NoopBellPlayer : BellPlaying {
+    override fun play() {}
+}
 
 /**
  * B1 regression: the [BatteryExemptionCard] was orphaned (zero call
@@ -67,7 +72,9 @@ class BatteryExemptionCardOnboardingTest {
             scope = dataStoreScope,
             produceFile = { tempFile },
         )
-        viewModel = PermissionsViewModel(PermissionsRepository(dataStore))
+        viewModel = PermissionsRepository(dataStore).let {
+            PermissionsViewModel(it, it, NoopBellPlayer)
+        }
     }
 
     @After
@@ -135,7 +142,9 @@ class BatteryExemptionCardOnboardingTest {
     @Test
     fun `card self-hides once the prompt has been answered`() {
         runBlocking { PermissionsRepository(dataStore).markBatteryExemptionAsked() }
-        viewModel = PermissionsViewModel(PermissionsRepository(dataStore))
+        viewModel = PermissionsRepository(dataStore).let {
+            PermissionsViewModel(it, it, NoopBellPlayer)
+        }
 
         composeRule.setContent {
             PilgrimTheme {

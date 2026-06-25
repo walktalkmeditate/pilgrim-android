@@ -86,4 +86,50 @@ class PermissionsRepositoryTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // #43 grant ritual persistence.
+
+    @Test
+    fun `consumeBellGrant fires once then stays silent`() = runTest {
+        val location = PermissionRitual.Permission.Location
+        assertFalse(repository.hasPlayedBell(location))
+
+        assertTrue(
+            "first grant should fire",
+            repository.consumeBellGrant(location, soundsEnabled = true),
+        )
+        assertTrue("firing must persist", repository.hasPlayedBell(location))
+        assertFalse(
+            "a second grant for the same permission stays silent",
+            repository.consumeBellGrant(location, soundsEnabled = true),
+        )
+    }
+
+    @Test
+    fun `consumeBellGrant is per permission`() = runTest {
+        repository.consumeBellGrant(PermissionRitual.Permission.Location, soundsEnabled = true)
+
+        assertTrue(
+            "a different permission still rings its own first grant",
+            repository.consumeBellGrant(PermissionRitual.Permission.Microphone, soundsEnabled = true),
+        )
+    }
+
+    @Test
+    fun `consumeBellGrant with sounds off does not consume the flag`() = runTest {
+        val motion = PermissionRitual.Permission.Activity
+
+        assertFalse(
+            "no bell when sounds are off",
+            repository.consumeBellGrant(motion, soundsEnabled = false),
+        )
+        assertFalse(
+            "a silenced grant must not burn the once-per-grant flag",
+            repository.hasPlayedBell(motion),
+        )
+        assertTrue(
+            "re-enabling sounds lets the still-unplayed bell ring",
+            repository.consumeBellGrant(motion, soundsEnabled = true),
+        )
+    }
 }
