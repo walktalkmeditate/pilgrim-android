@@ -55,7 +55,10 @@ internal object GoshuinShareRenderer {
     private const val INK = 0xFF2C2416.toInt()
     private const val PARCHMENT = 0xFFF5F0E8.toInt()
     private const val DAWN = 0xFFC4956A.toInt()
-    private const val FOG = 0xFFB8AFA2.toInt()
+    // AF68: WCAG-contrast fog. Always-light render tracks the light fog asset
+    // (iOS GoshuinShareRenderer: UIColor(named: "fog")); post-fix @ 3c8c443.
+    // `internal` so a test pins it to PilgrimPaletteLight.fog.
+    internal const val FOG = 0xFF8A8175.toInt()
 
     /** iOS `tintColor(for:)` — favicon → seal tint. */
     private fun tintArgb(favicon: org.walktalkmeditate.pilgrim.data.entity.WalkFavicon?): Int =
