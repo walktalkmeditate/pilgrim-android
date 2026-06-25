@@ -99,7 +99,7 @@ internal object LightReadingPresenter {
         Planet.Sun -> Color(0xFFC4956A)      // dawn yellow-gold
         Planet.Venus -> Color(0xFFC9A8B0)    // muted rose
         Planet.Mercury -> Color(0xFF7A9CB8)  // muted blue
-        Planet.Moon -> Color(0xFFB8AFA2)     // fog
+        Planet.Moon -> Color(0xFFB8AFA2)     // lunar silver-gray (fixed dot color, NOT the AF68 fog token)
     }
 
     private fun dayOfWeekForRuler(ruler: Planet): String = when (ruler) {

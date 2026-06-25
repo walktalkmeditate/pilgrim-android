@@ -30,6 +30,7 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.semantics.contentDescription
 import androidx.glance.semantics.semantics
+import androidx.glance.text.FontFamily
 import androidx.glance.text.FontStyle
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
@@ -241,6 +242,11 @@ private fun MantraContent(mantras: String, today: LocalDate) {
         text = phrase,
         style = TextStyle(
             color = fog,
+            // AF74: the mantra is the widget's brand-display text. Glance can't
+            // bundle Cormorant Garamond, so — like iOS's `.system(design: .serif)`
+            // fallback (PilgrimHomeWidget.swift @ 3c8c443) — approximate it with
+            // the system serif rather than the default sans.
+            fontFamily = FontFamily.Serif,
             fontSize = if (isMedium) 16.sp else 13.sp,
             fontStyle = FontStyle.Italic,
             textAlign = TextAlign.Center,
@@ -328,8 +334,12 @@ private val parchmentLight = androidx.compose.ui.graphics.Color(0xFFF5F0E8)
 private val parchmentDark = androidx.compose.ui.graphics.Color(0xFF1C1914)
 private val inkLight = androidx.compose.ui.graphics.Color(0xFF2C2416)
 private val inkDark = androidx.compose.ui.graphics.Color(0xFFF0EBE1)
-private val fogLight = androidx.compose.ui.graphics.Color(0xFFB8AFA2)
-private val fogDark = androidx.compose.ui.graphics.Color(0xFF6B6359)
+// AF68: WCAG-contrast fog (verbatim with the main palette, post-fix value
+// from fog.colorset @ pilgrim-ios 3c8c443). `internal` so a test pins these to
+// PilgrimPalette*.fog — Glance can't read the Compose palette, so they're a
+// hand-kept copy that a future palette sync could otherwise miss.
+internal val fogLight = androidx.compose.ui.graphics.Color(0xFF8A8175)
+internal val fogDark = androidx.compose.ui.graphics.Color(0xFF948E88)
 
 private val parchment = DayNightColorProvider(day = parchmentLight, night = parchmentDark)
 private val ink = DayNightColorProvider(day = inkLight, night = inkDark)

@@ -197,9 +197,9 @@ fun <T> SettingPicker(
                         activeContainerColor = pilgrimColors.stone,
                         activeContentColor = pilgrimColors.parchment,
                         inactiveContainerColor = pilgrimColors.parchmentSecondary.copy(alpha = 0f),
-                        // Faded ink instead of fog: fog (#6B6359 in dark mode)
-                        // on parchmentSecondary at alpha 0.5 falls below WCAG
-                        // AA; ink-at-60% holds contrast in both light and dark.
+                        // Faded ink instead of fog: fog on parchmentSecondary
+                        // at alpha 0.5 falls below WCAG AA even after the AF68
+                        // darken; ink-at-60% holds contrast in light and dark.
                         inactiveContentColor = pilgrimColors.ink.copy(alpha = 0.6f),
                         activeBorderColor = pilgrimColors.stone,
                         inactiveBorderColor = pilgrimColors.fog.copy(alpha = 0.3f),

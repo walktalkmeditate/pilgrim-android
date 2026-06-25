@@ -26,7 +26,9 @@ object PilgrimPaletteLight {
     val parchmentTertiary = Color(0xFFE4DBC9)
     val moss = Color(0xFF7A8B6F)
     val rust = Color(0xFFA0634B)
-    val fog = Color(0xFFB8AFA2)
+    // AF68: darkened from #B8AFA2 for WCAG contrast on parchment (secondary
+    // text). iOS verbatim, post-fix value (fog.colorset @ pilgrim-ios 3c8c443).
+    val fog = Color(0xFF8A8175)
     val dawn = Color(0xFFC4956A)
     val turningJade = Color(0xFF74B495)
     val turningGold = Color(0xFFC9A646)
@@ -42,7 +44,9 @@ object PilgrimPaletteDark {
     val parchmentTertiary = Color(0xFF30291F)
     val moss = Color(0xFF95A888)
     val rust = Color(0xFFC47E63)
-    val fog = Color(0xFF6B6359)
+    // AF68: lightened from #6B6359 for WCAG contrast on dark parchment. iOS
+    // verbatim, post-fix value (fog.colorset @ pilgrim-ios 3c8c443).
+    val fog = Color(0xFF948E88)
     val dawn = Color(0xFFD4A87A)
     val turningJade = Color(0xFF88C4A0)
     val turningGold = Color(0xFFD5B55D)
