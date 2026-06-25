@@ -7,6 +7,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,23 +31,34 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.core.app.ActivityCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
+import org.walktalkmeditate.pilgrim.permissions.PermissionRitual
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+
+// #43 grant ritual: the granted card springs its checkmark to 1.15× and back.
+private const val GRANT_PULSE_SCALE = 1.15f
 
 /**
  * Location grant state. Progresses from [NotRequested] through the two
@@ -62,6 +76,23 @@ fun PermissionsScreen(
     viewModel: PermissionsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    // The activity-result launcher callbacks are remembered, so they capture
+    // these CompositionLocals at first composition; rememberUpdatedState lets
+    // them read the live value when a grant actually lands.
+    val soundsEnabled = rememberUpdatedState(LocalSoundsEnabled.current)
+    val reduceMotion = rememberUpdatedState(LocalReduceMotion.current)
+    val locationPulse by viewModel.locationPulse.collectAsStateWithLifecycle()
+    val microphonePulse by viewModel.microphonePulse.collectAsStateWithLifecycle()
+    val activityPulse by viewModel.activityPulse.collectAsStateWithLifecycle()
+    val celebrate: (PermissionRitual.Permission) -> Unit = { permission ->
+        viewModel.celebrateGrant(
+            permission = permission,
+            soundsEnabled = soundsEnabled.value,
+            reduceMotion = reduceMotion.value,
+            onGrantHaptic = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+        )
+    }
 
     var locationStatus by remember {
         mutableStateOf(
@@ -98,8 +129,15 @@ fun PermissionsScreen(
         onDispose { lifecycle.removeObserver(observer) }
     }
 
+    // Hoist the contracts so their reference identity is stable across the
+    // (now pulse-driven) recompositions of this screen — rememberLauncher's
+    // registration keys on the contract instance, so a fresh one per recompose
+    // would re-register and could orphan an in-flight permission dialog.
+    val multiPermissionContract = remember { ActivityResultContracts.RequestMultiplePermissions() }
+    val singlePermissionContract = remember { ActivityResultContracts.RequestPermission() }
+
     val locationLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        contract = multiPermissionContract,
     ) { result ->
         val fine = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
         val coarse = result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
@@ -120,19 +158,26 @@ fun PermissionsScreen(
                 if (canPromptAgain) LocationStatus.NotRequested else LocationStatus.NeedsSettings
             }
         }
+        if (fine) celebrate(PermissionRitual.Permission.Location)
     }
 
     val notificationLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
+        contract = singlePermissionContract,
     ) { granted -> notificationGranted = granted }
 
     val microphoneLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { granted -> microphoneGranted = granted }
+        contract = singlePermissionContract,
+    ) { granted ->
+        microphoneGranted = granted
+        if (granted) celebrate(PermissionRitual.Permission.Microphone)
+    }
 
     val activityLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { granted -> activityGranted = granted }
+        contract = singlePermissionContract,
+    ) { granted ->
+        activityGranted = granted
+        if (granted) celebrate(PermissionRitual.Permission.Activity)
+    }
 
     val canContinue = locationStatus == LocationStatus.Granted && notificationGranted
 
@@ -157,6 +202,7 @@ fun PermissionsScreen(
 
         LocationPermissionCard(
             status = locationStatus,
+            pulse = locationPulse,
             onRequestPrompt = {
                 locationLauncher.launch(
                     arrayOf(
@@ -189,6 +235,7 @@ fun PermissionsScreen(
             title = stringResource(R.string.permission_microphone_title),
             rationale = stringResource(R.string.permission_microphone_rationale),
             granted = microphoneGranted,
+            pulse = microphonePulse,
             optional = true,
             onRequest = { microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         )
@@ -199,6 +246,7 @@ fun PermissionsScreen(
                 title = stringResource(R.string.permission_activity_title),
                 rationale = stringResource(R.string.permission_activity_rationale),
                 granted = activityGranted,
+                pulse = activityPulse,
                 optional = true,
                 onRequest = {
                     @Suppress("InlinedApi")
@@ -236,6 +284,7 @@ private fun LocationPermissionCard(
     status: LocationStatus,
     onRequestPrompt: () -> Unit,
     onOpenSettings: () -> Unit,
+    pulse: Boolean = false,
 ) {
     val rationale = when (status) {
         LocationStatus.CoarseOnly -> stringResource(R.string.permission_location_coarse_only)
@@ -267,11 +316,7 @@ private fun LocationPermissionCard(
                 horizontalArrangement = Arrangement.End,
             ) {
                 when (status) {
-                    LocationStatus.Granted -> Text(
-                        text = stringResource(R.string.permissions_granted_label),
-                        style = pilgrimType.caption,
-                        color = pilgrimColors.moss,
-                    )
+                    LocationStatus.Granted -> GrantedLabel(pulse = pulse)
                     LocationStatus.CoarseOnly, LocationStatus.NeedsSettings ->
                         TextButton(onClick = onOpenSettings) {
                             Text(stringResource(R.string.permissions_open_settings))
@@ -292,6 +337,7 @@ private fun PermissionCard(
     granted: Boolean,
     onRequest: () -> Unit,
     optional: Boolean = false,
+    pulse: Boolean = false,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -334,11 +380,7 @@ private fun PermissionCard(
                 // optional alike) — the "(optional)" label beside the
                 // title carries the distinction, not the button weight.
                 if (granted) {
-                    Text(
-                        text = stringResource(R.string.permissions_granted_label),
-                        style = pilgrimType.caption,
-                        color = pilgrimColors.moss,
-                    )
+                    GrantedLabel(pulse = pulse)
                 } else {
                     TextButton(onClick = onRequest) {
                         Text(stringResource(R.string.permissions_grant))
@@ -347,4 +389,32 @@ private fun PermissionCard(
             }
         }
     }
+}
+
+/**
+ * The "Granted" label, springing its scale when [pulse] flips true (#43 grant
+ * ritual). A single bool drives an `animateFloatAsState` — the view-model
+ * flips it on then off after 0.2s so the spring grows to 1.15× and settles
+ * back to 1.0×. Reduce-motion keeps [pulse] false (the VM never sets it), so
+ * the label simply appears.
+ */
+@Composable
+private fun GrantedLabel(pulse: Boolean) {
+    val scale by animateFloatAsState(
+        targetValue = if (pulse) GRANT_PULSE_SCALE else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "grant-pulse",
+    )
+    Text(
+        text = stringResource(R.string.permissions_granted_label),
+        style = pilgrimType.caption,
+        color = pilgrimColors.moss,
+        modifier = Modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        },
+    )
 }
