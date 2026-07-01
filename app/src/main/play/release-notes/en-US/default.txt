@@ -1,6 +1,7 @@
-The first step.
-
-Walk. Record. Reflect. Meditate.
-Everything on your device, nothing in the cloud.
-
-Walk well.
+• Voice talks now keep recording through notifications and brief interruptions
+• Full TalkBack + reduce-motion accessibility pass
+• Smoother, lighter long walks — faster live route, less battery churn
+• New onboarding: a Wander zoom and a gentle permission-grant ritual
+• Better text contrast in light & dark; brand font on the home widget
+• Hemisphere-correct seasonal colors and solstice/equinox turnings
+• Honest transcription & import status, with safer imports
