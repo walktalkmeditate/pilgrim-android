@@ -59,6 +59,38 @@ class AudioFocusCoordinatorTest {
         )
     }
 
+    // End-to-end (iOS PR #47): the listener wired by requestTransient must
+    // ignore a transient interruption (notification / nav / assistant / ring)
+    // and fire only on a permanent takeover — proving the flags are threaded
+    // through, not just the isFinalizingFocusLoss decision in isolation.
+    @Test
+    fun `requestTransient loss listener ignores transient loss, fires on permanent loss`() {
+        var lossCount = 0
+        coordinator.requestTransient(onLossListener = { lossCount++ })
+        val listener = shadowOf(audioManager).lastAudioFocusRequest.listener
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals("a transient interruption must not cut the talk", 0, lossCount)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        assertEquals("a permanent takeover finalizes the recording", 1, lossCount)
+    }
+
+    // Symmetric guard: playback's listener DOES fire on a transient loss, so a
+    // future accidental flag flip on requestMediaPlayback can't silently pass.
+    @Test
+    fun `requestMediaPlayback loss listener fires on transient loss`() {
+        var lossCount = 0
+        coordinator.requestMediaPlayback(onLossListener = { lossCount++ })
+        val listener = shadowOf(audioManager).lastAudioFocusRequest.listener
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertEquals("playback pauses on a transient interruption", 1, lossCount)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals("playback also pauses on a duckable loss", 2, lossCount)
+    }
+
     @Test
     fun `abandon releases the held request`() {
         coordinator.requestTransient(onLossListener = {})
@@ -71,36 +103,60 @@ class AudioFocusCoordinatorTest {
         )
     }
 
-    // Capture (treatDuckAsLoss = false): only a permanent or transient LOSS
-    // finalizes the recording. A CAN_DUCK loss (a notification ding) must NOT
-    // — a recording can simply talk over it.
+    // Capture (requestTransient → treatTransientAsLoss = false, treatDuckAsLoss
+    // = false): ONLY a permanent LOSS finalizes the recording. A transient LOSS
+    // or CAN_DUCK (a notification, nav prompt, assistant, unanswered ring) must
+    // NOT — AudioRecord keeps capturing, so a talk shouldn't split for a blip
+    // (iOS PR #47 parity).
     @Test
-    fun `capture treats LOSS and transient LOSS as finalizing but not CAN_DUCK`() {
-        val duck = false
+    fun `capture finalizes only on permanent LOSS, not transient or duck`() {
         assertTrue(
-            AudioFocusCoordinator.isFinalizingFocusLoss(AudioManager.AUDIOFOCUS_LOSS, duck),
-        )
-        assertTrue(
-            AudioFocusCoordinator.isFinalizingFocusLoss(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, duck),
-        )
-        assertFalse(
             AudioFocusCoordinator.isFinalizingFocusLoss(
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
-                duck,
+                AudioManager.AUDIOFOCUS_LOSS,
+                treatTransientAsLoss = false,
+                treatDuckAsLoss = false,
             ),
         )
         assertFalse(
-            AudioFocusCoordinator.isFinalizingFocusLoss(AudioManager.AUDIOFOCUS_GAIN, duck),
+            "a transient interruption must not cut the talk",
+            AudioFocusCoordinator.isFinalizingFocusLoss(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                treatTransientAsLoss = false,
+                treatDuckAsLoss = false,
+            ),
+        )
+        assertFalse(
+            AudioFocusCoordinator.isFinalizingFocusLoss(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
+                treatTransientAsLoss = false,
+                treatDuckAsLoss = false,
+            ),
+        )
+        assertFalse(
+            AudioFocusCoordinator.isFinalizingFocusLoss(
+                AudioManager.AUDIOFOCUS_GAIN,
+                treatTransientAsLoss = false,
+                treatDuckAsLoss = false,
+            ),
         )
     }
 
-    // Playback (treatDuckAsLoss = true): a CAN_DUCK loss DOES count, preserving
-    // the pre-existing requestMediaPlayback pause-on-duck behavior.
+    // Playback (requestMediaPlayback → both true): a transient LOSS and a
+    // CAN_DUCK loss both pause playback, preserving the pre-existing behavior —
+    // only capture changed for iOS PR #47.
     @Test
-    fun `playback treats CAN_DUCK as finalizing`() {
+    fun `playback finalizes on transient and CAN_DUCK loss`() {
+        assertTrue(
+            AudioFocusCoordinator.isFinalizingFocusLoss(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                treatTransientAsLoss = true,
+                treatDuckAsLoss = true,
+            ),
+        )
         assertTrue(
             AudioFocusCoordinator.isFinalizingFocusLoss(
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
+                treatTransientAsLoss = true,
                 treatDuckAsLoss = true,
             ),
         )
