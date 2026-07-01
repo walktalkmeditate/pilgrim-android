@@ -101,7 +101,7 @@ jobs:
 
       - name: Upload release artifacts to tag
         if: steps.rel.outputs.exists != 'true'
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
           files: |
             app/build/outputs/bundle/release/app-release.aab
