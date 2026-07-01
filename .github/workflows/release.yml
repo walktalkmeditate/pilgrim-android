@@ -16,6 +16,25 @@ jobs:
     permissions:
       contents: write
     steps:
+      # production.yml (and a manual `gh release create` for v1.0.0) create a
+      # curated GitHub release BEFORE this tag-triggered workflow reaches its
+      # build. Without this guard, softprops below would UPDATE that release
+      # with `generate_release_notes: true` — clobbering the curated changelog
+      # and doing a redundant build. Skip build + upload when the release
+      # already exists; this workflow still owns any ad-hoc v* tag that has no
+      # release yet.
+      - name: Skip if a release already exists for this tag
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $GITHUB_REF_NAME already exists — skipping build + upload so this workflow can't clobber its curated notes."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v6
         with:
           # The release job only needs the tag's tree, not the full
@@ -69,16 +88,19 @@ jobs:
           } > local.properties
 
       - name: Build signed AAB
+        if: steps.rel.outputs.exists != 'true'
         env:
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew bundleRelease
 
       - name: Build signed APK
+        if: steps.rel.outputs.exists != 'true'
         env:
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: ./gradlew assembleRelease
 
       - name: Upload release artifacts to tag
+        if: steps.rel.outputs.exists != 'true'
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: |
