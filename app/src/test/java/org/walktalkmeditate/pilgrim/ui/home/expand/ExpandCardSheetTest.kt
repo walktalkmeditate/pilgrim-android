@@ -76,6 +76,28 @@ class ExpandCardSheetTest {
     }
 
     @Test
+    fun renders_seek_snapshot_with_mode_glyph_composed() {
+        // The walk-mode glyph is decorative (semantics cleared), so
+        // there is no node to assert on — this proves the seek branch
+        // (print + dissolving trail) composes inside the header without
+        // crashing. Geometry itself is pinned in WalkModeFootprintsTest.
+        composeRule.setContent {
+            PilgrimTheme {
+                ExpandCardSheet(
+                    snapshot = snap.copy(isSeek = true),
+                    celestial = null,
+                    seasonColor = androidx.compose.ui.graphics.Color(0xFF74B495),
+                    units = UnitSystem.Metric,
+                    isShared = false,
+                    onViewDetails = {},
+                    onDismissRequest = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("View details").assertIsDisplayed()
+    }
+
+    @Test
     fun tapping_scrim_outside_card_dismisses() {
         var dismissed = false
         composeRule.setContent {

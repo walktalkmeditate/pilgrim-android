@@ -199,6 +199,7 @@ class HomeViewModel internal constructor(
             val talkSec: Long,
             val meditateSec: Long,
         )
+        val seekWalkIds = fetchSeekWalkIds()
         // Parallelize per-walk DAO reads — kaijutsu PR #86 review caught
         // sequential N reads stuttering at 100+ walks. Each walk's
         // locationSamplesFor + walkEventsFor + activitySumsFor are
@@ -252,6 +253,7 @@ class HomeViewModel internal constructor(
                     isShared = shareCache[input.walk.uuid]?.isExpiredAt(nowMs) == false,
                     weatherCondition = input.walk.weatherCondition,
                     isArchived = input.walk.uuid in archivedUuids,
+                    isSeek = input.walk.id in seekWalkIds,
                 )
             }
             val newestFirst = oldestFirstSnapshots.reversed()
@@ -269,6 +271,23 @@ class HomeViewModel internal constructor(
 
         scheduleSealRender(walks, units)
         return loaded
+    }
+
+    /**
+     * Seek walks are marked by their `SEEK_MODE` event (origin R18).
+     * One bulk fetch — the event count equals the seek-walk count —
+     * instead of faulting every walk's event list while building
+     * snapshots. Mirrors iOS `HomeViewModel.fetchSeekWalkIDs` incl. its
+     * failure contract: a fetch error is logged and degrades this one
+     * glyph to wander, never the whole journal.
+     */
+    private suspend fun fetchSeekWalkIds(): Set<Long> = try {
+        repository.seekWalkIds()
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (t: Throwable) {
+        android.util.Log.w("HomeViewModel", "seek walk-id fetch failed; glyphs fall back to wander", t)
+        emptySet()
     }
 
     fun setExpandedSnapshotId(id: Long?) {

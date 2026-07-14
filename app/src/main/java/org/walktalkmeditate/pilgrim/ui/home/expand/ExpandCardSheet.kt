@@ -2,7 +2,6 @@
 package org.walktalkmeditate.pilgrim.ui.home.expand
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -32,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -49,7 +47,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
-import org.walktalkmeditate.pilgrim.ui.design.scenery.footprintPath
+import org.walktalkmeditate.pilgrim.ui.home.WalkModeFootprints
 import org.walktalkmeditate.pilgrim.ui.home.WalkSnapshot
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -217,12 +215,9 @@ private fun HeaderRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Canvas(modifier = Modifier.size(width = 12.dp, height = 18.dp)) {
-            drawPath(
-                path = footprintPath(Size(size.width, size.height)),
-                color = footprintColor,
-            )
-        }
+        // iOS InkScrollView.swift:354-357@c1745e8 — the quick-view
+        // glyph speaks the walk's mode (wander pair vs seek trail).
+        WalkModeFootprints(isSeek = snapshot.isSeek, color = footprintColor)
         snapshot.favicon?.let { key ->
             WalkFavicon.fromRawValue(key)?.let { fav ->
                 Icon(

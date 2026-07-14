@@ -3,12 +3,13 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 
 import java.time.Instant
 import java.time.ZoneId
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 /**
  * Per-walk fields needed by [GoshuinMilestones.detect]. A small DTO
  * (rather than the full `Walk` Room entity) so detection tests don't
- * need to instantiate Room.
+ * need to instantiate Room. Android analogue of iOS `SealInput`.
  */
 data class WalkMilestoneInput(
     val walkId: Long,
@@ -22,25 +23,33 @@ data class WalkMilestoneInput(
      * `GoshuinMilestones` (`walk.routeData.first?.latitude`).
      */
     val latitude: Double = 0.0,
+    /**
+     * Seek arrivals recorded on this walk (reserved-icon waypoints),
+     * for the seeking milestones. Mirrors iOS
+     * `SealInput.foundPlaceCount`; populated from
+     * [GoshuinMilestones.arrivalCounts]. Default 0 = wander walk or
+     * caller that doesn't award seeking seals.
+     */
+    val foundPlaceCount: Int = 0,
 )
 
 /**
  * Pure milestone detector. Ported from iOS's `GoshuinMilestones.swift`.
  *
- * Returns the highest-precedence milestone for the walk at [walkIndex]
- * (0-based, most-recent-first within [allFinished]) — or `null` when
- * no milestone applies. Multiple simultaneous milestones (e.g., walk
- * #10 is also the longest) are resolved by explicit precedence:
+ * Returns the primary milestone for the walk at [walkIndex] (0-based,
+ * most-recent-first within [allFinished]) — or `null` when no
+ * milestone applies. Multiple simultaneous milestones (e.g., walk #10
+ * is also the longest) are resolved by [primaryMilestone]'s
+ * display-priority table (iOS `displayPriority`/`intraPriority`):
+ * once-ever moments outrank threshold crossings outrank recurring and
+ * transient records; within a parameterized tier the largest count is
+ * the headline.
  *
- *   1. [GoshuinMilestone.FirstWalk]
- *   2. [GoshuinMilestone.LongestWalk]
- *   3. [GoshuinMilestone.LongestMeditation]
- *   4. [GoshuinMilestone.NthWalk]
- *   5. [GoshuinMilestone.FirstOfSeason]
- *
- * iOS uses `Set<Milestone>.first` which depends on Swift's hash-based
- * iteration order — non-deterministic across processes. Android fixes
- * this with explicit precedence above.
+ * Shape divergence from iOS: `detect` there returns the full
+ * `Set<Milestone>` and every consumer immediately reduces it (halo on
+ * `!isEmpty`, caption/share label via `primaryMilestone`). Android
+ * returns the primary directly — same observable output on every
+ * surface, no churn for `GoshuinSeal.milestone` consumers.
  *
  * **List-ordering note:** callers pass [allFinished] sorted by
  * `endTimestamp DESC` (walk completion order) because the goshuin
@@ -55,17 +64,25 @@ data class WalkMilestoneInput(
  */
 object GoshuinMilestones {
 
+    /**
+     * Lifetime found-place counts that earn a seal. iOS
+     * `unknownThresholds` (`GoshuinMilestones.swift:18@c1745e8`).
+     */
+    val unknownThresholds: List<Int> = listOf(10, 25, 50, 100)
+
     fun detect(
         walkIndex: Int,
         walk: WalkMilestoneInput,
         allFinished: List<WalkMilestoneInput>,
     ): GoshuinMilestone? {
-        // Defensive guard: the function's two production callers
-        // already filter to non-empty `finished` lists, but keeping
-        // this check at the entry point means a future caller (test,
-        // preview, new feature) can pass `emptyList()` without
-        // crashing on `allFinished.maxOf` below.
+        // Defensive guard: the function's production callers already
+        // filter to non-empty `finished` lists, but keeping this check
+        // at the entry point means a future caller (test, preview, new
+        // feature) can pass `emptyList()` without crashing on
+        // `allFinished.maxOf` below.
         if (allFinished.isEmpty()) return null
+
+        val milestones = mutableSetOf<GoshuinMilestone>()
 
         // walkNumber is 1-based, where walkIndex 0 = newest = highest
         // walkNumber. iOS computed walkNumber = walkIndex + 1 from the
@@ -73,12 +90,15 @@ object GoshuinMilestones {
         // via the most-recent-first list this codebase uses.
         val walkNumber = allFinished.size - walkIndex
 
-        if (walkNumber == 1) return GoshuinMilestone.FirstWalk
+        if (walkNumber == 1) milestones += GoshuinMilestone.FirstWalk
 
-        // LongestWalk precedes NthWalk so a walk that hits both shows
-        // the more meaningful "Longest Walk" label. Tie-break: when two
-        // walks share the same max distance, the most recent (lower
-        // index) wins via `maxByOrNull`'s stable first-match semantics.
+        if (walkNumber > 0 && walkNumber % 10 == 0) {
+            milestones += GoshuinMilestone.NthWalk(walkNumber)
+        }
+
+        // LongestWalk tie-break: when two walks share the same max
+        // distance, the most recent (lower index) wins via
+        // `maxByOrNull`'s stable first-match semantics.
         //
         // The `maxDistance > 0.0` guard prevents a spurious "Longest
         // Walk" award when every finished walk has distance = 0 (e.g.,
@@ -88,7 +108,7 @@ object GoshuinMilestones {
         val maxDistance = allFinished.maxOf { it.distanceMeters }
         val longestId = allFinished.maxByOrNull { it.distanceMeters }?.walkId
         if (longestId == walk.walkId && allFinished.size > 1 && maxDistance > 0.0) {
-            return GoshuinMilestone.LongestWalk
+            milestones += GoshuinMilestone.LongestWalk
         }
 
         // LongestMeditation: walk has the global max meditate duration AND
@@ -101,12 +121,8 @@ object GoshuinMilestones {
             val maxMeditation = meditationCandidates.maxOf { it.meditateDurationMillis }
             val longestMedId = meditationCandidates.maxByOrNull { it.meditateDurationMillis }?.walkId
             if (longestMedId == walk.walkId && walk.meditateDurationMillis > 0L && walk.meditateDurationMillis == maxMeditation) {
-                return GoshuinMilestone.LongestMeditation
+                milestones += GoshuinMilestone.LongestMeditation
             }
-        }
-
-        if (walkNumber > 0 && walkNumber % 10 == 0) {
-            return GoshuinMilestone.NthWalk(walkNumber)
         }
 
         // FirstOfSeason: no other walk in the same season+year came
@@ -122,10 +138,109 @@ object GoshuinMilestones {
                 Instant.ofEpochMilli(other.startTimestamp).atZone(zone).year == walkYear
         }
         if (!hasEarlierInSeason) {
-            return GoshuinMilestone.FirstOfSeason(walkSeason)
+            milestones += GoshuinMilestone.FirstOfSeason(walkSeason)
         }
 
-        return null
+        // Seeking milestones — lifetime prior is the sum of arrivals on
+        // walks strictly before this one, self excluded. Verbatim port
+        // of the iOS SealInput-overload aggregation
+        // (`GoshuinMilestones.swift:218-227@c1745e8`).
+        if (walk.foundPlaceCount > 0) {
+            val arrivalsBefore = allFinished
+                .filter {
+                    it.walkId != walk.walkId &&
+                        isOrderedBefore(it.startTimestamp, it.uuid, walk.startTimestamp, walk.uuid)
+                }
+                .sumOf { it.foundPlaceCount }
+            milestones += seekingMilestones(
+                arrivalsInWalk = walk.foundPlaceCount,
+                arrivalsBefore = arrivalsBefore,
+            )
+        }
+
+        return primaryMilestone(milestones)
+    }
+
+    /**
+     * Seeking milestones for a walk, from its own arrivals and the
+     * lifetime count before it. Awarded to the walk that crosses the
+     * threshold; a walk with no arrivals never earns one — including
+     * FirstUnknown on a 0/0 tie (the Stage 4-D equal-value guard).
+     * Verbatim port of iOS `seekingMilestones`
+     * (`GoshuinMilestones.swift:75-89@c1745e8`).
+     */
+    fun seekingMilestones(arrivalsInWalk: Int, arrivalsBefore: Int): Set<GoshuinMilestone> {
+        if (arrivalsInWalk <= 0) return emptySet()
+        val milestones = mutableSetOf<GoshuinMilestone>()
+        if (arrivalsBefore == 0) {
+            milestones += GoshuinMilestone.FirstUnknown
+        }
+        val total = arrivalsBefore + arrivalsInWalk
+        unknownThresholds
+            .filter { arrivalsBefore < it && total >= it }
+            .forEach { milestones += GoshuinMilestone.UnknownsFound(it) }
+        return milestones
+    }
+
+    /**
+     * One pure counting pass for the whole book: arrival-waypoint
+     * counts per walk id, zero-count walks omitted. iOS
+     * `arrivalCounts(for:)` walks the CoreData waypoint relationships
+     * (`GoshuinMilestones.swift:51-63@c1745e8`); Android takes the
+     * icons from `WalkRepository.waypointIconsByWalk()` (one query, no
+     * per-walk faulting) and applies the same
+     * [SeekPersistence.isArrivalWaypoint] predicate.
+     */
+    fun arrivalCounts(waypointIconsByWalk: Map<Long, List<String?>>): Map<Long, Int> =
+        waypointIconsByWalk
+            .mapValues { (_, icons) -> icons.count(SeekPersistence::isArrivalWaypoint) }
+            .filterValues { it > 0 }
+
+    /**
+     * Strictly-before ordering with a stable uuid tie-break, so two
+     * walks sharing a startTimestamp never both count as "before" each
+     * other (a crossing seal would double-award) nor neither (it would
+     * vanish). Port of iOS `isOrderedBefore`
+     * (`GoshuinMilestones.swift:65-73@c1745e8`); uuids are non-null on
+     * Android so the `?? ""` fallback drops out.
+     */
+    fun isOrderedBefore(
+        lhsStartMs: Long,
+        lhsUuid: String,
+        rhsStartMs: Long,
+        rhsUuid: String,
+    ): Boolean {
+        if (lhsStartMs != rhsStartMs) return lhsStartMs < rhsStartMs
+        return lhsUuid < rhsUuid
+    }
+
+    /**
+     * Deterministic caption selection when a walk earns several
+     * milestones at once — Set iteration order must never pick the
+     * displayed seal. Once-ever moments outrank threshold crossings
+     * outrank recurring and transient records; within a parameterized
+     * tier the largest count is the headline. Port of iOS
+     * `primaryMilestone` (`GoshuinMilestones.swift:20-49@c1745e8`).
+     */
+    fun primaryMilestone(milestones: Set<GoshuinMilestone>): GoshuinMilestone? =
+        milestones.minWithOrNull(
+            compareBy({ displayPriority(it) }, { -intraPriority(it) }),
+        )
+
+    private fun displayPriority(milestone: GoshuinMilestone): Int = when (milestone) {
+        GoshuinMilestone.FirstWalk -> 0
+        GoshuinMilestone.FirstUnknown -> 1
+        is GoshuinMilestone.UnknownsFound -> 2
+        is GoshuinMilestone.NthWalk -> 3
+        is GoshuinMilestone.FirstOfSeason -> 4
+        GoshuinMilestone.LongestWalk -> 5
+        GoshuinMilestone.LongestMeditation -> 6
+    }
+
+    private fun intraPriority(milestone: GoshuinMilestone): Int = when (milestone) {
+        is GoshuinMilestone.NthWalk -> milestone.n
+        is GoshuinMilestone.UnknownsFound -> milestone.count
+        else -> 0
     }
 
     /**
@@ -160,6 +275,8 @@ object GoshuinMilestones {
         GoshuinMilestone.LongestMeditation -> "Longest Meditation"
         is GoshuinMilestone.NthWalk -> "${ordinal(milestone.n)} Walk"
         is GoshuinMilestone.FirstOfSeason -> "First of ${seasonLabel(milestone.season)}"
+        GoshuinMilestone.FirstUnknown -> "First Unknown"
+        is GoshuinMilestone.UnknownsFound -> "${milestone.count} Unknowns"
     }
 
     private fun seasonLabel(season: Season): String = when (season) {

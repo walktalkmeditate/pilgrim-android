@@ -35,6 +35,14 @@ data class WalkSnapshot(
      * "Released" tag w/ "full record removed" footer.
      */
     val isArchived: Boolean = false,
+    /**
+     * True when the walk carries a `SEEK_MODE` event (iOS
+     * `WalkSnapshot.isSeek`, origin R18). Drives the quick-view
+     * walk-mode glyph: seek = print + dissolving trail, wander =
+     * grounded pair. Populated by one bulk event fetch in
+     * `HomeViewModel.buildSnapshots`, never per-walk faulting.
+     */
+    val isSeek: Boolean = false,
 ) {
     /** Walk-only duration (total minus talk minus meditate, floored at 0). */
     val walkOnlyDurationSec: Long

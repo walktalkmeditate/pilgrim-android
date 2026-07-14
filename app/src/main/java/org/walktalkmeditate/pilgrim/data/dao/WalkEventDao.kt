@@ -27,6 +27,17 @@ interface WalkEventDao {
     @Query("SELECT * FROM walk_events WHERE walk_id = :walkId ORDER BY timestamp ASC")
     fun observeForWalk(walkId: Long): Flow<List<WalkEvent>>
 
+    /**
+     * Ids of all walks carrying at least one event of the given type,
+     * in one query. Backs the journal's seek-glyph flag (a seek walk
+     * is marked by one `SEEK_MODE` event) — iOS `fetchSeekWalkIDs`
+     * bulk-fetch rule: never fault per-walk event lists to answer a
+     * whole-journal question. [eventTypeName] is the enum name string
+     * exactly as the converter persists it.
+     */
+    @Query("SELECT DISTINCT walk_id FROM walk_events WHERE event_type = :eventTypeName")
+    suspend fun walkIdsWithEvent(eventTypeName: String): List<Long>
+
     @Query("DELETE FROM walk_events WHERE walk_id = :walkId")
     suspend fun deleteByWalkId(walkId: Long): Int
 }
