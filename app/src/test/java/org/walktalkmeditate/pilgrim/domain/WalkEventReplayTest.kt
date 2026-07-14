@@ -37,6 +37,25 @@ class WalkEventReplayTest {
     }
 
     @Test
+    fun `seek and unknown point markers do not perturb replay totals`() {
+        val totals = replayWalkEventTotals(
+            events = listOf(
+                Event(500L, WalkEventType.SEEK_MODE),
+                Event(1_000L, WalkEventType.PAUSED),
+                Event(1_200L, WalkEventType.SEEK_ARRIVAL),
+                Event(1_300L, WalkEventType.UNKNOWN),
+                Event(1_400L, WalkEventType.RESUMED),
+            ),
+            closeAt = null,
+        )
+
+        assertEquals(400L, totals.totalPausedMillis)
+        assertEquals(0L, totals.totalMeditatedMillis)
+        assertNull(totals.pendingPauseAt)
+        assertNull(totals.pendingMeditationAt)
+    }
+
+    @Test
     fun `completed MEDITATION pair accumulates into totalMeditatedMillis`() {
         val totals = replayWalkEventTotals(
             events = listOf(

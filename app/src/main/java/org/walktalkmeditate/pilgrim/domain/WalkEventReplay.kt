@@ -47,7 +47,12 @@ fun replayWalkEventTotals(
                 meditated += (event.timestamp - it).coerceAtLeast(0)
                 pendingMeditationAt = null
             }
-            WalkEventType.WAYPOINT_MARKED -> Unit
+            // Point markers, not spans — nothing to pair or accumulate.
+            WalkEventType.WAYPOINT_MARKED,
+            WalkEventType.SEEK_MODE,
+            WalkEventType.SEEK_ARRIVAL,
+            WalkEventType.UNKNOWN,
+            -> Unit
         }
     }
     if (closeAt != null) {

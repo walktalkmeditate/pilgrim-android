@@ -19,6 +19,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 
 class PilgrimPackageConverterTest {
 
@@ -537,12 +538,166 @@ class PilgrimPackageConverterTest {
         assertEquals(ActivityType.MEDITATING, pending.activityIntervals[0].activityType)
     }
 
+    // MARK: - Seek persistence vocabulary (U4, iOS SeekPersistenceTests.swift@c1745e8)
+
+    @Test
+    fun `seek events export with iOS wire identifiers verbatim`() {
+        val bundle = emptyBundle().copy(
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 1_000, eventType = WalkEventType.SEEK_MODE),
+                WalkEvent(walkId = 1, timestamp = 600_000, eventType = WalkEventType.SEEK_ARRIVAL),
+                WalkEvent(walkId = 1, timestamp = 900_000, eventType = WalkEventType.SEEK_ARRIVAL),
+            ),
+        )
+        val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertEquals(listOf("seekMode", "seekArrival", "seekArrival"), walk.workoutEvents.map { it.type })
+        assertEquals(Instant.ofEpochMilli(1_000), walk.workoutEvents[0].timestamp)
+    }
+
+    @Test
+    fun `UNKNOWN event exports as unknown wire identifier like iOS`() {
+        val bundle = emptyBundle().copy(
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 5_000, eventType = WalkEventType.UNKNOWN),
+            ),
+        )
+        val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertEquals(listOf("unknown"), walk.workoutEvents.map { it.type })
+    }
+
+    @Test
+    fun `wander lifecycle events stay out of workoutEvents`() {
+        // PAUSED/RESUMED already export as pauses, MEDITATION_* as
+        // activities, WAYPOINT_MARKED's waypoint as a GeoJSON Point —
+        // a second representation would double-count on import.
+        val bundle = emptyBundle().copy(
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 10_000, eventType = WalkEventType.PAUSED),
+                WalkEvent(walkId = 1, timestamp = 20_000, eventType = WalkEventType.RESUMED),
+                WalkEvent(walkId = 1, timestamp = 30_000, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 1, timestamp = 40_000, eventType = WalkEventType.MEDITATION_END),
+                WalkEvent(walkId = 1, timestamp = 50_000, eventType = WalkEventType.WAYPOINT_MARKED),
+            ),
+        )
+        val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertTrue(walk.workoutEvents.isEmpty())
+        assertEquals(1, walk.pauses.size)
+    }
+
+    @Test
+    fun `seek walk round-trips events and arrival waypoints through pilgrim JSON`() {
+        // Same Json shape as PilgrimJsonModule.providePilgrimJson —
+        // the converter test stays Hilt-free.
+        val json = kotlinx.serialization.json.Json {
+            prettyPrint = true
+            encodeDefaults = false
+            explicitNulls = false
+            ignoreUnknownKeys = true
+        }
+        val bundle = emptyBundle().copy(
+            walk = Walk(id = 1, uuid = UUID.randomUUID().toString(), startTimestamp = 1_000, endTimestamp = 3_600_000),
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 1_000, eventType = WalkEventType.SEEK_MODE),
+                WalkEvent(walkId = 1, timestamp = 600_000, eventType = WalkEventType.SEEK_ARRIVAL),
+                WalkEvent(walkId = 1, timestamp = 1_200_000, eventType = WalkEventType.SEEK_ARRIVAL),
+            ),
+            waypoints = listOf(
+                Waypoint(
+                    walkId = 1, timestamp = 600_000, latitude = 48.8584, longitude = 2.2945,
+                    label = "First clearing", icon = SeekPersistence.ARRIVAL_WAYPOINT_ICON,
+                ),
+                Waypoint(
+                    walkId = 1, timestamp = 1_200_000, latitude = 48.8600, longitude = 2.2960,
+                    label = "Second clearing", icon = SeekPersistence.ARRIVAL_WAYPOINT_ICON,
+                ),
+            ),
+        )
+        val exported = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertEquals(listOf("seekMode", "seekArrival", "seekArrival"), exported.workoutEvents.map { it.type })
+
+        val decoded = json.decodeFromString(
+            org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk.serializer(),
+            json.encodeToString(org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk.serializer(), exported),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(decoded)
+
+        assertEquals(
+            listOf(
+                WalkEventType.SEEK_MODE to 1_000L,
+                WalkEventType.SEEK_ARRIVAL to 600_000L,
+                WalkEventType.SEEK_ARRIVAL to 1_200_000L,
+            ),
+            pending.walkEvents.map { it.eventType to it.timestamp },
+        )
+        assertEquals(
+            listOf(SeekPersistence.ARRIVAL_WAYPOINT_ICON, SeekPersistence.ARRIVAL_WAYPOINT_ICON),
+            pending.waypoints.map { it.icon },
+        )
+        assertEquals(listOf("First clearing", "Second clearing"), pending.waypoints.map { it.label })
+        assertEquals(listOf(600_000L, 1_200_000L), pending.waypoints.map { it.timestamp })
+        assertEquals(2, pending.waypoints.count { SeekPersistence.isArrivalWaypoint(it.icon) })
+    }
+
+    @Test
+    fun `unknown workout event identifier imports as UNKNOWN and is kept`() {
+        // Mirrors iOS walkEventType(from:) default — unrecognized ids
+        // (future vocabulary, legacy lap/marker/segment) fall back to
+        // the unknown sentinel, never crash, never drop.
+        val pilgrimWalk = synthesizePilgrimWalk(
+            workoutEvents = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent(
+                    timestamp = Instant.ofEpochMilli(5_000), type = "seekWhisper",
+                ),
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent(
+                    timestamp = Instant.ofEpochMilli(6_000), type = "lap",
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(
+            listOf(WalkEventType.UNKNOWN, WalkEventType.UNKNOWN),
+            pending.walkEvents.map { it.eventType },
+        )
+    }
+
+    @Test
+    fun `import interleaves pause and workout events chronologically`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            pauses = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPause(
+                    startDate = Instant.ofEpochMilli(20_000),
+                    endDate = Instant.ofEpochMilli(30_000),
+                    type = "manual",
+                ),
+            ),
+            workoutEvents = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent(
+                    timestamp = Instant.ofEpochMilli(1_000), type = "seekMode",
+                ),
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent(
+                    timestamp = Instant.ofEpochMilli(25_000), type = "seekArrival",
+                ),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(
+            listOf(
+                WalkEventType.SEEK_MODE to 1_000L,
+                WalkEventType.PAUSED to 20_000L,
+                WalkEventType.SEEK_ARRIVAL to 25_000L,
+                WalkEventType.RESUMED to 30_000L,
+            ),
+            pending.walkEvents.map { it.eventType to it.timestamp },
+        )
+    }
+
     private fun synthesizePilgrimWalk(
         uuid: String = UUID.randomUUID().toString(),
         routeFeatures: List<org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonFeature> = emptyList(),
         pauses: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPause> = emptyList(),
         voiceRecordings: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording> = emptyList(),
         activities: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity> = emptyList(),
+        workoutEvents: List<org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent> = emptyList(),
     ) = org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk(
         schemaVersion = "1.0",
         id = uuid,
@@ -561,7 +716,7 @@ class PilgrimPackageConverterTest {
         intention = "calm",
         reflection = null,
         heartRates = emptyList(),
-        workoutEvents = emptyList(),
+        workoutEvents = workoutEvents,
         favicon = null,
         isRace = false,
         isUserModified = false,
