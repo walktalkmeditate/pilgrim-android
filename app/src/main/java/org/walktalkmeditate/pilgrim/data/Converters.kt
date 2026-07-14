@@ -8,10 +8,12 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
 /**
  * Room type converters for domain enums. Fallback semantics on read:
  * an unknown string (e.g., a newer enum variant persisted by a future
- * version read by an older binary, or an imported `.pilgrim` file that
- * predates a value's rename) returns a safe default instead of throwing.
- * A future fix might surface these as a dedicated `UNKNOWN` sentinel;
- * for now we keep the domain enums closed and pick a conservative default.
+ * version read by an older binary) returns a safe default instead of
+ * throwing. Walk events fall back to [WalkEventType.UNKNOWN] (mirrors
+ * iOS `EventType.init(rawValue:)` default) — this protects v1.2.0+
+ * readers of future vocabulary; already-shipped v1.1.x binaries map
+ * unknown names to PAUSED, which stands (in-place downgrades are
+ * unsupported). Activity types keep the conservative WALKING default.
  */
 class Converters {
     @TypeConverter
@@ -19,7 +21,7 @@ class Converters {
 
     @TypeConverter
     fun stringToWalkEventType(name: String): WalkEventType =
-        WalkEventType.entries.firstOrNull { it.name == name } ?: WalkEventType.PAUSED
+        WalkEventType.entries.firstOrNull { it.name == name } ?: WalkEventType.UNKNOWN
 
     @TypeConverter
     fun activityTypeToString(type: ActivityType): String = type.name

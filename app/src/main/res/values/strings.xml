@@ -990,4 +990,15 @@
         <item>@string/welcome_quote_5</item>
         <item>@string/welcome_quote_6</item>
     </string-array>
+
+    <!-- Seek persistence vocabulary (iOS parity SeekPersistence.swift@c1745e8).
+         Arrival labels are resolved at write time and persisted into the
+         waypoint row, like iOS's NSLocalizedString defaults. The two event
+         names surface in the walk summary in a later unit. -->
+    <string name="seek_event_seek_mode">Seek</string>
+    <string name="seek_event_arrival">Clearing reached</string>
+    <string name="seek_arrival_label_first">First clearing</string>
+    <string name="seek_arrival_label_second">Second clearing</string>
+    <string name="seek_arrival_label_third">Third clearing</string>
+    <string name="seek_arrival_label_nth">Clearing %1$d</string>
 </resources>

@@ -62,7 +62,9 @@ internal data class WaypointPresetChip(
     val iconKey: String,
 )
 
-private val PRESET_CHIPS: List<WaypointPresetChip> = listOf(
+// Internal (not private) so SeekPersistenceTest can prove the reserved
+// arrival icon never collides with a user-pickable key.
+internal val PRESET_CHIPS: List<WaypointPresetChip> = listOf(
     WaypointPresetChip(R.string.walk_waypoint_chip_peaceful, "leaf"),
     WaypointPresetChip(R.string.walk_waypoint_chip_beautiful, "eye"),
     WaypointPresetChip(R.string.walk_waypoint_chip_grateful, "heart"),

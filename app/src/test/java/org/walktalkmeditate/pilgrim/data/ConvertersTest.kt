@@ -19,9 +19,21 @@ class ConvertersTest {
     }
 
     @Test
-    fun `unknown WalkEventType name falls back to PAUSED instead of throwing`() {
+    fun `unknown WalkEventType name falls back to UNKNOWN instead of throwing`() {
         val decoded = converters.stringToWalkEventType("SOME_FUTURE_EVENT_TYPE")
-        assertEquals(WalkEventType.PAUSED, decoded)
+        assertEquals(WalkEventType.UNKNOWN, decoded)
+    }
+
+    @Test
+    fun `seek WalkEventType names round trip through storage`() {
+        assertEquals(
+            WalkEventType.SEEK_MODE,
+            converters.stringToWalkEventType(converters.walkEventTypeToString(WalkEventType.SEEK_MODE)),
+        )
+        assertEquals(
+            WalkEventType.SEEK_ARRIVAL,
+            converters.stringToWalkEventType(converters.walkEventTypeToString(WalkEventType.SEEK_ARRIVAL)),
+        )
     }
 
     @Test
