@@ -15,6 +15,7 @@ import com.mapbox.maps.extension.style.sources.addSource
 import com.mapbox.maps.extension.style.sources.generated.GeoJsonSource
 import com.mapbox.maps.extension.style.sources.generated.geoJsonSource
 import com.mapbox.maps.extension.style.types.StyleTransition
+import org.walktalkmeditate.pilgrim.domain.seek.SeekCrescentModel
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogModel
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
@@ -25,8 +26,9 @@ import kotlin.math.pow
 /**
  * Seek fog circle + pulse ring rendering over `PilgrimMap`'s Mapbox style.
  * The pure state model lives in `domain/seek/SeekFogModel.kt`; the crescent
- * renderer arrives with U7. Port spec
- * `docs/parity/2026-07-14-port-seek-fog-u6.md`
+ * renderer lives in `SeekCrescentRenderer.kt` (U7). Port specs
+ * `docs/parity/2026-07-14-port-seek-fog-u6.md` and
+ * `docs/parity/2026-07-14-port-seek-crescent-u7.md`
  * (PilgrimMapView+SeekFog.swift@c1745e8).
  */
 
@@ -86,9 +88,19 @@ internal interface SeekFogStyle {
  * whole-state was last applied, what is queued while the style is not ready,
  * and which pulse token last fired. One instance per [com.mapbox.maps.MapView],
  * created by `PilgrimMap` alongside the map.
+ *
+ * The optional [crescent] renderer (U7) is hooked at the same points iOS
+ * hooks its wisp from `PilgrimMapView+SeekFog.swift@c1745e8`: sync after
+ * the circle diff, flare on each pulse-token advance, remove on the null
+ * state, reset on style reload, and a visibility evaluation after every
+ * apply. [lightColorArgb] is read at fire time (iOS `seekLightColor(on:)`)
+ * so the ring carries the hour's light; defaults to golden, the seek's
+ * home light.
  */
 class SeekFogRenderer internal constructor(
     private val style: SeekFogStyle,
+    private val crescent: SeekCrescentRenderer? = null,
+    private val lightColorArgb: () -> Int = { SeekFogRendering.DEFAULT_LIGHT_COLOR_ARGB },
 ) {
     private var pendingState: SeekFogState? = null
     private var lastAppliedState: SeekFogState? = null
@@ -103,13 +115,13 @@ class SeekFogRenderer internal constructor(
     private fun resetForStyleReload() {
         lastAppliedState = null
         appliedCircles = emptyMap()
+        crescent?.onStyleReloaded()
     }
 
     fun apply(
         state: SeekFogState?,
         pulse: SeekPulseVisual,
         reduceMotion: Boolean,
-        lightColorArgb: Int,
     ) {
         pendingState = state
         if (!style.isStyleLoaded()) {
@@ -123,10 +135,21 @@ class SeekFogRenderer internal constructor(
         applyNow(state, reduceMotion)
         if (pulse.token != lastHandledPulseToken) {
             lastHandledPulseToken = pulse.token
-            if (state != null && !reduceMotion) {
-                style.firePulseRing(lightColorArgb)
+            if (state != null) {
+                if (!reduceMotion) style.firePulseRing(lightColorArgb())
+                crescent?.flare(pulse, reduceMotion)
             }
         }
+    }
+
+    /**
+     * Camera-driven crescent visibility re-check (U7): camera-changed
+     * events pass `throttled = true`, map-idle runs the authoritative
+     * trailing check. Reads the last-applied state so wander maps exit on
+     * the first guard.
+     */
+    fun evaluateCrescentVisibility(throttled: Boolean, reduceMotion: Boolean) {
+        crescent?.evaluateVisibility(lastAppliedState, throttled, reduceMotion)
     }
 
     /**
@@ -169,6 +192,7 @@ class SeekFogRenderer internal constructor(
         if (state == null) {
             appliedCircles.keys.forEach(style::removeFogCircle)
             style.removePulseRing()
+            crescent?.remove()
             appliedCircles = emptyMap()
             lastAppliedState = null
             return
@@ -183,8 +207,14 @@ class SeekFogRenderer internal constructor(
         for (id in appliedCircles.keys) {
             if (id !in applied) style.removeFogCircle(id)
         }
+        crescent?.sync(
+            state.crescent,
+            SeekCrescentModel.spanDegrees(state.activeFogBucket),
+            reduceMotion,
+        )
         appliedCircles = applied
         lastAppliedState = state
+        crescent?.evaluateVisibility(state, throttled = false, reduceMotion = reduceMotion)
     }
 
     private fun syncFogCircle(

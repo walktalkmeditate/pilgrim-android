@@ -7,9 +7,10 @@ import kotlin.math.abs
  * What the map should show for a seek: fog over the active clearing, faint
  * halos over found ones, and nothing at all for unrevealed clearings so the
  * chain's count stays hidden. Pure state — rendering lives in
- * `ui/walk/map/SeekFogRenderer.kt`. Port spec
- * `docs/parity/2026-07-14-port-seek-fog-u6.md` (SeekFogModel.swift@c1745e8);
- * the crescent field arrives with U7.
+ * `ui/walk/map/SeekFogRenderer.kt`. Port specs
+ * `docs/parity/2026-07-14-port-seek-fog-u6.md` and
+ * `docs/parity/2026-07-14-port-seek-crescent-u7.md`
+ * (SeekFogModel.swift@c1745e8).
  */
 data class SeekFogState(
     val circles: List<FogCircle>,
@@ -18,6 +19,13 @@ data class SeekFogState(
      * null renders the default fog grey. Fixed per walk. Halos keep dawn.
      */
     val tintHex: String? = null,
+    /**
+     * Null when hidden (arrived, revealing, complete, or no walker fix).
+     * Whether a present crescent is *shown* is the renderer's call: it
+     * releases the crescent whenever the fog itself is visible in the
+     * viewport. iOS names this `wisp` (U7 spec naming table).
+     */
+    val crescent: Crescent? = null,
 ) {
 
     data class FogCircle(
@@ -28,6 +36,16 @@ data class SeekFogState(
         val opacityBucket: Int,
         /** Found clearings keep a faint persistent halo after their reveal. */
         val isHalo: Boolean,
+    )
+
+    /**
+     * The crescent: a dawn arc hugging the puck's rim on the clearing's
+     * side, so a map glance answers "which way" without hunting the fog.
+     * Attached to the walker (rotation-only), never a floating marker.
+     */
+    data class Crescent(
+        val position: SeekPoint,
+        val bearingDegrees: Double,
     )
 
     /**
@@ -81,6 +99,7 @@ object SeekFogModel {
         distanceToActiveMeters: Double?,
         previousActiveBucket: Int? = null,
         tintHex: String? = null,
+        walkerPosition: SeekPoint? = null,
     ): SeekFogState {
         val count = chain.clearings.size
         if (count == 0) return SeekFogState(circles = emptyList())
@@ -88,6 +107,7 @@ object SeekFogModel {
         val haloCount =
             if (phase == SeekEnginePhase.COMPLETE) clampedActive + 1 else clampedActive
 
+        var crescent: SeekFogState.Crescent? = null
         val circles = buildList {
             for (index in 0 until haloCount) {
                 val clearing = chain.clearings[index]
@@ -120,9 +140,14 @@ object SeekFogModel {
                         isHalo = false,
                     ),
                 )
+                crescent = SeekCrescentModel.crescentPoint(
+                    walkerPosition = walkerPosition,
+                    clearingCenter = clearing.center,
+                    phase = phase,
+                )
             }
         }
-        return SeekFogState(circles = circles, tintHex = tintHex)
+        return SeekFogState(circles = circles, tintHex = tintHex, crescent = crescent)
     }
 
     fun opacityBucket(distanceMeters: Double?): Int {
