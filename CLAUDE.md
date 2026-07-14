@@ -12,21 +12,21 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 
 ## Parity scope (frozen)
 
-**Parity target: pilgrim-ios v1.6.0** (`fcd22553`, 2026-05-13). Anything iOS shipped AT OR BEFORE that tag is in-scope for Android port. Anything iOS ships AFTER v1.6.0 is OUT OF SCOPE for the time being — do not auto-pull new iOS work into the Android backlog without explicit user instruction.
+**Parity target: pilgrim-ios main @ `c1745e8`** (2026-07-14; post-v1.8.0, includes the 1.8.1-in-review journal scenery). Anything iOS shipped AT OR BEFORE that commit is in-scope for Android port. Anything iOS ships AFTER `c1745e8` is OUT OF SCOPE — with one bounded exception: deltas landing before Android v1.2.0 ships are re-diffed and triaged per the fold-in rule (R2 in `docs/brainstorms/2026-07-14-ios-main-parity-retarget-requirements.md`): chores, hotfixes, and incremental refinements to Seek Mode / journal scenery fold into the owning phase; new headline features, reverts of ported work, or redesigns require explicit user re-triage.
 
 To diff iOS for in-scope work that hasn't landed on Android yet:
 ```bash
-cd ../pilgrim-ios && git log --oneline v1.6.0
+cd ../pilgrim-ios && git log --oneline c1745e8
 ```
 
-Comparing to a future iOS HEAD past v1.6.0 is fine for context, but parity work targets v1.6.0 only.
+Comparing to a future iOS HEAD past `c1745e8` is fine for context, but parity work targets `c1745e8` only.
 
 ## Architecture
 
 - Jetpack Compose (Material 3 base, heavily themed).
 - MVVM with `ViewModel` + `StateFlow` (direct Combine/`@Published` analogue).
 - Hilt for DI.
-- Room for persistence — **single baseline schema, no migration chain from iOS**.
+- Room for persistence — **own migration chain (schema v8+, manual `MIGRATION_N_N+1` pattern); no schema import from iOS**.
 - DataStore (Preferences) for settings.
 - Navigation Compose, single Activity.
 - Foreground service for long walks (`foregroundServiceType="location"`).
@@ -85,4 +85,4 @@ The hardest part of this app is surviving a 45-90 minute walk with screen off, b
 
 ## Phasing — current state
 
-Phases 0-13 shipped (Stage 13-XZ merged 2026-05-04, PR #83). Walk Summary parity complete. Remaining work is iOS-v1.6.0 parity gaps + Phase N future items (Health Connect, App Actions, screenshot tests). See the port plan + autopilot memory entries for stage-level history.
+Phases 0-13 shipped (Stage 13-XZ merged 2026-05-04, PR #83); v1.7.0 finalization-pass parity swept (PRs #177–#193). In flight: **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** targeting a single v1.2.0 release — see `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`. Phase N future items (Health Connect, App Actions, screenshot tests) remain queued behind them. See the port plan + autopilot memory entries for stage-level history.

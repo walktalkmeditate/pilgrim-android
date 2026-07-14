@@ -43,3 +43,7 @@ Each cluster → its own `ce-plan` → `ce-work`. This gate plan only finds + ad
 ## Gate summary block
 
 Mirror the computed result into the ledger's "Gate summary" section on every reconcile / triage pass: total · unverified · match · close-the-gap · re-justify · stale, and PASS / NOT PASSABLE with blocking ids.
+
+---
+
+> **2026-07-14 — gate closed by dated waiver.** The remaining v1.7.0-residue `unverified` rows and needs-device backlog were waived (live phone-call/interruption probes carved out into Phase 14 device QA). State record: `2026-05-15-parity-ledger.md` § "Gate summary addendum — v1.7.0 residue waiver (2026-07-14)". This gate no longer blocks any work.
