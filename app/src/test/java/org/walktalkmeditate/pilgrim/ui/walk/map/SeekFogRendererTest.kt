@@ -100,7 +100,7 @@ class SeekFogRendererTest {
         state: SeekFogState?,
         pulse: SeekPulseVisual = SeekPulseVisual.NONE,
         reduceMotion: Boolean = false,
-    ) = apply(state, pulse, reduceMotion, gold)
+    ) = apply(state, pulse, reduceMotion)
 
     // Wander fast path
 
@@ -392,5 +392,137 @@ class SeekFogRendererTest {
         assertEquals("seek-fog-2-source", fogSourceId("seek-fog-2"))
         assertNotNull(SeekFogRendering.DEFAULT_LIGHT_COLOR_ARGB)
         assertEquals(0xFFC4956A.toInt(), SeekFogRendering.DEFAULT_LIGHT_COLOR_ARGB)
+    }
+
+    // Hour light (U7)
+
+    @Test
+    fun `ring color is read from the light provider at fire time`() {
+        val style = FakeSeekFogStyle()
+        var light = 0xFF111111.toInt()
+        val renderer = SeekFogRenderer(style, lightColorArgb = { light })
+        val state = SeekFogState(circles = listOf(circle(0, bucket = 5)))
+
+        renderer.apply(state, pulse(1), reduceMotion = false)
+        assertEquals(0xFF111111.toInt(), style.lastRingColor)
+
+        light = 0xFF222222.toInt()
+        renderer.apply(state, pulse(2), reduceMotion = false)
+        assertEquals("the next heartbeat picks up the hour's light", 0xFF222222.toInt(), style.lastRingColor)
+    }
+
+    // Crescent hooks (U7) — a real SeekCrescentRenderer over a fake
+    // surface, driven through the fog renderer's lifecycle.
+
+    private class FakeCrescentStyle : SeekCrescentStyle {
+        val ops = mutableListOf<String>()
+        var layerPresent = false
+
+        override fun isStyleLoaded(): Boolean = true
+        override fun crescentLayerExists(): Boolean = layerPresent
+        override fun crescentSourceExists(): Boolean = layerPresent
+        override fun hasImage(imageId: String): Boolean = false
+
+        override fun addCrescentImage(imageId: String, spanDegrees: Double, colorArgb: Int) {
+            ops += "image:$imageId"
+        }
+
+        override fun installCrescentLayer(
+            imageId: String,
+            position: SeekPoint,
+            bearingDegrees: Double,
+            breathTransitionMillis: Long,
+        ) {
+            layerPresent = true
+            ops += "install:$imageId"
+        }
+
+        override fun updateCrescentGeometry(position: SeekPoint, bearingDegrees: Double) {
+            ops += "geometry"
+        }
+
+        override fun setCrescentImage(imageId: String) {
+            ops += "setImage:$imageId"
+        }
+
+        override fun setCrescentOpacity(opacity: Double) {
+            ops += "opacity:$opacity"
+        }
+
+        override fun removeCrescent() {
+            layerPresent = false
+            ops += "remove"
+        }
+
+        override fun projectedFogCenter(latitude: Double, longitude: Double): ScreenPointPx? = null
+        override fun viewportSize(): ViewportPx = ViewportPx(400.0, 800.0)
+        override fun cameraZoom(): Double = 16.0
+        override fun postDelayed(delayMillis: Long, action: () -> Unit) = Unit
+    }
+
+    private fun crescentHarness(): Triple<FakeSeekFogStyle, FakeCrescentStyle, SeekFogRenderer> {
+        val fogStyle = FakeSeekFogStyle()
+        val crescentStyle = FakeCrescentStyle()
+        val crescent = SeekCrescentRenderer(
+            style = crescentStyle,
+            daypart = { org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight.Daypart.GOLDEN },
+            starlight = { false },
+            uptimeMillis = { 0L },
+        )
+        return Triple(fogStyle, crescentStyle, SeekFogRenderer(fogStyle, crescent))
+    }
+
+    private fun stateWithCrescent(bucket: Int = 5) = SeekFogState(
+        circles = listOf(circle(0, bucket = bucket)),
+        crescent = SeekFogState.Crescent(
+            position = SeekPoint(latitude = 42.0, longitude = -8.5),
+            bearingDegrees = 10.0,
+        ),
+    )
+
+    @Test
+    fun `apply installs the crescent with the span keyed to the active fog bucket`() {
+        val (_, crescentStyle, renderer) = crescentHarness()
+        renderer.apply(stateWithCrescent(bucket = 5), SeekPulseVisual.NONE, reduceMotion = false)
+        // Bucket 5 (farthest) = the 48° sliver.
+        assertTrue("install:seek-crescent-48-dawn-golden" in crescentStyle.ops)
+    }
+
+    @Test
+    fun `pulse advance flares the crescent alongside the ring`() {
+        val (fogStyle, crescentStyle, renderer) = crescentHarness()
+        renderer.apply(stateWithCrescent(), SeekPulseVisual.NONE, reduceMotion = false)
+        crescentStyle.ops.clear()
+
+        renderer.apply(stateWithCrescent(), pulse(1), reduceMotion = false)
+
+        assertEquals(1, fogStyle.ringsFired)
+        assertTrue(
+            "flare rides the same token advance as the ring",
+            crescentStyle.ops.any { it.startsWith("opacity:0.825") },
+        )
+    }
+
+    @Test
+    fun `null state removes the crescent with the fog`() {
+        val (_, crescentStyle, renderer) = crescentHarness()
+        renderer.apply(stateWithCrescent(), SeekPulseVisual.NONE, reduceMotion = false)
+        crescentStyle.ops.clear()
+
+        renderer.apply(null, SeekPulseVisual.NONE, reduceMotion = false)
+
+        assertTrue("remove" in crescentStyle.ops)
+    }
+
+    @Test
+    fun `style reload reinstalls the crescent from the pending state`() {
+        val (_, crescentStyle, renderer) = crescentHarness()
+        renderer.apply(stateWithCrescent(), SeekPulseVisual.NONE, reduceMotion = false)
+        crescentStyle.layerPresent = false
+        crescentStyle.ops.clear()
+
+        renderer.onStyleReloaded(reduceMotion = false)
+
+        assertTrue(crescentStyle.ops.any { it.startsWith("install:") })
     }
 }

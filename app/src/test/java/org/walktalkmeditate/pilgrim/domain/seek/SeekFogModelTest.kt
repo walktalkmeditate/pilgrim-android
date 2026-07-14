@@ -4,14 +4,16 @@ package org.walktalkmeditate.pilgrim.domain.seek
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Mirrors iOS `UnitTests/Seek/SeekFogStateTests.swift@c1745e8` (minus the
- * wisp cases — the crescent ports in U7). Port spec
- * `docs/parity/2026-07-14-port-seek-fog-u6.md`.
+ * Mirrors iOS `UnitTests/Seek/SeekFogStateTests.swift@c1745e8` including
+ * the wisp cases (Android: crescent, U7). Port specs
+ * `docs/parity/2026-07-14-port-seek-fog-u6.md` and
+ * `docs/parity/2026-07-14-port-seek-crescent-u7.md`.
  */
 class SeekFogModelTest {
 
@@ -272,5 +274,69 @@ class SeekFogModelTest {
         assertNull(plain.tintHex)
         assertEquals("#2377A4", tinted.tintHex)
         assertNotEquals(plain, tinted)
+    }
+
+    // Crescent (U7 — iOS SeekFogStateTests wisp section)
+
+    private val crescentChain = SeekChain(
+        clearings = listOf(
+            SeekClearing(center = SeekPoint(latitude = 42.01, longitude = -8.0), radiusMeters = 50.0),
+        ),
+        budgetMeters = 3000.0,
+    )
+
+    private val walker = SeekPoint(latitude = 42.0, longitude = -8.0)
+
+    private fun crescentState(
+        distance: Double?,
+        phase: SeekEnginePhase = SeekEnginePhase.GUIDING,
+        walkerPosition: SeekPoint? = walker,
+    ): SeekFogState = SeekFogModel.fogState(
+        chain = crescentChain,
+        activeIndex = 0,
+        phase = phase,
+        distanceToActiveMeters = distance,
+        walkerPosition = walkerPosition,
+    )
+
+    @Test
+    fun `crescent visible far away rides the walker and aims at the clearing`() {
+        val crescent = crescentState(distance = 900.0).crescent
+        assertNotNull("crescent should show beyond 150 m", crescent)
+        assertEquals("the crescent rides the puck, never floats away", walker, crescent!!.position)
+        assertEquals("clearing is due north; the crescent must aim north", 0.0, crescent.bearingDegrees, 1.0)
+    }
+
+    @Test
+    fun `crescent persists close in - the viewport owns the handoff`() {
+        assertNotNull(
+            "distance never hides the crescent — the renderer releases it when the fog is actually visible",
+            crescentState(distance = 120.0).crescent,
+        )
+    }
+
+    @Test
+    fun `crescent hides when arrived or revealing`() {
+        assertNull(crescentState(distance = 900.0, phase = SeekEnginePhase.ARRIVED).crescent)
+        assertNull(crescentState(distance = 900.0, phase = SeekEnginePhase.REVEALING).crescent)
+    }
+
+    @Test
+    fun `crescent hides without a walker position`() {
+        assertNull(crescentState(distance = 900.0, walkerPosition = null).crescent)
+    }
+
+    @Test
+    fun `crescent hides on the complete phase`() {
+        assertNull(crescentState(distance = 900.0, phase = SeekEnginePhase.COMPLETE).crescent)
+    }
+
+    @Test
+    fun `crescent moves with the walker and equality notices it`() {
+        val there = crescentState(
+            distance = 900.0,
+            walkerPosition = SeekPoint(latitude = 42.001, longitude = -8.0),
+        )
+        assertNotEquals(crescentState(distance = 900.0), there)
     }
 }

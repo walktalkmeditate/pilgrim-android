@@ -72,11 +72,16 @@ import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
+import org.walktalkmeditate.pilgrim.core.celestial.SunCalc
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
+import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
+import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekCrescentStyle
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekFogStyle
+import org.walktalkmeditate.pilgrim.ui.walk.map.SeekCrescentRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.SeekFogRenderer
+import org.walktalkmeditate.pilgrim.ui.walk.map.hexToColorArgb
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_ZOOM_PLANT_MS
@@ -131,16 +136,19 @@ internal fun PilgrimMap(
     // callback. Empty list → no pin manager work, no allocations.
     proximityPins: List<ProximityPinFilter.Pin> = emptyList(),
     onProximityPinTap: (ProximityPinFilter.Pin) -> Unit = {},
-    // iOS parity `PilgrimMapView+SeekFog.swift@c1745e8` (port spec
-    // docs/parity/2026-07-14-port-seek-fog-u6.md) — seek fog circles +
-    // pulse ring as runtime style layers. Null fog state is the wander
-    // default: the renderer's `null == null` fast path never touches the
-    // style, so non-seek walks pay nothing. [seekPulse] advances its token
-    // once per heartbeat; [seekLightColor] tints the ring with the hour's
-    // light (U7's SeekSkyLight computes it; golden home light until then).
+    // iOS parity `PilgrimMapView+SeekFog.swift@c1745e8` +
+    // `PilgrimMapView+SeekWisp.swift@c1745e8` (port specs
+    // docs/parity/2026-07-14-port-seek-fog-u6.md and
+    // docs/parity/2026-07-14-port-seek-crescent-u7.md) — seek fog circles,
+    // pulse ring, and the guiding crescent as runtime style layers. Null
+    // fog state is the wander default: the renderer's `null == null` fast
+    // path never touches the style, so non-seek walks pay nothing.
+    // [seekPulse] advances its token once per heartbeat. The hour's light
+    // (ring color + crescent tint) is computed internally from the walker's
+    // solar elevation via SeekSkyLight — iOS computes it inside the map
+    // layer at fire time; nothing is passed in (U7 spec D3).
     seekFog: SeekFogState? = null,
     seekPulse: SeekPulseVisual = SeekPulseVisual.NONE,
-    seekLightColor: Color = Color(0xFFC4956A),
 ) {
     // Mapbox's `MapView(context, initOptions)` constructor throws
     // `MapboxConfigurationException` synchronously when no access
@@ -277,35 +285,93 @@ internal fun PilgrimMap(
     // re-issued an easeTo to the camera's current target.
     var renderedLiveLineColor by remember { mutableStateOf<Int?>(null) }
     var lastFollowCameraKey by remember { mutableStateOf<Pair<Point, Double>?>(null) }
-    // Seek fog renderer — bookkeeping + Mapbox writes live in
-    // ui/walk/map/SeekFogRenderer.kt; this composable only owns lifecycle.
-    // The surface checks the route layer id for existence at install time,
-    // so fog lands below the route line once the manager exists and at the
-    // top of the stack (iOS fallback parity) before then.
+    // Seek fog + crescent renderers — bookkeeping + Mapbox writes live in
+    // ui/walk/map/SeekFogRenderer.kt + SeekCrescentRenderer.kt; this
+    // composable only owns lifecycle. The fog surface checks the route
+    // layer id for existence at install time, so fog lands below the route
+    // line once the manager exists and at the top of the stack (iOS
+    // fallback parity) before then. The hour's light (ring + crescent) is
+    // read at write time from the cached puck point's solar elevation —
+    // iOS `currentSeekDaypart(on:)`, U7 spec B6 — and the constellation
+    // appearance swaps the family to starlight (read via
+    // rememberUpdatedState so the provider lambdas see the live value
+    // without rebuilding the renderer).
     val seekFogStyle = remember(mapView) {
         mapView?.let { view ->
             MapboxSeekFogStyle(view.mapboxMap) { ROUTE_LINE_LAYER_ID }
         }
     }
-    val seekFogRenderer = remember(seekFogStyle) {
-        seekFogStyle?.let { SeekFogRenderer(it) }
+    val displayDensity = LocalDensity.current.density
+    val starlightState = androidx.compose.runtime.rememberUpdatedState(
+        org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation.current,
+    )
+    val reduceMotionState = androidx.compose.runtime.rememberUpdatedState(reduceMotion)
+    val seekFogRenderer = remember(mapView, seekFogStyle) {
+        val view = mapView
+        val fogStyle = seekFogStyle
+        if (view == null || fogStyle == null) {
+            null
+        } else {
+            val daypartNow: () -> SeekSkyLight.Daypart = {
+                SeekSkyLight.daypart(
+                    fogStyle.latestPuckPoint?.let { point ->
+                        SunCalc.solarElevationDegrees(
+                            latitude = point.latitude(),
+                            longitude = point.longitude(),
+                            instant = java.time.Instant.now(),
+                        )
+                    },
+                )
+            }
+            val starlightNow: () -> Boolean = { starlightState.value }
+            SeekFogRenderer(
+                style = fogStyle,
+                crescent = SeekCrescentRenderer(
+                    style = MapboxSeekCrescentStyle(view.mapboxMap, displayDensity),
+                    daypart = daypartNow,
+                    starlight = starlightNow,
+                    uptimeMillis = android.os.SystemClock::uptimeMillis,
+                ),
+                lightColorArgb = {
+                    hexToColorArgb(SeekSkyLight.hex(daypartNow(), starlightNow()))
+                },
+            )
+        }
     }
-    // The pulse ring fires at the puck's rendered position (iOS reads
-    // location.latestLocation at fire time; Android caches the indicator
-    // position — spec D3). Registered only while a seek is active so
-    // wander walks never pay for the per-frame listener.
+    // The pulse ring + hour light ride the puck's rendered position (iOS
+    // reads location.latestLocation at fire time; Android caches the
+    // indicator position — spec D3). The crescent's viewport release
+    // re-checks on camera moves (throttled — per-frame during gestures)
+    // with map-idle as the authoritative trailing check (U7 spec B14).
+    // All registered only while a seek is active so wander walks never
+    // pay for the per-frame callbacks.
     val seekFogActive = seekFog != null
     DisposableEffect(mapView, seekFogActive) {
         val view = mapView
         val style = seekFogStyle
-        if (view == null || style == null || !seekFogActive) {
+        val renderer = seekFogRenderer
+        if (view == null || style == null || renderer == null || !seekFogActive) {
             return@DisposableEffect onDispose {}
         }
         val listener = OnIndicatorPositionChangedListener { point ->
             style.latestPuckPoint = point
         }
         view.location.addOnIndicatorPositionChangedListener(listener)
+        val cameraSub = view.mapboxMap.subscribeCameraChanged {
+            renderer.evaluateCrescentVisibility(
+                throttled = true,
+                reduceMotion = reduceMotionState.value,
+            )
+        }
+        val idleSub = view.mapboxMap.subscribeMapIdle {
+            renderer.evaluateCrescentVisibility(
+                throttled = false,
+                reduceMotion = reduceMotionState.value,
+            )
+        }
         onDispose {
+            cameraSub.cancel()
+            idleSub.cancel()
             view.location.removeOnIndicatorPositionChangedListener(listener)
             style.latestPuckPoint = null
         }
@@ -918,16 +984,16 @@ internal fun PilgrimMap(
                 proximityPinIndex = newIndex
                 renderedProximityPins = proximityPins
             }
-            // Seek fog + pulse ring (iOS parity: applySeekFog at the end of
-            // updateUIView, PilgrimMapView.swift:208@c1745e8). The renderer
-            // gates on whole-state structural equality and swallows repeat
-            // pulse tokens, so this line is a no-op for wander walks and
-            // for recompositions that change neither fog nor pulse.
+            // Seek fog + pulse ring + crescent (iOS parity: applySeekFog at
+            // the end of updateUIView, PilgrimMapView.swift:208@c1745e8).
+            // The renderer gates on whole-state structural equality and
+            // swallows repeat pulse tokens, so this line is a no-op for
+            // wander walks and for recompositions that change neither fog
+            // nor pulse.
             seekFogRenderer?.apply(
                 state = seekFog,
                 pulse = seekPulse,
                 reduceMotion = reduceMotion,
-                lightColorArgb = seekLightColor.toArgb(),
             )
         },
         onRelease = { view ->

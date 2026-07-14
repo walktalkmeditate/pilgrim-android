@@ -699,6 +699,27 @@
     <string name="walk_greeting_weather_wind">The wind at your back</string>
     <string name="walk_greeting_weather_haze">A hazy veil over the world</string>
 
+    <!-- iOS parity SeekGatewayView.swift:145-160@c1745e8 SeekVoice — seek
+         weather greetings; replace the wander greeting on seek walks (U8). -->
+    <string name="seek_greeting_weather_clear">A clear day for seeking</string>
+    <string name="seek_greeting_weather_partly_cloudy">Seeking under shifting skies</string>
+    <string name="seek_greeting_weather_overcast">Soft light on the search</string>
+    <string name="seek_greeting_weather_light_rain">The rain joins your seeking</string>
+    <string name="seek_greeting_weather_heavy_rain">The sky seeks with you</string>
+    <string name="seek_greeting_weather_thunderstorm">Thunder over the unknown</string>
+    <string name="seek_greeting_weather_snow">Snow over the hidden way</string>
+    <string name="seek_greeting_weather_fog">Fog seeking fog</string>
+    <string name="seek_greeting_weather_wind">The wind knows the way</string>
+    <string name="seek_greeting_weather_haze">The unknown behind its veil</string>
+
+    <!-- iOS parity SeekGatewayView.swift:115-141@c1745e8 SeekSky — celestial
+         gateway lines (turning tints + full moon), line break verbatim. -->
+    <string name="seek_tint_line_spring_equinox">The year leans toward light.\nSeek with it.</string>
+    <string name="seek_tint_line_summer_solstice">The sun stands still.\nYou don\'t have to.</string>
+    <string name="seek_tint_line_autumn_equinox">The year leans toward dusk.\nSeek while it turns.</string>
+    <string name="seek_tint_line_winter_solstice">The longest night\nhas the most to hide.</string>
+    <string name="seek_tint_line_full_moon">Tonight the moon\nseeks with you.</string>
+
     <!-- iOS parity ActiveWalkView.swift:735-748@db4196e celestial greetings. -->
     <string name="walk_greeting_celestial_sun_enters">"The Sun enters %1$s today — %2$s"</string>
     <string name="walk_greeting_celestial_moon_through">The Moon moves through %1$s</string>
