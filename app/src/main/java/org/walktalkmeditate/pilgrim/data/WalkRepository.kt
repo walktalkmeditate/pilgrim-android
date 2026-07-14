@@ -22,6 +22,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 @Singleton
 open class WalkRepository @Inject constructor(
@@ -76,6 +77,24 @@ open class WalkRepository @Inject constructor(
     /** Pause-aware duration math input for [HomeViewModel.buildSnapshots]. */
     open suspend fun walkEventsFor(walkId: Long): List<WalkEvent> =
         walkEventDao.getForWalk(walkId)
+
+    /**
+     * Ids of all walks marked as seeks (one `SEEK_MODE` event at
+     * recording start), in a single query. Mirrors iOS
+     * `HomeViewModel.fetchSeekWalkIDs` — the journal glyph must never
+     * fault per-walk event lists to answer this.
+     */
+    open suspend fun seekWalkIds(): Set<Long> =
+        walkEventDao.walkIdsWithEvent(WalkEventType.SEEK_MODE.name).toSet()
+
+    /**
+     * Icon strings of every icon-carrying waypoint, grouped by walk id,
+     * in a single query (no N+1). Feeds
+     * `GoshuinMilestones.arrivalCounts` — the pure pass that turns
+     * these into seek-arrival counts for the seeking seals.
+     */
+    open suspend fun waypointIconsByWalk(): Map<Long, List<String?>> =
+        waypointDao.iconsPerWalk().groupBy({ it.walkId }, { it.icon })
 
     suspend fun getActiveWalk(): Walk? = walkDao.getActive()
 

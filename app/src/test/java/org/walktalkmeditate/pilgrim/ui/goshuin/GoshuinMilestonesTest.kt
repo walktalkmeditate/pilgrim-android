@@ -4,8 +4,11 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 
 class GoshuinMilestonesTest {
 
@@ -15,15 +18,18 @@ class GoshuinMilestonesTest {
         distance: Double = 1_000.0,
         meditateDurationMillis: Long = 0L,
         latitude: Double = 0.0,
+        foundPlaceCount: Int = 0,
+        uuid: String = "uuid-$id",
     ): WalkMilestoneInput {
         val ts = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         return WalkMilestoneInput(
             walkId = id,
-            uuid = "uuid-$id",
+            uuid = uuid,
             startTimestamp = ts,
             distanceMeters = distance,
             meditateDurationMillis = meditateDurationMillis,
             latitude = latitude,
+            foundPlaceCount = foundPlaceCount,
         )
     }
 
@@ -60,9 +66,8 @@ class GoshuinMilestonesTest {
 
     @Test fun `tenth walk - NthWalk(10)`() {
         // Give walk #5 a much greater distance so it (not the most-
-        // recent walk #10) wins LongestWalk. Without this the precedence
-        // LongestWalk > NthWalk would fire LongestWalk on the 10th walk
-        // since all-equal distances tie-break to the most recent.
+        // recent walk #10) wins LongestWalk, keeping this assertion
+        // about NthWalk alone rather than the display-priority table.
         val list = (1..10).map { i ->
             walk(i.toLong(), LocalDate.of(2026, 1, i), distance = if (i == 5) 9_999.0 else 1_000.0)
         }.reversed()
@@ -187,15 +192,18 @@ class GoshuinMilestonesTest {
         assertNull(mNewer)
     }
 
-    @Test fun `precedence - LongestWalk overrides NthWalk(10)`() {
-        // 10 walks where the 10th is also the longest. Precedence picks
-        // LongestWalk, not NthWalk(10).
+    @Test fun `precedence - NthWalk(10) overrides LongestWalk per iOS display priority`() {
+        // 10 walks where the 10th is also the longest. iOS's
+        // primaryMilestone table ranks the recurring NthWalk (priority
+        // 3) above the transient LongestWalk record (priority 5) —
+        // "once-ever > threshold crossings > recurring and transient
+        // records". Flipped from the pre-U12 Android-invented order.
         val list = (1..10).map { i ->
             walk(i.toLong(), LocalDate.of(2026, 1, i), distance = if (i == 10) 9_999.0 else 1_000.0)
         }.reversed()
         val tenth = list.first()
         val m = GoshuinMilestones.detect(walkIndex = 0, walk = tenth, allFinished = list)
-        assertEquals(GoshuinMilestone.LongestWalk, m)
+        assertEquals(GoshuinMilestone.NthWalk(10), m)
     }
 
     @Test fun `seasonFor - northern hemisphere months map correctly`() {
@@ -318,5 +326,202 @@ class GoshuinMilestonesTest {
         assertEquals("21st Walk", GoshuinMilestones.label(GoshuinMilestone.NthWalk(21)))
         assertEquals("First of Spring", GoshuinMilestones.label(GoshuinMilestone.FirstOfSeason(Season.Spring)))
         assertEquals("First of Winter", GoshuinMilestones.label(GoshuinMilestone.FirstOfSeason(Season.Winter)))
+        assertEquals("First Unknown", GoshuinMilestones.label(GoshuinMilestone.FirstUnknown))
+        assertEquals("25 Unknowns", GoshuinMilestones.label(GoshuinMilestone.UnknownsFound(25)))
+    }
+
+    // --- U12: seeking thresholds ------------------------------------
+
+    @Test fun `seekingMilestones - first arrival walk earns FirstUnknown not a crossing`() {
+        val m = GoshuinMilestones.seekingMilestones(arrivalsInWalk = 2, arrivalsBefore = 0)
+        assertTrue(m.contains(GoshuinMilestone.FirstUnknown))
+        assertFalse(m.contains(GoshuinMilestone.UnknownsFound(10)))
+    }
+
+    @Test fun `seekingMilestones - zero arrivals earn nothing`() {
+        assertTrue(GoshuinMilestones.seekingMilestones(arrivalsInWalk = 0, arrivalsBefore = 5).isEmpty())
+        // The zero/zero tie: a zero-arrival seek must NOT earn
+        // FirstUnknown just because the lifetime count is also 0
+        // (Stage 4-D equal-value-trap guard).
+        assertTrue(GoshuinMilestones.seekingMilestones(arrivalsInWalk = 0, arrivalsBefore = 0).isEmpty())
+    }
+
+    @Test fun `seekingMilestones - 8 to 12 crossing earns exactly UnknownsFound(10)`() {
+        assertEquals(
+            setOf<GoshuinMilestone>(GoshuinMilestone.UnknownsFound(10)),
+            GoshuinMilestones.seekingMilestones(arrivalsInWalk = 4, arrivalsBefore = 8),
+        )
+    }
+
+    @Test fun `seekingMilestones - walk after a crossing earns nothing for it`() {
+        assertTrue(GoshuinMilestones.seekingMilestones(arrivalsInWalk = 1, arrivalsBefore = 11).isEmpty())
+    }
+
+    @Test fun `seekingMilestones - exact landing on threshold still awards`() {
+        assertEquals(
+            setOf<GoshuinMilestone>(GoshuinMilestone.UnknownsFound(25)),
+            GoshuinMilestones.seekingMilestones(arrivalsInWalk = 1, arrivalsBefore = 24),
+        )
+    }
+
+    @Test fun `seekingMilestones - 0 to 26 earns FirstUnknown plus both crossings`() {
+        assertEquals(
+            setOf(
+                GoshuinMilestone.FirstUnknown,
+                GoshuinMilestone.UnknownsFound(10),
+                GoshuinMilestone.UnknownsFound(25),
+            ),
+            GoshuinMilestones.seekingMilestones(arrivalsInWalk = 26, arrivalsBefore = 0),
+        )
+    }
+
+    // --- U12: primary milestone (stable caption) ---------------------
+
+    @Test fun `primaryMilestone - once-ever outranks crossings outranks records`() {
+        val crowded = setOf(
+            GoshuinMilestone.LongestWalk,
+            GoshuinMilestone.FirstOfSeason(Season.Summer),
+            GoshuinMilestone.UnknownsFound(10),
+            GoshuinMilestone.UnknownsFound(25),
+            GoshuinMilestone.NthWalk(10),
+            GoshuinMilestone.FirstWalk,
+        )
+        assertEquals(GoshuinMilestone.FirstWalk, GoshuinMilestones.primaryMilestone(crowded))
+        assertEquals(
+            "the largest crossing is the headline",
+            GoshuinMilestone.UnknownsFound(25),
+            GoshuinMilestones.primaryMilestone(
+                setOf(
+                    GoshuinMilestone.UnknownsFound(10),
+                    GoshuinMilestone.UnknownsFound(25),
+                    GoshuinMilestone.LongestWalk,
+                ),
+            ),
+        )
+        assertNull(GoshuinMilestones.primaryMilestone(emptySet()))
+    }
+
+    @Test fun `primaryMilestone - deterministic across shuffled iteration orders`() {
+        // Kotlin's setOf is a LinkedHashSet — iteration follows
+        // insertion, so building the set from explicitly shuffled lists
+        // exercises genuinely different iteration orders. The selected
+        // seal must never depend on that order (iOS 3993b11 fix).
+        val milestones = listOf(
+            GoshuinMilestone.UnknownsFound(50),
+            GoshuinMilestone.NthWalk(20),
+            GoshuinMilestone.FirstOfSeason(Season.Autumn),
+            GoshuinMilestone.LongestWalk,
+            GoshuinMilestone.LongestMeditation,
+            GoshuinMilestone.UnknownsFound(10),
+        )
+        repeat(24) { seed ->
+            val shuffled = LinkedHashSet(milestones.shuffled(kotlin.random.Random(seed)))
+            assertEquals(
+                "seed $seed changed the primary milestone",
+                GoshuinMilestone.UnknownsFound(50),
+                GoshuinMilestones.primaryMilestone(shuffled),
+            )
+        }
+    }
+
+    // --- U12: stable walk ordering -----------------------------------
+
+    @Test fun `isOrderedBefore - earlier start wins regardless of uuid`() {
+        assertTrue(GoshuinMilestones.isOrderedBefore(1L, "z", 2L, "a"))
+        assertFalse(GoshuinMilestones.isOrderedBefore(2L, "a", 1L, "z"))
+    }
+
+    @Test fun `isOrderedBefore - start tie breaks by uuid and stays strict`() {
+        assertTrue(GoshuinMilestones.isOrderedBefore(5L, "a", 5L, "b"))
+        assertFalse(GoshuinMilestones.isOrderedBefore(5L, "b", 5L, "a"))
+        // Strictness: a walk is never before itself.
+        assertFalse(GoshuinMilestones.isOrderedBefore(5L, "a", 5L, "a"))
+    }
+
+    // --- U12: bulk arrival counts ------------------------------------
+
+    @Test fun `arrivalCounts - counts reserved icon only and omits zero-count walks`() {
+        val counts = GoshuinMilestones.arrivalCounts(
+            mapOf(
+                1L to listOf(SeekPersistence.ARRIVAL_WAYPOINT_ICON, "leaf", SeekPersistence.ARRIVAL_WAYPOINT_ICON),
+                2L to listOf("leaf", null, "mappin"),
+                3L to listOf(SeekPersistence.ARRIVAL_WAYPOINT_ICON),
+            ),
+        )
+        assertEquals(mapOf(1L to 2, 3L to 1), counts)
+    }
+
+    // --- U12: detect() aggregation (ordering, exclusion, ties) -------
+
+    /**
+     * A padding wander walk older than every seek fixture, with the
+     * longest distance — soaks up FirstWalk and LongestWalk so the
+     * seek walks' assertions isolate the seeking milestones.
+     */
+    private fun paddingWalk() =
+        walk(100L, LocalDate.of(2026, 1, 1), distance = 9_999.0)
+
+    @Test fun `detect - FirstUnknown goes to the earliest arrival walk`() {
+        val pad = paddingWalk()
+        val earlier = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 1)
+        val later = walk(2L, LocalDate.of(2026, 1, 4), foundPlaceCount = 1)
+        val list = listOf(later, earlier, pad)
+
+        assertEquals(
+            GoshuinMilestone.FirstUnknown,
+            GoshuinMilestones.detect(walkIndex = 1, walk = earlier, allFinished = list),
+        )
+        assertNull(
+            "the earlier walk's arrivals must count as before the later walk",
+            GoshuinMilestones.detect(walkIndex = 0, walk = later, allFinished = list),
+        )
+    }
+
+    @Test fun `detect - own arrivals never count as before`() {
+        val pad = paddingWalk()
+        val only = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 2)
+        val list = listOf(only, pad)
+        assertEquals(
+            "a walk's own arrivals must not inflate its arrivalsBefore",
+            GoshuinMilestone.FirstUnknown,
+            GoshuinMilestones.detect(walkIndex = 0, walk = only, allFinished = list),
+        )
+    }
+
+    @Test fun `detect - identical startDates award FirstUnknown exactly once`() {
+        val pad = paddingWalk()
+        val first = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 1, uuid = "0000000a")
+        val second = walk(2L, LocalDate.of(2026, 1, 2), foundPlaceCount = 1, uuid = "0000000b")
+        val list = listOf(second, first, pad)
+
+        val awards = listOf(
+            GoshuinMilestones.detect(walkIndex = 1, walk = first, allFinished = list),
+            GoshuinMilestones.detect(walkIndex = 0, walk = second, allFinished = list),
+        ).count { it == GoshuinMilestone.FirstUnknown }
+        assertEquals(
+            "a startDate tie must resolve to exactly one first unknown",
+            1,
+            awards,
+        )
+    }
+
+    @Test fun `detect - wander walk never earns a seeking seal`() {
+        val pad = paddingWalk()
+        val seek = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 9)
+        val wander = walk(2L, LocalDate.of(2026, 1, 4), foundPlaceCount = 0)
+        val list = listOf(wander, seek, pad)
+        assertNull(GoshuinMilestones.detect(walkIndex = 0, walk = wander, allFinished = list))
+    }
+
+    @Test fun `detect - crossing walk shows the largest threshold it crossed`() {
+        val pad = paddingWalk()
+        val prior = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 8)
+        val crossing = walk(2L, LocalDate.of(2026, 1, 4), foundPlaceCount = 20)
+        val list = listOf(crossing, prior, pad)
+        // 8 → 28 crosses both 10 and 25; the largest is the headline.
+        assertEquals(
+            GoshuinMilestone.UnknownsFound(25),
+            GoshuinMilestones.detect(walkIndex = 0, walk = crossing, allFinished = list),
+        )
     }
 }
