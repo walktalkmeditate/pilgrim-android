@@ -44,7 +44,7 @@ class FeedbackService @Inject constructor(
     suspend fun submit(category: String, message: String, deviceInfo: String?) {
         val body = json.encodeToString(
             FeedbackRequest.serializer(),
-            FeedbackRequest(category, message, deviceInfo),
+            FeedbackRequest(category, message, deviceInfo, platform = "android"),
         )
         val token = deviceTokenStore.getToken()
 

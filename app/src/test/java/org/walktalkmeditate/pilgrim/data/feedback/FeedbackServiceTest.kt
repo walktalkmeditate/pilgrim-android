@@ -71,6 +71,16 @@ class FeedbackServiceTest {
         assertFalse("body should not contain deviceInfo: $body", body.contains("deviceInfo"))
     }
 
+    @Test
+    fun `always sends platform android even when deviceInfo omitted`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        service.submit(category = "feedback", message = "msg", deviceInfo = null)
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue("body should contain platform android: $body", body.contains("\"platform\":\"android\""))
+    }
+
     @Test(expected = FeedbackError.RateLimited::class)
     fun `429 maps to RateLimited`() = runTest {
         server.enqueue(MockResponse().setResponseCode(429))
