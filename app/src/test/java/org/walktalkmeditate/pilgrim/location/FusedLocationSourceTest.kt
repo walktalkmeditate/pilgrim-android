@@ -120,6 +120,17 @@ class FusedLocationSourceTest {
     }
 
     @Test
+    fun bearingCarriedWhenPresentAndNullWhenAbsent() = runTest(UnconfinedTestDispatcher()) {
+        val (results, job) = collectInBackground()
+        binder.fire(point(accuracy = 5f))
+        binder.fire(point(accuracy = 5f, bearing = 42.5f))
+        assertEquals(2, results.size)
+        assertTrue(results[0].bearingDegrees == null)
+        assertEquals(42.5f, results[1].bearingDegrees)
+        job.cancel()
+    }
+
+    @Test
     fun newCollectionResetsAnchor() = runTest(UnconfinedTestDispatcher()) {
         val first = mutableListOf<LocationPoint>()
         val firstJob = launch { source.locationFlow().toList(first) }
@@ -145,13 +156,14 @@ class FusedLocationSourceTest {
         return results to job
     }
 
-    private fun point(accuracy: Float?): Location {
+    private fun point(accuracy: Float?, bearing: Float? = null): Location {
         val location = Location("test").apply {
             latitude = 35.0
             longitude = 139.0
             time = 1_700_000_000_000L
         }
         if (accuracy != null) location.accuracy = accuracy
+        if (bearing != null) location.bearing = bearing
         return location
     }
 }
