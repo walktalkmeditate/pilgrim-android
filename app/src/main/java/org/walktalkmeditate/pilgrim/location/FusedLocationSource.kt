@@ -94,6 +94,8 @@ class FusedLocationSource @Inject constructor(
                             } else {
                                 null
                             },
+                        bearingDegrees =
+                            if (location.hasBearing()) location.bearing else null,
                     )
                     val isFirst = !hasEmitted.get()
                     // First sample is force-anchored, mirroring iOS
@@ -147,6 +149,8 @@ class FusedLocationSource @Inject constructor(
                                 } else {
                                     null
                                 },
+                            bearingDegrees =
+                                if (location.hasBearing()) location.bearing else null,
                         ),
                     )
                 }

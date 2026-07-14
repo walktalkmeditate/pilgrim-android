@@ -20,4 +20,11 @@ data class LocationPoint(
      */
     val altitudeMeters: Double? = null,
     val verticalAccuracyMeters: Float? = null,
+    /**
+     * Course over ground in degrees clockwise from true north, when the
+     * fix carries one (`Location.hasBearing()`). Absent → null; iOS's
+     * negative-course sentinel maps here. Feeds the seek alignment
+     * window (`SeekEngine`), which excludes bearing-less fixes.
+     */
+    val bearingDegrees: Float? = null,
 )
