@@ -40,7 +40,11 @@ object SeekSetupModule {
     fun provideSeekQaFlags(
         @ApplicationContext context: Context,
     ): SeekQaFlags = SeekQaFlags {
-        BuildConfig.DEBUG &&
-            Settings.Global.getInt(context.contentResolver, "pilgrim_seek_qa_near", 0) == 1
+        if (!BuildConfig.DEBUG) {
+            0
+        } else {
+            Settings.Global.getInt(context.contentResolver, "pilgrim_seek_qa_near", 0)
+                .coerceIn(0, 2)
+        }
     }
 }

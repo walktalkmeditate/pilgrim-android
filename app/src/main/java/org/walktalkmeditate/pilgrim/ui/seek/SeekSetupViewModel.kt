@@ -305,10 +305,9 @@ class SeekSetupViewModel @Inject constructor(
             start = start,
             rng = SeekSeededGenerator(seed),
         )
-        val chain = if (qaFlags.nearClearings()) {
-            SeekQaOverrides.compressTowardOrigin(generated, start)
-        } else {
-            generated
+        val chain = when (val qaMode = qaFlags.nearClearingsMode()) {
+            0 -> generated
+            else -> SeekQaOverrides.compressTowardOrigin(generated, start, qaMode)
         }
         sessionStore.set(
             SeekPendingSession(

@@ -20,7 +20,8 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
  * test-pinned.
  */
 fun interface SeekQaFlags {
-    fun nearClearings(): Boolean
+    /** 0 = off, 1 = inside-cascade, 2 = guiding-visible (edge). */
+    fun nearClearingsMode(): Int
 }
 
 object SeekQaOverrides {
@@ -31,20 +32,30 @@ object SeekQaOverrides {
     /** Each later clearing steps this much farther out. */
     const val QA_STEP_METERS = 12.0
 
+    /** Mode 2: clearing edge sits this far beyond the tester. */
+    const val QA_EDGE_MARGIN_METERS = 15.0
+
+    /** Mode 2: each later clearing steps this much farther out. */
+    const val QA_EDGE_STEP_METERS = 25.0
+
     /**
-     * Re-places clearing `i` at `12 + 12·i` meters from [origin] along
-     * its original bearing — original distances are discarded entirely
-     * (a long chain's far clearing sits kilometers out; no scale factor
-     * serves both short and long chains). Bearings, ordering, radii,
-     * and budget survive, and the shipped 40–60 m radii mean every
-     * compressed clearing overlaps the tester standing at the origin,
-     * so the whole chain cascades to completion without walking.
+     * Mode 1 (`inside`): clearing `i` lands at `12 + 12·i` m — inside
+     * every shipped 40–60 m radius, so arrival/stillness/reveal cascade
+     * without walking; the guiding phase lasts seconds. Mode 2 (`edge`):
+     * clearing `i`'s EDGE lands `15 + 25·i` m away (center = own radius
+     * + margin), so fog/crescent/pings stay observable indefinitely and
+     * arrival is a short stroll. Original distances are discarded in
+     * both (a long chain's far clearing sits kilometers out); bearings,
+     * ordering, radii, and budget survive.
      */
-    fun compressTowardOrigin(chain: SeekChain, origin: SeekPoint): SeekChain =
+    fun compressTowardOrigin(chain: SeekChain, origin: SeekPoint, mode: Int): SeekChain =
         SeekChain(
             clearings = chain.clearings.mapIndexed { index, clearing ->
                 val bearing = SeekChainGenerator.bearingDegrees(origin, clearing.center)
-                val compressed = QA_BASE_DISTANCE_METERS + QA_STEP_METERS * index
+                val compressed = when (mode) {
+                    2 -> clearing.radiusMeters + QA_EDGE_MARGIN_METERS + QA_EDGE_STEP_METERS * index
+                    else -> QA_BASE_DISTANCE_METERS + QA_STEP_METERS * index
+                }
                 SeekClearing(
                     center = SeekChainGenerator.destination(origin, bearing, compressed),
                     radiusMeters = clearing.radiusMeters,

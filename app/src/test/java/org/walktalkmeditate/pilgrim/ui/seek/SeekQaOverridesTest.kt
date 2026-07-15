@@ -20,7 +20,7 @@ class SeekQaOverridesTest {
 
     @Test
     fun compressionHugsTheOrigin() {
-        val compressed = SeekQaOverrides.compressTowardOrigin(chain(), origin)
+        val compressed = SeekQaOverrides.compressTowardOrigin(chain(), origin, 1)
         compressed.clearings.forEachIndexed { index, clearing ->
             val d = SeekChainGenerator.distance(origin, clearing.center)
             val expected = SeekQaOverrides.QA_BASE_DISTANCE_METERS +
@@ -34,9 +34,22 @@ class SeekQaOverridesTest {
     }
 
     @Test
+    fun edgeModeKeepsTheTesterOutsideEveryClearing() {
+        val compressed = SeekQaOverrides.compressTowardOrigin(chain(), origin, 2)
+        compressed.clearings.forEachIndexed { index, clearing ->
+            val d = SeekChainGenerator.distance(origin, clearing.center)
+            val gap = d - clearing.radiusMeters
+            val expectedGap = SeekQaOverrides.QA_EDGE_MARGIN_METERS +
+                SeekQaOverrides.QA_EDGE_STEP_METERS * index
+            assertEquals("edge gap for clearing $index", expectedGap, gap, 1.0)
+            assertTrue("tester starts outside clearing $index (guiding observable)", gap > 0)
+        }
+    }
+
+    @Test
     fun compressionPreservesShape() {
         val original = chain()
-        val compressed = SeekQaOverrides.compressTowardOrigin(original, origin)
+        val compressed = SeekQaOverrides.compressTowardOrigin(original, origin, 1)
         assertEquals(original.clearings.size, compressed.clearings.size)
         assertEquals(original.budgetMeters, compressed.budgetMeters, 0.0)
         original.clearings.zip(compressed.clearings).forEach { (o, c) ->

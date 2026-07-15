@@ -116,7 +116,7 @@ class SeekSetupViewModelTest {
             clock = Clock { nowMs },
             accuracyChecker = { preciseLocation },
             breathHaptic = { breathCount++ },
-            qaFlags = { false },
+            qaFlags = { 0 },
         )
     }
 
