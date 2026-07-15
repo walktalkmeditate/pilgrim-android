@@ -8,7 +8,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Qualifier
 import javax.inject.Singleton
-import kotlin.math.max
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -45,8 +44,6 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPowerTier
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
 import org.walktalkmeditate.pilgrim.domain.seek.SeekSeed
-import org.walktalkmeditate.pilgrim.domain.seek.SeekSeededGenerator
-import org.walktalkmeditate.pilgrim.domain.seek.SeekTuning
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlaying
 import org.walktalkmeditate.pilgrim.location.LocationSource
 
@@ -121,12 +118,16 @@ fun interface SeekGlancePublisher {
 }
 
 /**
- * App-scoped owner of the live seek session: boots the engine from the
- * setup's pending session when a seek walk starts, routes engine events
- * to the senses (sonar, haptics, whisper) and persistence, feeds the
- * map's fog/pulse state and the notification's glance line (U10), and
- * implements "Seek anew". Port of the seek half of
- * `ActiveWalkViewModel+Seek.swift@c1745e8`; full contract in
+ * App-scoped owner of the live seek session: boots the engine as soon
+ * as the setup stages a pending session — pre-departure, on the ready
+ * screen, exactly like iOS's gateway GPS lock (`beginSeekGPSLock` →
+ * `startSeekEngine`, stage-independent) — routes engine events to the
+ * senses (sonar, haptics, whisper) and persistence, feeds the map's
+ * fog/pulse state and the notification's glance line (U10), and
+ * implements "Seek anew". Fog, crescent, and sonar are alive before
+ * stepping off (iOS 85373c1); the walk's Active transition ADOPTS the
+ * already-running engine instead of rebooting it. Port of the seek
+ * half of `ActiveWalkViewModel+Seek.swift@c1745e8`; full contract in
  * `docs/parity/2026-07-14-port-seek-orchestrator-u9.md` +
  * `docs/parity/2026-07-14-port-seek-glance-u10.md`.
  *
@@ -135,15 +136,19 @@ fun interface SeekGlancePublisher {
  * early-returns in `:tracker`), observing the process-local
  * `WalkController.state` exactly like `MeditationBellObserver` and
  * `VoiceGuideOrchestrator`. The engine's GPS feed is a UI-process FLP
- * subscription ([LocationSource.rawLocationFlow]); screen-off delivery
+ * subscription ([LocationSource.rawLocationFlow] — registered on
+ * collection, so it streams pre-recording too); screen-off delivery
  * is entitled at the UID level by the `:tracker` location FGS. A
  * UI-process death mid-walk ends seek guidance but never recording —
- * the restored walk never reboots the engine (see [handleWalkState]).
+ * the restored walk never reboots the engine (see [handleSeekInputs]).
  *
- * Restore-path filter (spec D3): the boot key is
- * [SeekSessionStore.pending], consumed at boot. A restored walk — new
- * process, in-memory store empty — can never satisfy the boot
- * condition, so no first-emission latch is needed.
+ * Restore-path filter (spec D3, revised 2026-07-15): the boot key is
+ * [SeekSessionStore.pending] — staged by the setup's chain lock,
+ * consumed when a walk ADOPTS the session (not at boot: a still-staged
+ * pending is what makes the ready-screen back-out observable — every
+ * existing clear path becomes a teardown signal). The filter stays
+ * structural: the store is in-memory, so a restored walk — new
+ * process, empty store — can never satisfy the boot condition.
  */
 @Singleton
 class SeekOrchestrator @Inject constructor(
@@ -209,9 +214,9 @@ class SeekOrchestrator @Inject constructor(
     fun start() {
         if (!started.compareAndSet(false, true)) return
         scope.launch {
-            walkState.collect { state ->
+            combine(walkState, sessionStore.pending, ::Pair).collect { (state, pending) ->
                 try {
-                    handleWalkState(state)
+                    handleSeekInputs(state, pending)
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
@@ -231,30 +236,28 @@ class SeekOrchestrator @Inject constructor(
      * `ActiveWalkViewModel+Seek.swift:196-210@c1745e8`). Dispatched onto
      * the seek scope: the engine is confined to it.
      *
-     * Pre-departure (setup Ready, walk not started — engine not yet
-     * booted) the reroll regenerates the PENDING session's chain
-     * instead; no engine means no immediate pulse there (spec D8).
+     * Pre-departure the engine is already live (booted on the setup's
+     * chain lock), so the reroll rides `engine.seekAnew` there too —
+     * immediate stale-distance pulse included, exactly like iOS (spec
+     * D8 superseded 2026-07-15). No engine → no-op, matching iOS's
+     * `guard let engine = seekEngine else { return }`.
      */
     fun seekAnewRequested() {
         scope.launch {
             try {
-                val live = engine
-                if (live != null) {
-                    val fix = latestFix
-                    val point = fix?.let { SeekPoint(it.latitude, it.longitude) }
-                        ?: accumulatorLocation()?.let { SeekPoint(it.latitude, it.longitude) }
-                        ?: return@launch
-                    live.seekAnew(
-                        currentLocation = point,
-                        seed = SeekSeed.make(
-                            intention = sessionIntention,
-                            momentEpochMillis = clock.now(),
-                            fix = fix,
-                        ),
-                    )
-                } else {
-                    rerollPendingSession()
-                }
+                val live = engine ?: return@launch
+                val fix = latestFix
+                val point = fix?.let { SeekPoint(it.latitude, it.longitude) }
+                    ?: accumulatorLocation()?.let { SeekPoint(it.latitude, it.longitude) }
+                    ?: return@launch
+                live.seekAnew(
+                    currentLocation = point,
+                    seed = SeekSeed.make(
+                        intention = sessionIntention,
+                        momentEpochMillis = clock.now(),
+                        fix = fix,
+                    ),
+                )
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
@@ -263,50 +266,100 @@ class SeekOrchestrator @Inject constructor(
         }
     }
 
-    // ─── Walk-state observation ───────────────────────────────────────
+    // ─── Walk-state + staging observation ─────────────────────────────
 
-    internal suspend fun handleWalkState(state: WalkState) {
-        // StateFlow conflation can elide the terminal emission between
-        // two walks under contention (the WalkLifecycleObserver-
-        // documented race): a live engine observing a DIFFERENT walk's
-        // in-progress state is a stale session — tear it down before
-        // the boot check so arrivals can never persist to the old walk.
-        val inProgressWalkId = when (state) {
-            is WalkState.Active -> state.walk.walkId
-            is WalkState.Paused -> state.walk.walkId
-            is WalkState.Meditating -> state.walk.walkId
+    /**
+     * The session state machine over `(walkState, pending)`. Boot keys
+     * on the STAGED session, not on recording (revised 2026-07-15 to
+     * match iOS's stage-independent `beginSeekGPSLock` →
+     * `startSeekEngine`): the engine comes alive on the ready screen
+     * and the walk's Active transition merely adopts it.
+     */
+    internal suspend fun handleSeekInputs(state: WalkState, pending: SeekPendingSession?) {
+        val inProgressWalk = when (state) {
+            is WalkState.Active -> state.walk
+            is WalkState.Paused -> state.walk
+            is WalkState.Meditating -> state.walk
             else -> null
         }
-        if (engine != null && inProgressWalkId != null && inProgressWalkId != sessionWalkId) {
-            Log.w(TAG, "stale seek session (walk $sessionWalkId) under walk $inProgressWalkId — tearing down")
-            // Keep the pending session: in this race it belongs to the
-            // NEW walk and is about to be consumed by the boot below.
-            teardownSession(clearPending = false)
+
+        // StateFlow conflation can elide the terminal emission between
+        // two walks under contention (the WalkLifecycleObserver-
+        // documented race): a live ADOPTED engine observing a DIFFERENT
+        // walk's in-progress state is a stale session — tear it down
+        // before the boot check so arrivals can never persist to the
+        // old walk. (An unadopted engine has no walk to be stale
+        // against; it is handled by adoption/abandonment below.)
+        if (engine != null && sessionWalkId != null && inProgressWalk != null &&
+            inProgressWalk.walkId != sessionWalkId
+        ) {
+            Log.w(TAG, "stale seek session (walk $sessionWalkId) under walk ${inProgressWalk.walkId} — tearing down")
+            teardownSession()
         }
-        when {
-            state is WalkState.Active &&
-                state.walk.mode == WalkMode.Seek &&
-                engine == null -> {
-                // Boot ONLY on (Active seek + pending session): a
-                // restored walk (process death) has an empty in-memory
-                // store; a wander walk fails the mode check; the UI
-                // process's brief first-frame Wander (event row not yet
-                // combined) simply boots on the next emission.
-                val session = sessionStore.pending.value ?: return
-                bootEngine(session, walkId = state.walk.walkId)
+
+        // An adopted session's walk reached a terminal state.
+        if (engine != null && sessionWalkId != null && inProgressWalk == null) {
+            teardownSession()
+        }
+
+        // Pre-departure staging abandoned: every existing pending-clear
+        // path — ready-screen back-out (SeekSetupViewModel.onCleared →
+        // clearPendingSessionIfUnconsumed), a post-lock setup cancel,
+        // WalkLifecycleObserver's terminal clears — lands here because
+        // the unadopted engine's session is only consumed at adoption.
+        if (engine != null && sessionWalkId == null && pending == null) {
+            Log.i(TAG, "pre-departure seek staging abandoned — tearing down")
+            teardownSession()
+        }
+
+        // Adoption: the pre-departure engine meets its walk. Consuming
+        // the pending session HERE is the restore filter (spec D3
+        // revised) — a process death after this point restores a walk
+        // into an empty store, which can never boot. A first-frame
+        // Wander emission (mode not yet re-derived from the SEEK_MODE
+        // event row) fails the mode check and simply adopts on the next
+        // emission — the engine keeps running untouched meanwhile.
+        if (engine != null && sessionWalkId == null && inProgressWalk != null &&
+            inProgressWalk.mode == WalkMode.Seek
+        ) {
+            sessionWalkId = inProgressWalk.walkId
+            sessionStore.clear()
+            Log.i(TAG, "seek engine adopted by walk=${inProgressWalk.walkId}")
+        }
+
+        // Boot. A restored walk (process death) has an empty in-memory
+        // store and never gets here; a non-seek in-progress walk with a
+        // stale pending (shouldn't exist, but defensive) never boots;
+        // a pending that predates a Finished walk's end is that walk's
+        // leftover, not a new setup's staging.
+        if (engine == null && pending != null) {
+            when {
+                inProgressWalk != null && inProgressWalk.mode == WalkMode.Seek ->
+                    // The staging-to-boot gap closed by a walk start
+                    // (or the conflated-terminal race above): boot
+                    // directly adopted.
+                    bootEngine(pending, walkId = inProgressWalk.walkId)
+                inProgressWalk != null -> Unit
+                state is WalkState.Finished && pending.seededAtEpochMillis <= state.endedAt -> Unit
+                else -> bootEngine(pending, walkId = null)
             }
-            (state is WalkState.Finished || state is WalkState.Idle) && engine != null ->
-                teardownSession()
-            else -> Unit
         }
     }
 
-    /** iOS `startSeekEngine` (`ActiveWalkViewModel+Seek.swift:72-119@c1745e8`). */
-    private fun bootEngine(session: SeekPendingSession, walkId: Long) {
-        // Consume the pending session — the boot key exists exactly
-        // between chain lock and walk start, which is what makes the
-        // restore filter structural rather than heuristic.
-        sessionStore.clear()
+    /**
+     * iOS `startSeekEngine` (`ActiveWalkViewModel+Seek.swift:72-119
+     * @c1745e8`). [walkId] is null on the pre-departure boot — the
+     * ready screen has no walk row yet; the Active transition adopts
+     * the session and sets it. A null-walkId session skips arrival
+     * persistence and glance publishing (both need a walk) while every
+     * display-side sense proceeds.
+     */
+    private fun bootEngine(session: SeekPendingSession, walkId: Long?) {
+        // Consume the pending session only when a walk adopts it at
+        // boot; the pre-departure boot leaves it staged so back-out's
+        // clear stays observable (and the options sheet's pre-departure
+        // gate keeps its input).
+        if (walkId != null) sessionStore.clear()
         sessionWalkId = walkId
         sessionIntention = session.intention
         tintHex = session.tint?.fogHex
@@ -361,7 +414,11 @@ class SeekOrchestrator @Inject constructor(
 
         engine.start()
         this.engine = engine
-        Log.i(TAG, "seek engine booted for walk=$walkId (${session.chain.clearings.size} clearings)")
+        Log.i(
+            TAG,
+            "seek engine booted ${if (walkId != null) "for walk=$walkId" else "pre-departure"} " +
+                "(${session.chain.clearings.size} clearings)",
+        )
     }
 
     /**
@@ -385,7 +442,7 @@ class SeekOrchestrator @Inject constructor(
             }
 
     /** iOS `teardownSeek` (`ActiveWalkViewModel+Seek.swift:121-126@c1745e8`). */
-    private fun teardownSession(clearPending: Boolean = true) {
+    private fun teardownSession() {
         whisperGeneration += 1
         eventsJob?.cancel()
         eventsJob = null
@@ -409,11 +466,13 @@ class SeekOrchestrator @Inject constructor(
         // session starts from a clean latch.
         publishedGlance = null
         hasPublishedGlance = false
-        // Belt-and-suspenders with WalkLifecycleObserver's terminal
-        // clear — idempotent either way. Skipped only on the stale-
-        // session teardown, where the store already holds the NEXT
-        // walk's session.
-        if (clearPending) sessionStore.clear()
+        // Deliberately no sessionStore.clear(): an adopted session was
+        // consumed at adoption; an abandoned pre-departure session got
+        // here BECAUSE the store was cleared; and in the conflated-
+        // terminal race the store already holds the NEXT walk's session
+        // (which the boot below this teardown must keep).
+        // WalkLifecycleObserver's terminal clear owns the stale-pending
+        // sweep.
         Log.i(TAG, "seek session torn down")
     }
 
@@ -473,9 +532,19 @@ class SeekOrchestrator @Inject constructor(
      * count. Direct awaited Room writes (spec D6): the UI→tracker
      * intent path is fire-and-forget and could not uphold
      * persist-before-ritual.
+     *
+     * Pre-departure (unadopted engine — no walk row) there is nothing
+     * to persist to. iOS parks such arrivals in the builder's in-memory
+     * relay, durable only if a walk gets recorded; Android skips the
+     * rows outright (chain geometry makes this near-unreachable — the
+     * first clearing sits ≥250 m from the lock point). The ritual
+     * senses proceed regardless.
      */
     private suspend fun recordSeekArrival() {
-        val walkId = sessionWalkId ?: return
+        val walkId = sessionWalkId ?: run {
+            Log.w(TAG, "pre-departure seek arrival — no walk row, persistence skipped")
+            return
+        }
         repository.recordEvent(
             WalkEvent(
                 walkId = walkId,
@@ -563,7 +632,14 @@ class SeekOrchestrator @Inject constructor(
             _fogState.value = state
         }
         _enginePhase.value = inputs.phase
-        publishGlance(deriveGlance(inputs))
+        // The glance rides the walk notification — pre-departure there
+        // is no walk, and the publish intent would start the :tracker
+        // service just to store a glance no notification will show.
+        // Adoption opens the channel; the engine re-emits distance on
+        // every processed fix, so the first post-adoption emission
+        // publishes within one fix interval (iOS's Live Activity also
+        // exists only while recording).
+        if (sessionWalkId != null) publishGlance(deriveGlance(inputs))
     }
 
     /**
@@ -606,39 +682,6 @@ class SeekOrchestrator @Inject constructor(
         hasPublishedGlance = true
         publishedGlance = glance
         glancePublisher.publish(glance)
-    }
-
-    // ─── Reroll helpers ───────────────────────────────────────────────
-
-    /**
-     * Pre-departure "Seek anew" (spec D8): the engine is not booted yet
-     * (Android boots at walk start, not at the gateway like iOS), so
-     * regenerate the pending session's whole chain from the last known
-     * position under the full budget. Silent by design — no engine, no
-     * sonar channel; the sheet dismissal is the feedback.
-     */
-    private suspend fun rerollPendingSession() {
-        val pending = sessionStore.pending.value ?: return
-        val fix = try {
-            locationSource.lastKnownLocation()
-        } catch (se: SecurityException) {
-            null
-        } ?: return
-        val seed = SeekSeed.make(
-            intention = pending.intention,
-            momentEpochMillis = clock.now(),
-            fix = fix,
-        )
-        val chain = pending.chain.regeneratingRemainder(
-            fromActiveIndex = 0,
-            current = SeekPoint(fix.latitude, fix.longitude),
-            remainingBudgetMeters = max(
-                pending.chain.budgetMeters,
-                SeekTuning.REROLL_MIN_BUDGET_METERS,
-            ),
-            rng = SeekSeededGenerator(seed),
-        )
-        sessionStore.set(pending.copy(chain = chain))
     }
 
     /** ≙ iOS's `routeCoordinates.last` fallback for the reroll position. */

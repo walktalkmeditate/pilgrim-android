@@ -58,11 +58,12 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.SeekFogStyle
 
 /**
  * The wiring keystone's contract (iOS `ActiveWalkSeekTests.swift@c1745e8`
- * + the plan's U9 scenarios): boot on (Active seek + pending session),
- * the full event → senses/persistence routing order, the structural
- * restore-path filter, reroll ordinal continuity, whisper scheduling,
- * and teardown. Port spec:
- * docs/parity/2026-07-14-port-seek-orchestrator-u9.md.
+ * + the plan's U9 scenarios): boot on the STAGED session — pre-departure,
+ * like iOS's `beginSeekGPSLock` (revised 2026-07-15) — walk adoption of
+ * the running engine, the full event → senses/persistence routing order,
+ * the structural restore-path filter, reroll ordinal continuity, whisper
+ * scheduling, and teardown (walk end AND pre-departure back-out). Port
+ * spec: docs/parity/2026-07-14-port-seek-orchestrator-u9.md.
  *
  * Robolectric + in-memory Room on the test scheduler's executor (the
  * WalkViewModelPlacementTest pattern) so arrival persistence runs
@@ -594,22 +595,201 @@ class SeekOrchestratorTest {
     }
 
     @Test
-    fun `pre-departure seek anew regenerates the pending chain silently`() = runTest(dispatcher) {
+    fun `pre-departure seek anew rides the live engine with an immediate pulse`() = runTest(dispatcher) {
+        // D8 superseded (2026-07-15): the engine boots on staging, so a
+        // pre-departure reroll drives engine.seekAnew like iOS — the
+        // immediate stale-distance pulse is the tangible confirmation.
         val original = chain(2)
         val orchestrator = startOrchestrator()
         sessionStore.set(pendingSession(original))
-        locationSource.lastKnown = fix(home)
+        runCurrent()
+        emitFix(home)
+        val centerBefore = activeFogCircle(orchestrator.fogState.value)!!.center
 
         orchestrator.seekAnewRequested()
         runCurrent()
 
-        val rerolled = sessionStore.pending.value
-        assertNotNull("the pending session survives a pre-walk reroll", rerolled)
-        assertEquals(original.clearings.size, rerolled!!.chain.clearings.size)
-        assertNotEquals("the chain was regenerated", original.clearings, rerolled.chain.clearings)
-        assertEquals("silent by design — no engine, no sonar", 0, sound.pings.size)
-        assertTrue(ops.isEmpty())
+        assertEquals("immediate feedback pulse, no walk needed", 1, sound.pings.size)
+        assertEquals(1, orchestrator.pulse.value.token)
+        assertNotEquals(
+            "the engine's chain regenerated",
+            centerBefore,
+            activeFogCircle(orchestrator.fogState.value)!!.center,
+        )
+        assertNotNull(
+            "the staged session remains for the walk to adopt",
+            sessionStore.pending.value,
+        )
     }
+
+    // ─── Pre-departure boot (iOS beginSeekGPSLock parity, 2026-07-15) ─
+
+    @Test
+    fun `staged session boots the engine pre-departure - fog and pings before any walk`() =
+        runTest(dispatcher) {
+            val chain = chain(1)
+            val orchestrator = startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+
+            assertEquals("engine boots on staging, not on recording", 1, sound.prepareCount)
+            assertNotNull(
+                "the staged session waits for a walk to adopt it",
+                sessionStore.pending.value,
+            )
+
+            emitFix(home)
+            assertNotNull("fog is alive on the ready screen", orchestrator.fogState.value)
+            assertEquals(SeekEnginePhase.GUIDING, orchestrator.enginePhase.value)
+
+            val distance = SeekChainGenerator.distance(home, chain.clearings[0].center)
+            advanceTimeBy(SeekEngine.pulseIntervalMillis(distance, SeekPowerTier.NORMAL) + 1)
+            runCurrent()
+            assertEquals("sonar pulses pre-departure", 1, sound.pings.size)
+            assertEquals(1, orchestrator.pulse.value.token)
+            assertTrue(
+                "no walk — the glance channel stays untouched",
+                publishedGlances.isEmpty(),
+            )
+        }
+
+    @Test
+    fun `ready-screen back-out tears the pre-departure engine down with no residue`() =
+        runTest(dispatcher) {
+            val chain = chain(1)
+            val orchestrator = startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+            emitFix(home)
+            assertEquals(1, sound.prepareCount)
+
+            // The back-out path: SeekSetupViewModel.onCleared →
+            // clearPendingSessionIfUnconsumed() → store.clear().
+            sessionStore.clear()
+            runCurrent()
+
+            assertTrue("abandonment stops the sonar channel", sound.stopCount >= 1)
+            assertNull(orchestrator.fogState.value)
+            assertNull(orchestrator.enginePhase.value)
+            assertEquals(SeekPulseVisual.NONE, orchestrator.pulse.value)
+
+            emitFix(home)
+            advanceTimeBy(600_000)
+            runCurrent()
+            assertEquals("no pings after abandonment", 0, sound.pings.size)
+
+            // The next wander walk sees zero seek residue.
+            walkState.value = WalkState.Active(
+                WalkAccumulator(walkId = 9L, startedAt = nowMs, mode = WalkMode.Wander),
+            )
+            runCurrent()
+            emitFix(home)
+            advanceTimeBy(120_000)
+            runCurrent()
+            assertEquals(1, sound.prepareCount)
+            assertNull(orchestrator.fogState.value)
+            assertTrue(publishedGlances.isEmpty())
+        }
+
+    @Test
+    fun `walk start adopts the running engine - same session, no reboot`() =
+        runTest(dispatcher) {
+            val chain = chain(1)
+            val orchestrator = startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+            emitFix(home)
+            assertEquals(1, sound.prepareCount)
+            assertNotNull(orchestrator.fogState.value)
+
+            val walk = repository.startWalk(startTimestamp = nowMs, intention = "find the river")
+            runCurrent()
+            walkState.value = WalkState.Active(
+                WalkAccumulator(walkId = walk.id, startedAt = nowMs, mode = WalkMode.Seek),
+            )
+            runCurrent()
+
+            assertEquals("adoption, never a second boot", 1, sound.prepareCount)
+            assertNull("adoption consumes the staged session", sessionStore.pending.value)
+
+            // Post-adoption the session persists to the adopted walk and
+            // the glance channel opens on the next engine emission.
+            emitMovingFix(
+                SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 50.0),
+                speedMps = 1.4f,
+                courseDegrees = 0f,
+            )
+            assertEquals(1, publishedGlances.size)
+            driveArrival(chain.clearings[0].center)
+            val events = repository.eventsFor(walk.id)
+            runCurrent()
+            assertEquals(1, events.count { it.eventType == WalkEventType.SEEK_ARRIVAL })
+
+            // Walk end tears the adopted session down (existing contract).
+            walkState.value = WalkState.Finished(
+                WalkAccumulator(walkId = walk.id, startedAt = 0L, mode = WalkMode.Seek),
+                endedAt = nowMs,
+            )
+            runCurrent()
+            assertNull(orchestrator.fogState.value)
+            assertTrue(sound.stopCount >= 1)
+        }
+
+    @Test
+    fun `first-frame wander emission neither kills nor adopts the pre-departure engine`() =
+        runTest(dispatcher) {
+            // The UI process can briefly derive mode=Wander for a seek
+            // walk (SEEK_MODE event row not yet combined). The engine
+            // must idle through it and adopt on the corrected emission.
+            val chain = chain(1)
+            startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+            assertEquals(1, sound.prepareCount)
+
+            val walk = repository.startWalk(startTimestamp = nowMs, intention = null)
+            runCurrent()
+            walkState.value = WalkState.Active(
+                WalkAccumulator(walkId = walk.id, startedAt = nowMs, mode = WalkMode.Wander),
+            )
+            runCurrent()
+            assertEquals("no teardown, no reboot", 1, sound.prepareCount)
+            assertEquals(0, sound.stopCount)
+            assertNotNull("session not adopted by the mislabeled frame", sessionStore.pending.value)
+
+            walkState.value = WalkState.Active(
+                WalkAccumulator(walkId = walk.id, startedAt = nowMs, mode = WalkMode.Seek),
+            )
+            runCurrent()
+            assertNull("corrected emission adopts", sessionStore.pending.value)
+            emitFix(home)
+            driveArrival(chain.clearings[0].center)
+            assertEquals(1, countSeekArrivalEvents())
+        }
+
+    @Test
+    fun `pre-departure arrival skips persistence but keeps the ritual and observer alive`() =
+        runTest(dispatcher) {
+            val chain = chain(2)
+            val orchestrator = startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+            emitFix(home)
+
+            driveArrival(chain.clearings[0].center)
+            assertTrue(
+                "the arrival ritual fires with zero rows persisted: $ops",
+                ops.contains("haptic:arrival(events=0,waypoints=0)"),
+            )
+            assertEquals(0, countSeekArrivalEvents())
+            assertEquals(0, countArrivalWaypoints())
+
+            // The event observer survived the skip: stillness → reveal
+            // still routes the bowl and the next clearing's fog.
+            driveStillnessReveal(chain.clearings[0].center)
+            assertEquals(1, sound.bowlCount)
+            assertEquals(2, orchestrator.fogState.value!!.circles.size)
+        }
 
     // ─── Reveal whisper (R15) ────────────────────────────────────────
 

@@ -44,8 +44,10 @@ data class SeekPendingSession(
  * when the GPS lock generates the chain; cleared on setup cancel, on a
  * fresh setup, when the setup surface dies without a walk, and on every
  * walk terminal transition ([org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver]).
- * The U9 orchestrator reads [pending] when a seek walk starts. UI
- * process only.
+ * The U9 orchestrator boots the engine the moment a session is staged
+ * (pre-departure, iOS `beginSeekGPSLock` parity) and consumes it when
+ * the walk's Active transition adopts the engine — so every clear above
+ * doubles as the pre-departure teardown signal. UI process only.
  */
 @Singleton
 class SeekSessionStore @Inject constructor() {
