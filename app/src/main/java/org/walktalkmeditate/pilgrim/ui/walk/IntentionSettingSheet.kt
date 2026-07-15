@@ -78,8 +78,23 @@ fun IntentionSettingSheet(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
     resetKey: Int = 0,
+    /**
+     * iOS parity `ActiveWalkView.swift:283-297@c1745e8` — seek requires
+     * an intention: `allowsSkip: viewModel.mode != .seek` hides the
+     * Cancel button and `.interactiveDismissDisabled(mode == .seek)`
+     * blocks swipe/scrim/back dismissal. `false` = Save is the only way
+     * out of the sheet.
+     */
+    allowsSkip: Boolean = true,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { target ->
+            // The Android reading of interactiveDismissDisabled: reject
+            // the Hidden target so swipe-down and scrim taps bounce back.
+            allowsSkip || target != androidx.compose.material3.SheetValue.Hidden
+        },
+    )
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val controller = remember {
@@ -105,11 +120,19 @@ fun IntentionSettingSheet(
 
     ModalBottomSheet(
         onDismissRequest = {
+            // Unreachable when !allowsSkip (confirmValueChange +
+            // shouldDismissOnBackPress close every dismissal path), but
+            // guard anyway so a future M3 behavior change can't reopen
+            // the skip-a-required-intention hole.
+            if (!allowsSkip) return@ModalBottomSheet
             controller.cancel()
             onDismiss()
         },
         sheetState = sheetState,
         containerColor = pilgrimColors.parchment,
+        properties = androidx.compose.material3.ModalBottomSheetProperties(
+            shouldDismissOnBackPress = allowsSkip,
+        ),
     ) {
         IntentionSheetContent(
             initial = initial,
@@ -118,6 +141,7 @@ fun IntentionSettingSheet(
             onSave = onSave,
             onDismiss = onDismiss,
             resetKey = resetKey,
+            allowsSkip = allowsSkip,
             voiceState = voiceState,
             voiceTranscript = transcript,
             onStartVoice = {
@@ -142,6 +166,7 @@ internal fun IntentionSheetContent(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
     resetKey: Int = 0,
+    allowsSkip: Boolean = true,
     voiceState: IntentionVoiceState = IntentionVoiceState.Idle,
     voiceTranscript: String? = null,
     onStartVoice: () -> Unit = {},
@@ -272,8 +297,13 @@ internal fun IntentionSheetContent(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal, Alignment.End),
         ) {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.walk_options_intention_cancel))
+            // iOS `IntentionSettingView.swift:319-326@c1745e8` — the
+            // Cancel button only exists when skipping is allowed; a seek
+            // walk requires an intention before the gateway.
+            if (allowsSkip) {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.walk_options_intention_cancel))
+                }
             }
             TextButton(onClick = { onSave(text.trim()) }) {
                 Text(stringResource(R.string.walk_options_intention_save))

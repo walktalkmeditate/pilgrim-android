@@ -7,6 +7,7 @@ import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 
 /**
@@ -33,9 +34,10 @@ class WalkActionPublisher @Inject constructor(
      * service is not running yet on the first start; the service's
      * onStartCommand promotes to FG before the API 31+ deadline.
      */
-    fun start(intention: String?) {
+    fun start(intention: String?, mode: WalkMode = WalkMode.Wander) {
         val intent = baseIntent(WalkTrackingService.ACTION_START).apply {
             putExtra(WalkTrackingService.EXTRA_FRESH_START, true)
+            putExtra(WalkTrackingService.EXTRA_WALK_MODE, mode.name)
             if (intention != null) putExtra(WalkTrackingService.EXTRA_INTENTION, intention)
         }
         ContextCompat.startForegroundService(context, intent)

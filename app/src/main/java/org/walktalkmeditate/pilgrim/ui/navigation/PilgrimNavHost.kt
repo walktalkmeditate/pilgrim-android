@@ -70,7 +70,19 @@ object Routes {
     const val BREATH = "breath"
     const val PATH = "path"
     const val HOME = "home"
-    const val ACTIVE_WALK = "active_walk"
+
+    /**
+     * ACTIVE_WALK is the route PATTERN (query-arg style) so every
+     * existing `currentRoute == Routes.ACTIVE_WALK` comparison and
+     * `popBackStack(Routes.ACTIVE_WALK, ...)` keeps matching the
+     * destination — `NavDestination.route` reports the pattern, not the
+     * filled route. Navigate with [activeWalk] to carry a mode; a bare
+     * pattern-less navigate falls back to the Wander default argument.
+     */
+    const val ACTIVE_WALK_ARG_MODE = "mode"
+    const val ACTIVE_WALK = "active_walk?$ACTIVE_WALK_ARG_MODE={$ACTIVE_WALK_ARG_MODE}"
+    fun activeWalk(mode: org.walktalkmeditate.pilgrim.domain.WalkMode): String =
+        "active_walk?$ACTIVE_WALK_ARG_MODE=${mode.name}"
     const val FEEDBACK = "feedback"
     const val GOSHUIN = "goshuin"
     const val MEDITATION = "meditation"
@@ -196,8 +208,8 @@ fun PilgrimNavHost(
         }
         composable(Routes.PATH) {
             org.walktalkmeditate.pilgrim.ui.path.WalkStartScreen(
-                onEnterActiveWalk = {
-                    navController.navigate(Routes.ACTIVE_WALK) {
+                onEnterActiveWalk = { mode ->
+                    navController.navigate(Routes.activeWalk(mode)) {
                         launchSingleTop = true
                     }
                 },
@@ -337,8 +349,20 @@ fun PilgrimNavHost(
                 onBack = { navController.popBackStack() },
             )
         }
-        composable(Routes.ACTIVE_WALK) {
+        composable(
+            Routes.ACTIVE_WALK,
+            arguments = listOf(
+                androidx.navigation.navArgument(Routes.ACTIVE_WALK_ARG_MODE) {
+                    type = androidx.navigation.NavType.StringType
+                    defaultValue = org.walktalkmeditate.pilgrim.domain.WalkMode.Wander.name
+                },
+            ),
+        ) { backStackEntry ->
+            val walkMode = org.walktalkmeditate.pilgrim.domain.WalkMode.fromWire(
+                backStackEntry.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE),
+            )
             ActiveWalkScreen(
+                mode = walkMode,
                 onFinished = { walkId ->
                     // Stage 9.5-A: a walk launched from Path leaves HOME
                     // off the back stack. popUpTo(HOME) would no-op +
@@ -616,7 +640,13 @@ fun PilgrimNavHost(
                 // while in-progress), so we don't bounce back to PATH.
                 // launchSingleTop is the dedup mechanism for any
                 // accidental concurrent navigate(ACTIVE_WALK) calls.
-                navController.navigate(Routes.ACTIVE_WALK) {
+                // Deep links always navigate with the Wander default —
+                // the mode arg only drives the pre-walk seek setup, and
+                // deep links target an already-running walk whose mode
+                // lives on the accumulator, not the nav arg.
+                navController.navigate(
+                    Routes.activeWalk(org.walktalkmeditate.pilgrim.domain.WalkMode.Wander),
+                ) {
                     popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true
                 }

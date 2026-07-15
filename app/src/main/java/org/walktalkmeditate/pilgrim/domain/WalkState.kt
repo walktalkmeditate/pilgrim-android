@@ -23,3 +23,17 @@ val WalkState.isInProgress: Boolean
     get() = this is WalkState.Active ||
         this is WalkState.Paused ||
         this is WalkState.Meditating
+
+/**
+ * The walk's [WalkMode] for any state that carries an accumulator
+ * (in-progress + Finished); null on Idle. Consumed by the seek weather
+ * greeting (U8), the orchestrator (U9), and the notification glance (U10).
+ */
+val WalkState.walkModeOrNull: WalkMode?
+    get() = when (this) {
+        WalkState.Idle -> null
+        is WalkState.Active -> walk.mode
+        is WalkState.Paused -> walk.mode
+        is WalkState.Meditating -> walk.mode
+        is WalkState.Finished -> walk.mode
+    }

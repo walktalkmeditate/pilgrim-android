@@ -179,6 +179,12 @@ class WalkTrackingService : Service() {
 
         val intentionExtra = startIntent?.getStringExtra(EXTRA_INTENTION)
         val isFreshStart = startIntent?.getBooleanExtra(EXTRA_FRESH_START, false) == true
+        // Absent (legacy intent, notification revival) or unknown values
+        // collapse to Wander. Restored walks ignore this extra entirely —
+        // their mode is re-derived from the persisted SEEK_MODE event.
+        val modeExtra = org.walktalkmeditate.pilgrim.domain.WalkMode.fromWire(
+            startIntent?.getStringExtra(EXTRA_WALK_MODE),
+        )
 
         // API 34+ rejects startForeground(type=location) with SecurityException
         // if FINE location isn't granted at that moment; API 33+ silently
@@ -249,7 +255,7 @@ class WalkTrackingService : Service() {
                     // pipeline still proceeds against whatever state
                     // the controller landed in.
                     try {
-                        controller.startWalk(intentionExtra)
+                        controller.startWalk(intentionExtra, modeExtra)
                     } catch (ce: CancellationException) {
                         throw ce
                     } catch (e: IllegalStateException) {
@@ -761,6 +767,13 @@ class WalkTrackingService : Service() {
          *  START_REDELIVER_INTENT revival (where the service restores
          *  from an existing Room row). Boolean. */
         const val EXTRA_FRESH_START = "extra.fresh_start"
+
+        /** Extra: the walk's [org.walktalkmeditate.pilgrim.domain.WalkMode]
+         *  enum name on [ACTION_START]. Absent/unknown → Wander
+         *  (forward-compat, same convention as WalkEventType.UNKNOWN).
+         *  Only the fresh-start path consumes it; restore paths re-derive
+         *  mode from the persisted SEEK_MODE walk event. */
+        const val EXTRA_WALK_MODE = "extra.walk_mode"
 
         /** Extra: explicit Done-tap millis for [ACTION_END_MEDITATION].
          *  Long. Absent → service uses its own clock. */

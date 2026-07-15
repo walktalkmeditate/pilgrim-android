@@ -57,6 +57,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.isInProgress
+import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
 import org.walktalkmeditate.pilgrim.ui.design.BreathingLogo
 import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.design.MoonPhaseGlyph
@@ -92,7 +93,7 @@ private const val MODE_TAP_DISSOLVE_MS = 450L
  */
 @Composable
 fun WalkStartScreen(
-    onEnterActiveWalk: () -> Unit,
+    onEnterActiveWalk: (WalkMode) -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -152,11 +153,15 @@ fun WalkStartScreen(
     // to ActiveWalk if a walk was somehow already in-progress on the
     // controller (warm launch case where the @Singleton survived).
     val didCheck = rememberSaveable { mutableStateOf(false) }
+    // Redirects into an ALREADY-RUNNING walk pass the running walk's
+    // mode when it's knowable (accumulator carries it); the mode arg
+    // only drives the seek setup ritual, which the recovery guard on
+    // ActiveWalkScreen skips for in-progress compositions anyway.
     LaunchedEffect(Unit) {
         if (didCheck.value) return@LaunchedEffect
         didCheck.value = true
         if (isInProgress) {
-            onEnterActiveWalk()
+            onEnterActiveWalk(walkState.walkModeOrNull ?: WalkMode.Wander)
         }
     }
 
@@ -166,7 +171,7 @@ fun WalkStartScreen(
     // false) doesn't fire spuriously on the initial Idle observation.
     LaunchedEffect(isInProgress) {
         if (isInProgress && didCheck.value) {
-            onEnterActiveWalk()
+            onEnterActiveWalk(walkState.walkModeOrNull ?: WalkMode.Wander)
         }
     }
 
@@ -293,7 +298,10 @@ fun WalkStartScreen(
                 // iOS parity: button navigates to the active-walk surface
                 // in its "ready" state. The walk does NOT start recording
                 // until the user taps the Start button on that screen.
-                onClick = { onEnterActiveWalk() },
+                // The selected mode rides the nav argument — for Seek it
+                // drives the setup ritual on the active-walk surface (iOS
+                // `MainCoordinator.startWalk(mode:)@c1745e8`).
+                onClick = { onEnterActiveWalk(selectedMode) },
                 enabled = selectedMode.isAvailable && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),

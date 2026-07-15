@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 
 /**
@@ -50,7 +51,15 @@ interface WalkController {
      */
     val liveSteps: StateFlow<Int?>
 
-    suspend fun startWalk(intention: String? = null): Walk
+    /**
+     * @param mode the walk's contemplative posture (iOS
+     *   `MainCoordinator.startWalk(mode:)@c1745e8`). Rides the intent
+     *   channel to the `:tracker` controller, lands on
+     *   [org.walktalkmeditate.pilgrim.domain.WalkAccumulator.mode], and —
+     *   for [WalkMode.Seek] — makes the reducer persist one SEEK_MODE
+     *   event at start.
+     */
+    suspend fun startWalk(intention: String? = null, mode: WalkMode = WalkMode.Wander): Walk
     suspend fun pauseWalk()
     suspend fun resumeWalk()
     suspend fun startMeditation()
