@@ -109,6 +109,7 @@ class SeekSetupViewModel @Inject constructor(
     private val clock: Clock,
     private val accuracyChecker: SeekAccuracyChecking,
     private val breathHaptic: SeekBreathHaptic,
+    private val qaFlags: SeekQaFlags,
 ) : ViewModel() {
 
     private val _stage = MutableStateFlow<SeekSetupStage>(SeekSetupStage.Ready)
@@ -298,11 +299,17 @@ class SeekSetupViewModel @Inject constructor(
             fix = fix,
         )
         val duration = durationMinutes ?: seekPreferences.lastDurationMinutes.value
-        val chain = SeekChainGenerator.generate(
+        val start = SeekPoint(latitude = fix.latitude, longitude = fix.longitude)
+        val generated = SeekChainGenerator.generate(
             durationMinutes = duration,
-            start = SeekPoint(latitude = fix.latitude, longitude = fix.longitude),
+            start = start,
             rng = SeekSeededGenerator(seed),
         )
+        val chain = if (qaFlags.nearClearings()) {
+            SeekQaOverrides.compressTowardOrigin(generated, start)
+        } else {
+            generated
+        }
         sessionStore.set(
             SeekPendingSession(
                 chain = chain,

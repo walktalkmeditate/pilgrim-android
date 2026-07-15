@@ -2,11 +2,13 @@
 package org.walktalkmeditate.pilgrim.ui.seek
 
 import android.content.Context
+import android.provider.Settings
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.audio.seek.SeekHaptics
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 
@@ -28,4 +30,17 @@ object SeekSetupModule {
     @Provides
     fun provideSeekBreathHaptic(seekHaptics: SeekHaptics): SeekBreathHaptic =
         SeekBreathHaptic(seekHaptics::breathIn)
+
+    /**
+     * QA-only near-clearing chains: debug builds + explicit device
+     * opt-in (`adb shell settings put global pilgrim_seek_qa_near 1`).
+     * Release builds are hard-false regardless of the setting.
+     */
+    @Provides
+    fun provideSeekQaFlags(
+        @ApplicationContext context: Context,
+    ): SeekQaFlags = SeekQaFlags {
+        BuildConfig.DEBUG &&
+            Settings.Global.getInt(context.contentResolver, "pilgrim_seek_qa_near", 0) == 1
+    }
 }
