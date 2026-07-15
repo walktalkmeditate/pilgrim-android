@@ -4,7 +4,6 @@ package org.walktalkmeditate.pilgrim.data.walk
 import androidx.compose.runtime.Immutable
 import java.time.Instant
 import kotlin.math.abs
-import org.walktalkmeditate.pilgrim.core.celestial.SunCalc
 import org.walktalkmeditate.pilgrim.data.cairn.CachedCairn
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -163,12 +162,10 @@ fun computeWalkMapAnnotations(
     // family regardless of appearance — the record keeps the sky palette.
     for (w in waypoints) {
         if (SeekPersistence.isArrivalWaypoint(w.icon)) {
-            val daypart = SeekSkyLight.daypart(
-                SunCalc.solarElevationDegrees(
-                    latitude = w.latitude,
-                    longitude = w.longitude,
-                    instant = Instant.ofEpochMilli(w.timestamp),
-                ),
+            val daypart = SeekSkyLight.daypartAt(
+                latitude = w.latitude,
+                longitude = w.longitude,
+                instant = Instant.ofEpochMilli(w.timestamp),
             )
             out += WalkMapAnnotation(
                 kind = WalkMapAnnotationKind.SeekArrival(

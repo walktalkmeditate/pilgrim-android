@@ -2,8 +2,10 @@
 package org.walktalkmeditate.pilgrim.domain.seek
 
 import androidx.annotation.StringRes
+import java.time.Instant
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.core.celestial.SunCalc
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 
 /**
@@ -33,6 +35,19 @@ object SeekSkyLight {
         solarElevationDegrees < 8.0 -> Daypart.GOLDEN
         else -> Daypart.MIDDAY
     }
+
+    /**
+     * The hour's light at a place and moment — the single source shared by
+     * the live crescent, the found-under captions, and the halo tint.
+     */
+    fun daypartAt(latitude: Double, longitude: Double, instant: Instant): Daypart =
+        daypart(
+            SunCalc.solarElevationDegrees(
+                latitude = latitude,
+                longitude = longitude,
+                instant = instant,
+            ),
+        )
 
     fun hex(daypart: Daypart, starlight: Boolean): String = when {
         !starlight && daypart == Daypart.GOLDEN -> "#C4956A"

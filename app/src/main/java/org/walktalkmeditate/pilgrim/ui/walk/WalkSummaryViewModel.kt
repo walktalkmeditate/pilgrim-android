@@ -1487,7 +1487,15 @@ class WalkSummaryViewModel @Inject constructor(
         _selectedFavicon.value = WalkFavicon.fromRawValue(walk.favicon)
         val samples = repository.locationSamplesFor(walkId)
         val events = repository.eventsFor(walkId)
-        val waypoints = repository.waypointsFor(walkId)
+        val waypoints = try {
+            repository.waypointsFor(walkId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            // A failed waypoint read degrades to no pins/halos/seek card
+            // rather than killing the whole summary.
+            emptyList()
+        }
 
         val points = samples.map {
             LocationPoint(

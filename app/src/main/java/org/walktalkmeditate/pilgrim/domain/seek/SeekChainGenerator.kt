@@ -10,6 +10,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlin.random.nextInt
+import org.walktalkmeditate.pilgrim.domain.EARTH_RADIUS_METERS
+import org.walktalkmeditate.pilgrim.domain.haversineMeters
 
 /**
  * Starting assumptions from the plan (origin R4) — tuned on real walks,
@@ -182,17 +184,8 @@ object SeekChainGenerator {
 
     // Spherical math (pure; no map-SDK dependency in this model).
 
-    private const val EARTH_RADIUS_METERS = 6_371_000.0
-
-    fun distance(from: SeekPoint, to: SeekPoint): Double {
-        val lat1 = Math.toRadians(from.latitude)
-        val lat2 = Math.toRadians(to.latitude)
-        val dLat = Math.toRadians(to.latitude - from.latitude)
-        val dLon = Math.toRadians(to.longitude - from.longitude)
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-            cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2)
-        return EARTH_RADIUS_METERS * 2 * atan2(sqrt(a), sqrt(1 - a))
-    }
+    fun distance(from: SeekPoint, to: SeekPoint): Double =
+        haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude)
 
     fun destination(from: SeekPoint, bearingDegrees: Double, distanceMeters: Double): SeekPoint {
         val angular = distanceMeters / EARTH_RADIUS_METERS

@@ -5,7 +5,6 @@ import android.content.res.Resources
 import androidx.compose.runtime.Immutable
 import java.time.Instant
 import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.core.celestial.SunCalc
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
@@ -159,12 +158,10 @@ object SeekSummaryModel {
      * `SeekSummarySection.swift:130-136@c1745e8`).
      */
     fun foundUnderDaypart(center: SeekPoint, arrivedAtEpochMs: Long): SeekSkyLight.Daypart =
-        SeekSkyLight.daypart(
-            SunCalc.solarElevationDegrees(
-                latitude = center.latitude,
-                longitude = center.longitude,
-                instant = Instant.ofEpochMilli(arrivedAtEpochMs),
-            ),
+        SeekSkyLight.daypartAt(
+            latitude = center.latitude,
+            longitude = center.longitude,
+            instant = Instant.ofEpochMilli(arrivedAtEpochMs),
         )
 
     /**

@@ -72,7 +72,6 @@ import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
-import org.walktalkmeditate.pilgrim.core.celestial.SunCalc
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
@@ -315,15 +314,16 @@ internal fun PilgrimMap(
             null
         } else {
             val daypartNow: () -> SeekSkyLight.Daypart = {
-                SeekSkyLight.daypart(
-                    fogStyle.latestPuckPoint?.let { point ->
-                        SunCalc.solarElevationDegrees(
-                            latitude = point.latitude(),
-                            longitude = point.longitude(),
-                            instant = java.time.Instant.now(),
-                        )
-                    },
-                )
+                val point = fogStyle.latestPuckPoint
+                if (point != null) {
+                    SeekSkyLight.daypartAt(
+                        latitude = point.latitude(),
+                        longitude = point.longitude(),
+                        instant = java.time.Instant.now(),
+                    )
+                } else {
+                    SeekSkyLight.daypart(null)
+                }
             }
             val starlightNow: () -> Boolean = { starlightState.value }
             SeekFogRenderer(
