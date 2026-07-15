@@ -59,4 +59,11 @@ class WalkModeFootprintsTest {
         assertEquals(TrailDot(x = 0.5f, y = 0.85f, radiusDp = 1.6f, alpha = 1.0f), dots.first())
         assertEquals(TrailDot(x = 0.5f, y = 0.05f, radiusDp = 0.7f, alpha = 0.22f), dots.last())
     }
+
+    @Test fun `draw-time radius scale pins the device-QA divergence`() {
+        // Verbatim iOS radii read as discrete circles at the journal
+        // size on Android (device QA 2026-07-15); the table stays
+        // verbatim, the drawn radius shrinks. Scale must stay in (0, 1).
+        assertEquals(0.6f, TRAIL_DOT_RADIUS_SCALE, 0f)
+    }
 }

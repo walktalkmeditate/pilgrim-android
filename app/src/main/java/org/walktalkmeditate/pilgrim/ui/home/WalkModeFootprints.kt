@@ -30,11 +30,22 @@ internal data class TrailDot(
 )
 
 /**
+ * Draw-time scale on the trail-dot radii. Deliberate divergence from
+ * iOS's verbatim radii (device QA 2026-07-15): at the journal's 10×18dp
+ * on a flat parchment card the 1.6/1.3/1.0/0.7dp dots read as discrete
+ * circles, not a dissolving trail (iOS renders the same table over a
+ * blurred `.ultraThinMaterial` card, which softens them). Positions and
+ * alphas stay verbatim; only the drawn radius shrinks.
+ */
+internal const val TRAIL_DOT_RADIUS_SCALE = 0.6f
+
+/**
  * The seek trail's dot table — verbatim iOS
  * `WalkModeFootprints.swift:35-42@c1745e8`: 6 dots dissolving upward
  * with shrinking radius and fading opacity, x jittered around center.
- * Exposed as a function so JVM tests pin the geometry directly
- * (Stage 3-C rule: Robolectric proves composition, never draw).
+ * Radii are the iOS point values; [TRAIL_DOT_RADIUS_SCALE] applies at
+ * draw time. Exposed as a function so JVM tests pin the geometry
+ * directly (Stage 3-C rule: Robolectric proves composition, never draw).
  */
 internal fun walkModeTrailDots(): List<TrailDot> = listOf(
     TrailDot(x = 0.5f, y = 0.85f, radiusDp = 1.6f, alpha = 1.0f),
@@ -111,7 +122,7 @@ private fun DissolvingTrail(
         walkModeTrailDots().forEach { dot ->
             drawCircle(
                 color = color,
-                radius = dot.radiusDp.dp.toPx(),
+                radius = dot.radiusDp.dp.toPx() * TRAIL_DOT_RADIUS_SCALE,
                 center = Offset(dot.x * size.width, dot.y * size.height),
                 // DrawScope modulates this with the color's own alpha —
                 // same math as iOS `context.opacity` over the passed color.

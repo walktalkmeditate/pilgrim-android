@@ -446,6 +446,17 @@ Android:
   (`WalkStartView.footprintForMode` vs `WalkModeFootprints`).
 - Journal **row dots** don't change; the glyph appears only in the expanded
   quick-view header, mirroring where iOS placed it in `InkScrollView`.
+- **Trail-dot radii scaled 0.6× at draw time** (added 2026-07-15, device QA):
+  the element layout, dot table, positions, and alphas were verified as a
+  verbatim iOS port (SwiftUI `ImageRenderer` of the c1745e8 source vs the
+  Android draw math render pixel-equivalently), yet on-device the verbatim
+  1.6/1.3/1.0/0.7dp radii read as "a few circles" on Android's flat parchment
+  card — iOS composites the same table over a blurred `.ultraThinMaterial`
+  card, which softens the dots into the intended dissolving trail. Android
+  keeps the table verbatim and applies `TRAIL_DOT_RADIUS_SCALE = 0.6f` to the
+  drawn radius only (`WalkModeFootprints.kt`), chosen by A/B renders at
+  1.0/0.75/0.6/0.5 — 0.6 is where the trail stops reading as discrete circles
+  while the fade stays visible.
 
 ## 9. Test parity map
 
