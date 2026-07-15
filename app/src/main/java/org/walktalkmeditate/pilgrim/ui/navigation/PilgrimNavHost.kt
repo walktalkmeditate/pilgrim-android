@@ -37,6 +37,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
@@ -81,7 +82,7 @@ object Routes {
      */
     const val ACTIVE_WALK_ARG_MODE = "mode"
     const val ACTIVE_WALK = "active_walk?$ACTIVE_WALK_ARG_MODE={$ACTIVE_WALK_ARG_MODE}"
-    fun activeWalk(mode: org.walktalkmeditate.pilgrim.domain.WalkMode): String =
+    fun activeWalk(mode: WalkMode): String =
         "active_walk?$ACTIVE_WALK_ARG_MODE=${mode.name}"
     const val FEEDBACK = "feedback"
     const val GOSHUIN = "goshuin"
@@ -352,13 +353,13 @@ fun PilgrimNavHost(
         composable(
             Routes.ACTIVE_WALK,
             arguments = listOf(
-                androidx.navigation.navArgument(Routes.ACTIVE_WALK_ARG_MODE) {
-                    type = androidx.navigation.NavType.StringType
-                    defaultValue = org.walktalkmeditate.pilgrim.domain.WalkMode.Wander.name
+                navArgument(Routes.ACTIVE_WALK_ARG_MODE) {
+                    type = NavType.StringType
+                    defaultValue = WalkMode.Wander.name
                 },
             ),
         ) { backStackEntry ->
-            val walkMode = org.walktalkmeditate.pilgrim.domain.WalkMode.fromWire(
+            val walkMode = WalkMode.fromWire(
                 backStackEntry.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE),
             )
             ActiveWalkScreen(
@@ -645,7 +646,7 @@ fun PilgrimNavHost(
                 // deep links target an already-running walk whose mode
                 // lives on the accumulator, not the nav arg.
                 navController.navigate(
-                    Routes.activeWalk(org.walktalkmeditate.pilgrim.domain.WalkMode.Wander),
+                    Routes.activeWalk(WalkMode.Wander),
                 ) {
                     popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true

@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
+import org.walktalkmeditate.pilgrim.domain.seek.SeekVoice
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -98,7 +99,7 @@ fun WeatherGreetingOverlay(
         val condition = visibleCondition ?: return@AnimatedVisibility
         val message = stringResource(
             if (isSeek) {
-                org.walktalkmeditate.pilgrim.domain.seek.SeekVoice.greetingRes(condition)
+                SeekVoice.greetingRes(condition)
             } else {
                 greetingStringResFor(condition)
             },

@@ -26,6 +26,7 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
 import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
+import org.walktalkmeditate.pilgrim.walk.seek.SeekOrchestrator
 
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
@@ -105,7 +106,7 @@ class PilgrimApp : Application(), Configuration.Provider {
      * only — the engine and every sense it drives live here; the
      * `:tracker` FGS keeps recording regardless.
      */
-    @Inject lateinit var seekOrchestratorProvider: Provider<org.walktalkmeditate.pilgrim.walk.seek.SeekOrchestrator>
+    @Inject lateinit var seekOrchestratorProvider: Provider<SeekOrchestrator>
 
     /**
      * Stage 8-B: collective counter. Boot-time fetch warms the cached

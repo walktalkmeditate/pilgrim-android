@@ -26,6 +26,7 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
 import kotlin.random.Random
+import org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation
 
 /**
  * Constellation appearance overlay — animated starlit indigo decoration
@@ -167,7 +168,7 @@ fun ConstellationOverlay(
  */
 @Composable
 fun ConstellationDecoration(includesNebulae: Boolean = true) {
-    val isConstellation = org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation.current
+    val isConstellation = LocalIsConstellation.current
     if (!isConstellation) return
     ConstellationOverlay(includesNebulae = includesNebulae)
 }

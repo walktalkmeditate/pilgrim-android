@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Terrain
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory
+import org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
@@ -303,10 +305,8 @@ internal fun PilgrimMap(
         }
     }
     val displayDensity = LocalDensity.current.density
-    val starlightState = androidx.compose.runtime.rememberUpdatedState(
-        org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation.current,
-    )
-    val reduceMotionState = androidx.compose.runtime.rememberUpdatedState(reduceMotion)
+    val starlightState = rememberUpdatedState(LocalIsConstellation.current)
+    val reduceMotionState = rememberUpdatedState(reduceMotion)
     val seekFogRenderer = remember(mapView, seekFogStyle) {
         val view = mapView
         val fogStyle = seekFogStyle

@@ -13,6 +13,7 @@ import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
 
 /**
  * App-scoped observer that owns voice-recorder auto-stop on every
@@ -52,7 +53,7 @@ class WalkLifecycleObserver @Inject constructor(
     private val voiceRecorder: VoiceRecorder,
     private val repository: WalkRepository,
     private val orphanSweeper: OrphanRecordingSweeper,
-    private val seekSessionStore: org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore,
+    private val seekSessionStore: SeekSessionStore,
 ) {
     init {
         scope.launch {

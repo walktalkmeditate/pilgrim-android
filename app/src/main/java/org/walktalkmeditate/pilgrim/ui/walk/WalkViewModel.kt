@@ -54,6 +54,7 @@ import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
@@ -1175,8 +1176,7 @@ class WalkViewModel @Inject constructor(
 
     fun startWalk(
         intention: String? = null,
-        mode: org.walktalkmeditate.pilgrim.domain.WalkMode =
-            org.walktalkmeditate.pilgrim.domain.WalkMode.Wander,
+        mode: WalkMode = WalkMode.Wander,
     ) {
         viewModelScope.launch {
             // AF45: don't begin a doomed walk without location permission —

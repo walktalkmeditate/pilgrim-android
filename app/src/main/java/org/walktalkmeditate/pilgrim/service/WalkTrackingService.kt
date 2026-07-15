@@ -187,7 +187,7 @@ class WalkTrackingService : Service() {
         // Absent (legacy intent, notification revival) or unknown values
         // collapse to Wander. Restored walks ignore this extra entirely —
         // their mode is re-derived from the persisted SEEK_MODE event.
-        val modeExtra = org.walktalkmeditate.pilgrim.domain.WalkMode.fromWire(
+        val modeExtra = WalkMode.fromWire(
             startIntent?.getStringExtra(EXTRA_WALK_MODE),
         )
 

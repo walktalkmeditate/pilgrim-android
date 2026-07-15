@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.walk
 import android.app.Application
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.outlined.WbTwilight
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -22,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -135,5 +137,16 @@ class WaypointMarkingSheetTest {
         // mappin and unknown both go to LocationOn by design.
         assertEquals(Icons.Filled.LocationOn, iconKeyToVector("mappin"))
         assertEquals(Icons.Filled.LocationOn, iconKeyToVector("totally.unknown.future.symbol"))
+    }
+
+    @Test fun `iconKeyToVector maps the arrival waypoint icon to WbTwilight`() {
+        // Regression guard for the seek-arrival pin: iOS renders its
+        // "sun.haze" SF symbol on the live-map pin, and WbTwilight is the
+        // matching Android mark. Falling back to LocationOn here would
+        // silently regress arrival pins to the generic pin.
+        assertEquals(
+            Icons.Outlined.WbTwilight,
+            iconKeyToVector(SeekPersistence.ARRIVAL_WAYPOINT_ICON),
+        )
     }
 }
