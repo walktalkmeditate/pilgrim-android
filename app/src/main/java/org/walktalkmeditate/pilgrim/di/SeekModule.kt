@@ -28,7 +28,9 @@ import org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPowerTier
 import org.walktalkmeditate.pilgrim.power.SeekPowerTierSource
+import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.seek.SeekGlancePublisher
 import org.walktalkmeditate.pilgrim.walk.seek.SeekObservedWalkState
 import org.walktalkmeditate.pilgrim.walk.seek.SeekPowerTiers
 import org.walktalkmeditate.pilgrim.walk.seek.SeekScope
@@ -69,6 +71,18 @@ object SeekModule {
     @Singleton
     @SeekPowerTiers
     fun provideSeekPowerTiers(source: SeekPowerTierSource): Flow<SeekPowerTier> = source.tiers
+
+    /**
+     * U10 glance transport: the orchestrator's changed glances ride the
+     * established UI→tracker intent channel to the notification
+     * renderer. Port spec:
+     * `docs/parity/2026-07-14-port-seek-glance-u10.md` B3.
+     */
+    @Provides
+    @Singleton
+    fun provideSeekGlancePublisher(
+        walkActionPublisher: WalkActionPublisher,
+    ): SeekGlancePublisher = SeekGlancePublisher(walkActionPublisher::publishSeekGlance)
 
     /**
      * The sonar/bowl channel with its real suppression gate (iOS

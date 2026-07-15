@@ -32,11 +32,14 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekChain
+import org.walktalkmeditate.pilgrim.domain.seek.SeekChainGenerator
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEngine
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEngineEvent
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogModel
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceModel
+import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPowerTier
@@ -107,12 +110,25 @@ class SeekSenses(
 }
 
 /**
+ * UI→tracker seek-glance transport seam (U10). Production binding in
+ * [org.walktalkmeditate.pilgrim.di.SeekModule] forwards to
+ * [org.walktalkmeditate.pilgrim.walk.WalkActionPublisher.publishSeekGlance];
+ * tests record publishes without a Context. `null` ≙ iOS `seek: nil`
+ * (clears the tracker's stored glance).
+ */
+fun interface SeekGlancePublisher {
+    fun publish(glance: SeekGlanceState?)
+}
+
+/**
  * App-scoped owner of the live seek session: boots the engine from the
  * setup's pending session when a seek walk starts, routes engine events
  * to the senses (sonar, haptics, whisper) and persistence, feeds the
- * map's fog/pulse state, and implements "Seek anew". Port of the seek
- * half of `ActiveWalkViewModel+Seek.swift@c1745e8`; full contract in
- * `docs/parity/2026-07-14-port-seek-orchestrator-u9.md`.
+ * map's fog/pulse state and the notification's glance line (U10), and
+ * implements "Seek anew". Port of the seek half of
+ * `ActiveWalkViewModel+Seek.swift@c1745e8`; full contract in
+ * `docs/parity/2026-07-14-port-seek-orchestrator-u9.md` +
+ * `docs/parity/2026-07-14-port-seek-glance-u10.md`.
  *
  * Process topology (spec D1): UI process only — instantiated eagerly
  * from [org.walktalkmeditate.pilgrim.PilgrimApp.onCreate] (which
@@ -140,6 +156,7 @@ class SeekOrchestrator @Inject constructor(
     private val senses: SeekSenses,
     private val soundsPreferences: SoundsPreferencesRepository,
     private val clock: Clock,
+    private val glancePublisher: SeekGlancePublisher,
     @ApplicationContext private val context: Context,
 ) {
 
@@ -185,6 +202,8 @@ class SeekOrchestrator @Inject constructor(
     private var previousActiveBucket: Int? = null
     private var latestFix: LocationPoint? = null
     private var whisperGeneration = 0L
+    private var publishedGlance: SeekGlanceState? = null
+    private var hasPublishedGlance = false
 
     /** Started explicitly from PilgrimApp (visible, cancellable); idempotent. */
     fun start() {
@@ -293,6 +312,8 @@ class SeekOrchestrator @Inject constructor(
         tintHex = session.tint?.fogHex
         previousActiveBucket = null
         latestFix = null
+        publishedGlance = null
+        hasPublishedGlance = false
 
         val engine = SeekEngine(
             chain = session.chain,
@@ -381,6 +402,13 @@ class SeekOrchestrator @Inject constructor(
         _fogState.value = null
         _pulse.value = SeekPulseVisual.NONE
         _enginePhase.value = null
+        // No teardown clear intent (U10 spec D4): walk end destroys the
+        // per-walk service — and its stored glance — with the
+        // notification; a post-stop intent would only resurrect the
+        // service to stopSelf(). Local publish state resets so the next
+        // session starts from a clean latch.
+        publishedGlance = null
+        hasPublishedGlance = false
         // Belt-and-suspenders with WalkLifecycleObserver's terminal
         // clear — idempotent either way. Skipped only on the stale-
         // session teardown, where the store already holds the NEXT
@@ -535,6 +563,49 @@ class SeekOrchestrator @Inject constructor(
             _fogState.value = state
         }
         _enginePhase.value = inputs.phase
+        publishGlance(deriveGlance(inputs))
+    }
+
+    /**
+     * iOS `currentSeekGlance()` (`ActiveWalkViewModel+Seek.swift:219-236
+     * @c1745e8`), fed from the same combine emission as the fog — the
+     * engine's distance re-publishes on every processed fix, so the
+     * effective cadence matches iOS's 1 Hz Live Activity loop without a
+     * second clock (U10 spec B2/D2).
+     */
+    private fun deriveGlance(inputs: FogInputs): SeekGlanceState? {
+        val fix = latestFix
+        val clearing = inputs.chain.clearings.getOrNull(inputs.activeIndex)
+        val bearing = if (fix != null && clearing != null) {
+            SeekChainGenerator.bearingDegrees(
+                from = SeekPoint(fix.latitude, fix.longitude),
+                to = clearing.center,
+            )
+        } else {
+            null
+        }
+        return SeekGlanceModel.glance(
+            distanceToActiveMeters = inputs.distanceMeters,
+            courseDegrees = fix?.bearingDegrees?.toDouble(),
+            speedMetersPerSecond = fix?.speedMetersPerSecond?.toDouble(),
+            bearingToClearingDegrees = bearing,
+            phase = inputs.phase,
+        )
+    }
+
+    /**
+     * UI-side pre-throttle (U10 spec B3): fire the cross-process intent
+     * only when the glance VALUE changes (≙ iOS `seek != lastSeekGlance`
+     * — here the cheap half; the tracker's fingerprint re-checks). The
+     * latch suppresses the leading nulls before the first fix so a
+     * session that never derived a glance never touches the channel.
+     */
+    private fun publishGlance(glance: SeekGlanceState?) {
+        if (!hasPublishedGlance && glance == null) return
+        if (hasPublishedGlance && glance == publishedGlance) return
+        hasPublishedGlance = true
+        publishedGlance = glance
+        glancePublisher.publish(glance)
     }
 
     // ─── Reroll helpers ───────────────────────────────────────────────

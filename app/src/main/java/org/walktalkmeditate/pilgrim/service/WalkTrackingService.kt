@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -33,7 +34,10 @@ import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
+import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.widget.DeepLinkTarget
@@ -113,6 +117,7 @@ class WalkTrackingService : Service() {
             ACTION_SET_SOUNDSCAPE,
             ACTION_SELECT_SOUNDSCAPE,
             ACTION_CLEAR_SOUNDSCAPE_SELECTION -> handleSoundscapeAction(action, intent)
+            ACTION_UPDATE_SEEK_GLANCE -> handleSeekGlanceAction(intent)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -405,6 +410,32 @@ class WalkTrackingService : Service() {
         }
     }
 
+    /**
+     * U10 glance intake: the UI-process [org.walktalkmeditate.pilgrim
+     * .walk.seek.SeekOrchestrator] publishes a changed seek glance over
+     * the [org.walktalkmeditate.pilgrim.walk.WalkActionPublisher]
+     * intent channel; this process (the renderer) stores it and
+     * re-renders immediately — a changed glance is a notify trigger,
+     * not something to sit on until the next state emission. Port spec:
+     * docs/parity/2026-07-14-port-seek-glance-u10.md B3.
+     */
+    private fun handleSeekGlanceAction(intent: Intent?) {
+        // Mirror the soundscape-action guard: a stray glance intent must
+        // not leave a started-but-unpromoted service lingering.
+        if (locationJob?.isActive != true) {
+            Log.w(TAG, "ignoring seek glance — no active walk pipeline")
+            stopSelf()
+            return
+        }
+        latestSeekGlance = seekGlanceFromExtras(
+            present = intent?.getBooleanExtra(EXTRA_SEEK_GLANCE_PRESENT, false) == true,
+            bucketMeters = intent?.getIntExtra(EXTRA_SEEK_GLANCE_BUCKET, 0) ?: 0,
+            directionName = intent?.getStringExtra(EXTRA_SEEK_GLANCE_DIRECTION),
+            isComplete = intent?.getBooleanExtra(EXTRA_SEEK_GLANCE_COMPLETE, false) == true,
+        )
+        updateNotification(controller.state.value)
+    }
+
     private fun handleControllerAction(action: String, intent: Intent?) {
         scope.launch {
             // Robustness path: if service was destroyed
@@ -549,7 +580,14 @@ class WalkTrackingService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(walkNotificationText(this, state, unitsPreferences.distanceUnits.value))
+            .setContentText(
+                walkNotificationText(
+                    this,
+                    state,
+                    unitsPreferences.distanceUnits.value,
+                    latestSeekGlance,
+                ),
+            )
             .setOngoing(true)
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
@@ -575,52 +613,44 @@ class WalkTrackingService : Service() {
     }
 
     /**
-     * State-class fingerprint + 5 m distance bucket. The notification
-     * text formats distance with `%.2f km` (HALF_UP rounding at the
-     * 0.005 km = 5 m boundary), so a 10 m bucket would skip every
-     * second display tick — visible as up to 5 m of stale km on the
-     * notification. 5 m alignment matches the rounding boundary
-     * exactly. Notify-rate stays in the ~100/walk range (vs the
-     * untrottled ~5400/walk), well below any vendor's update-
-     * suppression threshold.
+     * State-class fingerprint + 5 m distance bucket (wander) or the
+     * seek glance (Active seek). The wander notification text formats
+     * distance with `%.2f km` (HALF_UP rounding at the 0.005 km = 5 m
+     * boundary), so a 10 m bucket would skip every second display tick
+     * — visible as up to 5 m of stale km on the notification. 5 m
+     * alignment matches the rounding boundary exactly. Notify-rate
+     * stays in the ~100/walk range (vs the untrottled ~5400/walk),
+     * well below any vendor's update-suppression threshold. Active
+     * seek walks swap the distance component for the glance — the
+     * 100 m bucket IS the seek line's display rounding — plus a 15 s
+     * floor so the walked-distance prefix never goes long-stale
+     * (U10 port spec B4).
      */
     private var lastNotifiedFingerprint: Long = -1L
+    private var lastNotifyElapsedMillis: Long = 0L
+
+    /** The UI-process orchestrator's latest published glance (U10). */
+    private var latestSeekGlance: SeekGlanceState? = null
 
     private fun updateNotification(state: WalkState) {
-        val fingerprint = notificationFingerprint(state)
-        if (fingerprint == lastNotifiedFingerprint) return
+        val fingerprint = notificationFingerprint(
+            state = state,
+            seekGlance = latestSeekGlance,
+            unitsOrdinal = unitsPreferences.distanceUnits.value.ordinal.toLong(),
+        )
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val notify = shouldNotify(
+            fingerprint = fingerprint,
+            lastFingerprint = lastNotifiedFingerprint,
+            isActiveSeek = state is WalkState.Active &&
+                state.walk.mode == WalkMode.Seek,
+            millisSinceLastNotify = nowElapsed - lastNotifyElapsedMillis,
+        )
+        if (!notify) return
         lastNotifiedFingerprint = fingerprint
+        lastNotifyElapsedMillis = nowElapsed
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(state))
-    }
-
-    private fun notificationFingerprint(state: WalkState): Long {
-        // Pack the state-class ordinal + 5m-bucketed distance + units
-        // ordinal into one Long. State-class change always re-renders
-        // (action set + text both depend on it); within a single
-        // state-class only crossing a 5m boundary re-renders, matching
-        // the displayed text's rounding granularity.
-        //
-        // The units ordinal MUST be in the fingerprint so a Settings
-        // toggle from Metric→Imperial (or vice versa) mid-walk forces
-        // the notification to re-render with the new unit. Without
-        // this, the notification would show stale km/mi until the
-        // user walked another 5m.
-        val classOrdinal = when (state) {
-            WalkState.Idle -> 0L
-            is WalkState.Active -> 1L
-            is WalkState.Paused -> 2L
-            is WalkState.Meditating -> 3L
-            is WalkState.Finished -> 4L
-        }
-        val distanceBucket = when (state) {
-            is WalkState.Active -> (state.walk.distanceMeters / 5.0).toLong()
-            is WalkState.Paused -> (state.walk.distanceMeters / 5.0).toLong()
-            is WalkState.Meditating -> (state.walk.distanceMeters / 5.0).toLong()
-            else -> 0L
-        }
-        val unitsOrdinal = unitsPreferences.distanceUnits.value.ordinal.toLong()
-        return classOrdinal * 100_000_000L + distanceBucket * 10L + unitsOrdinal
     }
 
     /**
@@ -750,6 +780,8 @@ class WalkTrackingService : Service() {
         const val ACTION_DISCARD = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.DISCARD"
         const val ACTION_SET_INTENTION =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_INTENTION"
+        const val ACTION_UPDATE_SEEK_GLANCE =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.UPDATE_SEEK_GLANCE"
         const val ACTION_SET_SOUNDSCAPE =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SET_SOUNDSCAPE"
         const val ACTION_SELECT_SOUNDSCAPE =
@@ -786,6 +818,23 @@ class WalkTrackingService : Service() {
         /** Extra: optional waypoint icon key (UTF-8 string) for
          *  [ACTION_MARK_WAYPOINT]. */
         const val EXTRA_WAYPOINT_ICON = "extra.waypoint_icon"
+
+        /** Extra: whether [ACTION_UPDATE_SEEK_GLANCE] carries a glance.
+         *  Boolean; false ≙ iOS `seek: nil` — clears the stored glance
+         *  (mid-walk this happens right after a reveal, while the
+         *  engine's distance is null until the next fix). */
+        const val EXTRA_SEEK_GLANCE_PRESENT = "extra.seek_glance_present"
+
+        /** Extra: the glance's 100 m distance bucket in meters. Int. */
+        const val EXTRA_SEEK_GLANCE_BUCKET = "extra.seek_glance_bucket"
+
+        /** Extra: [org.walktalkmeditate.pilgrim.domain.seek
+         *  .SeekDirectionHint] enum name. Absent or unknown → no hint
+         *  (same forgiving-wire convention as [EXTRA_WALK_MODE]). */
+        const val EXTRA_SEEK_GLANCE_DIRECTION = "extra.seek_glance_direction"
+
+        /** Extra: the glance's terminal "seeking complete" flag. Boolean. */
+        const val EXTRA_SEEK_GLANCE_COMPLETE = "extra.seek_glance_complete"
 
         /** Extra: desired walk-long soundscape on/off for
          *  [ACTION_SET_SOUNDSCAPE]. Boolean. */
@@ -881,5 +930,109 @@ class WalkTrackingService : Service() {
             state is WalkState.Finished -> StartAction.StopNoWalk
             else -> StartAction.IgnoreInProgress
         }
+
+        // ─── U10 seek glance (port spec
+        //     docs/parity/2026-07-14-port-seek-glance-u10.md B3/B4) ───
+
+        /** ≙ iOS `WalkActivityManager.timeThreshold = 15` s. */
+        internal const val SEEK_NOTIFY_FLOOR_MILLIS = 15_000L
+
+        /**
+         * Pure decode of the [ACTION_UPDATE_SEEK_GLANCE] extras. An
+         * unknown direction name collapses to no hint rather than
+         * crashing on a stale intent from a future binary — the
+         * [org.walktalkmeditate.pilgrim.domain.WalkMode.fromWire]
+         * convention.
+         */
+        internal fun seekGlanceFromExtras(
+            present: Boolean,
+            bucketMeters: Int,
+            directionName: String?,
+            isComplete: Boolean,
+        ): SeekGlanceState? {
+            if (!present) return null
+            val direction = directionName?.let { name ->
+                SeekDirectionHint.entries
+                    .firstOrNull { it.name == name }
+            }
+            return SeekGlanceState(
+                distanceBucketMeters = bucketMeters,
+                directionHint = direction,
+                isComplete = isComplete,
+            )
+        }
+
+        /**
+         * Pack the state-class ordinal + a payload + the units ordinal
+         * into one Long. State-class change always re-renders (action
+         * set + text both depend on it); the units ordinal MUST be in
+         * the fingerprint so a Settings toggle from Metric→Imperial
+         * mid-walk re-renders immediately. The payload is the 5 m
+         * distance bucket (matching the wander text's `%.2f km`
+         * rounding granularity) for every state EXCEPT Active seek,
+         * where it is the glance — presence, 100 m bucket, hint,
+         * completion (≙ iOS `seek != lastSeekGlance`): distance ticks
+         * alone never rebuild a seek notification, the 15 s floor
+         * refreshes the walked-distance prefix instead (Samsung
+         * update-suppression budget).
+         */
+        internal fun notificationFingerprint(
+            state: WalkState,
+            seekGlance: SeekGlanceState?,
+            unitsOrdinal: Long,
+        ): Long {
+            val classOrdinal = when (state) {
+                WalkState.Idle -> 0L
+                is WalkState.Active -> 1L
+                is WalkState.Paused -> 2L
+                is WalkState.Meditating -> 3L
+                is WalkState.Finished -> 4L
+            }
+            val isActiveSeek = state is WalkState.Active &&
+                state.walk.mode == WalkMode.Seek
+            val payload = when {
+                isActiveSeek -> seekGlancePayload(seekGlance)
+                state is WalkState.Active -> (state.walk.distanceMeters / 5.0).toLong()
+                state is WalkState.Paused -> (state.walk.distanceMeters / 5.0).toLong()
+                state is WalkState.Meditating -> (state.walk.distanceMeters / 5.0).toLong()
+                else -> 0L
+            }
+            return classOrdinal * 100_000_000L + payload * 10L + unitsOrdinal
+        }
+
+        /**
+         * Disjoint decimal slots: presence (10⁴), bucket÷100 ∈ 0..20
+         * (10²), hint ordinal+1 ∈ 0..4 (10¹), completion (10⁰). Any
+         * field change produces a distinct payload — the packed
+         * equivalent of [org.walktalkmeditate.pilgrim.domain.seek
+         * .SeekGlanceState]'s structural equality.
+         */
+        private fun seekGlancePayload(
+            glance: SeekGlanceState?,
+        ): Long {
+            if (glance == null) return 0L
+            val bucketSlot = (glance.distanceBucketMeters / 100).coerceIn(0, 20).toLong()
+            val hintSlot = glance.directionHint?.let { it.ordinal + 1L } ?: 0L
+            val completeSlot = if (glance.isComplete) 1L else 0L
+            return 10_000L + bucketSlot * 100L + hintSlot * 10L + completeSlot
+        }
+
+        /**
+         * The notify gate: any fingerprint change (state class, units,
+         * glance — or, off seek, the 5 m distance bucket) notifies;
+         * an Active seek walk ALSO notifies on the 15 s floor so the
+         * walked-distance prefix stays fresh (≙ iOS `shouldPush`'s
+         * `secondsSinceLastPush >= timeThreshold` arm,
+         * `WalkActivityManager.swift:26-36@c1745e8`). Wander walks are
+         * deliberately floor-free — their fingerprint already tracks
+         * distance, so U10 changes nothing about their cadence.
+         */
+        internal fun shouldNotify(
+            fingerprint: Long,
+            lastFingerprint: Long,
+            isActiveSeek: Boolean,
+            millisSinceLastNotify: Long,
+        ): Boolean = fingerprint != lastFingerprint ||
+            (isActiveSeek && millisSinceLastNotify >= SEEK_NOTIFY_FLOOR_MILLIS)
     }
 }

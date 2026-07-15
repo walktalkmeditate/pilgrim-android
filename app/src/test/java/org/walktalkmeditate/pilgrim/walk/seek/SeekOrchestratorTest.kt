@@ -45,7 +45,9 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekClearing
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEngine
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEngineEvent
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
+import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPowerTier
@@ -93,6 +95,7 @@ class SeekOrchestratorTest {
     private var whisperThrows = false
     private var soundsPrefs = FakeSoundsPreferencesRepository()
     private val locationSource = FakeSeekLocationSource()
+    private val publishedGlances = mutableListOf<SeekGlanceState?>()
 
     private val home = SeekPoint(latitude = 42.8782, longitude = -8.5448)
 
@@ -187,6 +190,7 @@ class SeekOrchestratorTest {
             senses = senses(),
             soundsPreferences = soundsPrefs,
             clock = clock,
+            glancePublisher = { publishedGlances += it },
             context = context,
         )
         orchestrator.start()
@@ -241,6 +245,25 @@ class SeekOrchestratorTest {
 
     private suspend fun TestScope.emitFix(at: SeekPoint) {
         fixes.emit(fix(at))
+        runCurrent()
+    }
+
+    /** A fix that carries the glance's course/speed inputs (U10). */
+    private suspend fun TestScope.emitMovingFix(
+        at: SeekPoint,
+        speedMps: Float,
+        courseDegrees: Float,
+    ) {
+        fixes.emit(
+            LocationPoint(
+                timestamp = nowMs,
+                latitude = at.latitude,
+                longitude = at.longitude,
+                horizontalAccuracyMeters = 10f,
+                speedMetersPerSecond = speedMps,
+                bearingDegrees = courseDegrees,
+            ),
+        )
         runCurrent()
     }
 
@@ -450,6 +473,7 @@ class SeekOrchestratorTest {
         assertNull(orchestrator.fogState.value)
         assertNull(orchestrator.enginePhase.value)
         assertTrue(ops.isEmpty())
+        assertTrue(publishedGlances.isEmpty())
     }
 
     @Test
@@ -473,6 +497,7 @@ class SeekOrchestratorTest {
         assertEquals(0, sound.prepareCount)
         assertNull(orchestrator.fogState.value)
         assertTrue(ops.isEmpty())
+        assertTrue("wander walks never touch the glance channel", publishedGlances.isEmpty())
     }
 
     @Test
@@ -636,6 +661,99 @@ class SeekOrchestratorTest {
 
         assertEquals(1, sound.completionBowlCount)
         assertTrue("the final bowl closes the seeking quietly", playedWhispers.isEmpty())
+    }
+
+    // ─── Notification glance (U10) ───────────────────────────────────
+
+    @Test
+    fun `glance publishes only when the value changes`() = runTest(dispatcher) {
+        val chain = chain(1) // one clearing 1000 m north of home
+        startOrchestrator()
+        startSeekWalk(chain)
+        assertTrue("no fix yet — leading null glances stay unpublished", publishedGlances.isEmpty())
+
+        // 1050 m out, walking north toward the clearing: bucket 1000, AHEAD.
+        val southOfHome = SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 50.0)
+        emitMovingFix(southOfHome, speedMps = 1.4f, courseDegrees = 0f)
+        assertEquals(1, publishedGlances.size)
+        assertEquals(
+            SeekGlanceState(1000, SeekDirectionHint.AHEAD, isComplete = false),
+            publishedGlances[0],
+        )
+
+        // 1040 m out — a new distance in the SAME bucket with the same
+        // hint derives an equal glance: the pre-throttle stays quiet.
+        emitMovingFix(
+            SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 40.0),
+            speedMps = 1.4f,
+            courseDegrees = 0f,
+        )
+        assertEquals(1, publishedGlances.size)
+
+        // 940 m out — bucket steps to 900: one more publish.
+        emitMovingFix(
+            SeekChainGenerator.destination(home, bearingDegrees = 0.0, distanceMeters = 60.0),
+            speedMps = 1.4f,
+            courseDegrees = 0f,
+        )
+        assertEquals(2, publishedGlances.size)
+        assertEquals(
+            SeekGlanceState(900, SeekDirectionHint.AHEAD, isComplete = false),
+            publishedGlances[1],
+        )
+
+        // Course swung east a stride later (935 m out — same bucket):
+        // the clearing is now on the walker's left — the hint flip
+        // alone publishes. (The stride matters: the combine keys on the
+        // engine's distance emission, and real fixes never repeat a
+        // haversine distance exactly — U10 spec D2.)
+        emitMovingFix(
+            SeekChainGenerator.destination(home, bearingDegrees = 0.0, distanceMeters = 65.0),
+            speedMps = 1.4f,
+            courseDegrees = 90f,
+        )
+        assertEquals(3, publishedGlances.size)
+        assertEquals(SeekDirectionHint.LEFT, publishedGlances[2]?.directionHint)
+    }
+
+    @Test
+    fun `stationary fixes hide the direction hint on the published glance`() = runTest(dispatcher) {
+        val chain = chain(1)
+        startOrchestrator()
+        startSeekWalk(chain)
+
+        // 1050 m out (mid-bucket — the exact 1000 m boundary would be
+        // haversine-roundoff fragile) but creeping below the walking
+        // floor: bucket renders, hint hides.
+        val southOfHome = SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 50.0)
+        emitMovingFix(southOfHome, speedMps = 0.2f, courseDegrees = 0f)
+        assertEquals(1, publishedGlances.size)
+        assertEquals(
+            SeekGlanceState(1000, directionHint = null, isComplete = false),
+            publishedGlances[0],
+        )
+    }
+
+    @Test
+    fun `seek completion publishes the terminal glance and stops updating`() = runTest(dispatcher) {
+        val chain = chain(1)
+        startOrchestrator()
+        startSeekWalk(chain)
+        emitFix(home)
+        driveArrival(chain.clearings[0].center)
+        driveStillnessReveal(chain.clearings[0].center)
+
+        assertEquals(
+            SeekGlanceState(0, directionHint = null, isComplete = true),
+            publishedGlances.last(),
+        )
+
+        // The engine is stopped: further fixes derive nothing new.
+        val publishesAtCompletion = publishedGlances.size
+        emitFix(home)
+        advanceTimeBy(120_000)
+        runCurrent()
+        assertEquals(publishesAtCompletion, publishedGlances.size)
     }
 
     // ─── Defensive routing (Stage 5-D) ───────────────────────────────

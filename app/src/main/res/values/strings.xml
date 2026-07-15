@@ -19,6 +19,20 @@
     <string name="walk_notification_action_mark_waypoint">Waypoint</string>
     <string name="walk_notification_action_end_meditation">End</string>
     <string name="walk_notification_lock_screen_title">Walk in progress</string>
+    <!-- U10 seek glance line (iOS seekGlanceBar,
+         PilgrimWidgetLiveActivity.swift:196-242@c1745e8). %1$s = the
+         WalkFormat walked distance, %2$s = the glance line ("~400 m
+         ahead" / "seeking complete"). Distance-ladder numerics
+         ("~%d m", "~%.1f km", "2 km +") are code-side Locale.US
+         formats in WalkNotificationFactory, matching WalkFormat's
+         hardcoded-unit precedent. -->
+    <string name="walk_notification_seek_active">Walking — %1$s · %2$s</string>
+    <string name="walk_notification_seek_complete">seeking complete</string>
+    <string name="walk_notification_seek_close">close</string>
+    <string name="walk_notification_seek_direction_ahead">ahead</string>
+    <string name="walk_notification_seek_direction_left">left</string>
+    <string name="walk_notification_seek_direction_right">right</string>
+    <string name="walk_notification_seek_direction_behind">behind</string>
 
     <!-- iOS Permissions.* (Base.lproj/Localizable.strings) verbatim. -->
     <string name="onboarding_title">Prepare for the journey</string>
