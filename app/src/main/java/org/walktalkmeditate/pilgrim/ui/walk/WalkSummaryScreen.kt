@@ -94,6 +94,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhaseSaver
 import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.computeBoundsForTimeRange
@@ -406,6 +407,17 @@ fun WalkSummaryScreen(
                         if (!intention.isNullOrBlank()) {
                             Spacer(Modifier.height(PilgrimSpacing.normal))
                             WalkIntentionCard(intention = intention)
+                        }
+
+                        // 3b. Seek story (U11 — iOS WalkSummaryView.swift:73-77
+                        // @c1745e8: after the intention card, before the
+                        // elevation profile). No reveal alpha — iOS renders
+                        // it ungated, same tier as the intention card. Null
+                        // for wander walks and zero-arrival seeks, so the
+                        // slot vanishes entirely on the standard summary.
+                        s.summary.seekSummary?.let { seek ->
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            SeekSummarySection(data = seek)
                         }
 
                         // Stage 13-XZ: per-section reveal stagger replaces the

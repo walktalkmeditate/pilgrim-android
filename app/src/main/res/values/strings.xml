@@ -1022,4 +1022,28 @@
     <string name="seek_arrival_label_second">Second clearing</string>
     <string name="seek_arrival_label_third">Third clearing</string>
     <string name="seek_arrival_label_nth">Clearing %1$d</string>
+
+    <!-- Seek summary section (U11 — iOS parity SeekSummarySection.swift +
+         LS.swift:182-294@c1745e8). The unknowns-found note counts only
+         reached clearings — never totals, never "X of Y" (R19). The seeded
+         lines are the seed's provenance keepsake; %1$s is the time recording
+         began. Sign fragments join with " · " in photos-voices-marks order,
+         singular forms use the indefinite article ("a photo", not "1 photo"). -->
+    <string name="seek_summary_header">The Seeking</string>
+    <string name="seek_summary_found_one">One unknown found</string>
+    <string name="seek_summary_found_two">Two unknowns found</string>
+    <string name="seek_summary_found_three">Three unknowns found</string>
+    <string name="seek_summary_found_many">%1$d unknowns found</string>
+    <string name="seek_summary_found_under_golden">Found in the golden hour</string>
+    <string name="seek_summary_found_under_midday">Found in broad daylight</string>
+    <string name="seek_summary_found_under_night">Found under the night sky</string>
+    <string name="seek_summary_seeded">The way was shaped by your intention and the moment you set out — %1$s.</string>
+    <string name="seek_summary_seeded_quiet">The way was shaped by the moment you set out — %1$s.</string>
+    <string name="seek_summary_along_the_way">Along the way</string>
+    <string name="seek_summary_sign_photo_one">a photo</string>
+    <string name="seek_summary_sign_photo_many">%1$d photos</string>
+    <string name="seek_summary_sign_voice_one">a voice note</string>
+    <string name="seek_summary_sign_voice_many">%1$d voice notes</string>
+    <string name="seek_summary_sign_mark_one">a mark</string>
+    <string name="seek_summary_sign_mark_many">%1$d marks</string>
 </resources>

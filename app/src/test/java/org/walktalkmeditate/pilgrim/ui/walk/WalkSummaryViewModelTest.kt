@@ -1382,6 +1382,119 @@ class WalkSummaryViewModelTest {
         )
     }
 
+    // --- U11: seek summary + seeking-seal milestone -------------------
+
+    private suspend fun insertArrivalWaypoint(
+        walkId: Long,
+        timestamp: Long,
+        ordinal: Int,
+        lat: Double = 0.0,
+        lng: Double = 0.0,
+    ) {
+        repository.addWaypoint(
+            org.walktalkmeditate.pilgrim.data.entity.Waypoint(
+                walkId = walkId,
+                timestamp = timestamp,
+                latitude = lat,
+                longitude = lng,
+                label = org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
+                    .arrivalWaypointLabel(context.resources, ordinal),
+                icon = org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
+                    .ARRIVAL_WAYPOINT_ICON,
+            ),
+        )
+    }
+
+    @Test
+    fun `seek summary populated with provenance from the SEEK_MODE event`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L, intention = "find calm")
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = 1_000L, eventType = WalkEventType.SEEK_MODE),
+        )
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = 30_000L, eventType = WalkEventType.SEEK_ARRIVAL),
+        )
+        insertArrivalWaypoint(walk.id, timestamp = 30_000L, ordinal = 1)
+        insertArrivalWaypoint(walk.id, timestamp = 50_000L, ordinal = 2, lat = 0.01)
+        repository.recordLocation(
+            RouteDataSample(walkId = walk.id, timestamp = 1_000L, latitude = 0.0, longitude = 0.0),
+        )
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+
+        val vm = newViewModel(walkId = walk.id)
+        val loaded = awaitLoaded(vm)
+
+        val seek = loaded.summary.seekSummary
+        assertNotNull("seeded walk with arrivals must carry the seek story", seek)
+        assertEquals(2, seek!!.groups.size)
+        assertEquals(listOf("First clearing", "Second clearing"), seek.groups.map { it.label })
+        assertEquals(1_000L, seek.seededAtEpochMs)
+        assertTrue(seek.intentionWasVoiced)
+        // Arrival waypoints render as hour-lit halos, not pins, on the
+        // summary map (iOS WalkSummaryView.swift:693-710@c1745e8).
+        assertEquals(
+            2,
+            loaded.summary.walkAnnotations.count { it.kind is WalkMapAnnotationKind.SeekArrival },
+        )
+        assertTrue(
+            loaded.summary.walkAnnotations.none {
+                (it.kind as? WalkMapAnnotationKind.Waypoint)?.iconKey ==
+                    org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence.ARRIVAL_WAYPOINT_ICON
+            },
+        )
+    }
+
+    @Test
+    fun `wander walk has null seekSummary`() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(durationMillis = 60_000L)
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertNull(loaded.summary.seekSummary)
+    }
+
+    @Test
+    fun `zero-arrival seek walk has null seekSummary`() = runTest(dispatcher) {
+        val walkId = createFinishedWalk(
+            durationMillis = 60_000L,
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 1_000L, eventType = WalkEventType.SEEK_MODE),
+            ),
+        )
+
+        val vm = newViewModel(walkId)
+        val loaded = awaitLoaded(vm)
+
+        assertNull(
+            "zero-arrival seeks render the standard summary",
+            loaded.summary.seekSummary,
+        )
+    }
+
+    @Test
+    fun `seeded walk with two arrivals carries a seeking-seal milestone`() = runTest(dispatcher) {
+        // U12 handoff: foundPlaceCount must reach detectMilestoneFor —
+        // with the default 0, seeking seals never caption on the summary
+        // reveal. Prior wander walk keeps FirstWalk (displayPriority 0)
+        // off the seek walk, so FirstUnknown surfaces as primary.
+        val prior = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(prior, endTimestamp = 60_000L)
+
+        val seekWalk = repository.startWalk(startTimestamp = 100_000L)
+        repository.recordEvent(
+            WalkEvent(walkId = seekWalk.id, timestamp = 100_000L, eventType = WalkEventType.SEEK_MODE),
+        )
+        insertArrivalWaypoint(seekWalk.id, timestamp = 130_000L, ordinal = 1)
+        insertArrivalWaypoint(seekWalk.id, timestamp = 150_000L, ordinal = 2, lat = 0.01)
+        repository.finishWalk(seekWalk, endTimestamp = 200_000L)
+
+        val vm = newViewModel(walkId = seekWalk.id)
+        val loaded = awaitLoaded(vm)
+
+        assertEquals(GoshuinMilestone.FirstUnknown, loaded.summary.milestone)
+    }
+
     private suspend fun createFinishedWalk(
         durationMillis: Long,
         events: List<WalkEvent> = emptyList(),

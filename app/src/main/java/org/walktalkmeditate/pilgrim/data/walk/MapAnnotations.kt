@@ -2,7 +2,9 @@
 package org.walktalkmeditate.pilgrim.data.walk
 
 import androidx.compose.runtime.Immutable
+import java.time.Instant
 import kotlin.math.abs
+import org.walktalkmeditate.pilgrim.core.celestial.SunCalc
 import org.walktalkmeditate.pilgrim.data.cairn.CachedCairn
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -10,6 +12,8 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.whisper.CachedWhisper
 import org.walktalkmeditate.pilgrim.domain.ActivityType
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
+import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
 
 /**
  * Pin marker on the post-walk map. iOS-faithful port of
@@ -52,6 +56,19 @@ sealed class WalkMapAnnotationKind {
     @Immutable data class Waypoint(
         val label: String,
         val iconKey: String? = null,
+    ) : WalkMapAnnotationKind()
+
+    /**
+     * iOS parity `PilgrimAnnotation.Kind.seekArrival(label:lightHex:)`
+     * (`PilgrimAnnotation.swift:13-17@c1745e8`). A seek arrival on the
+     * summary map: a dawn halo in the hour's light it was found under
+     * (fixed hex — the record keeps the sky palette), not a pin. Live
+     * walks keep the waypoint path — their halo comes from the fog layer
+     * (U6). Label carries identity only; the halo is the whole marker.
+     */
+    @Immutable data class SeekArrival(
+        val label: String,
+        val lightHex: String,
     ) : WalkMapAnnotationKind()
 
     /**
@@ -139,16 +156,38 @@ fun computeWalkMapAnnotations(
     }
 
     // iOS v1.5 parity — user-dropped waypoints live at their own
-    // captured lat/lon (no GPS-sample alignment needed).
+    // captured lat/lon (no GPS-sample alignment needed). Seek arrivals
+    // (reserved-icon waypoints) render as two-part hour-lit halos instead
+    // of pins (iOS `WalkSummaryView.computeAnnotations`,
+    // `WalkSummaryView.swift:693-710@c1745e8`); the hex is the dawn
+    // family regardless of appearance — the record keeps the sky palette.
     for (w in waypoints) {
-        out += WalkMapAnnotation(
-            kind = WalkMapAnnotationKind.Waypoint(
-                label = w.label ?: "Waypoint",
-                iconKey = w.icon,
-            ),
-            latitude = w.latitude,
-            longitude = w.longitude,
-        )
+        if (SeekPersistence.isArrivalWaypoint(w.icon)) {
+            val daypart = SeekSkyLight.daypart(
+                SunCalc.solarElevationDegrees(
+                    latitude = w.latitude,
+                    longitude = w.longitude,
+                    instant = Instant.ofEpochMilli(w.timestamp),
+                ),
+            )
+            out += WalkMapAnnotation(
+                kind = WalkMapAnnotationKind.SeekArrival(
+                    label = w.label.orEmpty(),
+                    lightHex = SeekSkyLight.hex(daypart, starlight = false),
+                ),
+                latitude = w.latitude,
+                longitude = w.longitude,
+            )
+        } else {
+            out += WalkMapAnnotation(
+                kind = WalkMapAnnotationKind.Waypoint(
+                    label = w.label ?: "Waypoint",
+                    iconKey = w.icon,
+                ),
+                latitude = w.latitude,
+                longitude = w.longitude,
+            )
+        }
     }
 
     // Whispers + cairns come from the server geo-cache (CachedWhisper /

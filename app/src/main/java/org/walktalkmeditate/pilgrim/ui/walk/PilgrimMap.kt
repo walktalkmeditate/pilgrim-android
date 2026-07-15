@@ -251,6 +251,8 @@ internal fun PilgrimMap(
     // iOS parity `PilgrimMapView.buildCircles@v1.6.0` — meditation is a
     // duration-scaled dawn CircleAnnotation, not a fixed pin dot. Same
     // for the post-walk summary map (was rendering a tiny static pin).
+    // U11: seek-arrival halos (glow + core circle pair) share this
+    // manager — same delete/rebuild bookkeeping, summary-map-only.
     var meditationCircleManager by remember {
         mutableStateOf<com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager?>(
             null,
@@ -875,35 +877,77 @@ internal fun PilgrimMap(
                             (walkAnnotationColors?.meditation ?: WalkAnnotationColors.Fixed.meditation)
                                 .toArgb()
                         renderedMeditationCircles = walkAnnotations
-                            .mapNotNull { ann ->
-                                val med = ann.kind as? WalkMapAnnotationKind.Meditation
-                                    ?: return@mapNotNull null
-                                val scale = ((med.durationMillis / 1000.0) / 600.0)
-                                    .coerceIn(0.0, 1.0)
-                                val radius = 10.0 + (24.0 - 10.0) * scale
-                                medMgr.create(
-                                    com.mapbox.maps.plugin.annotation.generated
-                                        .CircleAnnotationOptions()
-                                        .withPoint(
-                                            Point.fromLngLat(ann.longitude, ann.latitude),
+                            .flatMap { ann ->
+                                when (val kind = ann.kind) {
+                                    is WalkMapAnnotationKind.Meditation -> {
+                                        val scale = ((kind.durationMillis / 1000.0) / 600.0)
+                                            .coerceIn(0.0, 1.0)
+                                        val radius = 10.0 + (24.0 - 10.0) * scale
+                                        listOf(
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(
+                                                        Point.fromLngLat(ann.longitude, ann.latitude),
+                                                    )
+                                                    .withCircleRadius(radius)
+                                                    .withCircleColor(dawnArgb)
+                                                    .withCircleOpacity(0.7)
+                                                    .withCircleStrokeColor(dawnArgb)
+                                                    .withCircleStrokeWidth(2.0)
+                                                    .withCircleStrokeOpacity(1.0),
+                                            ),
                                         )
-                                        .withCircleRadius(radius)
-                                        .withCircleColor(dawnArgb)
-                                        .withCircleOpacity(0.7)
-                                        .withCircleStrokeColor(dawnArgb)
-                                        .withCircleStrokeWidth(2.0)
-                                        .withCircleStrokeOpacity(1.0),
-                                )
+                                    }
+                                    // Seek arrivals: two-part hour-lit halo,
+                                    // not a pin — 26px glow at 0.28 under a
+                                    // 4px bright core at 0.9, both in the
+                                    // fixed light hex (iOS PilgrimMapView
+                                    // .swift:394-400,426-432@c1745e8). Glow
+                                    // created first so the core draws on top.
+                                    is WalkMapAnnotationKind.SeekArrival -> {
+                                        val lightArgb = hexToColorArgb(kind.lightHex)
+                                        val point = Point.fromLngLat(ann.longitude, ann.latitude)
+                                        listOf(
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(point)
+                                                    .withCircleRadius(26.0)
+                                                    .withCircleColor(lightArgb)
+                                                    .withCircleOpacity(0.28)
+                                                    .withCircleStrokeWidth(0.0),
+                                            ),
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(point)
+                                                    .withCircleRadius(4.0)
+                                                    .withCircleColor(lightArgb)
+                                                    .withCircleOpacity(0.9)
+                                                    .withCircleStrokeWidth(0.0),
+                                            ),
+                                        )
+                                    }
+                                    else -> emptyList()
+                                }
                             }
                     }
                     renderedWalkAnnotations = walkAnnotations
-                        .filter { it.kind !is WalkMapAnnotationKind.Meditation }
+                        .filter {
+                            it.kind !is WalkMapAnnotationKind.Meditation &&
+                                it.kind !is WalkMapAnnotationKind.SeekArrival
+                        }
                         .map { ann ->
                         val bitmap = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
                                 bitmaps.getValue("startEnd")
-                            is WalkMapAnnotationKind.Meditation ->
+                            // Meditation + SeekArrival are filtered out
+                            // above (they render as CircleAnnotations, not
+                            // point pins); branches kept for exhaustiveness.
+                            is WalkMapAnnotationKind.Meditation,
+                            is WalkMapAnnotationKind.SeekArrival ->
                                 bitmaps.getValue("meditation")
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
