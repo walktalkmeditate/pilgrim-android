@@ -80,7 +80,11 @@ fun SeekDurationSheet(
     onBegin: (Int) -> Unit,
     onCancel: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    // iOS presents at `.medium` first (`SeekSetupFlowModifier.swift:41`),
+    // where the content fits. M3's PartiallyExpanded detent clips
+    // Cancel/Begin below the fold on phones, so skip straight to the
+    // fully-expanded (content-height) state — device QA 2026-07-15.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedMinutes by rememberSaveable {
         mutableStateOf(preselectedSeekMinutes(lastUsedMinutes))
     }
