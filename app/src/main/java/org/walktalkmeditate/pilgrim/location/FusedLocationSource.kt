@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.location
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Looper
 import android.util.Log
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
@@ -234,7 +235,10 @@ class DefaultLocationCallbackBinder @Inject constructor(
 
     @SuppressLint("MissingPermission")
     override fun register(callback: LocationCallback) {
-        client.requestLocationUpdates(request, callback, /* looper = */ null)
+        // Explicit main looper: a null looper means "calling thread's
+        // looper" and throws when the collector runs on a looperless
+        // dispatcher (the seek engine's single-threaded Default scope).
+        client.requestLocationUpdates(request, callback, Looper.getMainLooper())
     }
 
     override fun unregister(callback: LocationCallback) {

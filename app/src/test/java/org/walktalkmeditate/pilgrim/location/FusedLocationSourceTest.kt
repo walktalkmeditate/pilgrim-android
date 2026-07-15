@@ -197,3 +197,36 @@ private class FakeLocationCallbackBinder : LocationCallbackBinder {
         callbacks.clear()
     }
 }
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class DefaultLocationCallbackBinderTest {
+
+    /**
+     * Regression: the seek engine collects the raw location flow on a
+     * single-threaded Default dispatcher with no Looper. A null looper
+     * in requestLocationUpdates means "calling thread's looper" and
+     * threw `invalid null looper` on-device the first time the
+     * pre-departure boot registered from that scope.
+     */
+    @Test
+    fun registerFromLooperlessThreadDoesNotThrow() {
+        val binder = DefaultLocationCallbackBinder(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext(),
+        )
+        val callback = object : com.google.android.gms.location.LocationCallback() {}
+        var thrown: Throwable? = null
+        val worker = Thread {
+            try {
+                binder.register(callback)
+            } catch (t: Throwable) {
+                thrown = t
+            } finally {
+                binder.unregister(callback)
+            }
+        }
+        worker.start()
+        worker.join(10_000)
+        org.junit.Assert.assertNull("register must not require a Looper on the calling thread", thrown)
+    }
+}
