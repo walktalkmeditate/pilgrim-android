@@ -226,4 +226,117 @@ class WalkReducerTest {
         val active = next as WalkState.Active
         assertEquals(100L, active.walk.totalPausedMillis)
     }
+
+    // ---- Walk-mode carriage + SEEK_MODE marker (U8) ----------------------
+
+    @Test
+    fun `start defaults to wander mode`() {
+        val (next, _) = WalkReducer.reduce(
+            WalkState.Idle,
+            WalkAction.Start(walkId = 1L, at = 100L),
+        )
+        assertEquals(WalkMode.Wander, (next as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `seek start from idle carries the mode and emits exactly one SEEK_MODE event`() {
+        val (next, effect) = WalkReducer.reduce(
+            WalkState.Idle,
+            WalkAction.Start(walkId = 7L, at = 300L, mode = WalkMode.Seek),
+        )
+
+        assertEquals(WalkMode.Seek, (next as WalkState.Active).walk.mode)
+        val persist = effect as WalkEffect.PersistEvent
+        assertEquals(7L, persist.walkId)
+        assertEquals(WalkEventType.SEEK_MODE, persist.eventType)
+        assertEquals(300L, persist.timestamp)
+    }
+
+    @Test
+    fun `seek start from finished emits the SEEK_MODE marker too`() {
+        val finished = WalkState.Finished(
+            walk = WalkAccumulator(walkId = 1L, startedAt = 0L),
+            endedAt = 1_000L,
+        )
+
+        val (next, effect) = WalkReducer.reduce(
+            finished,
+            WalkAction.Start(walkId = 2L, at = 2_000L, mode = WalkMode.Seek),
+        )
+
+        assertEquals(WalkMode.Seek, (next as WalkState.Active).walk.mode)
+        assertEquals(
+            WalkEffect.PersistEvent(walkId = 2L, eventType = WalkEventType.SEEK_MODE, timestamp = 2_000L),
+            effect,
+        )
+    }
+
+    @Test
+    fun `wander start never emits a SEEK_MODE event from either resettable state`() {
+        val (_, fromIdle) = WalkReducer.reduce(
+            WalkState.Idle,
+            WalkAction.Start(walkId = 1L, at = 100L, mode = WalkMode.Wander),
+        )
+        assertSame(WalkEffect.None, fromIdle)
+
+        val finished = WalkState.Finished(
+            walk = WalkAccumulator(walkId = 1L, startedAt = 0L),
+            endedAt = 1_000L,
+        )
+        val (_, fromFinished) = WalkReducer.reduce(
+            finished,
+            WalkAction.Start(walkId = 2L, at = 2_000L),
+        )
+        assertSame(WalkEffect.None, fromFinished)
+    }
+
+    @Test
+    fun `mode rides every transition of the walk lifecycle`() {
+        val seekStart = WalkState.Active(
+            WalkAccumulator(walkId = 5L, startedAt = 0L, mode = WalkMode.Seek),
+        )
+
+        val (paused, _) = WalkReducer.reduce(seekStart, WalkAction.Pause(at = 100L))
+        assertEquals(WalkMode.Seek, (paused as WalkState.Paused).walk.mode)
+
+        val (resumed, _) = WalkReducer.reduce(paused, WalkAction.Resume(at = 200L))
+        assertEquals(WalkMode.Seek, (resumed as WalkState.Active).walk.mode)
+
+        val (meditating, _) = WalkReducer.reduce(resumed, WalkAction.MeditateStart(at = 300L))
+        assertEquals(WalkMode.Seek, (meditating as WalkState.Meditating).walk.mode)
+
+        val (backActive, _) = WalkReducer.reduce(meditating, WalkAction.MeditateEnd(at = 400L))
+        val (finished, _) = WalkReducer.reduce(backActive, WalkAction.Finish(at = 500L))
+        assertEquals(WalkMode.Seek, (finished as WalkState.Finished).walk.mode)
+        assertEquals(WalkMode.Seek, finished.walkModeOrNull)
+    }
+
+    @Test
+    fun `walkModeFromEvents recognizes a seek by its marker`() {
+        fun event(type: WalkEventType) = object : WalkEventLike {
+            override val timestamp = 1L
+            override val type = type
+        }
+
+        assertEquals(WalkMode.Wander, walkModeFromEvents(emptyList()))
+        assertEquals(
+            WalkMode.Wander,
+            walkModeFromEvents(listOf(event(WalkEventType.PAUSED), event(WalkEventType.RESUMED))),
+        )
+        assertEquals(
+            WalkMode.Seek,
+            walkModeFromEvents(
+                listOf(event(WalkEventType.SEEK_MODE), event(WalkEventType.MEDITATION_START)),
+            ),
+        )
+    }
+
+    @Test
+    fun `WalkMode fromWire is forgiving`() {
+        assertEquals(WalkMode.Seek, WalkMode.fromWire("Seek"))
+        assertEquals(WalkMode.Wander, WalkMode.fromWire("Wander"))
+        assertEquals(WalkMode.Wander, WalkMode.fromWire(null))
+        assertEquals(WalkMode.Wander, WalkMode.fromWire("seek"))
+        assertEquals(WalkMode.Wander, WalkMode.fromWire("Pilgrimage"))
+    }
 }

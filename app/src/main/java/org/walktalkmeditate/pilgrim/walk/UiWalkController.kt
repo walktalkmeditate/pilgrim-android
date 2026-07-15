@@ -32,9 +32,11 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.domain.walkModeFromEvents
 
 /**
  * UI-process [WalkController]: derives [state] reactively from Room
@@ -245,6 +247,7 @@ class UiWalkController @Inject constructor(
             distanceMeters = distance,
             totalPausedMillis = totals.totalPausedMillis,
             totalMeditatedMillis = totals.totalMeditatedMillis,
+            mode = walkModeFromEvents(events),
         )
         return WalkState.Finished(
             accumulator,
@@ -353,6 +356,14 @@ class UiWalkController @Inject constructor(
             distanceMeters = distance,
             totalPausedMillis = totals.totalPausedMillis,
             totalMeditatedMillis = totals.totalMeditatedMillis,
+            // Cross-process mode carriage: the tracker persisted the
+            // SEEK_MODE marker at start; the UI process re-derives the
+            // mode from that event row. The first combine emission can
+            // briefly predate the event row (mode reads Wander for a
+            // frame) — acceptable because no mode consumer renders
+            // within that window (the weather greeting arrives seconds
+            // later at the earliest).
+            mode = walkModeFromEvents(events),
         )
         return when {
             totals.pendingPauseAt != null ->
@@ -375,8 +386,8 @@ class UiWalkController @Inject constructor(
 
     // --- Mutations: fire intent to tracker, optionally await Room ---
 
-    override suspend fun startWalk(intention: String?): Walk {
-        actionPublisher.start(intention)
+    override suspend fun startWalk(intention: String?, mode: WalkMode): Walk {
+        actionPublisher.start(intention, mode)
         // Wait for the tracker to insert the walk row. 5 s timeout
         // covers worst-case tracker spin-up. Any later timeout
         // bubbles as TimeoutCancellationException, which

@@ -24,6 +24,7 @@ import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 
@@ -287,6 +288,71 @@ class WalkControllerTest {
 
         assertNull(restored)
         assertEquals(activeIdBefore, (controller.state.value as WalkState.Active).walk.walkId)
+    }
+
+    // ---- Walk-mode carriage + SEEK_MODE marker (U8) ----------------------
+
+    @Test
+    fun `seek startWalk persists exactly one SEEK_MODE event and carries the mode`() = runTest {
+        val walk = controller.startWalk(intention = "find the river", mode = WalkMode.Seek)
+
+        val events = repository.eventsFor(walk.id)
+        assertEquals(1, events.count { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(clock.now(), events.single { it.eventType == WalkEventType.SEEK_MODE }.timestamp)
+
+        val active = controller.state.value as WalkState.Active
+        assertEquals(WalkMode.Seek, active.walk.mode)
+    }
+
+    @Test
+    fun `wander startWalk never writes a SEEK_MODE event`() = runTest {
+        val walk = controller.startWalk()
+
+        assertTrue(repository.eventsFor(walk.id).none { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(WalkMode.Wander, (controller.state.value as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `second seek walk from cached Finished controller writes its own single marker`() = runTest {
+        val first = controller.startWalk(mode = WalkMode.Seek)
+        clock.advanceTo(5_000L)
+        controller.finishWalk()
+        assertTrue(controller.state.value is WalkState.Finished)
+
+        clock.advanceTo(6_000L)
+        val second = controller.startWalk(mode = WalkMode.Seek)
+
+        assertEquals(1, repository.eventsFor(first.id).count { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(1, repository.eventsFor(second.id).count { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(WalkMode.Seek, (controller.state.value as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `restoreActiveWalk re-derives Seek mode from the persisted marker without re-writing it`() =
+        runTest {
+            val walk = controller.startWalk(mode = WalkMode.Seek)
+            // Simulate process death: fresh controller over the same Room.
+            val revived = WalkControllerImpl(repository, clock, fakeStepCounter())
+
+            val restored = revived.restoreActiveWalk()
+
+            assertNotNull(restored)
+            val active = revived.state.value as WalkState.Active
+            assertEquals(WalkMode.Seek, active.walk.mode)
+            // Restore must not dispatch Start — the marker stays single.
+            assertEquals(
+                1,
+                repository.eventsFor(walk.id).count { it.eventType == WalkEventType.SEEK_MODE },
+            )
+        }
+
+    @Test
+    fun `restoreActiveWalk derives Wander mode for an ordinary walk`() = runTest {
+        controller.startWalk()
+        val revived = WalkControllerImpl(repository, clock, fakeStepCounter())
+
+        assertNotNull(revived.restoreActiveWalk())
+        assertEquals(WalkMode.Wander, (revived.state.value as WalkState.Active).walk.mode)
     }
 }
 

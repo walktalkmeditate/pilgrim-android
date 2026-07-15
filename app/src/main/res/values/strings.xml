@@ -720,6 +720,22 @@
     <string name="seek_tint_line_winter_solstice">The longest night\nhas the most to hide.</string>
     <string name="seek_tint_line_full_moon">Tonight the moon\nseeks with you.</string>
 
+    <!-- Seek setup ritual (U8) — iOS parity SeekDurationView.swift +
+         SeekSetupFlowModifier.swift + Localizable.strings seek.* @c1745e8. -->
+    <string name="seek_duration_title">How long do you have?</string>
+    <string name="seek_duration_30min">30 minutes</string>
+    <string name="seek_duration_1hour">1 hour</string>
+    <string name="seek_duration_2hours">2 hours</string>
+    <string name="seek_duration_3hours">3 hours</string>
+    <string name="seek_safety_caption">Never trespass, and let your own judgment walk above the pulse. Any clearing may be released — seek anew.</string>
+    <string name="seek_begin">Begin</string>
+    <string name="seek_setup_cancel">Cancel</string>
+    <string name="seek_accuracy_declined_title">Precise Location Needed</string>
+    <string name="seek_accuracy_declined_body">Seeking needs your precise location to sense the clearings. Wander is always open.</string>
+    <string name="seek_gps_timeout_title">Still Reaching for the Sky</string>
+    <string name="seek_gps_timeout_body">The sky hasn\'t answered yet. Try again under more open sky — Wander is always open.</string>
+    <string name="seek_alert_ok">OK</string>
+
     <!-- iOS parity ActiveWalkView.swift:735-748@db4196e celestial greetings. -->
     <string name="walk_greeting_celestial_sun_enters">"The Sun enters %1$s today — %2$s"</string>
     <string name="walk_greeting_celestial_moon_through">The Moon moves through %1$s</string>

@@ -13,4 +13,16 @@ enum class WalkMode {
     Wander, Together, Seek;
 
     val isAvailable: Boolean get() = this == Wander
+
+    companion object {
+        /**
+         * Forgiving parse for wire values (nav arguments, service intent
+         * extras). Unknown or absent values collapse to [Wander] so a
+         * stale intent from a future binary can never crash the start
+         * path — mirrors the UNKNOWN convention in
+         * [org.walktalkmeditate.pilgrim.domain.WalkEventType].
+         */
+        fun fromWire(value: String?): WalkMode =
+            entries.firstOrNull { it.name == value } ?: Wander
+    }
 }

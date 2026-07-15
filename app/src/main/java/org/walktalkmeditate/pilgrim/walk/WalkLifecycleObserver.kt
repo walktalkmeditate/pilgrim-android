@@ -52,6 +52,7 @@ class WalkLifecycleObserver @Inject constructor(
     private val voiceRecorder: VoiceRecorder,
     private val repository: WalkRepository,
     private val orphanSweeper: OrphanRecordingSweeper,
+    private val seekSessionStore: org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore,
 ) {
     init {
         scope.launch {
@@ -91,6 +92,15 @@ class WalkLifecycleObserver @Inject constructor(
                     is WalkState.Finished -> scope.launch { handleVoiceStop(commitRow = true) }
                     WalkState.Idle -> scope.launch { handleVoiceStop(commitRow = false) }
                     else -> Unit
+                }
+                // U8: a walk reaching a terminal state retires any pending
+                // seek session — the setup's chain must never leak into the
+                // NEXT walk's orchestrator read. Synchronous + idempotent
+                // (no-op when nothing pending), so it rides the collector
+                // directly rather than a forked child. U9's orchestrator
+                // may take ownership of this clear.
+                if (state is WalkState.Finished || state is WalkState.Idle) {
+                    seekSessionStore.clear()
                 }
             }
         }

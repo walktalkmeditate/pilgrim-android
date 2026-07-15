@@ -24,10 +24,12 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkAction
 import org.walktalkmeditate.pilgrim.domain.WalkEffect
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkReducer
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.domain.walkModeFromEvents
 
 /**
  * Full implementation of [WalkController]: owns the in-memory state
@@ -78,33 +80,40 @@ class WalkControllerImpl @Inject constructor(
      * [WalkState.Finished] (subsequent walks after reviewing the summary);
      * throws otherwise.
      */
-    override suspend fun startWalk(intention: String?): Walk = dispatchMutex.withLock {
-        val current = _state.value
-        check(current is WalkState.Idle || current is WalkState.Finished) {
-            "startWalk requires Idle or Finished state but controller is currently $current"
+    override suspend fun startWalk(intention: String?, mode: WalkMode): Walk =
+        dispatchMutex.withLock {
+            val current = _state.value
+            check(current is WalkState.Idle || current is WalkState.Finished) {
+                "startWalk requires Idle or Finished state but controller is currently $current"
+            }
+            val startedAt = clock.now()
+            // Same trim/truncate/blank-check as `setIntention` so a future
+            // caller (test, restore, deep-link) passing `"   "` or a 200-char
+            // string can't land malformed text in Room.
+            val sanitized = intention?.trim()
+                ?.take(WalkController.MAX_INTENTION_CHARS)
+                ?.takeIf { it.isNotBlank() }
+            val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized)
+            stepCounter.start()
+            // A seek Start's effect is the SEEK_MODE marker event (U4/U8);
+            // wander's is None. Applied inside the same mutex hold as the
+            // row insert so the marker can never race a concurrent finish.
+            val (next, effect) = WalkReducer.reduce(
+                current,
+                WalkAction.Start(walkId = walk.id, at = startedAt, mode = mode),
+            )
+            applyEffect(effect)
+            _state.value = next
+            // Log presence, not content — intentions can carry privacy-sensitive
+            // text ("mourning Y", "anxiety about Z") that we don't want landing
+            // in logcat where other debug tooling might capture it.
+            Log.i(
+                TAG,
+                "startWalk id=${walk.id} mode=$mode intentionSet=${sanitized != null} at=$startedAt",
+            )
+            _bellTriggers.tryEmit(BellTrigger.WalkStart)
+            walk
         }
-        val startedAt = clock.now()
-        // Same trim/truncate/blank-check as `setIntention` so a future
-        // caller (test, restore, deep-link) passing `"   "` or a 200-char
-        // string can't land malformed text in Room.
-        val sanitized = intention?.trim()
-            ?.take(WalkController.MAX_INTENTION_CHARS)
-            ?.takeIf { it.isNotBlank() }
-        val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized)
-        stepCounter.start()
-        val (next, effect) = WalkReducer.reduce(
-            current,
-            WalkAction.Start(walkId = walk.id, at = startedAt),
-        )
-        applyEffect(effect)
-        _state.value = next
-        // Log presence, not content — intentions can carry privacy-sensitive
-        // text ("mourning Y", "anxiety about Z") that we don't want landing
-        // in logcat where other debug tooling might capture it.
-        Log.i(TAG, "startWalk id=${walk.id} intentionSet=${sanitized != null} at=$startedAt")
-        _bellTriggers.tryEmit(BellTrigger.WalkStart)
-        walk
-    }
 
     override suspend fun pauseWalk() {
         Log.i(TAG, "pauseWalk invoked from state=${_state.value::class.simpleName}")
@@ -367,6 +376,11 @@ class WalkControllerImpl @Inject constructor(
             distanceMeters = distance,
             totalPausedMillis = totals.totalPausedMillis,
             totalMeditatedMillis = totals.totalMeditatedMillis,
+            // Walks stay ordinary Room rows; the mode is re-derived from
+            // the SEEK_MODE marker the reducer persisted at start. A
+            // restored seek walk must keep speaking seek (greeting, U9
+            // orchestrator gates, U10 glance) across a process kill.
+            mode = walkModeFromEvents(events),
         )
         val pendingPause = totals.pendingPauseAt
         val pendingMeditation = totals.pendingMeditationAt

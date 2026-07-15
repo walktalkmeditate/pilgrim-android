@@ -59,6 +59,7 @@ class WalkLifecycleObserverTest {
     private lateinit var observedFlow: CountingStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
     private lateinit var observer: WalkLifecycleObserver
+    private val seekSessionStore = org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore()
     private val testClock = object : Clock {
         @Volatile var current: Long = 0L
         override fun now(): Long = current
@@ -110,6 +111,7 @@ class WalkLifecycleObserverTest {
             voiceRecorder = voiceRecorder,
             repository = repository,
             orphanSweeper = sweeper,
+            seekSessionStore = seekSessionStore,
         )
         // The observer's `init { scope.launch { walkState.collect } }`
         // subscribes asynchronously on its scope dispatcher and swallows
@@ -258,6 +260,45 @@ class WalkLifecycleObserverTest {
         assertTrue(
             "Cold-start observer must not interfere with subsequent recordings",
             voiceRecorder.audioLevel.value > 0f,
+        )
+    }
+
+    @Test
+    fun `terminal transitions retire a pending seek session`() = runBlocking {
+        seekSessionStore.set(
+            org.walktalkmeditate.pilgrim.walk.seek.SeekPendingSession(
+                chain = org.walktalkmeditate.pilgrim.domain.seek.SeekChain(
+                    clearings = listOf(
+                        org.walktalkmeditate.pilgrim.domain.seek.SeekClearing(
+                            center = org.walktalkmeditate.pilgrim.domain.seek.SeekPoint(35.0, 135.0),
+                            radiusMeters = 50.0,
+                        ),
+                    ),
+                    budgetMeters = 1_000.0,
+                ),
+                durationMinutes = 30,
+                tint = null,
+                seededAtEpochMillis = 1L,
+            ),
+        )
+
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = 1L, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = 1L, startedAt = 0L),
+            endedAt = 100L,
+        )
+
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (
+            System.currentTimeMillis() < deadline &&
+            seekSessionStore.pending.value != null
+        ) {
+            Thread.sleep(20L)
+        }
+        assertEquals(
+            "a finished walk must retire the pending seek session",
+            null,
+            seekSessionStore.pending.value,
         )
     }
 
