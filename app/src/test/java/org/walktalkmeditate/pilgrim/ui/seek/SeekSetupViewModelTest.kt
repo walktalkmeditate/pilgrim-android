@@ -221,6 +221,11 @@ class SeekSetupViewModelTest {
             assertTrue(session!!.chain.clearings.isNotEmpty())
             assertEquals(30, session.durationMinutes)
             assertEquals(h.nowMs, session.seededAtEpochMillis)
+            assertEquals(
+                "the session carries the voiced intention for U9's reroll seed",
+                "find the river",
+                session.intention,
+            )
 
             h.vm.advanceTransitionComplete()
             assertEquals(SeekSetupStage.Ready, h.vm.stage.value)

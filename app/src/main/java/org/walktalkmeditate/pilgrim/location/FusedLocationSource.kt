@@ -49,8 +49,19 @@ class FusedLocationSource @Inject constructor(
         LocationServices.getFusedLocationProviderClient(context)
     }
 
+    override fun locationFlow(): Flow<LocationPoint> = callbackFlowOf(applyAccuracyGate = true)
+
+    /**
+     * Unfiltered variant for the seek engine (U9 port spec D2): no
+     * 20 m gate, no first-sample anchor special-case — the engine
+     * applies its own 50 m arrival/stillness gates. Each collection
+     * registers its own FLP callback (FLP multiplexes callbacks over
+     * the one underlying request cadence).
+     */
+    override fun rawLocationFlow(): Flow<LocationPoint> = callbackFlowOf(applyAccuracyGate = false)
+
     @SuppressLint("MissingPermission")
-    override fun locationFlow(): Flow<LocationPoint> = callbackFlow {
+    private fun callbackFlowOf(applyAccuracyGate: Boolean): Flow<LocationPoint> = callbackFlow {
         // Per-collection (per-walk) anchor flag. Lives inside the
         // callbackFlow body so each new `locationFlow()` collection —
         // i.e. each new walk — gets a fresh `false`. A class-level
@@ -103,7 +114,7 @@ class FusedLocationSource @Inject constructor(
                     // checkForAppropriateAccuracy(location)`. Sets the
                     // walk's geographic anchor even with bad GPS so a
                     // walk in a heavy backpack doesn't strand empty.
-                    if (!isFirst && !meetsAccuracyGate(point)) return@forEach
+                    if (applyAccuracyGate && !isFirst && !meetsAccuracyGate(point)) return@forEach
                     hasEmitted.set(true)
                     trySend(point)
                 }

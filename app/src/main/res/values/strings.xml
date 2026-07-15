@@ -1030,14 +1030,24 @@
 
     <!-- Seek persistence vocabulary (iOS parity SeekPersistence.swift@c1745e8).
          Arrival labels are resolved at write time and persisted into the
-         waypoint row, like iOS's NSLocalizedString defaults. The two event
-         names surface in the walk summary in a later unit. -->
-    <string name="seek_event_seek_mode">Seek</string>
-    <string name="seek_event_arrival">Clearing reached</string>
+         waypoint row, like iOS's NSLocalizedString defaults. The event-name
+         strings iOS keeps behind EventType.description were dropped here —
+         no live surface renders them on either platform at c1745e8 (U9 port
+         spec B12). -->
     <string name="seek_arrival_label_first">First clearing</string>
     <string name="seek_arrival_label_second">Second clearing</string>
     <string name="seek_arrival_label_third">Third clearing</string>
     <string name="seek_arrival_label_nth">Clearing %1$d</string>
+
+    <!-- Seek section of the in-walk options sheet (iOS parity
+         WalkOptionsSheet.swift:107-137 + LS.swift:141-183@c1745e8, commit
+         85373c1). "Sonar"/"Sonar Volume"/"Seek" are shared with the U13
+         Sound Settings mirror. -->
+    <string name="seek_section_title">Seek</string>
+    <string name="seek_sonar_title">Sonar</string>
+    <string name="seek_sonar_volume_title">Sonar Volume</string>
+    <string name="seek_anew_title">Seek Anew</string>
+    <string name="seek_anew_complete_subtitle">The seeking is complete</string>
 
     <!-- Seek summary section (U11 — iOS parity SeekSummarySection.swift +
          LS.swift:182-294@c1745e8). The unknowns-found note counts only

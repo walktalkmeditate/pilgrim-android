@@ -91,6 +91,33 @@ open class WhisperPlayer @Inject constructor(
     private val _isPlaying = MutableStateFlow(false)
     open val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    private val _isAnyChannelPlaying = MutableStateFlow(false)
+
+    /**
+     * True while EITHER channel (main play or preview) holds a live
+     * MediaPlayer. The seek sonar's suppression gate reads this — iOS
+     * `AudioPriorityQueue.shared.isPlayingWhisper` covers both channels
+     * (`SeekSoundPlayer.swift:48@c1745e8`), while [isPlaying] above
+     * deliberately tracks the preview channel only for the placement
+     * sheet's stop button. U9 port spec B14.
+     */
+    open val isAnyChannelPlaying: StateFlow<Boolean> = _isAnyChannelPlaying.asStateFlow()
+
+    private fun refreshAnyChannelPlaying() {
+        _isAnyChannelPlaying.value = playPlayer != null || previewPlayer != null
+    }
+
+    /**
+     * Whether [definition]'s audio is already cached on disk (the same
+     * target `ensureCached` writes). iOS parity
+     * `WhisperPlayer.shared.isAvailable` — the seek reveal whisper only
+     * ever plays locally-downloaded whispers (never triggers a fetch).
+     */
+    open fun isAvailable(definition: WhisperDefinition): Boolean {
+        val target = File(File(context.filesDir, CACHE_DIR_NAME), "${definition.audioFileName}.aac")
+        return target.exists() && target.length() > 0L
+    }
+
     /**
      * Play [definition] at [PLAY_VOLUME] (0.8). Fetches from CDN +
      * caches to disk on first hit; replays from cache thereafter.
@@ -162,6 +189,7 @@ open class WhisperPlayer @Inject constructor(
                 runCatching { it.release() }
             }
             playPlayer = null
+            refreshAnyChannelPlaying()
             if (wasPlaying) releaseFocusHolder()
         }
     }
@@ -175,6 +203,7 @@ open class WhisperPlayer @Inject constructor(
             }
             previewPlayer = null
             _isPlaying.value = false
+            refreshAnyChannelPlaying()
             if (wasPlaying) releaseFocusHolder()
         }
     }
@@ -295,6 +324,7 @@ open class WhisperPlayer @Inject constructor(
                 if (mp === playPlayer) {
                     playPlayer = null
                 }
+                refreshAnyChannelPlaying()
                 releaseFocusHolder()
             }
             setOnErrorListener { mp, what, extra ->
@@ -305,6 +335,7 @@ open class WhisperPlayer @Inject constructor(
                     _isPlaying.value = false
                 }
                 if (mp === playPlayer) playPlayer = null
+                refreshAnyChannelPlaying()
                 releaseFocusHolder()
                 true
             }
@@ -317,6 +348,7 @@ open class WhisperPlayer @Inject constructor(
             focusAcquired = true
             player.start()
             bindPlayer(player)
+            refreshAnyChannelPlaying()
         } catch (e: Exception) {
             Log.w(TAG, "MediaPlayer start failed: ${e.message}")
             runCatching { player.release() }

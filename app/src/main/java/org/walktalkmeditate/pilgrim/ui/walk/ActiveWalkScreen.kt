@@ -78,6 +78,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
+import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
 import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
@@ -252,6 +253,7 @@ fun ActiveWalkScreen(
     mode: WalkMode = WalkMode.Wander,
     viewModel: WalkViewModel = hiltViewModel(),
     seekSetupViewModel: SeekSetupViewModel = hiltViewModel(),
+    seekWalkViewModel: SeekWalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     // Navigation observer reads the passthrough flow, NOT uiState's
@@ -260,6 +262,16 @@ fun ActiveWalkScreen(
     val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
+    // U9 seek session feeds — the orchestrator's hot StateFlows through
+    // the thin SeekWalkViewModel bridge. Fog/pulse feed PilgrimMap; the
+    // phase + pending session gate the options sheet's seek section
+    // (alive from setup-ready, before the walk starts — 85373c1).
+    val seekFog by seekWalkViewModel.fogState.collectAsStateWithLifecycle()
+    val seekPulse by seekWalkViewModel.pulse.collectAsStateWithLifecycle()
+    val seekEnginePhase by seekWalkViewModel.enginePhase.collectAsStateWithLifecycle()
+    val seekPendingSession by seekWalkViewModel.pendingSession.collectAsStateWithLifecycle()
+    val seekSonarEnabled by seekWalkViewModel.sonarEnabled.collectAsStateWithLifecycle()
+    val seekSonarVolume by seekWalkViewModel.sonarVolume.collectAsStateWithLifecycle()
     val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
@@ -743,6 +755,11 @@ fun ActiveWalkScreen(
             bottomInsetDp = sheetInsetDp,
             waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
+            // Seek fog + pulse ring + crescent (U9 feeds the U6/U7
+            // renderer params): null fog keeps wander walks off the
+            // style entirely; the pulse token advances per heartbeat.
+            seekFog = seekFog,
+            seekPulse = seekPulse,
             proximityPins = proximityPins,
             onProximityPinTap = { pin ->
                 when (pin) {
@@ -950,6 +967,22 @@ fun ActiveWalkScreen(
                 availableSoundscapes = availableSoundscapes,
                 onToggleSoundscape = viewModel::onToggleSoundscape,
                 onSelectSoundscape = viewModel::onSelectSoundscape,
+                // Seek section (85373c1): alive from setup-ready (pending
+                // session, pre-departure) through the whole engine
+                // session; iOS gates on `seekEngine != nil`
+                // (ActiveWalkView.swift:272-277@c1745e8).
+                isSeekActive = seekEnginePhase != null || seekPendingSession != null,
+                isSeekComplete = seekEnginePhase == SeekEnginePhase.COMPLETE,
+                sonarEnabled = seekSonarEnabled,
+                sonarVolume = seekSonarVolume,
+                onToggleSonar = seekWalkViewModel::setSonarEnabled,
+                onSonarVolumeChange = seekWalkViewModel::setSonarVolume,
+                onSeekAnew = {
+                    // Dismiss then reroll — the engine's immediate pulse
+                    // is the confirmation (ece26a7).
+                    showOptions = false
+                    seekWalkViewModel.seekAnewRequested()
+                },
             )
         }
         if (showWhisperSheet) {

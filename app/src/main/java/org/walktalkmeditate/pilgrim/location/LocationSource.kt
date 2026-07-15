@@ -19,6 +19,22 @@ interface LocationSource {
     fun locationFlow(): Flow<LocationPoint>
 
     /**
+     * Cold flow of device location points with NO accuracy gating —
+     * every fix the platform delivers, including those worse than the
+     * walk pipeline's 20 m desired accuracy. Consumers apply their own
+     * gates: the seek engine accepts arrival/stillness fixes up to 50 m
+     * (U9 port spec D2 — feeding it [locationFlow] would starve seek
+     * guidance in degraded GPS).
+     *
+     * Default implementation falls back to [locationFlow] so test fakes
+     * stay source-compatible; [FusedLocationSource] overrides it with a
+     * truly unfiltered stream.
+     *
+     * **Permission contract**: same as [locationFlow].
+     */
+    fun rawLocationFlow(): Flow<LocationPoint> = locationFlow()
+
+    /**
      * One-shot fetch of the system's last-known location. Returns null
      * when no cached fix is available (fresh install, GPS never
      * enabled, location services off). Used to seed the Active Walk

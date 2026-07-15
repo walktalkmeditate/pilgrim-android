@@ -309,6 +309,7 @@ class SeekSetupViewModel @Inject constructor(
                 durationMinutes = duration,
                 tint = tint,
                 seededAtEpochMillis = moment,
+                intention = capturedIntention,
             ),
         )
     }

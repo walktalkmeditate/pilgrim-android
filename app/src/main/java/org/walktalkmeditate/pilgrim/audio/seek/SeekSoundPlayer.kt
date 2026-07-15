@@ -20,13 +20,12 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
  * speaking, and while a talk recording is active so the mic capture is
  * never perturbed.
  *
- * U5 defines the seam; **U9 binds the real providers**:
- *  - whisper → `data/whisper/WhisperPlayer` (needs an any-channel
- *    is-playing surface; the current public `isPlaying` StateFlow
- *    tracks the preview channel only),
+ * U5 defined the seam; U9 binds the real providers in
+ * [org.walktalkmeditate.pilgrim.di.SeekModule]:
+ *  - whisper → `data/whisper/WhisperPlayer.isAnyChannelPlaying`,
  *  - voice guide → `audio/voiceguide/VoiceGuidePlayer.state == Playing`,
- *  - talk recording → the walk UI's `voiceRecorderState is Recording`
- *    signal (no recorder-level singleton flow exists today).
+ *  - talk recording → the recorder-level `@TalkRecordingActive` flow
+ *    (`audio/VoiceRecorder.isRecording`).
  */
 class SeekPingGate(
     private val isWhisperPlaying: () -> Boolean,
@@ -35,6 +34,22 @@ class SeekPingGate(
 ) {
     fun allowsPing(): Boolean =
         !isWhisperPlaying() && !isVoiceGuidePlaying() && !isTalkRecordingActive()
+}
+
+/**
+ * Seam over [SeekSoundPlayer] so orchestrator tests can spy the ritual
+ * audio without touching the audio session — iOS builds the same seam
+ * for the same reason (`SeekSoundPlaying`,
+ * `ActiveWalkViewModel+Seek.swift:8-15@c1745e8`), plus
+ * [playCompletionBowl] because Android moved the completion release
+ * into the player (U5 spec §2.5).
+ */
+interface SeekSoundPlaying {
+    fun prepare()
+    fun playPing(aligned: Boolean, closeness: Float)
+    fun playBowl()
+    fun playCompletionBowl()
+    fun stop()
 }
 
 /**
@@ -90,7 +105,7 @@ class SeekSoundPlayer(
     // Mirrors iOS's injected `makePlayer` seam so tests can count
     // plays on real MediaPlayer instances; production uses the default.
     private val playerFactory: () -> MediaPlayer = { MediaPlayer() },
-) {
+) : SeekSoundPlaying {
     private val lock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val audioAttrs = AudioAttributes.Builder()
@@ -123,7 +138,7 @@ class SeekSoundPlayer(
      * `prepare()`). Focus denial or arm failure leaves the player
      * inactive; every later play lazily retries.
      */
-    fun prepare() {
+    override fun prepare() {
         synchronized(lock) {
             if (!activateSessionIfNeededLocked()) return
             armPingPlayerIfNeededLocked()
@@ -140,7 +155,7 @@ class SeekSoundPlayer(
      * a whisper over the hill to a drop beside you:
      * volume = `sonarVolume × (0.55 + 0.45 × closeness)`.
      */
-    fun playPing(aligned: Boolean, closeness: Float) {
+    override fun playPing(aligned: Boolean, closeness: Float) {
         val clamped = SeekHaptics.clampCloseness(closeness)
         val volumeScale = PING_VOLUME_FLOOR + PING_VOLUME_RANGE * clamped
         val expected: Long
@@ -173,7 +188,7 @@ class SeekSoundPlayer(
      * toggle is off — only the master Sounds toggle (and an in-flight
      * interruption) silences it. U9 calls this on `revealedNext`.
      */
-    fun playBowl() {
+    override fun playBowl() {
         synchronized(lock) {
             if (!soundsPreferences.soundsEnabled.value || isInterrupted) return
             if (!activateSessionIfNeededLocked()) return
@@ -195,7 +210,7 @@ class SeekSoundPlayer(
      * home. Generation-guarded; [stop] stays idempotent so the regular
      * teardown at walk end is safe.
      */
-    fun playCompletionBowl() {
+    override fun playCompletionBowl() {
         playBowl()
         val expected: Long
         synchronized(lock) {
@@ -213,7 +228,7 @@ class SeekSoundPlayer(
     }
 
     /** Drops both players and releases the focus consumer. Idempotent. */
-    fun stop() {
+    override fun stop() {
         synchronized(lock) { stopLocked() }
     }
 

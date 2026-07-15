@@ -27,6 +27,15 @@ data class SeekPendingSession(
     /** Moment the seed was drawn (chain provenance, pairs with the
      *  SEEK_MODE event's timestamp on the walk itself). */
     val seededAtEpochMillis: Long,
+    /**
+     * The intention voiced during setup (already one voice in the
+     * chain's seed). Carried so a reroll can re-ask with the same
+     * intention and a new moment — iOS reads `vm.intention` at
+     * `seekAnewRequested` (`ActiveWalkViewModel+Seek.swift:196-210
+     * @c1745e8`); the orchestrator has no VM, so the session carries it
+     * (U9 port spec D7).
+     */
+    val intention: String? = null,
 )
 
 /**

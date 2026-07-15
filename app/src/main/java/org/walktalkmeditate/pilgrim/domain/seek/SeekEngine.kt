@@ -39,8 +39,13 @@ enum class SeekEnginePhase {
     ARRIVED,
 
     /**
-     * Reserved for the reveal ritual choreography (U7); the engine commits
-     * reveals atomically and never parks here itself.
+     * Reserved iOS-parity value (`SeekGlance.swift:28@c1745e8`): nothing
+     * produces it at the pinned anchor — the engine commits reveals
+     * atomically (GUIDING → GUIDING/COMPLETE) and the orchestrator (U9)
+     * passes the engine phase straight through, matching iOS's
+     * `updateSeekFog`. The fog and crescent models handle it defensively
+     * (dissolved fog, hidden crescent) should a future reveal ritual
+     * ever park here.
      */
     REVEALING,
     COMPLETE,
