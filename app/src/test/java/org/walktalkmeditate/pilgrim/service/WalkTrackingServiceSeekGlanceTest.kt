@@ -177,6 +177,27 @@ class WalkTrackingServiceSeekGlanceTest {
         )
     }
 
+    // ─── Stray-intent guard (no active pipeline → self-stop) ──────────
+
+    @Test
+    fun `glance with no active pipeline stops the service`() {
+        // A late glance intent after the tracker pipeline tore down (FGS
+        // timeout, OEM cleanup) must stop the revived service instead of
+        // leaving it started-but-unpromoted — the soundscape-guard twin.
+        assertEquals(
+            WalkTrackingService.SeekGlanceAction.StopNoPipeline,
+            WalkTrackingService.decideSeekGlanceAction(pipelineActive = false),
+        )
+    }
+
+    @Test
+    fun `glance with a live pipeline stores and re-renders`() {
+        assertEquals(
+            WalkTrackingService.SeekGlanceAction.StoreAndRender,
+            WalkTrackingService.decideSeekGlanceAction(pipelineActive = true),
+        )
+    }
+
     // ─── Transport round-trip (UI intent → tracker decode) ────────────
 
     @Test

@@ -8,6 +8,7 @@ import kotlin.math.max
 import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.random.Random
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -127,6 +128,15 @@ class SeekEngine(
     var pulseGeneration: Int = 0
         private set
 
+    /**
+     * Inputs (or whole feeds) dropped by [start]'s guards. The engine is
+     * framework-free — no logger to route failures through — so they
+     * surface here for tests and diagnostics instead of escaping into
+     * the session scope and crashing the process.
+     */
+    var inputFaultCount: Int = 0
+        private set
+
     private var collectorJobs: List<Job> = emptyList()
     private var pulseJob: Job? = null
     private var stillnessCheckJob: Job? = null
@@ -152,10 +162,35 @@ class SeekEngine(
     fun start() {
         collectorJobs.forEach { it.cancel() }
         collectorJobs = listOf(
-            scope.launch { locations.collect { processLocation(it) } },
-            scope.launch { walkStates.collect { handleWalkState(it) } },
-            scope.launch { powerTiers.collect { handleTier(it) } },
+            collectQuietly(locations) { processLocation(it) },
+            collectQuietly(walkStates) { handleWalkState(it) },
+            collectQuietly(powerTiers) { handleTier(it) },
         )
+    }
+
+    /**
+     * A poisoned input is dropped and a broken feed ends quietly —
+     * counted in [inputFaultCount] — so one failure degrades guidance
+     * instead of killing sibling collectors or crashing the process
+     * (the SeekOrchestrator collector idiom, minus the logging the
+     * domain layer cannot host).
+     */
+    private fun <T> collectQuietly(source: Flow<T>, handle: (T) -> Unit): Job = scope.launch {
+        try {
+            source.collect { value ->
+                try {
+                    handle(value)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                    inputFaultCount += 1
+                }
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            inputFaultCount += 1
+        }
     }
 
     fun stop() {
@@ -359,7 +394,13 @@ class SeekEngine(
         stillnessCheckJob = scope.launch {
             while (isActive) {
                 delay(SeekEngineTuning.STILLNESS_CHECK_INTERVAL_MILLIS)
-                evaluateStillness(clock.now())
+                try {
+                    evaluateStillness(clock.now())
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                    inputFaultCount += 1
+                }
             }
         }
     }

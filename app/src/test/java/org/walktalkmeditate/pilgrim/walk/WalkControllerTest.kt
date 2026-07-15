@@ -17,8 +17,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import android.database.sqlite.SQLiteException
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -354,6 +356,55 @@ class WalkControllerTest {
         assertNotNull(revived.restoreActiveWalk())
         assertEquals(WalkMode.Wander, (revived.state.value as WalkState.Active).walk.mode)
     }
+
+    @Test
+    fun `seek startWalk survives a failing SEEK_MODE event write`() = runTest {
+        // WalkTrackingService catches only IllegalStateException around
+        // startWalk — an escaping SQLiteException from the marker write
+        // would crash the :tracker recording process. The marker is best
+        // effort: the walk must start (as a functional wander-equivalent
+        // recording) even when the event row fails.
+        val throwingDao = ThrowingWalkEventDao(db.walkEventDao())
+        val fragileRepository = WalkRepository(
+            database = db,
+            walkDao = db.walkDao(),
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = throwingDao,
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+        )
+        val fragile = WalkControllerImpl(fragileRepository, clock, fakeStepCounter())
+        throwingDao.throwOnInsert = true
+
+        val walk = fragile.startWalk(intention = "find the river", mode = WalkMode.Seek)
+
+        val state = fragile.state.value as WalkState.Active
+        assertEquals(walk.id, state.walk.walkId)
+        assertEquals("the in-memory mode survives the dropped marker", WalkMode.Seek, state.walk.mode)
+        assertTrue(
+            "the marker row was dropped, not retried",
+            repository.eventsFor(walk.id).none { it.eventType == WalkEventType.SEEK_MODE },
+        )
+    }
+}
+
+/** Delegates to the real DAO; [throwOnInsert] simulates a disk failure. */
+private class ThrowingWalkEventDao(private val delegate: WalkEventDao) : WalkEventDao {
+    var throwOnInsert = false
+
+    override suspend fun insert(event: WalkEvent): Long {
+        if (throwOnInsert) throw SQLiteException("disk I/O error")
+        return delegate.insert(event)
+    }
+
+    override suspend fun getForWalk(walkId: Long) = delegate.getForWalk(walkId)
+    override fun observeForWalk(walkId: Long) = delegate.observeForWalk(walkId)
+    override suspend fun walkIdsWithEvent(eventTypeName: String) =
+        delegate.walkIdsWithEvent(eventTypeName)
+    override suspend fun deleteByWalkId(walkId: Long) = delegate.deleteByWalkId(walkId)
 }
 
 private class FakeClock(initial: Long) : Clock {

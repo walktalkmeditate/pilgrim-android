@@ -263,7 +263,13 @@ class SeekSetupViewModel @Inject constructor(
         val generation = gpsGeneration
         gpsJob = viewModelScope.launch {
             val fix = try {
-                locationSource.locationFlow()
+                // Raw feed, not the 20 m-gated pipeline flow: fixes in
+                // the (20, 50] band — the normal urban-canyon regime —
+                // must lock the chain, so [qualifiesForChainLock]'s
+                // ≤50 m check is the only accuracy gate (iOS's
+                // pre-recording feed is ungated; same starvation
+                // reasoning as the engine feed, U9 spec D2).
+                locationSource.rawLocationFlow()
                     .filter { qualifiesForChainLock(it) }
                     .first()
             } catch (ce: CancellationException) {

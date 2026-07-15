@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.domain.seek
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -157,6 +158,44 @@ class SeekEngineTest {
         assertEquals(30_000L, SeekEngine.pulseIntervalMillis(100.0, SeekPowerTier.LOW))
         assertEquals(60_000L, SeekEngine.pulseIntervalMillis(2000.0, SeekPowerTier.LOW))
         assertEquals(10_000L, SeekEngine.pulseIntervalMillis(100.0, SeekPowerTier.NORMAL))
+    }
+
+    // Collector resilience
+
+    @Test
+    fun `a throwing locations flow dies quietly and sibling collectors keep working`() = runTest {
+        // A broken feed must never escape into the session scope (it
+        // would crash the process); the engine degrades — no more fixes
+        // — while the walk-state and tier collectors stay alive.
+        val engine = SeekEngine(
+            chain = makeChain(1),
+            scope = backgroundScope,
+            clock = clock,
+            locations = flow {
+                emit(fix(at = home))
+                throw IllegalStateException("gps feed exploded")
+            },
+            walkStates = walkStates,
+            powerTiers = tiers,
+            stillnessWindowOverrideMillis = 60_000L,
+        )
+        backgroundScope.launch { engine.events.collect { events += it } }
+        runCurrent()
+        engine.start()
+        runCurrent()
+
+        assertEquals("the fix before the failure landed", 1000.0, engine.distanceToActiveMeters.value!!, 1.0)
+        assertEquals("the dead feed is counted, not crashed on", 1, engine.inputFaultCount)
+
+        tiers.emit(SeekPowerTier.LOW)
+        runCurrent()
+        assertEquals("the tier collector survives the dead feed", SeekPowerTier.LOW, engine.currentTier)
+
+        walkStates.emit(paused())
+        runCurrent()
+        walkStates.emit(active())
+        runCurrent()
+        assertEquals("the walk-state collector survives too", SeekEnginePhase.GUIDING, engine.phase.value)
     }
 
     // AE2: misalignment is positive-only

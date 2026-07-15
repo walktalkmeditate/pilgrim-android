@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -31,6 +32,9 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekChainGenerator
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
+import org.walktalkmeditate.pilgrim.domain.seek.SeekTuning
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereStore
@@ -62,8 +66,14 @@ class SeekSetupViewModelTest {
     // ---- Harness --------------------------------------------------------
 
     private class FakeLocationSource : LocationSource {
+        /** The raw feed the chain lock must ride (ungated iOS parity). */
         val fixes = MutableSharedFlow<LocationPoint>()
-        override fun locationFlow(): Flow<LocationPoint> = fixes
+
+        /** The 20 m-gated pipeline feed — the lock must never consult it. */
+        val gatedFixes = MutableSharedFlow<LocationPoint>()
+
+        override fun locationFlow(): Flow<LocationPoint> = gatedFixes
+        override fun rawLocationFlow(): Flow<LocationPoint> = fixes
         override suspend fun lastKnownLocation(): LocationPoint? = null
     }
 
@@ -103,6 +113,7 @@ class SeekSetupViewModelTest {
         val controller: FakeWalkController = FakeWalkController(),
         var nowMs: Long = ORDINARY_DAY_MS,
         hasPreciseLocation: Boolean = true,
+        qaMode: Int = 0,
     ) {
         var preciseLocation = hasPreciseLocation
         var breathCount = 0
@@ -116,7 +127,7 @@ class SeekSetupViewModelTest {
             clock = Clock { nowMs },
             accuracyChecker = { preciseLocation },
             breathHaptic = { breathCount++ },
-            qaFlags = { 0 },
+            qaFlags = { qaMode },
         )
     }
 
@@ -409,6 +420,31 @@ class SeekSetupViewModelTest {
         }
 
     @Test
+    fun `a 35 m fix locks the chain via the raw feed - the gated pipeline is never consulted`() =
+        runTest(dispatcher) {
+            val h = Harness()
+            h.reachTransition()
+            runCurrent()
+
+            // A 35 m fix on the 20 m-gated pipeline flow must be
+            // invisible to the lock: were the lock riding locationFlow,
+            // this fix would never reach it anyway — proving it does
+            // nothing here proves the lock isn't subscribed to it.
+            h.location.gatedFixes.emit(fix(accuracy = 35f))
+            runCurrent()
+            assertNull(h.store.pending.value)
+
+            // The same urban-canyon fix on the raw feed locks: ≤50 m is
+            // the only accuracy gate (iOS `hAcc <= 50` parity).
+            h.location.fixes.emit(fix(accuracy = 35f))
+            runCurrent()
+            assertNotNull(
+                "a 35 m raw fix must lock the chain",
+                h.store.pending.value,
+            )
+        }
+
+    @Test
     fun `inaccurate and accuracy-less fixes never lock the chain`() = runTest(dispatcher) {
         val h = Harness()
         h.reachTransition()
@@ -448,6 +484,57 @@ class SeekSetupViewModelTest {
             val b = second.store.pending.value!!.chain
             assertFalse(a.clearings == b.clearings)
         }
+
+    // ---- Device-QA near-clearing wiring (SeekQaOverrides) ----------------
+
+    /** Locks a chain under [qaMode] and returns (start point, clearings). */
+    private suspend fun TestScope.lockedChainUnderQaMode(qaMode: Int) =
+        Harness(qaMode = qaMode).let { h ->
+            h.reachTransition()
+            runCurrent()
+            h.location.fixes.emit(fix(accuracy = 10f))
+            runCurrent()
+            val locked = fix(accuracy = 10f)
+            SeekPoint(latitude = locked.latitude, longitude = locked.longitude) to
+                h.store.pending.value!!.chain.clearings
+        }
+
+    @Test
+    fun `qa mode 1 compresses the locked chain onto the inside ladder`() = runTest(dispatcher) {
+        val (start, clearings) = lockedChainUnderQaMode(1)
+        assertTrue(clearings.isNotEmpty())
+        clearings.forEachIndexed { index, clearing ->
+            assertEquals(
+                SeekQaOverrides.QA_BASE_DISTANCE_METERS + SeekQaOverrides.QA_STEP_METERS * index,
+                SeekChainGenerator.distance(start, clearing.center),
+                0.5,
+            )
+        }
+    }
+
+    @Test
+    fun `qa mode 2 places each locked clearing's edge a stroll away`() = runTest(dispatcher) {
+        val (start, clearings) = lockedChainUnderQaMode(2)
+        assertTrue(clearings.isNotEmpty())
+        clearings.forEachIndexed { index, clearing ->
+            assertEquals(
+                clearing.radiusMeters + SeekQaOverrides.QA_EDGE_MARGIN_METERS +
+                    SeekQaOverrides.QA_EDGE_STEP_METERS * index,
+                SeekChainGenerator.distance(start, clearing.center),
+                0.5,
+            )
+        }
+    }
+
+    @Test
+    fun `qa mode 0 locks the generated chain uncompressed`() = runTest(dispatcher) {
+        val (start, clearings) = lockedChainUnderQaMode(0)
+        assertTrue(
+            "a real chain's first clearing starts a walk away, never on the QA ladder",
+            SeekChainGenerator.distance(start, clearings.first().center) >=
+                SeekTuning.MIN_START_DISTANCE_METERS - 0.5,
+        )
+    }
 
     // ---- Duration persistence (SeekSetupFlowTests.swift:111-134) --------
 

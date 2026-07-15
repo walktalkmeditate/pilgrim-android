@@ -86,8 +86,15 @@ object SeekCrescentVisibilityModel {
      * Returns the new released state given the previous one. Null center
      * means the fog could not be projected onto the screen — Mapbox's
      * `pixelForCoordinate` collapses every off-view coordinate to
-     * `(-1, -1)` (verified against SDK v11.11.0 source, spec B10), so an
-     * unprojectable fog is definitionally not visible: the crescent shows.
+     * `(-1, -1)` (verified against SDK v11.11.0 source, spec B10),
+     * losing HOW far past the edge the fog lies. An unreleased crescent
+     * therefore stays shown (an unprojectable fog is not visible), and a
+     * released one HOLDS released: the clamp fires the instant the
+     * center crosses the raw edge, so flipping back on null would bypass
+     * the ±24 px hysteresis band and strobe the handoff exhale on every
+     * edge crossing during a pan. The hold lasts until the crescent
+     * resets (arrival/reveal/walk end clear `released` via the
+     * renderer's remove path).
      */
     fun shouldRelease(
         wasReleased: Boolean,
@@ -97,7 +104,7 @@ object SeekCrescentVisibilityModel {
         viewWidthPx: Double,
         viewHeightPx: Double,
     ): Boolean {
-        if (fogCenterX == null || fogCenterY == null) return false
+        if (fogCenterX == null || fogCenterY == null) return wasReleased
         if (viewWidthPx <= 0.0 || viewHeightPx <= 0.0 ||
             !fogCenterX.isFinite() || !fogCenterY.isFinite() || !fogRadiusPx.isFinite()
         ) {

@@ -102,7 +102,23 @@ class WalkControllerImpl @Inject constructor(
                 current,
                 WalkAction.Start(walkId = walk.id, at = startedAt, mode = mode),
             )
-            applyEffect(effect)
+            // Best effort, like PersistLocation: the walk must start even
+            // if the marker row fails. Callers (WalkTrackingService) catch
+            // only IllegalStateException around startWalk, so an escaping
+            // SQLiteException would crash the recording process. Without
+            // the marker a restored walk re-derives as wander — an
+            // acceptable degrade for a walk that still records.
+            try {
+                applyEffect(effect)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(
+                    TAG,
+                    "startWalk effect ${effect::class.simpleName} dropped for walk ${walk.id} " +
+                        "(mode=$mode): ${t.message}",
+                )
+            }
             _state.value = next
             // Log presence, not content — intentions can carry privacy-sensitive
             // text ("mourning Y", "anxiety about Z") that we don't want landing

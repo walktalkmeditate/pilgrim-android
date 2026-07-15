@@ -3,6 +3,11 @@ package org.walktalkmeditate.pilgrim.di
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -14,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.audio.TalkRecordingActive
 import org.walktalkmeditate.pilgrim.audio.seek.SeekHaptics
@@ -33,6 +39,7 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.seek.SeekGlancePublisher
 import org.walktalkmeditate.pilgrim.walk.seek.SeekObservedWalkState
 import org.walktalkmeditate.pilgrim.walk.seek.SeekPowerTiers
+import org.walktalkmeditate.pilgrim.walk.seek.SeekProcessForeground
 import org.walktalkmeditate.pilgrim.walk.seek.SeekScope
 import org.walktalkmeditate.pilgrim.walk.seek.SeekSenses
 
@@ -73,6 +80,41 @@ object SeekModule {
     fun provideSeekPowerTiers(source: SeekPowerTierSource): Flow<SeekPowerTier> = source.tiers
 
     /**
+     * Process-foreground signal bounding the unadopted pre-departure
+     * session (see [SeekProcessForeground]). Starts pessimistic (false)
+     * and is corrected by the observer's retroactive lifecycle delivery;
+     * registration hops to the main thread — `ProcessLifecycleOwner`
+     * requires it, and Hilt may build providers off-main. The observer
+     * is process-lifetime by design: the orchestrator is an app-scoped
+     * singleton.
+     */
+    @Provides
+    @Singleton
+    @SeekProcessForeground
+    fun provideSeekProcessForeground(): StateFlow<Boolean> {
+        val foreground = MutableStateFlow(false)
+        val register = {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(
+                object : DefaultLifecycleObserver {
+                    override fun onStart(owner: LifecycleOwner) {
+                        foreground.value = true
+                    }
+
+                    override fun onStop(owner: LifecycleOwner) {
+                        foreground.value = false
+                    }
+                },
+            )
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            register()
+        } else {
+            Handler(Looper.getMainLooper()).post { register() }
+        }
+        return foreground
+    }
+
+    /**
      * U10 glance transport: the orchestrator's changed glances ride the
      * established UI→tracker intent channel to the notification
      * renderer. Port spec:
@@ -98,6 +140,7 @@ object SeekModule {
         audioManager: AudioManager,
         seekPreferences: SeekPreferencesRepository,
         soundsPreferences: SoundsPreferencesRepository,
+        @SeekScope scope: CoroutineScope,
         whisperPlayer: WhisperPlayer,
         voiceGuidePlayer: VoiceGuidePlayer,
         @TalkRecordingActive talkRecordingActive: StateFlow<Boolean>,
@@ -107,6 +150,7 @@ object SeekModule {
         audioManager = audioManager,
         seekPreferences = seekPreferences,
         soundsPreferences = soundsPreferences,
+        scope = scope,
         gate = SeekPingGate(
             isWhisperPlaying = { whisperPlayer.isAnyChannelPlaying.value },
             isVoiceGuidePlaying = {

@@ -9,6 +9,10 @@ import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.seek.SeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -67,8 +71,14 @@ interface SeekSoundPlaying {
  * one `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` request held from
  * [prepare] to [stop] — the session-long-holder pattern from the
  * soundscape player — so sub-second pings don't duck-pump concurrent
- * audio at pulse cadence. Denied focus (e.g. phone call) skips the
- * play attempt AND the coupled haptic (no phantom buzz — BellPlayer
+ * audio at pulse cadence. The hold exists FOR the sonar channel: with
+ * sonar (or master sounds) off, [prepare] holds nothing — otherwise a
+ * silent walk ducks other apps' audio for 45-90 minutes — and a pref
+ * flip that silences the channel mid-session releases the held focus
+ * (observed on [scope]); the next enabled play re-arms lazily. A bowl
+ * while sonar is off carries its own short-lived session, released
+ * after its ring. Denied focus (e.g. phone call) skips the play
+ * attempt AND the coupled haptic (no phantom buzz — BellPlayer
  * precedent).
  *
  * Interruption mapping (iOS drops its `AVAudioPlayer`s on `.began`
@@ -98,6 +108,7 @@ class SeekSoundPlayer(
     private val audioManager: AudioManager,
     private val seekPreferences: SeekPreferencesRepository,
     private val soundsPreferences: SoundsPreferencesRepository,
+    scope: CoroutineScope,
     private val gate: SeekPingGate,
     private val haptics: SeekHaptics,
     private val doublePingGapMs: Long = DOUBLE_PING_GAP_MS,
@@ -132,14 +143,36 @@ class SeekSoundPlayer(
 
     private enum class PingOutcome { PLAYED, POLICY_SKIPPED, PLATFORM_REJECTED }
 
+    init {
+        scope.launch {
+            combine(
+                seekPreferences.sonarEnabled,
+                soundsPreferences.soundsEnabled,
+                ::Pair,
+            ).collect { (sonar, sounds) ->
+                try {
+                    handlePreferenceChange(sonarEnabled = sonar, soundsEnabled = sounds)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    Log.w(TAG, "seek pref-change handling failed", t)
+                }
+            }
+        }
+    }
+
     /**
      * Activates the focus consumer and arms both players at seek start
      * so the first pulse plays without cold-start latency (iOS
-     * `prepare()`). Focus denial or arm failure leaves the player
+     * `prepare()`). Sonar (or master sounds) off holds nothing — the
+     * session would duck other apps' audio for the whole walk with zero
+     * pings to justify it; a bowl activates its own session lazily in
+     * [playBowl]. Focus denial or arm failure leaves the player
      * inactive; every later play lazily retries.
      */
     override fun prepare() {
         synchronized(lock) {
+            if (!sonarAndSoundsEnabled()) return
             if (!activateSessionIfNeededLocked()) return
             armPingPlayerIfNeededLocked()
             armBowlPlayerIfNeededLocked()
@@ -197,7 +230,12 @@ class SeekSoundPlayer(
                 deactivateIfNothingArmedLocked()
                 return
             }
-            startPlayerLocked(player, volumeScale = 1f)
+            val started = startPlayerLocked(player, volumeScale = 1f)
+            // Sonar off means no session-long holder exists: this bowl
+            // carried its own focus, so give it back once it has rung.
+            // The bowl keeps its master-sounds-only independence — only
+            // the idle-release is scoped to the silent sonar channel.
+            if (started && !seekPreferences.sonarEnabled.value) scheduleSessionReleaseLocked()
         }
     }
 
@@ -212,19 +250,7 @@ class SeekSoundPlayer(
      */
     override fun playCompletionBowl() {
         playBowl()
-        val expected: Long
-        synchronized(lock) {
-            releaseGeneration += 1
-            expected = releaseGeneration
-        }
-        mainHandler.postDelayed(
-            {
-                synchronized(lock) {
-                    if (releaseGeneration == expected) stopLocked()
-                }
-            },
-            completionReleaseDelayMs,
-        )
+        synchronized(lock) { scheduleSessionReleaseLocked() }
     }
 
     /** Drops both players and releases the focus consumer. Idempotent. */
@@ -378,6 +404,44 @@ class SeekSoundPlayer(
             audioManager.abandonAudioFocusRequest(request)
         } catch (t: Throwable) {
             Log.w(TAG, "abandonAudioFocusRequest failed", t)
+        }
+    }
+
+    /**
+     * Generation-guarded deferred [stopLocked]: releases the audio
+     * consumer once a just-rung bowl has had room to ring
+     * ([completionReleaseDelayMs], iOS `seekCompleteSoundStopDelay`).
+     * Any newer play or schedule supersedes a pending release.
+     */
+    private fun scheduleSessionReleaseLocked() {
+        releaseGeneration += 1
+        val expected = releaseGeneration
+        mainHandler.postDelayed(
+            {
+                synchronized(lock) {
+                    if (releaseGeneration == expected) stopLocked()
+                }
+            },
+            completionReleaseDelayMs,
+        )
+    }
+
+    /**
+     * A pref flip that silences the channel must not leave the focus
+     * held (other apps would stay ducked for the rest of the walk). The
+     * next enabled play re-arms lazily via its own activate path.
+     */
+    private fun handlePreferenceChange(sonarEnabled: Boolean, soundsEnabled: Boolean) {
+        synchronized(lock) {
+            if (focusRequest == null) return
+            when {
+                // Master off: nothing can play — release now.
+                !soundsEnabled -> stopLocked()
+                // Sonar off: only bowls remain, and each carries its own
+                // session — release after a possibly-ringing one.
+                !sonarEnabled -> scheduleSessionReleaseLocked()
+                else -> Unit
+            }
         }
     }
 

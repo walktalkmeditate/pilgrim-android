@@ -81,6 +81,18 @@ annotation class SeekObservedWalkState
 annotation class SeekPowerTiers
 
 /**
+ * Qualifier for the process-foreground signal (true between
+ * `ProcessLifecycleOwner`'s onStart/onStop) that bounds the UNADOPTED
+ * pre-departure session: an abandoned ready screen (HOME press, task
+ * switch) must not keep pinging, buzzing, and ducking other apps'
+ * audio from a pocket — there is no walk to justify it. Bound in
+ * [org.walktalkmeditate.pilgrim.di.SeekModule].
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class SeekProcessForeground
+
+/**
  * Injectable seek side-effect hooks (iOS `SeekSenses`,
  * `ActiveWalkViewModel+Seek.swift:19-30@c1745e8`). Production defaults
  * are built in [org.walktalkmeditate.pilgrim.di.SeekModule]; tests swap
@@ -158,6 +170,7 @@ class SeekOrchestrator @Inject constructor(
     private val repository: WalkRepository,
     private val locationSource: LocationSource,
     @SeekPowerTiers private val powerTiers: Flow<@JvmSuppressWildcards SeekPowerTier>,
+    @SeekProcessForeground private val processForeground: StateFlow<Boolean>,
     private val senses: SeekSenses,
     private val soundsPreferences: SoundsPreferencesRepository,
     private val clock: Clock,
@@ -226,7 +239,39 @@ class SeekOrchestrator @Inject constructor(
                 }
             }
         }
+        scope.launch {
+            processForeground.collect { foreground ->
+                try {
+                    handleForegroundChange(foreground)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    Log.w(TAG, "seek foreground handling failed", t)
+                }
+            }
+        }
     }
+
+    /**
+     * Bounds the UNADOPTED pre-departure session (see
+     * [SeekProcessForeground]): backgrounding releases the sonar
+     * channel's players + audio focus, foreground re-arms it; the
+     * engine keeps ticking so the ready screen resumes seamlessly, but
+     * [senseMuted] silences its events meanwhile. An ADOPTED session is
+     * untouched — recording continues through backgrounding by design.
+     */
+    private fun handleForegroundChange(foreground: Boolean) {
+        if (engine == null || sessionWalkId != null) return
+        if (foreground) {
+            senses.soundPlayer.prepare()
+        } else {
+            senses.soundPlayer.stop()
+        }
+    }
+
+    /** Audio/haptic mute for the backgrounded unadopted session. */
+    private fun senseMuted(): Boolean =
+        sessionWalkId == null && !processForeground.value
 
     /**
      * R17 "Seek anew": regenerates the remainder of the chain from the
@@ -484,6 +529,10 @@ class SeekOrchestrator @Inject constructor(
      * `ActiveWalkViewModel+Seek.swift:132-157@c1745e8`).
      */
     internal suspend fun handleSeekEvent(event: SeekEngineEvent) {
+        // Visual state keeps flowing while muted (the map isn't visible
+        // from a pocket, and the ready screen must resume seamlessly);
+        // only the ear-and-skin senses go quiet.
+        val muted = senseMuted()
         when (event) {
             is SeekEngineEvent.Pulse -> {
                 val closeness = SeekEngine.closeness(event.distanceMeters)
@@ -494,22 +543,26 @@ class SeekOrchestrator @Inject constructor(
                 )
                 // One call carries ear AND skin: the tick/aligned haptic
                 // rides the player's coupled path (U5 spec §3.3).
-                senses.soundPlayer.playPing(
-                    aligned = event.aligned,
-                    closeness = closeness.toFloat(),
-                )
+                if (!muted) {
+                    senses.soundPlayer.playPing(
+                        aligned = event.aligned,
+                        closeness = closeness.toFloat(),
+                    )
+                }
             }
             is SeekEngineEvent.Arrived -> {
                 // The persistence commit happens before any ritual
                 // effect so an interruption mid-ritual can never lose
                 // the arrival (iOS comment ported).
                 recordSeekArrival()
-                senses.arrivalHaptic()
+                if (!muted) senses.arrivalHaptic()
             }
-            is SeekEngineEvent.StillnessBegan -> senses.breathInHaptic()
+            is SeekEngineEvent.StillnessBegan -> if (!muted) senses.breathInHaptic()
             is SeekEngineEvent.RevealedNext -> {
-                senses.soundPlayer.playBowl()
-                scheduleRevealWhisper()
+                if (!muted) {
+                    senses.soundPlayer.playBowl()
+                    scheduleRevealWhisper()
+                }
             }
             SeekEngineEvent.SeekComplete ->
                 // Bowl + generation-guarded release of the audio
@@ -518,7 +571,7 @@ class SeekOrchestrator @Inject constructor(
                 // emission — all halos — stays on the map until walk
                 // end, and [enginePhase] stays COMPLETE for the options
                 // sheet's disabled row.
-                senses.soundPlayer.playCompletionBowl()
+                if (!muted) senses.soundPlayer.playCompletionBowl()
         }
     }
 

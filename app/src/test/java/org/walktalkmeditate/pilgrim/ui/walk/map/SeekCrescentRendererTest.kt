@@ -328,7 +328,7 @@ class SeekCrescentRendererTest {
     }
 
     @Test
-    fun `fog leaving past the outset hands the crescent back at rest`() {
+    fun `fog clamping off view holds the released crescent - no edge strobe`() {
         val h = Harness()
         h.guidingSyncOnScreenFog()
         h.renderer.evaluateVisibility(fogState(), throttled = false, reduceMotion = false)
@@ -340,10 +340,18 @@ class SeekCrescentRendererTest {
         h.renderer.evaluateVisibility(fogState(), throttled = false, reduceMotion = false)
         assertTrue("dead zone must not flap", h.style.ops.isEmpty())
 
-        // Beyond the outset: the crescent returns at rest.
+        // The clamp (null projection) fires the instant the center
+        // crosses the raw edge; flipping back to visible there would
+        // bypass the ±24 px hysteresis band and replay the handoff
+        // exhale on every edge crossing during a pan.
         h.style.projection = null
         h.renderer.evaluateVisibility(fogState(), throttled = false, reduceMotion = false)
-        assertEquals(listOf(0.55), h.style.opacityWrites())
+        assertTrue("clamped off view: released holds", h.style.ops.isEmpty())
+
+        // Finite again just inside the edge: still released, still quiet.
+        h.style.projection = ScreenPointPx(200.0, 400.0)
+        h.renderer.evaluateVisibility(fogState(), throttled = false, reduceMotion = false)
+        assertTrue("no exhale replay on the way back in", h.style.ops.isEmpty())
     }
 
     @Test

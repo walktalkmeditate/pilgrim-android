@@ -420,20 +420,24 @@ class WalkTrackingService : Service() {
      * docs/parity/2026-07-14-port-seek-glance-u10.md B3.
      */
     private fun handleSeekGlanceAction(intent: Intent?) {
-        // Mirror the soundscape-action guard: a stray glance intent must
-        // not leave a started-but-unpromoted service lingering.
-        if (locationJob?.isActive != true) {
-            Log.w(TAG, "ignoring seek glance — no active walk pipeline")
-            stopSelf()
-            return
+        when (decideSeekGlanceAction(pipelineActive = locationJob?.isActive == true)) {
+            SeekGlanceAction.StopNoPipeline -> {
+                // Mirror the soundscape-action guard: a stray glance
+                // intent must not leave a started-but-unpromoted service
+                // lingering.
+                Log.w(TAG, "ignoring seek glance — no active walk pipeline")
+                stopSelf()
+            }
+            SeekGlanceAction.StoreAndRender -> {
+                latestSeekGlance = seekGlanceFromExtras(
+                    present = intent?.getBooleanExtra(EXTRA_SEEK_GLANCE_PRESENT, false) == true,
+                    bucketMeters = intent?.getIntExtra(EXTRA_SEEK_GLANCE_BUCKET, 0) ?: 0,
+                    directionName = intent?.getStringExtra(EXTRA_SEEK_GLANCE_DIRECTION),
+                    isComplete = intent?.getBooleanExtra(EXTRA_SEEK_GLANCE_COMPLETE, false) == true,
+                )
+                updateNotification(controller.state.value)
+            }
         }
-        latestSeekGlance = seekGlanceFromExtras(
-            present = intent?.getBooleanExtra(EXTRA_SEEK_GLANCE_PRESENT, false) == true,
-            bucketMeters = intent?.getIntExtra(EXTRA_SEEK_GLANCE_BUCKET, 0) ?: 0,
-            directionName = intent?.getStringExtra(EXTRA_SEEK_GLANCE_DIRECTION),
-            isComplete = intent?.getBooleanExtra(EXTRA_SEEK_GLANCE_COMPLETE, false) == true,
-        )
-        updateNotification(controller.state.value)
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {
@@ -689,6 +693,14 @@ class WalkTrackingService : Service() {
         IgnoreInProgress,
     }
 
+    /**
+     * What [handleSeekGlanceAction] should do given whether the location
+     * pipeline is live — pure per the [decideStateAction] precedent so
+     * the stray-intent stop path (a late glance intent after the tracker
+     * pipeline tore down) is unit-testable without a Hilt service.
+     */
+    internal enum class SeekGlanceAction { StopNoPipeline, StoreAndRender }
+
     companion object {
         /**
          * Per-process "is the FGS alive in THIS process" flag. Set in
@@ -936,6 +948,9 @@ class WalkTrackingService : Service() {
 
         /** ≙ iOS `WalkActivityManager.timeThreshold = 15` s. */
         internal const val SEEK_NOTIFY_FLOOR_MILLIS = 15_000L
+
+        internal fun decideSeekGlanceAction(pipelineActive: Boolean): SeekGlanceAction =
+            if (pipelineActive) SeekGlanceAction.StoreAndRender else SeekGlanceAction.StopNoPipeline
 
         /**
          * Pure decode of the [ACTION_UPDATE_SEEK_GLANCE] extras. An

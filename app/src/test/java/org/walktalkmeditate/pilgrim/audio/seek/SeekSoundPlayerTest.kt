@@ -8,6 +8,10 @@ import android.os.Looper
 import android.os.Vibrator
 import androidx.test.core.app.ApplicationProvider
 import java.time.Duration
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -61,6 +65,9 @@ class SeekSoundPlayerTest {
     private var voiceGuidePlaying = false
     private var talkRecording = false
 
+    /** Main-looper scope so the pref observer runs under [idle]/[idleFor]. */
+    private lateinit var playerScope: CoroutineScope
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -76,10 +83,12 @@ class SeekSoundPlayerTest {
         talkRecording = false
         seekPreferences = FakeSeekPreferencesRepository()
         soundsPreferences = FakeSoundsPreferencesRepository()
+        playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     }
 
     @After
     fun tearDown() {
+        playerScope.cancel()
         ShadowMediaPlayer.resetStaticState()
     }
 
@@ -93,6 +102,7 @@ class SeekSoundPlayerTest {
         audioManager = audioManager,
         seekPreferences = seekPreferences,
         soundsPreferences = soundsPreferences,
+        scope = playerScope,
         gate = SeekPingGate(
             isWhisperPlaying = { whisperPlaying },
             isVoiceGuidePlaying = { voiceGuidePlaying },
@@ -162,6 +172,81 @@ class SeekSoundPlayerTest {
             "focus abandoned",
             shadowOf(audioManager).lastAbandonedAudioFocusRequest,
         )
+    }
+
+    // ─── Idle-focus discipline (sonar-off sessions must not duck) ────
+
+    @Test
+    fun `prepare with sonar disabled holds no focus and arms nothing`() {
+        seekPreferences = FakeSeekPreferencesRepository(initialSonarEnabled = false)
+        val player = makePlayer()
+
+        player.prepare()
+
+        assertNull(
+            "a silent sonar channel must not duck other apps for the walk",
+            shadowOf(audioManager).lastAudioFocusRequest,
+        )
+        assertEquals(0, players.size)
+    }
+
+    @Test
+    fun `ping with sonar disabled never acquires focus`() {
+        seekPreferences = FakeSeekPreferencesRepository(initialSonarEnabled = false)
+        val player = makePlayer()
+
+        player.playPing(aligned = false, closeness = 1f)
+
+        assertNull(shadowOf(audioManager).lastAudioFocusRequest)
+        assertHapticFired()
+    }
+
+    @Test
+    fun `bowl with sonar disabled acquires focus then releases after its ring`() {
+        seekPreferences = FakeSeekPreferencesRepository(initialSonarEnabled = false)
+        val player = makePlayer()
+        player.prepare()
+
+        player.playBowl()
+
+        assertNotNull(
+            "the bowl keeps its master-sounds-only independence",
+            shadowOf(audioManager).lastAudioFocusRequest,
+        )
+        assertEquals(1, totalPlays)
+        assertNull(
+            "the bowl's own session holds through the ring",
+            shadowOf(audioManager).lastAbandonedAudioFocusRequest,
+        )
+
+        idleFor(SeekSoundPlayer.COMPLETION_RELEASE_DELAY_MS + 50)
+        assertNotNull(
+            "no session-long holder exists with sonar off — released after the ring",
+            shadowOf(audioManager).lastAbandonedAudioFocusRequest,
+        )
+    }
+
+    @Test
+    fun `mid-session sonar-off flip abandons the held focus`() {
+        val player = makePlayer()
+        player.prepare()
+        idle()
+        assertNull(shadowOf(audioManager).lastAbandonedAudioFocusRequest)
+
+        seekPreferences.setSonarEnabledNow(false)
+        // The release waits out a possibly-ringing bowl, then abandons.
+        idleFor(SeekSoundPlayer.COMPLETION_RELEASE_DELAY_MS + 50)
+
+        assertNotNull(
+            "disabling sonar mid-walk must stop ducking other apps",
+            shadowOf(audioManager).lastAbandonedAudioFocusRequest,
+        )
+
+        // The next enabled play re-arms lazily with a fresh request.
+        seekPreferences.setSonarEnabledNow(true)
+        idle()
+        player.playPing(aligned = false, closeness = 1f)
+        assertEquals(1, totalPlays)
     }
 
     // ─── Ping volume (iOS: sonarVolume × (0.55 + 0.45 × closeness)) ──
@@ -361,9 +446,12 @@ class SeekSoundPlayerTest {
         player.playBowl()
 
         assertEquals("the reveal bowl belongs to the ritual, not the sonar toggle", 1, totalPlays)
-        assertEquals(1, players[1].startCount)
+        // Sonar-off prepare() arms nothing, so the lazily-armed bowl is
+        // the only player.
+        assertEquals(1, players.size)
+        assertEquals(1, players[0].startCount)
         // Bowl volume = sonarVolume × 1 (iOS `play(player)` default scale).
-        assertEquals(0.6f, shadowOf(players[1] as MediaPlayer).leftVolume, 0.001f)
+        assertEquals(0.6f, shadowOf(players[0] as MediaPlayer).leftVolume, 0.001f)
     }
 
     // ─── Focus denial (Android-only failure mode) ────────────────────

@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -84,6 +85,7 @@ class SeekOrchestratorTest {
     private lateinit var repository: WalkRepository
 
     private val walkState = MutableStateFlow<WalkState>(WalkState.Idle)
+    private val processForeground = MutableStateFlow(true)
     private val sessionStore = SeekSessionStore()
     private val fixes = MutableSharedFlow<LocationPoint>(extraBufferCapacity = 64)
     private val tiers = MutableSharedFlow<SeekPowerTier>(extraBufferCapacity = 4)
@@ -130,8 +132,18 @@ class SeekOrchestratorTest {
 
     private inner class FakeSeekLocationSource : LocationSource {
         var lastKnown: LocationPoint? = null
+
+        /** Non-null: the raw feed emits one fix at [home], then throws. */
+        var rawLocationFailure: Throwable? = null
+
         override fun locationFlow(): Flow<LocationPoint> = fixes
-        override fun rawLocationFlow(): Flow<LocationPoint> = fixes
+        override fun rawLocationFlow(): Flow<LocationPoint> {
+            val failure = rawLocationFailure ?: return fixes
+            return flow {
+                emit(fix(home))
+                throw failure
+            }
+        }
         override suspend fun lastKnownLocation(): LocationPoint? = lastKnown
     }
 
@@ -188,6 +200,7 @@ class SeekOrchestratorTest {
             repository = repository,
             locationSource = locationSource,
             powerTiers = tiers,
+            processForeground = processForeground,
             senses = senses(),
             soundsPreferences = soundsPrefs,
             clock = clock,
@@ -790,6 +803,121 @@ class SeekOrchestratorTest {
             assertEquals(1, sound.bowlCount)
             assertEquals(2, orchestrator.fogState.value!!.circles.size)
         }
+
+    // ─── Pre-departure foreground bound (abandoned ready screen) ─────
+
+    @Test
+    fun `backgrounding an unadopted session mutes senses and releases the sonar channel`() =
+        runTest(dispatcher) {
+            val chain = chain(1)
+            val orchestrator = startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+            emitFix(home)
+            assertEquals(1, sound.prepareCount)
+
+            processForeground.value = false
+            runCurrent()
+            assertTrue("background releases players + focus", sound.stopCount >= 1)
+
+            val distance = SeekChainGenerator.distance(home, chain.clearings[0].center)
+            val interval = SeekEngine.pulseIntervalMillis(distance, SeekPowerTier.NORMAL)
+            advanceTimeBy(interval + 1)
+            runCurrent()
+            assertEquals("no walk, no foreground — no pings from a pocket", 0, sound.pings.size)
+            assertTrue("no haptics either", ops.none { it.startsWith("haptic") })
+
+            processForeground.value = true
+            runCurrent()
+            assertEquals("foreground re-arms the sonar channel", 2, sound.prepareCount)
+            advanceTimeBy(interval + 1)
+            runCurrent()
+            assertEquals("the ready screen resumes seamlessly", 1, sound.pings.size)
+        }
+
+    @Test
+    fun `an adopted session keeps its senses through backgrounding`() = runTest(dispatcher) {
+        val chain = chain(1)
+        startOrchestrator()
+        startSeekWalk(chain)
+        emitFix(home)
+
+        processForeground.value = false
+        runCurrent()
+        assertEquals("a recording walk is untouched by backgrounding", 0, sound.stopCount)
+
+        val distance = SeekChainGenerator.distance(home, chain.clearings[0].center)
+        advanceTimeBy(SeekEngine.pulseIntervalMillis(distance, SeekPowerTier.NORMAL) + 1)
+        runCurrent()
+        assertEquals("pings continue with the screen off", 1, sound.pings.size)
+    }
+
+    // ─── Dead location feed (SecurityException swallow) ──────────────
+
+    @Test
+    fun `location feed SecurityException dies quietly - sibling collectors survive`() =
+        runTest(dispatcher) {
+            locationSource.rawLocationFailure =
+                SecurityException("fine location revoked mid-session")
+            val chain = chain(1)
+            val orchestrator = startOrchestrator()
+            sessionStore.set(pendingSession(chain))
+            runCurrent()
+            assertEquals("boot survives the dying feed", 1, sound.prepareCount)
+
+            // One fix landed before the feed died, so the pulse clock is
+            // armed — the engine-events collector (a sibling of the dead
+            // feed) still routes the ping.
+            val distance = SeekChainGenerator.distance(home, chain.clearings[0].center)
+            advanceTimeBy(SeekEngine.pulseIntervalMillis(distance, SeekPowerTier.NORMAL) + 1)
+            runCurrent()
+            assertEquals("event routing survives the dead feed", 1, sound.pings.size)
+
+            // The walk-state/pending combine collector survives too:
+            // abandonment still tears the session down.
+            sessionStore.clear()
+            runCurrent()
+            assertTrue(sound.stopCount >= 1)
+            assertNull(orchestrator.fogState.value)
+        }
+
+    // ─── Leftover-pending boot suppression after Finished ─────────────
+
+    @Test
+    fun `a pending seeded before the finished walk's end never boots`() = runTest(dispatcher) {
+        startOrchestrator()
+        walkState.value = WalkState.Finished(
+            WalkAccumulator(walkId = 5L, startedAt = 0L, mode = WalkMode.Seek),
+            endedAt = nowMs,
+        )
+        runCurrent()
+
+        // seededAtEpochMillis == endedAt: the finished walk's leftover.
+        sessionStore.set(pendingSession(chain(1)))
+        runCurrent()
+        advanceTimeBy(120_000)
+        runCurrent()
+
+        assertEquals("a leftover pending must not reboot the engine", 0, sound.prepareCount)
+        assertTrue(ops.isEmpty())
+    }
+
+    @Test
+    fun `a pending staged after the finished walk's end boots`() = runTest(dispatcher) {
+        startOrchestrator()
+        val endedAt = nowMs
+        walkState.value = WalkState.Finished(
+            WalkAccumulator(walkId = 5L, startedAt = 0L, mode = WalkMode.Seek),
+            endedAt = endedAt,
+        )
+        runCurrent()
+
+        nowMs += 60_000
+        sessionStore.set(pendingSession(chain(1)))
+        runCurrent()
+
+        assertEquals("a fresh setup after the summary screen boots", 1, sound.prepareCount)
+    }
 
     // ─── Reveal whisper (R15) ────────────────────────────────────────
 

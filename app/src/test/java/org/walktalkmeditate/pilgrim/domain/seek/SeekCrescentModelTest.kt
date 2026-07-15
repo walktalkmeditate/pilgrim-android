@@ -149,14 +149,28 @@ class SeekCrescentModelTest {
     }
 
     @Test
-    fun `unprojectable fog never releases and always returns`() {
+    fun `unprojectable fog never releases`() {
         // Mapbox's pixelForCoordinate collapses every off-view coordinate
         // to (-1, -1); the renderer maps that to null. iOS field
         // regression 174e9e0: the sentinel used to read as a circle
         // grazing the top-left corner, releasing the crescent on the
         // first camera event and pinning it released forever.
         assertFalse("off-screen fog must not release", release(wasReleased = false, centerX = null, centerY = null))
-        assertFalse("off-screen fog must hand the crescent back", release(wasReleased = true, centerX = null, centerY = null))
+    }
+
+    @Test
+    fun `released fog that clamps off view holds released - no edge strobe`() {
+        // The clamp fires the instant the center crosses the raw edge,
+        // losing HOW far past it the fog lies. Finite → null → finite
+        // while released must hold — flipping back on null bypasses the
+        // ±24 px hysteresis band and replays the handoff exhale on every
+        // edge crossing during a pan.
+        assertTrue(release(wasReleased = true, centerX = 399.0, centerY = 400.0, radius = 100.0))
+        assertTrue(
+            "clamped-off-view center must hold the released state",
+            release(wasReleased = true, centerX = null, centerY = null, radius = 100.0),
+        )
+        assertTrue(release(wasReleased = true, centerX = 399.0, centerY = 400.0, radius = 100.0))
     }
 
     @Test
