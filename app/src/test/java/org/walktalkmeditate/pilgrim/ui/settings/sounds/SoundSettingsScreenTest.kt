@@ -48,6 +48,7 @@ import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
+import org.walktalkmeditate.pilgrim.data.seek.FakeSeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionRepository
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -83,6 +84,7 @@ class SoundSettingsScreenTest {
     private lateinit var fileStore: SoundscapeFileStore
     private lateinit var selectionRepo: SoundscapeSelectionRepository
     private lateinit var soundsRepo: FakeSoundsPreferencesRepository
+    private lateinit var seekRepo: FakeSeekPreferencesRepository
     private lateinit var manifestCacheFile: File
 
     @Before
@@ -129,10 +131,15 @@ class SoundSettingsScreenTest {
         Dispatchers.resetMain()
     }
 
-    private fun newVm(soundsEnabled: Boolean = true): SoundSettingsViewModel {
+    private fun newVm(
+        soundsEnabled: Boolean = true,
+        sonarEnabled: Boolean = true,
+    ): SoundSettingsViewModel {
         soundsRepo = FakeSoundsPreferencesRepository(initialSoundsEnabled = soundsEnabled)
+        seekRepo = FakeSeekPreferencesRepository(initialSonarEnabled = sonarEnabled)
         return SoundSettingsViewModel(
             soundsPreferences = soundsRepo,
+            seekPreferences = seekRepo,
             soundscapeSelection = selectionRepo,
             manifestService = manifestService,
             fileStore = fileStore,
@@ -174,6 +181,9 @@ class SoundSettingsScreenTest {
         composeRule.onAllNodesWithTextFilter("Sounds").assertCountEquals(2)
         composeRule.onNodeWithText("Walk").assertExists()
         val list = composeRule.onNode(hasScrollAction())
+        list.performScrollToNode(hasText("Seek"))
+        composeRule.onNodeWithText("Seek").assertExists()
+        composeRule.onNodeWithText("Sonar").assertExists()
         list.performScrollToNode(hasText("Meditation"))
         composeRule.onNodeWithText("Meditation").assertExists()
         list.performScrollToNode(hasText("Volume"))
@@ -195,9 +205,30 @@ class SoundSettingsScreenTest {
             }
         }
         composeRule.onNodeWithText("Walk").assertDoesNotExist()
+        composeRule.onNodeWithText("Seek").assertDoesNotExist()
         composeRule.onNodeWithText("Meditation").assertDoesNotExist()
         composeRule.onNodeWithText("Volume").assertDoesNotExist()
         composeRule.onNodeWithText("Storage").assertDoesNotExist()
+    }
+
+    @Test
+    fun `sonar volume slider only shows while sonar is enabled`() = runBlocking<Unit> {
+        val vm = newVm(sonarEnabled = false)
+        composeRule.setContent {
+            PilgrimTheme {
+                SoundSettingsScreen(
+                    onAction = {},
+                    onBack = {},
+                    viewModel = vm,
+                )
+            }
+        }
+        val list = composeRule.onNode(hasScrollAction())
+        list.performScrollToNode(hasText("Sonar"))
+        composeRule.onNodeWithTag(SOUNDS_SONAR_VOLUME_SLIDER_TAG).assertDoesNotExist()
+        seekRepo.setSonarEnabled(true)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SOUNDS_SONAR_VOLUME_SLIDER_TAG).assertExists()
     }
 
     @Test

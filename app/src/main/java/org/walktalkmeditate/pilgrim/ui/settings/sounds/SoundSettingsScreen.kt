@@ -54,11 +54,12 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * wrapped in the shared [settingsCard] modifier:
  *  1. Master toggle + (when on) bell-haptic toggle
  *  2. Walk: per-event bell pickers
- *  3. Meditation: per-event bell pickers + soundscape selector + breath rhythm
- *  4. Volume: bell + soundscape sliders
- *  5. Storage: cache size + clear-all action
+ *  3. Seek: sonar toggle + volume mirror (U13)
+ *  4. Meditation: per-event bell pickers + soundscape selector + breath rhythm
+ *  5. Volume: bell + soundscape sliders
+ *  6. Storage: cache size + clear-all action
  *
- * Sections 2-5 are gated on [SoundSettingsViewModel.soundsEnabled]
+ * Sections 2-6 are gated on [SoundSettingsViewModel.soundsEnabled]
  * and animated via `AnimatedVisibility` (`expandVertically + fadeIn`)
  * to match iOS's `easeInOut(duration: 0.2)` toggle reveal.
  *
@@ -83,6 +84,8 @@ fun SoundSettingsScreen(
     val meditationStartBellId by viewModel.meditationStartBellId.collectAsStateWithLifecycle()
     val meditationEndBellId by viewModel.meditationEndBellId.collectAsStateWithLifecycle()
     val breathRhythmId by viewModel.breathRhythm.collectAsStateWithLifecycle()
+    val sonarEnabled by viewModel.sonarEnabled.collectAsStateWithLifecycle()
+    val sonarVolume by viewModel.sonarVolume.collectAsStateWithLifecycle()
     val selectedSoundscapeId by viewModel.selectedSoundscapeId.collectAsStateWithLifecycle()
     val availableBells by viewModel.availableBells.collectAsStateWithLifecycle()
     val availableSoundscapes by viewModel.availableSoundscapes.collectAsStateWithLifecycle()
@@ -131,6 +134,23 @@ fun SoundSettingsScreen(
                         availableBells = availableBells,
                         onOpenWalkStart = { activePicker = BellPickerTarget.WalkStart },
                         onOpenWalkEnd = { activePicker = BellPickerTarget.WalkEnd },
+                    )
+                }
+            }
+
+            item {
+                AnimatedVisibility(
+                    visible = soundsEnabled,
+                    enter = fadeIn(animationSpec = tween(200)) +
+                        expandVertically(animationSpec = tween(200)),
+                    exit = fadeOut(animationSpec = tween(200)) +
+                        shrinkVertically(animationSpec = tween(200)),
+                ) {
+                    SeekSection(
+                        sonarEnabled = sonarEnabled,
+                        sonarVolume = sonarVolume,
+                        onSetSonarEnabled = viewModel::setSonarEnabled,
+                        onSetSonarVolume = viewModel::setSonarVolume,
                     )
                 }
             }
@@ -302,6 +322,60 @@ private fun WalkSection(
             detail = bellDisplayName(walkEndBellId, availableBells, noneLabel),
             onClick = onOpenWalkEnd,
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * U13 port of iOS `SeekSonarSection`
+ * (`SoundSettingsView.swift:445-475@c1745e8`): sonar toggle, volume
+ * slider revealed only while enabled, and the guiding-ping caption as
+ * the section footer. Reads/writes the same [SeekPreferencesRepository
+ * ][org.walktalkmeditate.pilgrim.data.seek.SeekPreferencesRepository]
+ * keys as the in-walk options sheet.
+ */
+@Composable
+private fun SeekSection(
+    sonarEnabled: Boolean,
+    sonarVolume: Float,
+    onSetSonarEnabled: (Boolean) -> Unit,
+    onSetSonarVolume: (Float) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .settingsCard()
+            .testTag(SOUNDS_SEEK_SECTION_TAG),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CardHeader(
+            title = stringResource(R.string.seek_section_title),
+            subtitle = "",
+        )
+        SettingToggle(
+            label = stringResource(R.string.seek_sonar_title),
+            description = "",
+            checked = sonarEnabled,
+            onCheckedChange = onSetSonarEnabled,
+        )
+        AnimatedVisibility(
+            visible = sonarEnabled,
+            enter = fadeIn(animationSpec = tween(200)) +
+                expandVertically(animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(200)) +
+                shrinkVertically(animationSpec = tween(200)),
+        ) {
+            VolumeRow(
+                label = stringResource(R.string.seek_sonar_volume_title),
+                volume = sonarVolume,
+                onChange = onSetSonarVolume,
+                testTag = SOUNDS_SONAR_VOLUME_SLIDER_TAG,
+            )
+        }
+        Text(
+            text = stringResource(R.string.seek_sonar_settings_caption),
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
         )
     }
 }
@@ -553,6 +627,8 @@ internal enum class BellPickerTarget {
 
 internal const val SOUNDS_MAIN_SECTION_TAG = "SoundSettings.main"
 internal const val SOUNDS_WALK_SECTION_TAG = "SoundSettings.walk"
+internal const val SOUNDS_SEEK_SECTION_TAG = "SoundSettings.seek"
+internal const val SOUNDS_SONAR_VOLUME_SLIDER_TAG = "SoundSettings.sonarVolume"
 internal const val SOUNDS_MEDITATION_SECTION_TAG = "SoundSettings.meditation"
 internal const val SOUNDS_VOLUME_SECTION_TAG = "SoundSettings.volume"
 internal const val SOUNDS_STORAGE_SECTION_TAG = "SoundSettings.storage"
