@@ -436,8 +436,11 @@ fun HomeScreen(
                                         }
 
                                         // Animated scenery — drawn
-                                        // behind the dot.
-                                        val scenery = remember(snap.uuid, snap.startMs) {
+                                        // behind the dot. Keyed on the
+                                        // whole snapshot: the placement
+                                        // also depends on threshold /
+                                        // foundPlaces / isSeek (U14).
+                                        val scenery = remember(snap) {
                                             SceneryGenerator.pick(snap)
                                         }
                                         if (scenery != null) {

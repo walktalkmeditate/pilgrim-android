@@ -33,7 +33,7 @@ internal fun SceneryItem(
     }
 
     val baseTokens = pilgrimColors
-    val baseColor = when (placement.type.tintTokenName) {
+    val baseColor = when (placement.tintTokenName) {
         "moss" -> baseTokens.moss
         "stone" -> baseTokens.stone
         "dawn" -> baseTokens.dawn
@@ -98,6 +98,10 @@ internal fun SceneryItem(
             walkDateMs = snapshot.startMs,
             parchmentColor = parchmentColor,
         )
+        // U15 renders these — cairn stones and drift's seasonal faces.
+        // Until then the placement composes to nothing so the journal
+        // stays green with the U14 data model in place.
+        SceneryType.Cairn, SceneryType.Drift -> Unit
     }
 }
 

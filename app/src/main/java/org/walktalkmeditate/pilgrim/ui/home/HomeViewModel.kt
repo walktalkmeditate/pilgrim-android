@@ -44,6 +44,8 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
+import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones
+import org.walktalkmeditate.pilgrim.ui.home.scenery.WalkThresholds
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
@@ -200,6 +202,7 @@ class HomeViewModel internal constructor(
             val meditateSec: Long,
         )
         val seekWalkIds = fetchSeekWalkIds()
+        val arrivalCounts = fetchArrivalCounts()
         // Parallelize per-walk DAO reads — kaijutsu PR #86 review caught
         // sequential N reads stuttering at 100+ walks. Each walk's
         // locationSamplesFor + walkEventsFor + activitySumsFor are
@@ -207,8 +210,11 @@ class HomeViewModel internal constructor(
         // ioDispatcher (parent context) but I/O parallelism wins on
         // multi-walk emissions. Stage 13-XZ PromptsCoordinator.buildContext
         // pattern.
+        // Chronological order carries the uuid tie-break so the journal's
+        // threshold accumulation and the goshuin seals' `arrivalsBefore`
+        // (both GoshuinMilestones.isOrderedBefore semantics) always agree.
         val perWalk = coroutineScope {
-            walks.sortedBy { it.startTimestamp }.map { walk ->
+            walks.sortedWith(compareBy({ it.startTimestamp }, { it.uuid })).map { walk ->
                 async {
                     val samples = if (walk.distanceMeters == null) {
                         repository.locationSamplesFor(walk.id).map {
@@ -232,6 +238,16 @@ class HomeViewModel internal constructor(
 
         // Default: CPU-only reduce + format.
         val loaded = withContext(defaultDispatcher) {
+            val thresholds = WalkThresholds.compute(
+                walks = perWalk.map { input ->
+                    WalkThresholds.WalkRef(
+                        walkId = input.walk.id,
+                        uuid = input.walk.uuid,
+                        startMs = input.walk.startTimestamp,
+                    )
+                },
+                foundPlacesByWalkId = arrivalCounts,
+            )
             var cumulative = 0.0
             val oldestFirstSnapshots = perWalk.map { input ->
                 cumulative += input.distanceM
@@ -254,6 +270,8 @@ class HomeViewModel internal constructor(
                     weatherCondition = input.walk.weatherCondition,
                     isArchived = input.walk.uuid in archivedUuids,
                     isSeek = input.walk.id in seekWalkIds,
+                    foundPlaces = arrivalCounts[input.walk.id] ?: 0,
+                    threshold = thresholds[input.walk.id],
                 )
             }
             val newestFirst = oldestFirstSnapshots.reversed()
@@ -288,6 +306,23 @@ class HomeViewModel internal constructor(
     } catch (t: Throwable) {
         android.util.Log.w("HomeViewModel", "seek walk-id fetch failed; glyphs fall back to wander", t)
         emptySet()
+    }
+
+    /**
+     * Arrival counts per walk (reserved-icon waypoints) via the single
+     * U12 bulk waypoint-icons query — one read for the whole journal,
+     * exactly like iOS `GoshuinMilestones.arrivalCounts(for: walks)`
+     * computed once in `buildSnapshots`. Feeds the ink scroll's cairns
+     * and seeking gates; a failed fetch degrades those two surfaces
+     * (practice gates need no arrivals), never the journal.
+     */
+    private suspend fun fetchArrivalCounts(): Map<Long, Int> = try {
+        GoshuinMilestones.arrivalCounts(repository.waypointIconsByWalk())
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (t: Throwable) {
+        android.util.Log.w("HomeViewModel", "waypoint-icon fetch failed; cairns and seeking gates degrade", t)
+        emptyMap()
     }
 
     fun setExpandedSnapshotId(id: Long?) {

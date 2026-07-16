@@ -6,6 +6,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,7 +16,12 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.home.empty.EmptyJournalState
 import org.walktalkmeditate.pilgrim.ui.home.expand.ExpandCardSheet
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryPlacement
+import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryType
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 /**
  * Smoke-only Stage 14-BCD task 9 integration assertion. Asserts that
@@ -69,5 +76,37 @@ class JournalScreenIntegrationTest {
             }
         }
         composeRule.onNodeWithText("View details").assertIsDisplayed()
+    }
+
+    @Test
+    fun scenery_item_composes_for_cairn_and_drift_placements() {
+        // U14 guard: cairn/drift are model-complete but render as a
+        // passthrough until U15 — the journal must still compose.
+        composeRule.setContent {
+            PilgrimTheme {
+                SceneryItem(
+                    placement = SceneryPlacement(
+                        type = SceneryType.Cairn,
+                        side = ScenerySide.Left,
+                        offset = 0f,
+                        stones = 5,
+                    ),
+                    snapshot = snap.copy(isSeek = true, foundPlaces = 3),
+                    sizeDp = 24.dp,
+                    hemisphere = Hemisphere.Northern,
+                )
+                SceneryItem(
+                    placement = SceneryPlacement(
+                        type = SceneryType.Drift,
+                        side = ScenerySide.Right,
+                        offset = 0f,
+                    ),
+                    snapshot = snap,
+                    sizeDp = 24.dp,
+                    hemisphere = Hemisphere.Northern,
+                )
+            }
+        }
+        composeRule.onRoot().assertExists()
     }
 }
