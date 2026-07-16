@@ -5,6 +5,8 @@ import android.app.Application
 import androidx.compose.ui.geometry.Offset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,5 +66,32 @@ class MoonSceneryTest {
         val bounds = waxing.getBounds()
         assertEquals(70f, bounds.right, 0.5f)
         assertTrue("sliver keeps the right edge", bounds.right > 50f)
+    }
+
+    @Test
+    fun `waning carve path leaves the sliver on the left limb`() {
+        val waning = moonPhaseCarvePath(
+            center = Offset(50f, 50f),
+            diameter = 40f,
+            illumination = 0f,
+            waxing = false,
+        )
+        assertFalse(waning.isEmpty)
+        val bounds = waning.getBounds()
+        assertEquals(30f, bounds.left, 0.5f)
+        assertTrue("sliver stays off the right edge", bounds.right < 70f)
+    }
+
+    @Test
+    fun `carve cache reuses the path until the draw geometry changes`() {
+        val cache = MoonCarveCache(illumination = 0.6f, waxing = true)
+        val center = Offset(50f, 50f)
+        val first = cache.pathFor(center = center, diameter = 40f)
+        assertSame(first, cache.pathFor(center = center, diameter = 40f))
+
+        val resized = cache.pathFor(center = center, diameter = 48f)
+        assertNotSame(first, resized)
+        assertSame(resized, cache.pathFor(center = center, diameter = 48f))
+        assertNotSame(resized, cache.pathFor(center = Offset(60f, 60f), diameter = 48f))
     }
 }

@@ -285,12 +285,24 @@ the eager-render cost is acceptable"). U16 does not add virtualization;
 it verifies the new types keep the eager render bounded:
 
 - Composition stays N-proportional: placements are `remember(snap)`-ed,
-  and per-frame work is draw-phase only (scenery clocks are the shared
-  `sceneryTimeSeconds()` 300 s infinite transition; parallax/alpha are
-  graphicsLayer-lambda reads).
+  and per-frame work is draw-phase only (scenery clocks are ~~the shared
+  `sceneryTimeSeconds()` 300 s infinite transition~~ the
+  `sceneryTimeSeconds()` 300 s infinite-transition idiom; parallax/alpha
+  are graphicsLayer-lambda reads). **Corrected 2026-07-15 (P15 review):**
+  "shared" overstated it. Each `sceneryTimeSeconds()` call creates its
+  OWN `rememberInfiniteTransition` instance — roughly one clock per
+  animating scenery item, not one process-wide clock. The clocks are
+  phase-locked by construction (identical 0→300 s linear spec started at
+  composition) but each is an independent animation subscription
+  invalidating its own Canvas per frame, so a deep journal runs ~one
+  subscription per animated item, offscreen included. A true
+  shared-clock optimization (hoist one transition to the journal and
+  pass the `State<Float>` down) is a known candidate but is DEFERRED
+  pending the R12 deep-journal device-QA pass — measure the real cost
+  before buying the plumbing.
 - Cairn subscribes to **no** clock (U15: deliberately static); drift
-  joins the same shared-clock idiom as the seven pre-existing types — no
-  new per-frame recomposition class.
+  joins the same per-item clock idiom as the seven pre-existing types —
+  no new per-frame recomposition class.
 - Pinned by test: a 90-walk journal's worth of scenery (forced gates,
   cairns, drift among the lottery) composes in one pass
   (`JournalScreenIntegrationTest.deep_journal_scenery_composes_at_scale`).

@@ -47,6 +47,7 @@ internal fun MoonScenery(
     }
     val illumination = moonPhase.illumination.toFloat()
     val waxing = moonPhase.isWaxing
+    val carveCache = remember(walkDateMs) { MoonCarveCache(illumination, waxing) }
 
     val timeSec by sceneryTimeSeconds()
 
@@ -83,12 +84,7 @@ internal fun MoonScenery(
         // off as illumination grows. Rays / stars / clouds / halo stay
         // un-carved, matching the iOS mask scope.
         val mSize = s * MOON_PHASE_SCALE
-        val carve = moonPhaseCarvePath(
-            center = Offset(cx, cy),
-            diameter = mSize,
-            illumination = illumination,
-            waxing = waxing,
-        )
+        val carve = carveCache.pathFor(center = Offset(cx, cy), diameter = mSize)
         clipPath(carve) {
             // Crescent ghost (1.06×, low alpha, slight offset).
             translate(left = cx - mSize * 1.06f / 2f + 1f, top = cy - mSize * 1.06f / 2f + 1f) {
@@ -152,6 +148,32 @@ internal const val MOON_PHASE_SCALE = 0.9f
  */
 internal fun moonCarveOffsetFraction(illumination: Float, waxing: Boolean): Float =
     (if (waxing) -1f else 1f) * max(illumination, 0.08f)
+
+/**
+ * Composition-hoisted carve holder (the P4 idiom, one step further):
+ * the draw block re-runs every frame chasing the animated clock, but
+ * the carve depends only on the remembered phase and the canvas
+ * geometry — canvas size is unknowable at composition, so the path is
+ * built lazily in draw and rebuilt only when the geometry changes,
+ * instead of running 2×addOval + a boolean Difference per frame.
+ */
+internal class MoonCarveCache(
+    private val illumination: Float,
+    private val waxing: Boolean,
+) {
+    private var cachedCenter: Offset = Offset.Zero
+    private var cachedDiameter: Float = 0f
+    private var cachedPath: Path? = null
+
+    fun pathFor(center: Offset, diameter: Float): Path {
+        val hit = cachedPath
+        if (hit != null && center == cachedCenter && diameter == cachedDiameter) return hit
+        cachedCenter = center
+        cachedDiameter = diameter
+        return moonPhaseCarvePath(center, diameter, illumination, waxing)
+            .also { cachedPath = it }
+    }
+}
 
 /**
  * Base disc minus offset shadow disc. iOS carves with a

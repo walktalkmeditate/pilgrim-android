@@ -237,18 +237,7 @@ fun HomeScreen(
             topInsetPx + verticalSpacingPx * it + verticalSpacingPx / 2f
         }
     }
-    // Gates and cairns speak their own touch — same decision order as
-    // SceneryGenerator.pick, duplicated here exactly as iOS duplicates it
-    // in configureHaptics (InkScrollView.swift:692-696@c1745e8).
-    val dotKinds = remember(snapshots) {
-        snapshots.map { snap ->
-            when {
-                snap.threshold != null -> DotHapticKind.Gate
-                snap.isSeek && snap.foundPlaces > 0 -> DotHapticKind.Cairn
-                else -> DotHapticKind.Plain
-            }
-        }
-    }
+    val dotKinds = remember(snapshots) { snapshots.map(::dotHapticKind) }
     val hapticState = remember(snapshots, dotThresholdPx, milestoneThresholdPx, largeDotCutoffPx) {
         ScrollHapticState(
             dotPositionsPx = dotYsPx,
@@ -795,5 +784,19 @@ fun HomeScreen(
             }
         }
     }
+}
+
+/**
+ * Gates and cairns speak their own touch — same decision order as
+ * SceneryGenerator.pick's deterministic branch, duplicated exactly as
+ * iOS duplicates it in configureHaptics
+ * (InkScrollView.swift:692-696@c1745e8). DotHapticKindLockstepTest pins
+ * the two sites against each other so a one-sided edit can't ship a
+ * gate haptic with no gate on screen.
+ */
+internal fun dotHapticKind(snapshot: WalkSnapshot): DotHapticKind = when {
+    snapshot.threshold != null -> DotHapticKind.Gate
+    snapshot.isSeek && snapshot.foundPlaces > 0 -> DotHapticKind.Cairn
+    else -> DotHapticKind.Plain
 }
 

@@ -65,15 +65,42 @@ internal fun driftFace(month: Int): DriftFace = when (month) {
     else -> DriftFace.WinterFlurry
 }
 
+// Per-particle tables, U15-spec verbatim — pinned by DriftSceneryTest
+// the way CairnScenery pins cairnStoneRects and ToriiScenery pins
+// ShimenawaGeometry.
+
+/** (phase, speed, radius fraction) per petal. */
+internal val PETAL_PARTICLES: List<Triple<Float, Float, Float>> = listOf(
+    Triple(0.0f, 0.09f, 0.055f),
+    Triple(2.1f, 0.13f, 0.045f),
+    Triple(4.0f, 0.07f, 0.06f),
+    Triple(1.2f, 0.11f, 0.04f),
+    Triple(5.3f, 0.15f, 0.05f),
+)
+
+/** (phase, x wander frequency, y wander frequency) per mote. */
+internal val FIREFLY_MOTES: List<Triple<Float, Float, Float>> = listOf(
+    Triple(0.0f, 0.31f, 0.23f),
+    Triple(2.4f, 0.19f, 0.37f),
+    Triple(4.7f, 0.27f, 0.17f),
+)
+
+/** Hover phase per dragonfly. */
+internal val DRAGONFLY_PHASES: List<Double> = listOf(0.0, 2.6)
+
+internal val SNOW_FLAKES: List<Flake> = listOf(
+    Flake(0.0f, 0.10f, -0.30f, 0.030f),
+    Flake(1.7f, 0.14f, 0.10f, 0.022f),
+    Flake(3.2f, 0.08f, 0.35f, 0.026f),
+    Flake(4.5f, 0.12f, -0.12f, 0.020f),
+    Flake(2.6f, 0.09f, 0.24f, 0.028f),
+    Flake(5.5f, 0.13f, -0.38f, 0.018f),
+)
+
+internal data class Flake(val phase: Float, val speed: Float, val x: Float, val r: Float)
+
 private fun DrawScope.drawPetalDrift(timeSec: Float, cx: Float, cy: Float, s: Float) {
-    val petals = listOf(
-        Triple(0.0f, 0.09f, 0.055f),
-        Triple(2.1f, 0.13f, 0.045f),
-        Triple(4.0f, 0.07f, 0.06f),
-        Triple(1.2f, 0.11f, 0.04f),
-        Triple(5.3f, 0.15f, 0.05f),
-    )
-    for ((phase, speed, r) in petals) {
+    for ((phase, speed, r) in PETAL_PARTICLES) {
         val progress = ((timeSec * speed + phase) % 1.6f) / 1.6f
         val px = cx + s * (-0.45f + progress * 0.9f) +
             (sin(timeSec * 0.8 + phase) * 3.0).toFloat()
@@ -98,12 +125,7 @@ private fun DrawScope.drawFireflies(
     lit: Boolean,
     tintColor: Color,
 ) {
-    val motes = listOf(
-        Triple(0.0f, 0.31f, 0.23f),
-        Triple(2.4f, 0.19f, 0.37f),
-        Triple(4.7f, 0.27f, 0.17f),
-    )
-    for ((phase, fx, fy) in motes) {
+    for ((phase, fx, fy) in FIREFLY_MOTES) {
         val pulse = if (lit) ((sin(timeSec * 1.7 + phase * 2.0) + 1.0) / 2.0).toFloat() else 0f
         val color = if (lit) {
             FIREFLY_GLOW.copy(alpha = 0.12f + pulse * 0.38f)
@@ -122,8 +144,7 @@ private fun DrawScope.drawFireflies(
 }
 
 private fun DrawScope.drawDragonflies(timeSec: Float, cx: Float, cy: Float, s: Float) {
-    for (i in 0 until 2) {
-        val phase = i * 2.6
+    for (phase in DRAGONFLY_PHASES) {
         // Hover with the occasional sideways dart.
         val x = (sin(timeSec * 0.4 + phase) * s * 0.32 + sin(timeSec * 2.3 + phase) * s * 0.06).toFloat()
         val y = (cos(timeSec * 0.7 + phase) * s * 0.2 + sin(timeSec * 3.1 + phase) * 2.0).toFloat()
@@ -162,15 +183,7 @@ private fun DrawScope.drawDragonflyWing(
 }
 
 private fun DrawScope.drawSnowFlurry(timeSec: Float, cx: Float, cy: Float, s: Float) {
-    val flakes = listOf(
-        Flake(0.0f, 0.10f, -0.30f, 0.030f),
-        Flake(1.7f, 0.14f, 0.10f, 0.022f),
-        Flake(3.2f, 0.08f, 0.35f, 0.026f),
-        Flake(4.5f, 0.12f, -0.12f, 0.020f),
-        Flake(2.6f, 0.09f, 0.24f, 0.028f),
-        Flake(5.5f, 0.13f, -0.38f, 0.018f),
-    )
-    for (flake in flakes) {
+    for (flake in SNOW_FLAKES) {
         val progress = ((timeSec * flake.speed + flake.phase) % 1.4f) / 1.4f
         drawCircle(
             color = Color.White.copy(alpha = 0.32f * (1f - progress * 0.35f)),
@@ -182,8 +195,6 @@ private fun DrawScope.drawSnowFlurry(timeSec: Float, cx: Float, cy: Float, s: Fl
         )
     }
 }
-
-private data class Flake(val phase: Float, val speed: Float, val x: Float, val r: Float)
 
 /** iOS literal Color(1.0, 0.75, 0.82). */
 private val PETAL_PINK = Color(0xFFFFBFD1)

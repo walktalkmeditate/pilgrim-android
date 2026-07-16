@@ -290,9 +290,13 @@ class HomeViewModelJournalTest {
 
             // One bulk waypoint-icons query per snapshot build — the same
             // once-per-build cadence as the seek-id fetch, never per-walk
-            // faulting.
-            assertTrue(iconFetches.get() >= 1)
-            assertEquals(seekFetches.get(), iconFetches.get())
+            // faulting. All four combine sources emit exactly once here
+            // (walks pre-inserted, static fakes), so this single Loaded
+            // build fetches EXACTLY once for both reads — a symmetric
+            // per-walk regression (3 == 3) must fail, not just an
+            // asymmetric one.
+            assertEquals(1, iconFetches.get())
+            assertEquals(1, seekFetches.get())
             cancelAndIgnoreRemainingEvents()
         }
     }

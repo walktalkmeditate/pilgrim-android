@@ -55,6 +55,11 @@ class JournalHapticDispatcher internal constructor(
 
     private var lastDotDispatchNs: Long = 0L
     private val minIntervalNs: Long = 50_000_000L // 50 ms
+    // Delayed-tail spans of the composed vocabularies: the cairn's
+    // second CLICK lands at +120 ms, the gate/milestone LOW_TICK at
+    // +30 ms (buildEffect below).
+    private val cairnTailNs: Long = 120_000_000L
+    private val thumpTailNs: Long = 30_000_000L
     private val MAX_AMPLITUDE = 255
 
     fun dispatch(event: HapticEvent) {
@@ -84,6 +89,24 @@ class JournalHapticDispatcher internal constructor(
 
         val effect: VibrationEffect = buildEffect(event) ?: return
         v.vibrate(effect)
+        stampCompositionTail(event, nowNs)
+    }
+
+    /**
+     * `Vibrator.vibrate` replaces any in-flight effect, so a plain dot
+     * landing inside a composition's delayed tail (a fling over dense
+     * cairns) would truncate the success double to a single click.
+     * Stamping the throttle clock forward makes trailing plain dots
+     * wait out the tail plus the normal 50 ms interval — the interval
+     * doubles as the trailing primitive's duration margin. Kinds still
+     * bypass the ENTRY throttle (rare + important; iOS unthrottled).
+     */
+    private fun stampCompositionTail(event: HapticEvent, nowNs: Long) {
+        lastDotDispatchNs = when (event) {
+            is HapticEvent.CairnDot -> nowNs + cairnTailNs
+            is HapticEvent.GateDot, is HapticEvent.Milestone -> nowNs + thumpTailNs
+            else -> lastDotDispatchNs
+        }
     }
 
     private fun buildEffect(event: HapticEvent): VibrationEffect? {
