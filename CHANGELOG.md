@@ -3,6 +3,47 @@
 All notable changes to Pilgrim are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [1.2.0] — 2026-07-16
+
+Seek Mode and journal scenery — parity with iOS v1.8.0/1.8.1 (anchor `c1745e8`).
+
+### Seek Mode
+- A new walk mode: name an intention, choose how long you have, and follow a
+  quiet sonar through fog toward unknown clearings. The fog dissolves as you
+  arrive; a crescent on the map keeps the bearing honest.
+- Sonar pings tighten as a clearing nears, with haptic breaths at the gateway;
+  sonar volume and toggle live in the in-walk options sheet AND Settings →
+  Sounds (shared preference, mirrored live).
+- Arrival leaves a sun-haze waypoint; the walk summary gains a seek section
+  with provenance and clearing halos; goshuin seals mark seeking milestones.
+- The foreground notification carries a seek glance line (distance ladder +
+  direction), refreshed through screen-off pocket walks.
+- Survives process death mid-seek: staged sessions restore across the
+  two-process boundary; pre-departure GPS lock matches iOS's gateway boot.
+
+### Journal scenery
+- Walks can now stand at torii gates (practice + seeking thresholds decided
+  from real history), raise cairns for found places, and draw the season's
+  breath (drift: petals, fireflies, dragonflies, snow) — deterministic per
+  walk, backward-compatible with every previously rolled scenery item.
+- Moon scenery renders the real lunar phase of that night with a breathing
+  halo and swaying light shafts; lanterns light only after dusk.
+- Scenery gains depth-of-field parallax on scroll, ages with its walk
+  (seeking gates refuse the fade), and haptic dots mark gates and cairns.
+
+### Fixes
+- Journal walk dots no longer read flat black: the drop shadow is pinned to
+  true black (the adaptive ink inverted to a light halo in dark mode — the
+  same bug iOS fixed in 1.7.0) and the outer aura no longer age-fades.
+- Archived-walk rings match iOS (0.6× size, constant opacity, 44 dp target);
+  smallest dots get the full 44 dp tap target.
+- Scenery restored to iOS-verbatim 32–56 dp (the earlier 20–36 dp shrink
+  read as glyphs side-by-side against an iPhone).
+- Importing an archive with duplicate walk entries now resolves the winner
+  deterministically on every platform.
+- In-app feedback is tagged with its platform so reports route to the right
+  repo.
+
 ## [1.1.0] — 2026-07-01
 
 The iOS v1.7.0 (PR #45) parity sweep plus the PR #47 recording follow-up.
