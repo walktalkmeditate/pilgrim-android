@@ -103,11 +103,6 @@ import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 
-// Mirrors WalkDot.kt's HALO_SCALE = 3.5f / 2 — the box that wraps the
-// halo radial gradient is 3.5× the dot's core size, so half of that
-// scale centers the dot on its meander point.
-private const val HALO_HALF = 1.75f
-
 private val JOURNAL_ROW_HEIGHT = 90.dp
 private val JOURNAL_TOP_INSET_DP = 40.dp
 private val JOURNAL_MAX_MEANDER = 100.dp
@@ -413,7 +408,6 @@ fun HomeScreen(
                                     )
                                     s.snapshots.forEachIndexed { index, snap ->
                                         val dotSizeDp = WalkDotMath.dotSize(snap.durationSec)
-                                        val dotSizePx = sizesPx.getOrNull(index) ?: 0f
                                         val xPx = meanderXs.getOrNull(index)
                                             ?: (widthPx / 2f)
                                         val yPx = dotYsPx.getOrNull(index)
@@ -513,6 +507,14 @@ fun HomeScreen(
                                         }
                                         val dotColor = dotColors.getOrNull(index)
                                             ?: fallbackInk
+                                        // WalkDot's outer box is
+                                        // max(44dp, 3.5×size) for live dots
+                                        // and a fixed 44dp for archived
+                                        // rings (iOS a11y tap-target frame),
+                                        // so center on half the ACTUAL box.
+                                        val dotBoxHalfPx = with(density) {
+                                            (WalkDotMath.dotBoxDp(dotSizeDp, snap.isArchived) / 2f).dp.toPx()
+                                        }
                                         WalkDot(
                                             snapshot = snap,
                                             sizeDp = dotSizeDp,
@@ -529,8 +531,8 @@ fun HomeScreen(
                                             modifier = Modifier
                                                 .offset {
                                                     IntOffset(
-                                                        (xPx - dotSizePx * HALO_HALF).toInt(),
-                                                        (yPx - dotSizePx * HALO_HALF).toInt(),
+                                                        (xPx - dotBoxHalfPx).toInt(),
+                                                        (yPx - dotBoxHalfPx).toInt(),
                                                     )
                                                 }
                                                 .graphicsLayer { alpha = perDotAlpha },
