@@ -152,6 +152,25 @@ enum class SceneryType {
             Cairn -> "stone"
             Drift -> "fog"
         }
+
+    /**
+     * Parallax drift in dp at the viewport edge — depth of field for
+     * the scroll. Sky and horizon barely move; things at the walker's
+     * feet move most, and drift rides the air nearest of all.
+     * iOS `SceneryGenerator.swift:41-53@c1745e8` (points → dp).
+     */
+    val parallaxWeightDp: Float
+        get() = when (this) {
+            Mountain -> 3f
+            Moon -> 4f
+            Torii -> 6f
+            Tree -> 8f
+            Lantern -> 9f
+            Cairn -> 9f
+            Grass -> 12f
+            Butterfly -> 14f
+            Drift -> 16f
+        }
 }
 
 enum class ScenerySide { Left, Right }

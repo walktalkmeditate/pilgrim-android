@@ -88,7 +88,10 @@ import org.walktalkmeditate.pilgrim.ui.home.markers.computeLunarMarkers
 import org.walktalkmeditate.pilgrim.ui.home.markers.computeMilestonePositions
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
-import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
+import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryAgeAlpha
+import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryCenterPx
+import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryParallaxXPx
+import org.walktalkmeditate.pilgrim.ui.home.scroll.DotHapticKind
 import org.walktalkmeditate.pilgrim.ui.home.scroll.JournalHapticDispatcher
 import org.walktalkmeditate.pilgrim.ui.home.scroll.ScrollHapticState
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
@@ -234,11 +237,24 @@ fun HomeScreen(
             topInsetPx + verticalSpacingPx * it + verticalSpacingPx / 2f
         }
     }
+    // Gates and cairns speak their own touch — same decision order as
+    // SceneryGenerator.pick, duplicated here exactly as iOS duplicates it
+    // in configureHaptics (InkScrollView.swift:692-696@c1745e8).
+    val dotKinds = remember(snapshots) {
+        snapshots.map { snap ->
+            when {
+                snap.threshold != null -> DotHapticKind.Gate
+                snap.isSeek && snap.foundPlaces > 0 -> DotHapticKind.Cairn
+                else -> DotHapticKind.Plain
+            }
+        }
+    }
     val hapticState = remember(snapshots, dotThresholdPx, milestoneThresholdPx, largeDotCutoffPx) {
         ScrollHapticState(
             dotPositionsPx = dotYsPx,
             dotSizesPx = sizesPx,
             milestonePositionsPx = emptyList(),
+            dotKinds = dotKinds,
             largeDotCutoffPx = largeDotCutoffPx,
             dotThresholdPx = dotThresholdPx,
             milestoneThresholdPx = milestoneThresholdPx,
@@ -451,20 +467,51 @@ fun HomeScreen(
                                             val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 16f
                                             val scenerySizePx = with(density) { scenerySizeDp.dp.toPx() }
                                             val sceneryBoxPx = scenerySizePx * 2f
-                                            val xSign = if (scenery.side == ScenerySide.Left) -1f else 1f
-                                            val sceneryCenterX = xPx + xSign * (40f.dp.let { with(density) { it.toPx() } } + scenerySizePx / 2f) +
-                                                with(density) { scenery.offset.dp.toPx() }
-                                            val sceneryCenterY = yPx - with(density) { 4.dp.toPx() }
+                                            // Dot-relative placement — an offset from the
+                                            // dot's own canvas center, never an absolute
+                                            // scroll coordinate (iOS 3f9d3db bug class;
+                                            // U16 spec § 4).
+                                            val sceneryCenter = sceneryCenterPx(
+                                                dotXPx = xPx,
+                                                dotYPx = yPx,
+                                                scenerySizePx = scenerySizePx,
+                                                side = scenery.side,
+                                                jitterPx = with(density) { scenery.offset.dp.toPx() },
+                                                clearancePx = with(density) { 40.dp.toPx() },
+                                                liftPx = with(density) { 4.dp.toPx() },
+                                            )
+                                            // The item ages with its walk (the dot's own
+                                            // fade); seeking gates refuse the fade — old
+                                            // stone grows older, not fainter (6e80a91).
+                                            val sceneryAge = sceneryAgeAlpha(scenery.gateKind, opacity)
+                                            val parallaxWeightPx =
+                                                with(density) { scenery.type.parallaxWeightDp.dp.toPx() }
                                             Box(
                                                 modifier = Modifier
                                                     .offset {
                                                         IntOffset(
-                                                            (sceneryCenterX - sceneryBoxPx / 2f).toInt(),
-                                                            (sceneryCenterY - sceneryBoxPx / 2f).toInt(),
+                                                            (sceneryCenter.x - sceneryBoxPx / 2f).toInt(),
+                                                            (sceneryCenter.y - sceneryBoxPx / 2f).toInt(),
                                                         )
                                                     }
                                                     .size(scenerySizeDp.dp * 2f)
-                                                    .graphicsLayer { alpha = perSceneryAlpha }
+                                                    .graphicsLayer {
+                                                        alpha = perSceneryAlpha * sceneryAge
+                                                        // Per-type depth of field. Lambda-form
+                                                        // scroll reads (Stage 5-A): the scroll
+                                                        // invalidates only this layer's
+                                                        // placement, never composition. Stays
+                                                        // live under reduce-motion — iOS
+                                                        // applies its .visualEffect
+                                                        // unconditionally (scroll-driven, not
+                                                        // autonomous).
+                                                        translationX = sceneryParallaxXPx(
+                                                            sceneryCenterYPx = sceneryCenter.y,
+                                                            scrollOffsetPx = scrollState.value.toFloat(),
+                                                            viewportHeightPx = scrollState.viewportSize.toFloat(),
+                                                            weightPx = parallaxWeightPx,
+                                                        )
+                                                    }
                                                     .semantics { contentDescription = "" },
                                             ) {
                                                 SceneryItem(

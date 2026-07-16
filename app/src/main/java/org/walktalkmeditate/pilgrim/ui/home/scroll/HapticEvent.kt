@@ -7,4 +7,10 @@ sealed class HapticEvent {
     data class LightDot(val dotIndex: Int) : HapticEvent()
     data class HeavyDot(val dotIndex: Int) : HapticEvent()
     data class Milestone(val milestoneIndex: Int) : HapticEvent()
+
+    /** Crossing a threshold walk's torii — the milestone thump. */
+    data class GateDot(val dotIndex: Int) : HapticEvent()
+
+    /** Crossing a seek walk's cairn — the soft double of a found place. */
+    data class CairnDot(val dotIndex: Int) : HapticEvent()
 }

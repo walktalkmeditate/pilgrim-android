@@ -289,6 +289,32 @@ class SceneryGeneratorTest {
         }
     }
 
+    @Test
+    fun `parallax weight table is pinned per type`() {
+        // iOS SceneryGenerator.swift:41-53@c1745e8 — sky and horizon
+        // barely move; drift rides the air nearest of all.
+        val expected = mapOf(
+            SceneryType.Mountain to 3f,
+            SceneryType.Moon to 4f,
+            SceneryType.Torii to 6f,
+            SceneryType.Tree to 8f,
+            SceneryType.Lantern to 9f,
+            SceneryType.Cairn to 9f,
+            SceneryType.Grass to 12f,
+            SceneryType.Butterfly to 14f,
+            SceneryType.Drift to 16f,
+        )
+        assertEquals(SceneryType.entries.size, expected.size)
+        for (type in SceneryType.entries) {
+            assertEquals(
+                "parallax weight for $type",
+                expected.getValue(type),
+                type.parallaxWeightDp,
+                1e-4f,
+            )
+        }
+    }
+
     private data class LegacyPlacement(
         val type: SceneryType,
         val side: ScenerySide,

@@ -63,10 +63,13 @@ class JournalHapticDispatcher internal constructor(
         if (isReduceMotion()) return
 
         // kaijutsu PR #86 review: milestones bypass the throttle (rare +
-        // important events). Dot throttle remains to defend against
-        // scroll-fling flooding when crossing many dots in <50 ms.
+        // important events). Gates and cairns (U16) are the same class —
+        // first walk / every tenth / a seek that found places — and iOS
+        // fires every event unthrottled. Plain-dot throttle remains to
+        // defend against scroll-fling flooding when crossing many dots
+        // in <50 ms.
         val nowNs = SystemClock.elapsedRealtimeNanos()
-        if (event !is HapticEvent.Milestone) {
+        if (event is HapticEvent.LightDot || event is HapticEvent.HeavyDot) {
             if (nowNs - lastDotDispatchNs < minIntervalNs) return
             lastDotDispatchNs = nowNs
         }
@@ -100,12 +103,24 @@ class JournalHapticDispatcher internal constructor(
                 if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.85f)
                 composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.85f)
             }
-            is HapticEvent.Milestone -> {
+            // A torii speaks the milestone thump regardless of size — iOS
+            // routes gateDot through the same heavy-0.8 sensory-feedback
+            // slot as milestones (InkScrollView.swift:50-54@c1745e8).
+            is HapticEvent.Milestone, is HapticEvent.GateDot -> {
                 val canHeavy = supports(VibrationEffect.Composition.PRIMITIVE_CLICK)
                 val canLow = supports(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)
                 if (!canHeavy) return fallback(1.0f)
                 composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f)
                 if (canLow) composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.7f, 30)
+            }
+            is HapticEvent.CairnDot -> {
+                // The soft double of a found place — iOS `.success`
+                // (InkScrollView.swift:55-58@c1745e8) mapped to two soft
+                // rising clicks in this file's CLICK vocabulary, distinct
+                // from the milestone thump.
+                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.7f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.55f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.7f, 120)
             }
             is HapticEvent.None -> return null
         }

@@ -66,4 +66,61 @@ class ScrollHapticStateTest {
         val state = newState()
         assertEquals(HapticEvent.None, state.handleViewportCenterPx(50f))
     }
+
+    // ---- Dot-kind vocabulary (U16) — mirrors iOS
+    // ScrollHapticEngineTests.swift@c1745e8 (dots [100,200,300,500],
+    // sizes [10,20,10,20], kinds [plain, gate, cairn, plain]).
+
+    private fun kindState() = ScrollHapticState(
+        dotPositionsPx = listOf(100f, 200f, 300f, 500f),
+        dotSizesPx = listOf(10f, 20f, 10f, 20f),
+        milestonePositionsPx = emptyList(),
+        dotKinds = listOf(
+            DotHapticKind.Plain,
+            DotHapticKind.Gate,
+            DotHapticKind.Cairn,
+            DotHapticKind.Plain,
+        ),
+        largeDotCutoffPx = 15f,
+        dotThresholdPx = 20f,
+        milestoneThresholdPx = 25f,
+    )
+
+    @Test
+    fun `gate dot fires the gate event regardless of size`() {
+        // Dot 1 is size 20 (large — would be Heavy); the gate kind wins.
+        val event = kindState().handleViewportCenterPx(200f)
+        assertEquals(HapticEvent.GateDot(1), event)
+    }
+
+    @Test
+    fun `cairn dot fires the cairn event`() {
+        val event = kindState().handleViewportCenterPx(300f)
+        assertEquals(HapticEvent.CairnDot(2), event)
+    }
+
+    @Test
+    fun `plain dots keep the size vocabulary`() {
+        val state = kindState()
+        assertEquals(HapticEvent.LightDot(0), state.handleViewportCenterPx(100f))
+        assertEquals(HapticEvent.HeavyDot(3), state.handleViewportCenterPx(500f))
+    }
+
+    @Test
+    fun `same dot with a kind does not retrigger inside the window`() {
+        val state = kindState()
+        assertEquals(HapticEvent.GateDot(1), state.handleViewportCenterPx(200f))
+        assertEquals(HapticEvent.None, state.handleViewportCenterPx(205f))
+    }
+
+    @Test
+    fun `missing kinds fall back to size`() {
+        // No kinds configured = the old vocabulary.
+        val state = ScrollHapticState(
+            dotPositionsPx = listOf(100f),
+            dotSizesPx = listOf(20f),
+            milestonePositionsPx = emptyList(),
+        )
+        assertEquals(HapticEvent.HeavyDot(0), state.handleViewportCenterPx(100f))
+    }
 }
