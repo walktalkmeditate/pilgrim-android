@@ -971,6 +971,39 @@ class SeekOrchestratorTest {
         assertTrue("the final bowl closes the seeking quietly", playedWhispers.isEmpty())
     }
 
+    @Test
+    fun `an unchanged glance re-publishes after the keep-alive window`() = runTest(dispatcher) {
+        val chain = chain(1)
+        startOrchestrator()
+        startSeekWalk(chain)
+
+        val southOfHome = SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 50.0)
+        emitMovingFix(southOfHome, speedMps = 1.4f, courseDegrees = 0f)
+        assertEquals(1, publishedGlances.size)
+
+        // Same bucket + hint before the window (GPS jitter keeps the
+        // engine emitting; an identical fix would be deduped upstream):
+        // the value latch holds.
+        nowMs += 30_000L
+        emitMovingFix(
+            SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 49.0),
+            speedMps = 1.4f,
+            courseDegrees = 0f,
+        )
+        assertEquals(1, publishedGlances.size)
+
+        // Past the window: the equal-valued glance re-publishes so a
+        // revived :tracker instance recovers its seek line (finding #11).
+        nowMs += 31_000L
+        emitMovingFix(
+            SeekChainGenerator.destination(home, bearingDegrees = 180.0, distanceMeters = 48.0),
+            speedMps = 1.4f,
+            courseDegrees = 0f,
+        )
+        assertEquals(2, publishedGlances.size)
+        assertEquals(publishedGlances[0], publishedGlances[1])
+    }
+
     // ─── Notification glance (U10) ───────────────────────────────────
 
     @Test

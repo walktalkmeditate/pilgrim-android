@@ -222,6 +222,7 @@ class SeekOrchestrator @Inject constructor(
     private var whisperGeneration = 0L
     private var publishedGlance: SeekGlanceState? = null
     private var hasPublishedGlance = false
+    private var lastGlancePublishAtMs = 0L
 
     /** Started explicitly from PilgrimApp (visible, cancellable); idempotent. */
     fun start() {
@@ -728,12 +729,24 @@ class SeekOrchestrator @Inject constructor(
      * — here the cheap half; the tracker's fingerprint re-checks). The
      * latch suppresses the leading nulls before the first fix so a
      * session that never derived a glance never touches the channel.
+     *
+     * Keep-alive: an unchanged glance still re-publishes once per
+     * [GLANCE_KEEP_ALIVE_MILLIS]. The tracker stores the glance in
+     * memory only — a killed-and-revived service instance has none, and
+     * the value latch alone would withhold the seek line until the next
+     * bucket/direction step (code-review finding #11). Riding the
+     * per-fix emissions bounds that degradation at one minute; the
+     * tracker's fingerprint dedups the no-op renders in between.
      */
     private fun publishGlance(glance: SeekGlanceState?) {
+        val now = clock.now()
+        val keepAliveDue = hasPublishedGlance &&
+            now - lastGlancePublishAtMs >= GLANCE_KEEP_ALIVE_MILLIS
         if (!hasPublishedGlance && glance == null) return
-        if (hasPublishedGlance && glance == publishedGlance) return
+        if (hasPublishedGlance && glance == publishedGlance && !keepAliveDue) return
         hasPublishedGlance = true
         publishedGlance = glance
+        lastGlancePublishAtMs = now
         glancePublisher.publish(glance)
     }
 
@@ -747,5 +760,6 @@ class SeekOrchestrator @Inject constructor(
 
     private companion object {
         const val TAG = "SeekOrchestrator"
+        const val GLANCE_KEEP_ALIVE_MILLIS = 60_000L
     }
 }
