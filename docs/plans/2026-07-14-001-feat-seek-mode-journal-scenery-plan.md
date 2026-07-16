@@ -1,7 +1,7 @@
 ---
 title: "feat: Seek Mode + Journal Scenery (iOS c1745e8 parity)"
 type: feat
-status: active
+status: completed
 date: 2026-07-14
 origin: docs/brainstorms/2026-07-14-ios-main-parity-retarget-requirements.md
 ---
