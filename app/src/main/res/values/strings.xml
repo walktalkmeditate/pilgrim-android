@@ -1060,6 +1060,7 @@
     <string name="seek_section_title">Seek</string>
     <string name="seek_sonar_title">Sonar</string>
     <string name="seek_sonar_volume_title">Sonar Volume</string>
+    <string name="seek_sonar_settings_caption">A quiet ping that guides seek walks, tightening as a clearing nears.</string>
     <string name="seek_anew_title">Seek Anew</string>
     <string name="seek_anew_complete_subtitle">The seeking is complete</string>
 

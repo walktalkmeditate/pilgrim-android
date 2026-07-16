@@ -23,6 +23,7 @@ import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.audio.download.DownloadProgress
+import org.walktalkmeditate.pilgrim.data.seek.SeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -48,6 +49,7 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 @HiltViewModel
 class SoundSettingsViewModel @Inject constructor(
     private val soundsPreferences: SoundsPreferencesRepository,
+    private val seekPreferences: SeekPreferencesRepository,
     private val soundscapeSelection: SoundscapeSelectionRepository,
     private val manifestService: AudioManifestService,
     private val fileStore: SoundscapeFileStore,
@@ -65,6 +67,13 @@ class SoundSettingsViewModel @Inject constructor(
     val meditationStartBellId: StateFlow<String?> = soundsPreferences.meditationStartBellId
     val meditationEndBellId: StateFlow<String?> = soundsPreferences.meditationEndBellId
     val breathRhythm: StateFlow<Int> = soundsPreferences.breathRhythm
+
+    // U13 mirror of the in-walk sonar controls — same
+    // SeekPreferencesRepository the WalkOptionsSheet writes through,
+    // so either surface's change shows live on the other (iOS
+    // SeekSonarSection ↔ WalkOptionsSheet via UserPreferences).
+    val sonarEnabled: StateFlow<Boolean> = seekPreferences.sonarEnabled
+    val sonarVolume: StateFlow<Float> = seekPreferences.sonarVolume
 
     val selectedSoundscapeId: StateFlow<String?> = soundscapeSelection.selectedSoundscapeId
 
@@ -165,6 +174,20 @@ class SoundSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { soundsPreferences.setSoundscapeVolume(value.coerceIn(0f, 1f)) }
                 .onFailure { Log.w(TAG, "failed to persist soundscape volume", it) }
+        }
+    }
+
+    fun setSonarEnabled(value: Boolean) {
+        viewModelScope.launch {
+            runCatching { seekPreferences.setSonarEnabled(value) }
+                .onFailure { Log.w(TAG, "failed to persist sonar toggle", it) }
+        }
+    }
+
+    fun setSonarVolume(value: Float) {
+        viewModelScope.launch {
+            runCatching { seekPreferences.setSonarVolume(value.coerceIn(0f, 1f)) }
+                .onFailure { Log.w(TAG, "failed to persist sonar volume", it) }
         }
     }
 

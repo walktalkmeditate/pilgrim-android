@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
+import org.walktalkmeditate.pilgrim.data.seek.FakeSeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeFileStore
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionRepository
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -66,6 +67,7 @@ class SoundSettingsViewModelTest {
     private lateinit var fileStore: SoundscapeFileStore
     private lateinit var selectionRepo: SoundscapeSelectionRepository
     private lateinit var soundsRepo: FakeSoundsPreferencesRepository
+    private lateinit var seekRepo: FakeSeekPreferencesRepository
     private lateinit var manifestCacheFile: File
 
     @Before
@@ -84,6 +86,7 @@ class SoundSettingsViewModelTest {
         )
         selectionRepo = SoundscapeSelectionRepository(dataStore, dataStoreScope)
         soundsRepo = FakeSoundsPreferencesRepository()
+        seekRepo = FakeSeekPreferencesRepository()
         fileStore = SoundscapeFileStore(context)
         manifestScope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
         manifestCacheFile = File(context.filesDir, "audio_manifest.json")
@@ -122,6 +125,7 @@ class SoundSettingsViewModelTest {
             NoOpScheduler,
     ): SoundSettingsViewModel = SoundSettingsViewModel(
         soundsPreferences = soundsRepo,
+        seekPreferences = seekRepo,
         soundscapeSelection = selectionRepo,
         manifestService = manifestService,
         fileStore = fileStore,
@@ -210,6 +214,28 @@ class SoundSettingsViewModelTest {
         val vm = newVm()
         vm.setSoundsEnabled(false)
         assertEquals(false, soundsRepo.soundsEnabled.first { !it })
+    }
+
+    @Test
+    fun `setSonarEnabled persists through the shared seek repo`() = runTest {
+        val vm = newVm()
+        vm.setSonarEnabled(false)
+        assertEquals(false, seekRepo.sonarEnabled.first { !it })
+    }
+
+    @Test
+    fun `setSonarVolume clamps and persists through the shared seek repo`() = runTest {
+        val vm = newVm()
+        vm.setSonarVolume(1.7f)
+        assertEquals(1.0f, seekRepo.sonarVolume.first { it > 0.5f })
+    }
+
+    @Test
+    fun `sonar state mirrors external writes from the in-walk sheet`() = runTest {
+        val vm = newVm()
+        assertEquals(true, vm.sonarEnabled.value)
+        seekRepo.setSonarEnabled(false)
+        assertEquals(false, vm.sonarEnabled.first { !it })
     }
 
     @Test

@@ -52,7 +52,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.random.Random
-import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
@@ -75,14 +74,6 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
  * delay (and the haptic) entirely.
  */
 private const val MODE_TAP_DISSOLVE_MS = 450L
-
-/**
- * Device-QA gate: Seek is selectable in debug builds ahead of the U13
- * availability flip so the Phase 14 smoke check can drive a real seek
- * walk. U13 flips [WalkMode.isAvailable] and deletes this property.
- */
-private val WalkMode.isSelectableInThisBuild: Boolean
-    get() = isAvailable || (this == WalkMode.Seek && BuildConfig.DEBUG)
 
 /**
  * The Path tab — Pilgrim's contemplative pre-walk hub. Ports iOS
@@ -311,7 +302,7 @@ fun WalkStartScreen(
                 // drives the setup ritual on the active-walk surface (iOS
                 // `MainCoordinator.startWalk(mode:)@c1745e8`).
                 onClick = { onEnterActiveWalk(selectedMode) },
-                enabled = selectedMode.isSelectableInThisBuild && !isInProgress,
+                enabled = selectedMode.isAvailable && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -413,7 +404,7 @@ private fun ModeSelector(
         }
         Spacer(Modifier.height(PilgrimSpacing.small))
         AnimatedContent(targetState = selectedMode, label = "mode-subtitle") { mode ->
-            val subtitleId = if (mode.isSelectableInThisBuild) {
+            val subtitleId = if (mode.isAvailable) {
                 when (mode) {
                     WalkMode.Wander -> R.string.path_mode_wander_subtitle
                     WalkMode.Together -> R.string.path_mode_together_subtitle
