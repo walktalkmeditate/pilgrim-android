@@ -182,6 +182,40 @@ astronomy port is needed.** Carve = pure
 `PathOperation.Difference` path used as `clipPath` around the three
 crescent layers.
 
+### 3a. Presentation supersede (2026-07-16, device QA)
+
+Device QA found the U15 moon visually inferior to iOS ("the moon in iOS
+is way nicer") — the carve math above was right but the presentation
+layer was under-ported. The full iOS presentation
+(`SceneryItemView.swift:472-566@c1745e8`) is now in `MoonScenery.kt`:
+
+- **Ray fan anchor fixed.** iOS rotates each of the 6 rays about its
+  bottom edge and then offsets the fan `−0.15·size` *after* rotation, so
+  all six bases share one point `0.15·size` below the disc center. The
+  U15 port applied the offset inside the rotated frame — bases orbited
+  the center instead of fanning from a shared point.
+- **Blur stand-ins.** iOS blurs — rays `blur(2)`, halo `blur(8)`,
+  clouds `blur(3)` — were dropped in U15, leaving hard-edged shapes at
+  2–9 % alpha (the halo repeated the "solid drawCircle reads as a
+  translucent disk" failure LanternScenery's glow already fixed). Now
+  the package's gradient idiom: rays draw a 0.06·size-wide rect with a
+  transparent→white(rayPulse)→transparent cross-ray gradient (peak alpha
+  stays the iOS `rayPulse` value); halo and clouds draw flat-core
+  radial gradients feathering to transparent (clouds via an anisotropic
+  `scale` so the gradient is elliptical).
+- **Halo pulse phase.** The halo breathes 0.02→0.04 on a 6 s raised
+  cosine (iOS `phaseAnimator` 0.4↔0.8 × easeInOut 3 s per leg over a
+  0.05-alpha fill), phased so the frozen Reduce-Motion frame (t = 0)
+  equals iOS's collapsed `[false]` phase (0.4 × 0.05 = 0.02).
+- **Per-frame work hoisted.** The three crescent layers no longer run
+  `moonOuterAndInner` + `PathOperation.Difference` per frame:
+  `MoonCrescentCache` (same lazy-geometry pattern as `MoonCarveCache`)
+  builds each scale (1.06/1.0/0.92) once per canvas size. Star and
+  cloud data lists hoisted to file-level constants.
+- **No phase gating** — confirmed against iOS: rays, halo, stars, and
+  clouds render at every lunar phase with the same intensities; a full
+  moon does not glow brighter. Only the carve reads the phase.
+
 ## 4. Lantern — lit only when the walk met the dark (SceneryItemView.swift:350-394)
 
 ```swift
