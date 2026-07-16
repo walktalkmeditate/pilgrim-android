@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.home
 
 import android.app.Application
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -14,12 +15,14 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.home.empty.EmptyJournalState
 import org.walktalkmeditate.pilgrim.ui.home.expand.ExpandCardSheet
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryPlacement
 import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryType
+import org.walktalkmeditate.pilgrim.ui.home.scenery.WalkThreshold
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
@@ -80,8 +83,8 @@ class JournalScreenIntegrationTest {
 
     @Test
     fun scenery_item_composes_for_cairn_and_drift_placements() {
-        // U14 guard: cairn/drift are model-complete but render as a
-        // passthrough until U15 — the journal must still compose.
+        // U15: cairn stones and drift's seasonal faces render for real —
+        // the journal must compose them without crashing.
         composeRule.setContent {
             PilgrimTheme {
                 SceneryItem(
@@ -105,6 +108,39 @@ class JournalScreenIntegrationTest {
                     sizeDp = 24.dp,
                     hemisphere = Hemisphere.Northern,
                 )
+            }
+        }
+        composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun new_scenery_renders_a_static_frame_under_reduce_motion() {
+        // U15: every new/reworked renderer must freeze to a single frame
+        // when Reduce Motion is on (sceneryTimeSeconds returns t=0).
+        val placements = listOf(
+            SceneryPlacement(SceneryType.Cairn, ScenerySide.Left, 0f, stones = 4),
+            SceneryPlacement(SceneryType.Drift, ScenerySide.Right, 0f),
+            SceneryPlacement(
+                SceneryType.Torii,
+                ScenerySide.Left,
+                0f,
+                gateKind = WalkThreshold.Seeking,
+            ),
+            SceneryPlacement(SceneryType.Moon, ScenerySide.Right, 0f),
+            SceneryPlacement(SceneryType.Lantern, ScenerySide.Left, 0f),
+        )
+        composeRule.setContent {
+            PilgrimTheme {
+                CompositionLocalProvider(LocalReduceMotion provides true) {
+                    for (placement in placements) {
+                        SceneryItem(
+                            placement = placement,
+                            snapshot = snap,
+                            sizeDp = 24.dp,
+                            hemisphere = Hemisphere.Northern,
+                        )
+                    }
+                }
             }
         }
         composeRule.onRoot().assertExists()

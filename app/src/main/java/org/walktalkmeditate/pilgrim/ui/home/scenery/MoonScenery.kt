@@ -8,23 +8,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size as GeomSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.Dp
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
+import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
+import java.time.Instant
 import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 
 /**
- * Port of `SceneryItemView.swift` moon branch — phase-scaled crescent
- * disc (size varies daily), 6 white moonlight rays, 6 stars (each with
- * its own twinkle speed), 2 drifting parchment-ish clouds, and a halo
- * glow that pulses every 3 s.
+ * Port of `SceneryItemView.swift` moon branch — the real moon of that
+ * night. [MoonCalc] gives the illuminated fraction and the waxing half
+ * orients the lit limb (waxing lights the right, waning the left). A
+ * shadow disc slides off the moon as illumination grows; at full it has
+ * left entirely. Plus 6 white moonlight rays, 6 stars (each with its own
+ * twinkle speed), 2 drifting parchment-ish clouds, and a halo glow that
+ * pulses every 3 s.
  */
 @Composable
 internal fun MoonScenery(
@@ -33,13 +40,13 @@ internal fun MoonScenery(
     walkDateMs: Long,
     parchmentColor: Color,
 ) {
-    val phaseScale = remember(walkDateMs) {
-        val daysSinceEpoch = (walkDateMs / 86_400_000L).toInt()
-        // iOS used `timeIntervalSinceReferenceDate` (2001 epoch) but the
-        // 2001-vs-1970 offset is a fixed integer so the phase pattern
-        // collapses to (abs(days) % 30) / 100 + 0.85.
-        0.85f + (abs(daysSinceEpoch % 30)) / 100f
+    // Astronomy hoisted to composition — once per walkDate, never per
+    // frame (the iOS P4 hoisting idiom).
+    val moonPhase = remember(walkDateMs) {
+        MoonCalc.moonPhase(Instant.ofEpochMilli(walkDateMs))
     }
+    val illumination = moonPhase.illumination.toFloat()
+    val waxing = moonPhase.isWaxing
 
     val timeSec by sceneryTimeSeconds()
 
@@ -72,20 +79,31 @@ internal fun MoonScenery(
             center = Offset(cx, cy),
         )
 
-        // Crescent ghost (1.06 × phaseScale, low alpha, slight offset).
-        val mSize = s * phaseScale
-        translate(left = cx - mSize * 1.06f / 2f + 1f, top = cy - mSize * 1.06f / 2f + 1f) {
-            drawCrescent(GeomSize(mSize * 1.06f, mSize * 1.06f), tintColor.copy(alpha = 0.10f))
-        }
+        // Two-disc phase carve clips the moon layers: the shadow slides
+        // off as illumination grows. Rays / stars / clouds / halo stay
+        // un-carved, matching the iOS mask scope.
+        val mSize = s * MOON_PHASE_SCALE
+        val carve = moonPhaseCarvePath(
+            center = Offset(cx, cy),
+            diameter = mSize,
+            illumination = illumination,
+            waxing = waxing,
+        )
+        clipPath(carve) {
+            // Crescent ghost (1.06×, low alpha, slight offset).
+            translate(left = cx - mSize * 1.06f / 2f + 1f, top = cy - mSize * 1.06f / 2f + 1f) {
+                drawCrescent(GeomSize(mSize * 1.06f, mSize * 1.06f), tintColor.copy(alpha = 0.10f))
+            }
 
-        // Main crescent
-        translate(left = cx - mSize / 2f, top = cy - mSize / 2f) {
-            drawCrescent(GeomSize(mSize, mSize), tintColor.copy(alpha = 0.35f))
-        }
+            // Main crescent
+            translate(left = cx - mSize / 2f, top = cy - mSize / 2f) {
+                drawCrescent(GeomSize(mSize, mSize), tintColor.copy(alpha = 0.35f))
+            }
 
-        // Inner highlight (0.92×, white-ish)
-        translate(left = cx - mSize * 0.92f / 2f - 1f, top = cy - mSize * 0.92f / 2f - 1f) {
-            drawCrescent(GeomSize(mSize * 0.92f, mSize * 0.92f), Color.White.copy(alpha = 0.10f))
+            // Inner highlight (0.92×, white-ish)
+            translate(left = cx - mSize * 0.92f / 2f - 1f, top = cy - mSize * 0.92f / 2f - 1f) {
+                drawCrescent(GeomSize(mSize * 0.92f, mSize * 0.92f), Color.White.copy(alpha = 0.10f))
+            }
         }
 
         // Stars
@@ -121,6 +139,40 @@ internal fun MoonScenery(
             )
         }
     }
+}
+
+/** iOS `phaseScale` — constant 0.9 since the real-phase carve landed. */
+internal const val MOON_PHASE_SCALE = 0.9f
+
+/**
+ * Signed carve offset in disc diameters: waxing slides the shadow left
+ * (lit limb right), waning right (lit limb left). The 0.08 floor keeps
+ * even a new-moon walk from losing its moon entirely
+ * (iOS `SceneryItemView.swift:502-514@c1745e8`).
+ */
+internal fun moonCarveOffsetFraction(illumination: Float, waxing: Boolean): Float =
+    (if (waxing) -1f else 1f) * max(illumination, 0.08f)
+
+/**
+ * Base disc minus offset shadow disc. iOS carves with a
+ * destination-out compositing mask; a path Difference is the same
+ * hard-edge geometry and stays a testable pure function.
+ */
+internal fun moonPhaseCarvePath(
+    center: Offset,
+    diameter: Float,
+    illumination: Float,
+    waxing: Boolean,
+): Path {
+    val radius = diameter / 2f
+    val base = Path().apply {
+        addOval(Rect(center - Offset(radius, radius), GeomSize(diameter, diameter)))
+    }
+    val shadowCenter = center + Offset(moonCarveOffsetFraction(illumination, waxing) * diameter, 0f)
+    val shadow = Path().apply {
+        addOval(Rect(shadowCenter - Offset(radius, radius), GeomSize(diameter, diameter)))
+    }
+    return Path().apply { op(base, shadow, PathOperation.Difference) }
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCrescent(
