@@ -85,4 +85,4 @@ The hardest part of this app is surviving a 45-90 minute walk with screen off, b
 
 ## Phasing — current state
 
-Phases 0-13 shipped (Stage 13-XZ merged 2026-05-04, PR #83); v1.7.0 finalization-pass parity swept (PRs #177–#193). In flight: **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** targeting a single v1.2.0 release — see `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`. Phase N future items (Health Connect, App Actions, screenshot tests) remain queued behind them. See the port plan + autopilot memory entries for stage-level history.
+Phases 0-15 shipped: 0-13 through Stage 13-XZ (PR #83) + v1.7.0 parity sweep (PRs #177–#193); **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** landed 2026-07-16 (PRs #198/#199, plan `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`), released as v1.2.0. The R2 re-diff at release time found iOS main unmoved from `c1745e8` — parity is exact. Next up: Phase N future items (Health Connect, App Actions, screenshot tests). See the port plan + autopilot memory entries for stage-level history.
