@@ -35,8 +35,11 @@ import org.walktalkmeditate.pilgrim.ui.home.WalkSnapshot
 import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryTimeSeconds
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
-private const val HALO_SCALE = 3.5f
 private const val HALO_PEAK_ALPHA = 0.15f
+// iOS RadialGradient bounds on the halo: `startRadius: size * 0.5`,
+// `endRadius: size * 1.8` (WalkDotView.swift @ c1745e8).
+private const val HALO_GRADIENT_START_SCALE = 0.5f
+private const val HALO_GRADIENT_END_SCALE = 1.8f
 // Padding around the core's own Canvas for the blurred drop shadow, so the
 // 2dp Gaussian blur + (1,2)dp offset render without clipping.
 private const val SHADOW_PAD_DP = 4f
@@ -45,16 +48,30 @@ private const val ACTIVITY_STROKE_DP = 2f
 private const val SHARED_RING_OFFSET_DP = 12f
 
 /**
- * Per-row dot — verbatim port of iOS WalkDotView.swift. Layer stack
- * (bottom → top):
- *  1. Animated ripple (newest only, Reduce-Motion-safe).
- *  2. Outer halo radial gradient at 3.5× core size.
- *  3. Core fill — radial gradient `color → color.copy(alpha=0.7)` from
- *     UnitPoint(0.4, 0.35) for the soft 3D feel.
- *  4. Favicon glyph (if set).
- *  5. Activity arcs — rust talk arc + dawn meditate arc (trimmed).
+ * iOS pins BOTH dot shadows to fixed black (3c8c443, in c1745e8 history):
+ * "Fixed .black, not adaptive .ink: .ink inverts to near-white in dark
+ * mode and renders as a light halo around every dot." Core shadow is
+ * `.black.opacity(0.15)`, the favicon glyph shadow `.black.opacity(0.4)`.
+ */
+internal val DOT_SHADOW_COLOR = Color.Black.copy(alpha = 0.15f)
+internal val FAVICON_SHADOW_TINT = Color.Black.copy(alpha = 0.4f)
+
+/**
+ * Per-row dot — verbatim port of iOS WalkDotView.swift @ c1745e8. Layer
+ * stack (bottom → top):
+ *  1. Animated ripple (newest only, Reduce-Motion-safe). No age fade.
+ *  2. Outer halo radial gradient at 3.5× core size. No age fade.
+ *  3. Blurred black drop shadow, then the core fill — radial gradient
+ *     `color → color.copy(alpha=0.7)` from UnitPoint(0.4, 0.35) for the
+ *     soft 3D feel. ×opacity.
+ *  4. Favicon glyph + its black-40% shadow (if set). ×opacity.
+ *  5. Activity arcs — rust talk arc + dawn meditate arc (trimmed). ×opacity.
  *  6. Specular highlight — small white-30% radial offset upper-left.
- *  7. Shared-walk stone ring (if isShared).
+ *     ×(opacity × 0.5).
+ *  7. Shared-walk stone ring (if isShared). ×opacity.
+ *
+ * The age fade (`opacity`, newest 1.0 → oldest 0.5) is applied per layer
+ * exactly as iOS does — layers 1-2 stay constant while 3-7 fade.
  */
 @Composable
 fun WalkDot(
@@ -86,16 +103,18 @@ fun WalkDot(
      */
     onLongPress: (() -> Unit)? = null,
 ) {
-    val haloSizeDp = sizeDp * HALO_SCALE
+    val haloSizeDp = sizeDp * WalkDotMath.HALO_SCALE
     val activityRingSizeDp = sizeDp + ACTIVITY_RING_OFFSET_DP
     val sharedRingSizeDp = sizeDp + SHARED_RING_OFFSET_DP
     if (isArchived) {
-        // Hollow ring at the dot's nominal size — matches iOS
-        // `WalkDotView.archivedRing` (1 px stroke, fog @ 50%).
+        // iOS archived treatment (WalkDotView.swift @ c1745e8): a hollow
+        // fog-50% ring at 0.6× the dot's nominal size inside a fixed
+        // 44 pt touch frame, with NO age fade — the archived branch
+        // ignores `opacity` entirely so released walks stay a constant
+        // quiet placeholder.
         Box(
             modifier = modifier
-                .size(sizeDp.dp)
-                .graphicsLayer { alpha = opacity }
+                .size(WalkDotMath.MIN_TOUCH_DP.dp)
                 .semantics {
                     this.contentDescription = contentDescription
                     // detectTapGestures (below) is invisible to TalkBack —
@@ -113,7 +132,7 @@ fun WalkDot(
             contentAlignment = Alignment.Center,
         ) {
             val ringColor = pilgrimColors.fog.copy(alpha = 0.5f)
-            Canvas(Modifier.size(sizeDp.dp)) {
+            Canvas(Modifier.size((sizeDp * WalkDotMath.ARCHIVED_RING_SCALE).dp)) {
                 val r = size.minDimension / 2f - 0.5f
                 drawCircle(
                     color = ringColor,
@@ -125,10 +144,12 @@ fun WalkDot(
         }
         return
     }
+    // Age fade is applied PER LAYER exactly as iOS does — the ripple and
+    // the outer halo carry NO `.opacity(opacity)` on iOS, so a root-level
+    // alpha here would (and previously did) dim the aura of older dots.
     Box(
         modifier = modifier
-            .size(haloSizeDp.dp)
-            .graphicsLayer { alpha = opacity }
+            .size(WalkDotMath.dotBoxDp(sizeDp, isArchived = false).dp)
             .semantics {
                 this.contentDescription = contentDescription
                 // detectTapGestures (below) is invisible to TalkBack —
@@ -153,14 +174,16 @@ fun WalkDot(
         // 2. Outer halo radial gradient (3.5× core). iOS uses a SwiftUI
         // RadialGradient with `startRadius = size * 0.5` + `endRadius =
         // size * 1.8` so the peak alpha forms a soft donut: flat-peak
-        // from r=0 to r=0.5×sizeDp, fading to clear at r=1.8×sizeDp.
-        // Compose's Brush.radialGradient has no startRadius, so we use
-        // colorStops normalized against the halo Canvas radius
-        // (= sizeDp * 1.75): plateau 0..0.286, fade 0.286..1.0.
+        // from r=0 to r=0.5×sizeDp, fading to clear at r=1.8×sizeDp —
+        // slightly past the 1.75×sizeDp shape edge, so the brush radius
+        // deliberately exceeds the drawn circle. NOT age-faded: iOS
+        // applies no `.opacity(opacity)` to this layer.
         Canvas(Modifier.size(haloSizeDp.dp)) {
             val r = size.minDimension / 2f
             val peak = color.copy(alpha = HALO_PEAK_ALPHA)
-            val plateauStop = (0.5f / (HALO_SCALE / 2f)).coerceIn(0f, 1f)
+            val gradientEndPx = sizeDp.dp.toPx() * HALO_GRADIENT_END_SCALE
+            val plateauStop =
+                (HALO_GRADIENT_START_SCALE / HALO_GRADIENT_END_SCALE).coerceIn(0f, 1f)
             drawCircle(
                 brush = Brush.radialGradient(
                     colorStops = arrayOf(
@@ -169,22 +192,27 @@ fun WalkDot(
                         1f to Color.Transparent,
                     ),
                     center = Offset(size.width / 2f, size.height / 2f),
-                    radius = r,
+                    radius = gradientEndPx,
                 ),
                 radius = r,
                 center = Offset(size.width / 2f, size.height / 2f),
             )
         }
 
-        // 3a. Drop shadow — iOS `.shadow(color: .ink.opacity(0.15),
+        // 3a. Drop shadow — iOS `.shadow(color: .black.opacity(0.15),
         // radius: 2, x: 1, y: 2)`: a REAL Gaussian blur via
         // BlurMaskFilter, not the old two-hard-circle approximation
         // (which read as a crisp taupe disc behind the dot — the "ring"
         // — and made the dot look like a 3D sticker rather than ink on
-        // paper). Drawn in its own slightly-larger Canvas so the blur +
-        // offset aren't clipped by the core's bounds, and BEFORE the core
-        // so it sits behind.
-        val shadowArgb = pilgrimColors.ink.copy(alpha = 0.15f).toArgb()
+        // paper). Fixed black per iOS 3c8c443 (adaptive ink flips to a
+        // near-white halo in dark mode). iOS applies `.shadow` AFTER
+        // `.opacity(opacity)`, so the shadow fades with the dot's age.
+        // Drawn in its own slightly-larger Canvas so the blur + offset
+        // aren't clipped by the core's bounds, and BEFORE the core so it
+        // sits behind.
+        val shadowArgb = DOT_SHADOW_COLOR
+            .copy(alpha = DOT_SHADOW_COLOR.alpha * opacity)
+            .toArgb()
         Canvas(Modifier.size((sizeDp + SHADOW_PAD_DP * 2f).dp)) {
             val coreR = sizeDp.dp.toPx() / 2f
             val cx = size.width / 2f + 1.dp.toPx()
@@ -202,14 +230,19 @@ fun WalkDot(
             }
         }
         // 3b. Core dot — radial gradient from full color to 70% alpha,
-        // origin biased upper-left to read as a soft 3D bulge (iOS parity).
+        // origin biased upper-left to read as a soft 3D bulge (iOS
+        // parity). ×opacity = iOS `.opacity(opacity)` age fade on the
+        // core circle.
         Canvas(Modifier.size(sizeDp.dp)) {
             val coreR = size.minDimension / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
             val biasedCenter = Offset(size.width * 0.4f, size.height * 0.35f)
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(color, color.copy(alpha = 0.7f)),
+                    colors = listOf(
+                        color.copy(alpha = color.alpha * opacity),
+                        color.copy(alpha = color.alpha * 0.7f * opacity),
+                    ),
                     center = biasedCenter,
                     radius = coreR * 1.2f,
                 ),
@@ -219,24 +252,40 @@ fun WalkDot(
         }
 
         // 4. Favicon glyph. iOS `.font(.system(size: size * 0.4)).bold()
-        // .foregroundColor(.parchment)`. The 0.5× ratio used previously
-        // made glyphs crowd the dot interior — 0.4× matches iOS.
+        // .foregroundColor(.parchment).shadow(color: .black.opacity(0.4),
+        // radius: 0.5, x: 0, y: 0.5).opacity(opacity)`. The 0.5× ratio
+        // used previously made glyphs crowd the dot interior — 0.4×
+        // matches iOS. The shadow is a black-40% copy nudged 0.5dp down
+        // (the 0.5pt Gaussian blur is sub-pixel at glyph scale, omitted);
+        // glyph + shadow fade together, as iOS composes the shadow before
+        // the age fade.
         snapshot.favicon?.let { faviconKey ->
             val favicon = WalkFavicon.entries.firstOrNull { it.rawValue == faviconKey }
             if (favicon != null) {
-                Icon(
-                    imageVector = favicon.icon,
-                    contentDescription = null,
-                    tint = pilgrimColors.parchment,
-                    modifier = Modifier.size((sizeDp * 0.4f).dp),
-                )
+                Box(Modifier.graphicsLayer { alpha = opacity }) {
+                    Icon(
+                        imageVector = favicon.icon,
+                        contentDescription = null,
+                        tint = FAVICON_SHADOW_TINT,
+                        modifier = Modifier
+                            .size((sizeDp * 0.4f).dp)
+                            .graphicsLayer { translationY = 0.5.dp.toPx() },
+                    )
+                    Icon(
+                        imageVector = favicon.icon,
+                        contentDescription = null,
+                        tint = pilgrimColors.parchment,
+                        modifier = Modifier.size((sizeDp * 0.4f).dp),
+                    )
+                }
             }
         }
 
         // 5. Activity arcs — talk (rust) + meditate (dawn). Both
         // drawn around an `activityRingSizeDp` circle, trimmed to the
         // duration fraction. iOS rotateEffect(-90°) so 0deg starts at
-        // top — Compose Canvas rotate() achieves the same.
+        // top — Compose Canvas rotate() achieves the same. ×opacity =
+        // iOS `.opacity(opacity)` on the arcs ZStack.
         val totalSec = snapshot.durationSec
         if (totalSec > 0.0) {
             val talkFrac = (snapshot.talkDurationSec / totalSec).toFloat().coerceIn(0f, 1f)
@@ -249,7 +298,7 @@ fun WalkDot(
                     rotate(degrees = -90f, pivot = Offset(size.width / 2f, size.height / 2f)) {
                         if (talkFrac > 0.01f) {
                             drawArc(
-                                color = talkColor.copy(alpha = 0.7f),
+                                color = talkColor.copy(alpha = 0.7f * opacity),
                                 startAngle = 0f,
                                 sweepAngle = 360f * talkFrac,
                                 useCenter = false,
@@ -260,7 +309,7 @@ fun WalkDot(
                         }
                         if (meditateFrac > 0.01f) {
                             drawArc(
-                                color = meditateColor.copy(alpha = 0.7f),
+                                color = meditateColor.copy(alpha = 0.7f * opacity),
                                 startAngle = 360f * talkFrac,
                                 sweepAngle = 360f * meditateFrac,
                                 useCenter = false,
@@ -276,13 +325,11 @@ fun WalkDot(
 
         // 6. Specular highlight — small white-30% radial offset upper-left.
         // iOS `.opacity(opacity * 0.5)` so older dots fade their
-        // catchlight with the core; the per-row `opacity` is already
-        // multiplied at the root via `graphicsLayer { alpha = opacity }`,
-        // so the inner 0.5 is the iOS multiplier.
+        // catchlight with the core.
         Canvas(
             Modifier
                 .size((sizeDp * 0.7f).dp)
-                .graphicsLayer { alpha = 0.5f },
+                .graphicsLayer { alpha = 0.5f * opacity },
         ) {
             val r = size.minDimension / 2f
             drawCircle(
@@ -299,8 +346,9 @@ fun WalkDot(
         // 7. Shared-walk stone ring. iOS uses a fixed
         // `Color.stone.opacity(0.5)` — earlier Android code reused the
         // per-dot seasonal `color`, so jade walks got a jade ring.
+        // ×opacity = iOS `.opacity(opacity)` age fade on the ring.
         if (snapshot.isShared) {
-            val ringColor = pilgrimColors.stone.copy(alpha = 0.5f)
+            val ringColor = pilgrimColors.stone.copy(alpha = 0.5f * opacity)
             Canvas(Modifier.size(sharedRingSizeDp.dp)) {
                 val r = size.minDimension / 2f
                 drawCircle(

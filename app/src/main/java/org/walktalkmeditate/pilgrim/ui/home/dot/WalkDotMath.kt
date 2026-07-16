@@ -16,6 +16,27 @@ internal object WalkDotMath {
     private const val MIN_DOT_DP = 8f
     private const val MAX_DOT_DP = 22f
 
+    /** iOS WalkDotView halo frame — `size * 3.5`. */
+    const val HALO_SCALE = 3.5f
+
+    /**
+     * iOS a11y minimum tap target — `.frame(width: max(44, size * 3.5))`
+     * on the live dot and a fixed `.frame(width: 44, height: 44)` on the
+     * archived ring (WalkDotView.swift @ c1745e8).
+     */
+    const val MIN_TOUCH_DP = 44f
+
+    /** iOS archived ring diameter — `.frame(width: size * 0.6)`. */
+    const val ARCHIVED_RING_SCALE = 0.6f
+
+    /**
+     * Outer container for the dot layers. Live dots host the 3.5× halo but
+     * never shrink below the 44 dp tap target; archived rings are always a
+     * 44 dp target around the tiny hollow ring.
+     */
+    fun dotBoxDp(sizeDp: Float, isArchived: Boolean): Float =
+        if (isArchived) MIN_TOUCH_DP else max(MIN_TOUCH_DP, sizeDp * HALO_SCALE)
+
     /**
      * Linear scale duration → dot diameter (dp). 5 min → 8 dp, 2 h → 22 dp.
      * Verbatim port of iOS `InkScrollView.swift` size formula.
