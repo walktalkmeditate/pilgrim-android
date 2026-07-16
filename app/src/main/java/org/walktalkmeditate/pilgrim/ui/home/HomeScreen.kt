@@ -443,11 +443,14 @@ fun HomeScreen(
                                             SceneryGenerator.pick(snap)
                                         }
                                         if (scenery != null) {
-                                            val sceneryBaseSizeDp = 20f
+                                            // iOS InkScrollView+Scenery.swift:19-23@c1745e8 —
+                                            // 32 + variation × 24. (a658b5fb's 20-36 dp
+                                            // shrink reverted after side-by-side QA.)
+                                            val sceneryBaseSizeDp = 32f
                                             val sceneryVariation = remember(snap.uuid) {
                                                 SceneryGenerator.sizeVariation01(snap)
                                             }
-                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 16f
+                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 24f
                                             val scenerySizePx = with(density) { scenerySizeDp.dp.toPx() }
                                             val sceneryBoxPx = scenerySizePx * 2f
                                             // Dot-relative placement — an offset from the
