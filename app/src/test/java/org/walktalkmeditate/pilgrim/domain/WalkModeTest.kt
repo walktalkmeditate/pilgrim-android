@@ -9,10 +9,10 @@ import org.junit.Test
 class WalkModeTest {
 
     @Test
-    fun `isAvailable true only for Wander`() {
+    fun `isAvailable true for Wander and Seek, not Together`() {
         assertTrue(WalkMode.Wander.isAvailable)
         assertFalse(WalkMode.Together.isAvailable)
-        assertFalse(WalkMode.Seek.isAvailable)
+        assertTrue(WalkMode.Seek.isAvailable)
     }
 
     @Test
