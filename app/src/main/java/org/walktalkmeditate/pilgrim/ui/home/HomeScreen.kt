@@ -88,7 +88,10 @@ import org.walktalkmeditate.pilgrim.ui.home.markers.computeLunarMarkers
 import org.walktalkmeditate.pilgrim.ui.home.markers.computeMilestonePositions
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator
 import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
-import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
+import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryAgeAlpha
+import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryCenterPx
+import org.walktalkmeditate.pilgrim.ui.home.scenery.sceneryParallaxXPx
+import org.walktalkmeditate.pilgrim.ui.home.scroll.DotHapticKind
 import org.walktalkmeditate.pilgrim.ui.home.scroll.JournalHapticDispatcher
 import org.walktalkmeditate.pilgrim.ui.home.scroll.ScrollHapticState
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
@@ -99,11 +102,6 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimLightColors
 import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
-
-// Mirrors WalkDot.kt's HALO_SCALE = 3.5f / 2 — the box that wraps the
-// halo radial gradient is 3.5× the dot's core size, so half of that
-// scale centers the dot on its meander point.
-private const val HALO_HALF = 1.75f
 
 private val JOURNAL_ROW_HEIGHT = 90.dp
 private val JOURNAL_TOP_INSET_DP = 40.dp
@@ -234,11 +232,13 @@ fun HomeScreen(
             topInsetPx + verticalSpacingPx * it + verticalSpacingPx / 2f
         }
     }
+    val dotKinds = remember(snapshots) { snapshots.map(::dotHapticKind) }
     val hapticState = remember(snapshots, dotThresholdPx, milestoneThresholdPx, largeDotCutoffPx) {
         ScrollHapticState(
             dotPositionsPx = dotYsPx,
             dotSizesPx = sizesPx,
             milestonePositionsPx = emptyList(),
+            dotKinds = dotKinds,
             largeDotCutoffPx = largeDotCutoffPx,
             dotThresholdPx = dotThresholdPx,
             milestoneThresholdPx = milestoneThresholdPx,
@@ -408,7 +408,6 @@ fun HomeScreen(
                                     )
                                     s.snapshots.forEachIndexed { index, snap ->
                                         val dotSizeDp = WalkDotMath.dotSize(snap.durationSec)
-                                        val dotSizePx = sizesPx.getOrNull(index) ?: 0f
                                         val xPx = meanderXs.getOrNull(index)
                                             ?: (widthPx / 2f)
                                         val yPx = dotYsPx.getOrNull(index)
@@ -436,32 +435,69 @@ fun HomeScreen(
                                         }
 
                                         // Animated scenery — drawn
-                                        // behind the dot.
-                                        val scenery = remember(snap.uuid, snap.startMs) {
+                                        // behind the dot. Keyed on the
+                                        // whole snapshot: the placement
+                                        // also depends on threshold /
+                                        // foundPlaces / isSeek (U14).
+                                        val scenery = remember(snap) {
                                             SceneryGenerator.pick(snap)
                                         }
                                         if (scenery != null) {
-                                            val sceneryBaseSizeDp = 20f
+                                            // iOS InkScrollView+Scenery.swift:19-23@c1745e8 —
+                                            // 32 + variation × 24. (a658b5fb's 20-36 dp
+                                            // shrink reverted after side-by-side QA.)
+                                            val sceneryBaseSizeDp = 32f
                                             val sceneryVariation = remember(snap.uuid) {
                                                 SceneryGenerator.sizeVariation01(snap)
                                             }
-                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 16f
+                                            val scenerySizeDp = sceneryBaseSizeDp + sceneryVariation.toFloat() * 24f
                                             val scenerySizePx = with(density) { scenerySizeDp.dp.toPx() }
                                             val sceneryBoxPx = scenerySizePx * 2f
-                                            val xSign = if (scenery.side == ScenerySide.Left) -1f else 1f
-                                            val sceneryCenterX = xPx + xSign * (40f.dp.let { with(density) { it.toPx() } } + scenerySizePx / 2f) +
-                                                with(density) { scenery.offset.dp.toPx() }
-                                            val sceneryCenterY = yPx - with(density) { 4.dp.toPx() }
+                                            // Dot-relative placement — an offset from the
+                                            // dot's own canvas center, never an absolute
+                                            // scroll coordinate (iOS 3f9d3db bug class;
+                                            // U16 spec § 4).
+                                            val sceneryCenter = sceneryCenterPx(
+                                                dotXPx = xPx,
+                                                dotYPx = yPx,
+                                                scenerySizePx = scenerySizePx,
+                                                side = scenery.side,
+                                                jitterPx = with(density) { scenery.offset.dp.toPx() },
+                                                clearancePx = with(density) { 40.dp.toPx() },
+                                                liftPx = with(density) { 4.dp.toPx() },
+                                            )
+                                            // The item ages with its walk (the dot's own
+                                            // fade); seeking gates refuse the fade — old
+                                            // stone grows older, not fainter (6e80a91).
+                                            val sceneryAge = sceneryAgeAlpha(scenery.gateKind, opacity)
+                                            val parallaxWeightPx =
+                                                with(density) { scenery.type.parallaxWeightDp.dp.toPx() }
                                             Box(
                                                 modifier = Modifier
                                                     .offset {
                                                         IntOffset(
-                                                            (sceneryCenterX - sceneryBoxPx / 2f).toInt(),
-                                                            (sceneryCenterY - sceneryBoxPx / 2f).toInt(),
+                                                            (sceneryCenter.x - sceneryBoxPx / 2f).toInt(),
+                                                            (sceneryCenter.y - sceneryBoxPx / 2f).toInt(),
                                                         )
                                                     }
                                                     .size(scenerySizeDp.dp * 2f)
-                                                    .graphicsLayer { alpha = perSceneryAlpha }
+                                                    .graphicsLayer {
+                                                        alpha = perSceneryAlpha * sceneryAge
+                                                        // Per-type depth of field. Lambda-form
+                                                        // scroll reads (Stage 5-A): the scroll
+                                                        // invalidates only this layer's
+                                                        // placement, never composition. Stays
+                                                        // live under reduce-motion — iOS
+                                                        // applies its .visualEffect
+                                                        // unconditionally (scroll-driven, not
+                                                        // autonomous).
+                                                        translationX = sceneryParallaxXPx(
+                                                            sceneryCenterYPx = sceneryCenter.y,
+                                                            scrollOffsetPx = scrollState.value.toFloat(),
+                                                            viewportHeightPx = scrollState.viewportSize.toFloat(),
+                                                            weightPx = parallaxWeightPx,
+                                                        )
+                                                    }
                                                     .semantics { contentDescription = "" },
                                             ) {
                                                 SceneryItem(
@@ -474,6 +510,14 @@ fun HomeScreen(
                                         }
                                         val dotColor = dotColors.getOrNull(index)
                                             ?: fallbackInk
+                                        // WalkDot's outer box is
+                                        // max(44dp, 3.5×size) for live dots
+                                        // and a fixed 44dp for archived
+                                        // rings (iOS a11y tap-target frame),
+                                        // so center on half the ACTUAL box.
+                                        val dotBoxHalfPx = with(density) {
+                                            (WalkDotMath.dotBoxDp(dotSizeDp, snap.isArchived) / 2f).dp.toPx()
+                                        }
                                         WalkDot(
                                             snapshot = snap,
                                             sizeDp = dotSizeDp,
@@ -490,8 +534,8 @@ fun HomeScreen(
                                             modifier = Modifier
                                                 .offset {
                                                     IntOffset(
-                                                        (xPx - dotSizePx * HALO_HALF).toInt(),
-                                                        (yPx - dotSizePx * HALO_HALF).toInt(),
+                                                        (xPx - dotBoxHalfPx).toInt(),
+                                                        (yPx - dotBoxHalfPx).toInt(),
                                                     )
                                                 }
                                                 .graphicsLayer { alpha = perDotAlpha },
@@ -745,5 +789,19 @@ fun HomeScreen(
             }
         }
     }
+}
+
+/**
+ * Gates and cairns speak their own touch — same decision order as
+ * SceneryGenerator.pick's deterministic branch, duplicated exactly as
+ * iOS duplicates it in configureHaptics
+ * (InkScrollView.swift:692-696@c1745e8). DotHapticKindLockstepTest pins
+ * the two sites against each other so a one-sided edit can't ship a
+ * gate haptic with no gate on screen.
+ */
+internal fun dotHapticKind(snapshot: WalkSnapshot): DotHapticKind = when {
+    snapshot.threshold != null -> DotHapticKind.Gate
+    snapshot.isSeek && snapshot.foundPlaces > 0 -> DotHapticKind.Cairn
+    else -> DotHapticKind.Plain
 }
 

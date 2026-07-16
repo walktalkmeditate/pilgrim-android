@@ -9,7 +9,7 @@ import androidx.compose.runtime.Immutable
  * on the goshuin grid (halo + label) and on the seal-reveal overlay
  * (2-pulse haptic + extra hold).
  *
- * Ports all 5 of iOS's `GoshuinMilestones.Milestone` cases.
+ * Ports all 7 of iOS's `GoshuinMilestones.Milestone` cases.
  *
  * `@Immutable` for Compose stability — the class hierarchy contains
  * only stable types ([Season] enum, [Int]) but the Compose compiler
@@ -23,6 +23,15 @@ sealed class GoshuinMilestone {
     data object LongestMeditation : GoshuinMilestone()
     data class NthWalk(val n: Int) : GoshuinMilestone()
     data class FirstOfSeason(val season: Season) : GoshuinMilestone()
+
+    /**
+     * Seeking thresholds (iOS `firstUnknown` / `unknownsFound(Int)`):
+     * the walk that carried the first found place, and the walks whose
+     * arrivals crossed a lifetime count in
+     * [GoshuinMilestones.unknownThresholds].
+     */
+    data object FirstUnknown : GoshuinMilestone()
+    data class UnknownsFound(val count: Int) : GoshuinMilestone()
 }
 
 /**

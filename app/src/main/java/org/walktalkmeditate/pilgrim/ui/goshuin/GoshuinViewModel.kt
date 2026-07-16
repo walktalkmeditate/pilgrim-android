@@ -83,6 +83,12 @@ class GoshuinViewModel @Inject constructor(
                     distances[walk.id] = walkDistanceMeters(samples)
                     firstLats[walk.id] = samples.firstOrNull()?.latitude ?: 0.0
                 }
+                // One waypoint pass for the whole book (iOS GoshuinView
+                // computes arrivalCounts once at construction; seal
+                // cells read counts by id instead of re-faulting every
+                // walk's waypoints per cell).
+                val arrivalCounts =
+                    GoshuinMilestones.arrivalCounts(repository.waypointIconsByWalk())
                 val milestoneInputs = finished.map { walk ->
                     WalkMilestoneInput(
                         walkId = walk.id,
@@ -91,6 +97,7 @@ class GoshuinViewModel @Inject constructor(
                         distanceMeters = distances.getValue(walk.id),
                         meditateDurationMillis = (walk.meditationSeconds ?: 0L) * 1000L,
                         latitude = firstLats.getValue(walk.id),
+                        foundPlaceCount = arrivalCounts[walk.id] ?: 0,
                     )
                 }
                 val seals = finished.mapIndexed { index, walk ->

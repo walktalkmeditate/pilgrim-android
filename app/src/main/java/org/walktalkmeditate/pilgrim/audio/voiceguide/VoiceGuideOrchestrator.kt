@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.TalkRecordingActive
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voiceguide.PromptDensity
@@ -67,11 +68,12 @@ private const val MEDITATION_GUIDE_ALWAYS_ENABLED = true
  *    Net effect: the scheduler moves on to a different prompt
  *    next tick rather than replaying the interrupted one — user
  *    hears variety instead of repeats. iOS distinguishes the two.
- *  - The scheduler's `isRecordingVoice` guard is hardcoded `false`
- *    by this orchestrator. Voice-memo recording doesn't pause the
- *    guide via this path (the OS-level audio-focus loss already
- *    stops the player via `AUDIOFOCUS_LOSS_TRANSIENT`). When a
- *    voice-recording-state flow exists, wire it here.
+ *  - The scheduler's `isRecordingVoice` guard reads the
+ *    `@TalkRecordingActive` flow (recorder-level
+ *    `VoiceRecorder.isRecording`, added with seek U9) so no new
+ *    prompt is scheduled while a talk is being captured; the
+ *    OS-level audio-focus loss still stops any in-flight prompt via
+ *    `AUDIOFOCUS_LOSS_TRANSIENT`.
  *  - Deselecting the pack mid-session doesn't abort the current
  *    scheduler (`eligiblePackOrNull` is checked once per session).
  *    Pack-switch mid-session is out of scope per Stage 5-E design.
@@ -90,6 +92,12 @@ class VoiceGuideOrchestrator @Inject constructor(
     private val voicePreferences: VoicePreferencesRepository,
     private val progressRepository: VoiceGuideProgressRepository,
     @VoiceGuidePlaybackScope private val scope: CoroutineScope,
+    // Kotlin default keeps the many positional test constructions
+    // source-compatible; Hilt ignores defaults and always injects the
+    // @TalkRecordingActive binding in production.
+    @TalkRecordingActive
+    private val talkRecordingActive: StateFlow<@JvmSuppressWildcards Boolean> =
+        MutableStateFlow(false),
 ) : VoiceGuidePauseController {
     private val _isPaused = MutableStateFlow(false)
 
@@ -336,7 +344,7 @@ class VoiceGuideOrchestrator @Inject constructor(
                 // `pause()`'s `safeStopPlayer()`.
                 val prompt = sched.decide(
                     isPaused = _isPaused.value,
-                    isRecordingVoice = false,
+                    isRecordingVoice = talkRecordingActive.value,
                 )
                 if (prompt != null) {
                     playOrSkip(

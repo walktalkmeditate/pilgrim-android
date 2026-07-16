@@ -7,6 +7,8 @@ import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 
 /**
@@ -33,9 +35,10 @@ class WalkActionPublisher @Inject constructor(
      * service is not running yet on the first start; the service's
      * onStartCommand promotes to FG before the API 31+ deadline.
      */
-    fun start(intention: String?) {
+    fun start(intention: String?, mode: WalkMode = WalkMode.Wander) {
         val intent = baseIntent(WalkTrackingService.ACTION_START).apply {
             putExtra(WalkTrackingService.EXTRA_FRESH_START, true)
+            putExtra(WalkTrackingService.EXTRA_WALK_MODE, mode.name)
             if (intention != null) putExtra(WalkTrackingService.EXTRA_INTENTION, intention)
         }
         ContextCompat.startForegroundService(context, intent)
@@ -121,6 +124,29 @@ class WalkActionPublisher @Inject constructor(
             baseIntent(WalkTrackingService.ACTION_CLEAR_SOUNDSCAPE_SELECTION),
             WalkTrackingService.ACTION_CLEAR_SOUNDSCAPE_SELECTION,
         )
+    }
+
+    /**
+     * Carry the seek glance to `:tracker`'s notification renderer (U10).
+     * The orchestrator pre-throttles to value changes, so this fires at
+     * most once per 100 m bucket / hint flip / completion; `null` ≙ iOS
+     * `seek: nil` and clears the tracker's stored glance. Uses
+     * [safeStartService] — a glance dropped by the background-start
+     * window self-heals on the next change. Port spec:
+     * `docs/parity/2026-07-14-port-seek-glance-u10.md` B3.
+     */
+    fun publishSeekGlance(glance: SeekGlanceState?) {
+        val intent = baseIntent(WalkTrackingService.ACTION_UPDATE_SEEK_GLANCE).apply {
+            putExtra(WalkTrackingService.EXTRA_SEEK_GLANCE_PRESENT, glance != null)
+            if (glance != null) {
+                putExtra(WalkTrackingService.EXTRA_SEEK_GLANCE_BUCKET, glance.distanceBucketMeters)
+                putExtra(WalkTrackingService.EXTRA_SEEK_GLANCE_COMPLETE, glance.isComplete)
+                glance.directionHint?.let {
+                    putExtra(WalkTrackingService.EXTRA_SEEK_GLANCE_DIRECTION, it.name)
+                }
+            }
+        }
+        safeStartService(intent, WalkTrackingService.ACTION_UPDATE_SEEK_GLANCE)
     }
 
     private fun fireService(action: String) {

@@ -7,6 +7,7 @@ import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import kotlin.math.acos
 import kotlin.math.asin
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sin
@@ -157,6 +158,46 @@ internal object SunCalc {
         val sunTrueLong = geomMeanLong + sunEqCenter
         val sunAppLong = sunTrueLong - 0.00569 - 0.00478 * sin(Math.toRadians(125.04 - 1934.136 * T))
         return normalizeDeg(sunAppLong)
+    }
+
+    /**
+     * Instantaneous solar elevation above the horizon in degrees.
+     *
+     * Ports iOS `CelestialCalculator.solarElevationDegrees`
+     * (`CelestialCalculator.swift:414-436@c1745e8`): declination and
+     * right ascension from the ecliptic longitude, hour angle from
+     * Greenwich mean sidereal time plus the observer's longitude.
+     * Accuracy well under a degree — plenty for classifying golden
+     * hour / midday / night (Seek's `SeekSkyLight`, U7) and the U11
+     * consumers.
+     *
+     * Divergence note (port spec D6): iOS derives λ from the TRUE
+     * solar longitude; this reuses [solarLongitude] (APPARENT, Meeus)
+     * as the module's single source of truth. The difference is
+     * ≤ 0.006° in λ → < 0.01° in elevation.
+     */
+    fun solarElevationDegrees(
+        latitude: Double,
+        longitude: Double,
+        instant: Instant,
+    ): Double {
+        val jd = julianDay(instant)
+        val T = julianCenturies(jd)
+        val lambda = Math.toRadians(solarLongitude(T))
+        val epsilon = Math.toRadians(23.439291 - 0.0130042 * T)
+
+        val declination = asin(sin(epsilon) * sin(lambda))
+        val rightAscension = atan2(cos(epsilon) * sin(lambda), cos(lambda))
+
+        // Truncating remainder like iOS; a negative result for pre-2000
+        // instants is harmless because the hour angle only enters via cos.
+        val gmstDegrees = (280.46061837 + 360.98564736629 * (jd - 2_451_545.0)) % 360.0
+        val hourAngle = Math.toRadians(gmstDegrees + longitude) - rightAscension
+
+        val phi = Math.toRadians(latitude)
+        val sinElevation = sin(phi) * sin(declination) +
+            cos(phi) * cos(declination) * cos(hourAngle)
+        return Math.toDegrees(asin(sinElevation.coerceIn(-1.0, 1.0)))
     }
 
     internal fun normalizeDeg(deg: Double): Double {

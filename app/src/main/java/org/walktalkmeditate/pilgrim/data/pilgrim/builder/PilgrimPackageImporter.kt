@@ -188,7 +188,10 @@ class PilgrimPackageImporter @Inject constructor(
         }
         val files = walksDir.listFiles { _, name -> name.endsWith(".json") }
             ?: return ReadWalksResult(emptyList(), decodeFailures = 0)
-        return decodeWalkFiles(files.toList(), json)
+        // listFiles order is filesystem-dependent (ext4 hash vs APFS
+        // alphabetical) — sort so which of two duplicate-uuid entries
+        // wins doesn't vary by platform.
+        return decodeWalkFiles(files.sortedBy { it.name }, json)
     }
 
     /**

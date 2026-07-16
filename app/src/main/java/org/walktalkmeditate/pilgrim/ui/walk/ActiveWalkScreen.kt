@@ -73,9 +73,17 @@ import org.walktalkmeditate.pilgrim.core.celestial.kanji
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimHemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.forHemisphere
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.domain.isInProgress
+import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
+import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
+import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
+import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
+import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
+import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
+import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
@@ -234,7 +242,18 @@ fun ActiveWalkScreen(
     onFinished: (walkId: Long) -> Unit,
     onEnterMeditation: () -> Unit,
     onDiscarded: () -> Unit,
+    /**
+     * The selected [WalkMode] from the Path selector (nav argument;
+     * iOS `MainCoordinator.startWalk(mode:)@c1745e8`). Drives the
+     * pre-walk seek setup ritual and rides [WalkViewModel.startWalk]
+     * into the accumulator. In-walk mode consumers (greeting) read the
+     * accumulator's mode instead, so a recovered walk stays honest
+     * even when this argument defaults to Wander.
+     */
+    mode: WalkMode = WalkMode.Wander,
     viewModel: WalkViewModel = hiltViewModel(),
+    seekSetupViewModel: SeekSetupViewModel = hiltViewModel(),
+    seekWalkViewModel: SeekWalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     // Navigation observer reads the passthrough flow, NOT uiState's
@@ -243,6 +262,16 @@ fun ActiveWalkScreen(
     val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
+    // U9 seek session feeds — the orchestrator's hot StateFlows through
+    // the thin SeekWalkViewModel bridge. Fog/pulse feed PilgrimMap; the
+    // phase + pending session gate the options sheet's seek section
+    // (alive from setup-ready, before the walk starts — 85373c1).
+    val seekFog by seekWalkViewModel.fogState.collectAsStateWithLifecycle()
+    val seekPulse by seekWalkViewModel.pulse.collectAsStateWithLifecycle()
+    val seekEnginePhase by seekWalkViewModel.enginePhase.collectAsStateWithLifecycle()
+    val seekPendingSession by seekWalkViewModel.pendingSession.collectAsStateWithLifecycle()
+    val seekSonarEnabled by seekWalkViewModel.sonarEnabled.collectAsStateWithLifecycle()
+    val seekSonarVolume by seekWalkViewModel.sonarVolume.collectAsStateWithLifecycle()
     val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
@@ -405,7 +434,7 @@ fun ActiveWalkScreen(
     val locationPermissionLauncher = rememberLauncherForActivityResult(locationPermissionContract) { granted ->
         locationRequestInFlight = false
         if (granted) {
-            viewModel.startWalk(intention = pendingStartIntention)
+            viewModel.startWalk(intention = pendingStartIntention, mode = mode)
         } else {
             permissionSnackbarScope.launch {
                 val result = snackbarHostState.showSnackbar(
@@ -606,8 +635,57 @@ fun ActiveWalkScreen(
     LaunchedEffect(isPreWalkSurface) {
         if (isPreWalkSurface) hasCheckedAutoIntention.value = false
     }
+
+    // ---- Seek setup ritual (U8) ----------------------------------------
+    // iOS `SeekSetupFlowModifier.swift:66-71@c1745e8`: begin 0.5 s after
+    // the surface appears, seek only. Recovery compositions (restored /
+    // notification-tap into a running walk) skip the ritual entirely —
+    // the walk is already recording and its chain is gone with the old
+    // process; re-running the gateway over a live walk is wrong UX.
+    // `beginSetup` is idempotent, so rotation mid-flow no-ops.
+    val seekStage by seekSetupViewModel.stage.collectAsStateWithLifecycle()
+    LaunchedEffect(seekSetupViewModel) {
+        if (mode != WalkMode.Seek || isRecoveryComposition) return@LaunchedEffect
+        delay(AUTO_INTENTION_DELAY_MS)
+        seekSetupViewModel.beginSetup(mode)
+    }
+    // Accuracy upgrade ask (spec B2/D2): coarse-only grant → request the
+    // FINE upgrade; the system dialog result routes back through the VM's
+    // stage-guarded handler. Same stable-contract pattern as the AF45
+    // start-permission launcher above.
+    val fineAccuracyContract = remember { ActivityResultContracts.RequestPermission() }
+    val fineAccuracyLauncher = rememberLauncherForActivityResult(fineAccuracyContract) { granted ->
+        seekSetupViewModel.onAccuracyResult(granted)
+    }
+    LaunchedEffect(seekSetupViewModel) {
+        seekSetupViewModel.accuracyUpgradeRequests.collect {
+            fineAccuracyLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+    // Stage side effects: the required-intention handoff (house 300 ms
+    // sheet-swap spacing, iOS uses 0.35 s — spec D6) and the
+    // user-dismissed exit. The two alert-worthy cancel reasons render
+    // dialogs below instead of navigating directly.
+    LaunchedEffect(seekStage) {
+        when (val stage = seekStage) {
+            SeekSetupStage.Intention -> {
+                delay(SHEET_HANDOFF_DELAY_MS)
+                showPreWalkIntention = true
+            }
+            is SeekSetupStage.Cancelled ->
+                if (stage.reason == SeekSetupCancelReason.UserDismissed) {
+                    onDiscarded()
+                }
+            else -> Unit
+        }
+    }
+
     LaunchedEffect(navWalkState::class) {
         if (isRecoveryComposition) return@LaunchedEffect
+        // Seek drives the intention step from its own stage machine — the
+        // wander-only auto-present would double-fire the sheet (iOS
+        // `ActiveWalkView.swift:392-398@c1745e8`).
+        if (mode == WalkMode.Seek) return@LaunchedEffect
         // Skip when the user just ended/discarded a walk on THIS entry.
         // hasSeenInProgress.value=true means we observed in-progress
         // during this composition; the current Idle/Finished is the
@@ -677,6 +755,11 @@ fun ActiveWalkScreen(
             bottomInsetDp = sheetInsetDp,
             waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
+            // Seek fog + pulse ring + crescent (U9 feeds the U6/U7
+            // renderer params): null fog keeps wander walks off the
+            // style entirely; the pulse token advances per heartbeat.
+            seekFog = seekFog,
+            seekPulse = seekPulse,
             proximityPins = proximityPins,
             onProximityPinTap = { pin ->
                 when (pin) {
@@ -709,6 +792,9 @@ fun ActiveWalkScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = PilgrimSpacing.big * 3),
+            // Accumulator-sourced (not the nav arg) so a recovered seek
+            // walk still speaks seek (iOS ActiveWalkView.swift:691-693).
+            isSeek = navWalkState.walkModeOrNull == WalkMode.Seek,
         )
         // Celestial greeting overlay — same anchor as weather, but
         // schedules its own 5s pre-delay before fading in so the
@@ -881,6 +967,22 @@ fun ActiveWalkScreen(
                 availableSoundscapes = availableSoundscapes,
                 onToggleSoundscape = viewModel::onToggleSoundscape,
                 onSelectSoundscape = viewModel::onSelectSoundscape,
+                // Seek section (85373c1): alive from setup-ready (pending
+                // session, pre-departure) through the whole engine
+                // session; iOS gates on `seekEngine != nil`
+                // (ActiveWalkView.swift:272-277@c1745e8).
+                isSeekActive = seekEnginePhase != null || seekPendingSession != null,
+                isSeekComplete = seekEnginePhase == SeekEnginePhase.COMPLETE,
+                sonarEnabled = seekSonarEnabled,
+                sonarVolume = seekSonarVolume,
+                onToggleSonar = seekWalkViewModel::setSonarEnabled,
+                onSonarVolumeChange = seekWalkViewModel::setSonarVolume,
+                onSeekAnew = {
+                    // Dismiss then reroll — the engine's immediate pulse
+                    // is the confirmation (ece26a7).
+                    showOptions = false
+                    seekWalkViewModel.seekAnewRequested()
+                },
             )
         }
         if (showWhisperSheet) {
@@ -942,12 +1044,19 @@ fun ActiveWalkScreen(
                     preWalkIntention = text.takeIf { it.isNotBlank() }
                     showPreWalkIntention = false
                     preWalkIntentionResetKey++
+                    // Guarded no-op for wander / wrong stage — mirrors iOS
+                    // calling advanceSeekSetupIntentionSet from the shared
+                    // onSet handler (ActiveWalkView.swift:286-291@c1745e8).
+                    seekSetupViewModel.advanceIntentionSet(text)
                 },
                 onDismiss = {
                     showPreWalkIntention = false
                     preWalkIntentionResetKey++
                 },
                 resetKey = preWalkIntentionResetKey,
+                // Seek requires an intention: no Cancel, no swipe/back/scrim
+                // dismissal (iOS allowsSkip + interactiveDismissDisabled).
+                allowsSkip = mode != WalkMode.Seek,
             )
         }
         // iOS parity `ActiveWalkView.swift:80-96, 138-141@db4196e`:
@@ -1018,7 +1127,7 @@ fun ActiveWalkScreen(
             // pre-walk path doesn't write to Room until commit.
             intention = preWalkIntention ?: intention,
             onStartWalk = {
-                viewModel.startWalk(intention = preWalkIntention)
+                viewModel.startWalk(intention = preWalkIntention, mode = mode)
                 preWalkIntention = null
             },
             onStartMeditation = viewModel::startMeditation,
@@ -1068,7 +1177,78 @@ fun ActiveWalkScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = PilgrimSpacing.big * 2),
         )
+        // ---- Seek setup presentations (U8) ----------------------------
+        // The Android equivalent of iOS's SeekSetupFlowModifier: duration
+        // sheet, gateway overlay, and the two cancel alerts. All inert
+        // for wander — the stage machine is born Ready and none of these
+        // branches ever render. Declared LAST so the gateway paints over
+        // every other layer (iOS presents it as a full-screen overlay).
+        if (seekStage == SeekSetupStage.DurationQuestion) {
+            SeekDurationSheet(
+                lastUsedMinutes = seekSetupViewModel.lastUsedDurationMinutes(),
+                showsSafetyCaption = seekSetupViewModel.showsSafetyCaption,
+                onSelect = seekSetupViewModel::rememberDurationSelection,
+                onBegin = seekSetupViewModel::advanceDuration,
+                onCancel = {
+                    // Only a dismissal while STILL on the question is a
+                    // cancel — a Begin-driven teardown has already advanced
+                    // the stage (iOS SeekSetupFlowModifier.swift:17-29).
+                    if (seekSetupViewModel.stage.value == SeekSetupStage.DurationQuestion) {
+                        seekSetupViewModel.cancelSetup()
+                    }
+                },
+            )
+        }
+        if (seekStage == SeekSetupStage.Transition) {
+            SeekGatewayOverlay(
+                celestialLineRes = seekSetupViewModel.tint?.gatewayLineRes,
+                onBreathMoment = seekSetupViewModel::fireGatewayBreath,
+                onComplete = seekSetupViewModel::advanceTransitionComplete,
+            )
+        }
+        val seekCancelReason = (seekStage as? SeekSetupStage.Cancelled)?.reason
+        if (seekCancelReason == SeekSetupCancelReason.AccuracyDeclined) {
+            SeekCancelAlert(
+                titleRes = R.string.seek_accuracy_declined_title,
+                bodyRes = R.string.seek_accuracy_declined_body,
+                onAcknowledged = onDiscarded,
+            )
+        }
+        if (seekCancelReason == SeekSetupCancelReason.GpsTimeout) {
+            SeekCancelAlert(
+                titleRes = R.string.seek_gps_timeout_title,
+                bodyRes = R.string.seek_gps_timeout_body,
+                onAcknowledged = onDiscarded,
+            )
+        }
     }
+}
+
+/**
+ * iOS `SeekSetupFlowModifier.swift:53-62@c1745e8` — the two seek-setup
+ * cancel alerts ("Precise Location Needed" / "Still Reaching for the
+ * Sky"). OK (and any dismissal) returns the walker home; no walk exists
+ * yet, so there is nothing to discard.
+ */
+@Composable
+private fun SeekCancelAlert(
+    titleRes: Int,
+    bodyRes: Int,
+    onAcknowledged: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onAcknowledged,
+        title = { Text(stringResource(titleRes)) },
+        text = { Text(stringResource(bodyRes)) },
+        confirmButton = {
+            TextButton(onClick = onAcknowledged) {
+                Text(stringResource(R.string.seek_alert_ok))
+            }
+        },
+        containerColor = pilgrimColors.parchment,
+        titleContentColor = pilgrimColors.ink,
+        textContentColor = pilgrimColors.ink,
+    )
 }
 
 @Composable

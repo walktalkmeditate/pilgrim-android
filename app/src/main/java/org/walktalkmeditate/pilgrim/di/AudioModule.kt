@@ -26,6 +26,8 @@ import org.walktalkmeditate.pilgrim.audio.BellPlayer
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
 import org.walktalkmeditate.pilgrim.audio.MeditationBellScope
 import org.walktalkmeditate.pilgrim.audio.MeditationObservedWalkState
+import org.walktalkmeditate.pilgrim.audio.TalkRecordingActive
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -82,6 +84,20 @@ abstract class AudioModule {
         fun provideMeditationObservedWalkState(
             controller: WalkController,
         ): StateFlow<WalkState> = controller.state
+
+        /**
+         * Expose [VoiceRecorder.isRecording] as a narrow qualified
+         * `StateFlow<Boolean>` (see [TalkRecordingActive]) so consumers
+         * — the seek sonar's suppression gate (U9) and the voice-guide
+         * scheduler's `isRecordingVoice` guard — never depend on the
+         * recorder class itself.
+         */
+        @Provides
+        @Singleton
+        @TalkRecordingActive
+        fun provideTalkRecordingActive(
+            voiceRecorder: VoiceRecorder,
+        ): StateFlow<Boolean> = voiceRecorder.isRecording
 
         /**
          * Expose `WalkController.bellTriggers` for `MeditationBellObserver`.

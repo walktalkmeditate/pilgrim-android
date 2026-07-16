@@ -284,6 +284,43 @@ class VoiceGuideOrchestratorTest {
         s.cancel()
     }
 
+    @Test fun `active talk recording suppresses prompt scheduling`() = runTest {
+        // U9 wired the scheduler's isRecordingVoice guard to the
+        // @TalkRecordingActive flow (recorder-level
+        // VoiceRecorder.isRecording); scheduler-level short-circuiting
+        // is pinned in VoiceGuideSchedulerTest — this covers the wire.
+        val pk = pack()
+        seedManifest(listOf(pk))
+        writePromptFiles(pk)
+        val walkState = MutableStateFlow<WalkState>(WalkState.Active(acc))
+        val selectedPackId = MutableStateFlow<String?>("p")
+        val recording = MutableStateFlow(true)
+        val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        VoiceGuideOrchestrator(
+            walkState, selectedPackId, manifestService, fileStore,
+            capturingPlayer, FixedClock(),
+            FakeSoundsPreferencesRepository(initialSoundsEnabled = true),
+            FakeVoicePreferencesRepository(initialVoiceGuideEnabled = true),
+            VoiceGuideProgressRepository.NoOp,
+            s,
+            talkRecordingActive = recording,
+        ).start()
+        runCurrent()
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals("no prompt while a talk records", 0, capturingPlayer.playCount)
+
+        // Recording ends → the next tick schedules normally.
+        recording.value = false
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertTrue(
+            "expected a prompt after the recording ended, got ${capturingPlayer.playCount}",
+            capturingPlayer.playCount >= 1,
+        )
+        s.cancel()
+    }
+
     @Test fun `Finished cancels scheduler and stops player`() = runTest {
         val pk = pack()
         seedManifest(listOf(pk))

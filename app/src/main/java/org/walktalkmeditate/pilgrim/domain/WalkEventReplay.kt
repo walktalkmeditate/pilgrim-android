@@ -47,7 +47,12 @@ fun replayWalkEventTotals(
                 meditated += (event.timestamp - it).coerceAtLeast(0)
                 pendingMeditationAt = null
             }
-            WalkEventType.WAYPOINT_MARKED -> Unit
+            // Point markers, not spans — nothing to pair or accumulate.
+            WalkEventType.WAYPOINT_MARKED,
+            WalkEventType.SEEK_MODE,
+            WalkEventType.SEEK_ARRIVAL,
+            WalkEventType.UNKNOWN,
+            -> Unit
         }
     }
     if (closeAt != null) {
@@ -71,3 +76,13 @@ interface WalkEventLike {
     val timestamp: Long
     val type: WalkEventType
 }
+
+/**
+ * Re-derives a walk's [WalkMode] from its persisted event log. Walks
+ * stay ordinary Room rows (no mode column); a seek is recognized by
+ * the single SEEK_MODE marker the reducer writes at start. Shared by
+ * both controllers' restore/derivation paths so the two processes can
+ * never disagree about a walk's mode.
+ */
+fun walkModeFromEvents(events: List<WalkEventLike>): WalkMode =
+    if (events.any { it.type == WalkEventType.SEEK_MODE }) WalkMode.Seek else WalkMode.Wander

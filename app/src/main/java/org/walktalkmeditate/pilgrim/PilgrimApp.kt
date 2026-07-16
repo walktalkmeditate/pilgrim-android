@@ -26,6 +26,7 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver
 import org.walktalkmeditate.pilgrim.walk.WalkLifecycleObserver
+import org.walktalkmeditate.pilgrim.walk.seek.SeekOrchestrator
 
 @HiltAndroidApp
 class PilgrimApp : Application(), Configuration.Provider {
@@ -95,6 +96,17 @@ class PilgrimApp : Application(), Configuration.Provider {
      * installs begin downloading immediately.
      */
     @Inject lateinit var soundscapeAutoDownloadObserverProvider: Provider<SoundscapeAutoDownloadObserver>
+
+    /**
+     * U9: app-scoped seek session owner. Boots the seek engine from the
+     * setup's pending session when a seek walk starts, routes engine
+     * events to sonar/haptics/persistence/map, and implements "Seek
+     * anew". Started explicitly (like the voice-guide orchestrator) so
+     * the walk-state subscription is visible + cancellable. UI process
+     * only — the engine and every sense it drives live here; the
+     * `:tracker` FGS keeps recording regardless.
+     */
+    @Inject lateinit var seekOrchestratorProvider: Provider<SeekOrchestrator>
 
     /**
      * Stage 8-B: collective counter. Boot-time fetch warms the cached
@@ -240,6 +252,11 @@ class PilgrimApp : Application(), Configuration.Provider {
         // walk-state flow + selected-pack flow and drives the player
         // via per-session scheduler coroutines on VoiceGuidePlaybackScope.
         voiceGuideOrchestratorProvider.get().start()
+
+        // Start the seek orchestrator (U9). Observes the walk-state flow
+        // and boots/tears down the seek engine per session; wander walks
+        // cost one no-op state check per transition.
+        seekOrchestratorProvider.get().start()
 
         // The soundscape playback orchestrator is NOT started here. It
         // runs in the :tracker process (WalkTrackingService) so the

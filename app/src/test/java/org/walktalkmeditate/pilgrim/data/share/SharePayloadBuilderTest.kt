@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.data.share
 
 import java.time.ZoneId
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -47,6 +48,33 @@ class SharePayloadBuilderTest {
         elevationDescentMeters = 40.0,
         steps = 1_500,
     )
+
+    @Test
+    fun `wander walk share payload wire bytes are pinned (U4 regression guard)`() {
+        // The seek vocabulary (U4) must not move a single byte of the
+        // wander share wire format. Same Json shape as
+        // NetworkModule.provideJson; inputs fully deterministic (UTC
+        // zone, fixed timestamps, no turning day near 2023-11-14).
+        val json = Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
+        val payload = SharePayloadBuilder.build(
+            inputs = baseInputs(
+                waypoints = listOf(
+                    Waypoint(
+                        walkId = 1L, timestamp = 1_700_000_030_000L,
+                        latitude = 45.0005, longitude = -70.0005,
+                        label = "Bridge", icon = "leaf",
+                    ),
+                ),
+            ),
+            options = allOn().copy(includeWaypoints = true),
+            zoneId = ZoneId.of("UTC"),
+        )
+        val encoded = json.encodeToString(SharePayload.serializer(), payload)
+        assertEquals(GOLDEN_WANDER_PAYLOAD, encoded)
+    }
 
     private fun allOn(expiry: ExpiryOption = ExpiryOption.Season) = WalkShareOptions(
         expiry = expiry,
@@ -298,5 +326,21 @@ class SharePayloadBuilderTest {
             photos = listOf(photo),
         )
         assertEquals(listOf(photo), on.photos)
+    }
+
+    private companion object {
+        // Captured from the production builder + serializer, which U4
+        // leaves untouched (ShareInputs carries no walk events) — so
+        // these are the pre-seek wire bytes. Any diff here means the
+        // wander wire format moved.
+        const val GOLDEN_WANDER_PAYLOAD =
+            """{"stats":{"distance":1234.0,"active_duration":600.0,"elevation_ascent":42.0,""" +
+                """"elevation_descent":40.0,"steps":1500},"route":[{"lat":45.0,"lon":-70.0,"alt":0.0,""" +
+                """"ts":1700000000},{"lat":45.001,"lon":-70.001,"alt":0.0,"ts":1700000060}],""" +
+                """"activity_intervals":[],"expiry_days":90,"units":"metric",""" +
+                """"start_date":"2023-11-14T22:13:20Z","tz_identifier":"UTC",""" +
+                """"toggled_stats":["distance","duration","elevation","activity_breakdown","steps"],""" +
+                """"waypoints":[{"lat":45.0005,"lon":-70.0005,"label":"Bridge","icon":"leaf",""" +
+                """"ts":1700000030}]}"""
     }
 }

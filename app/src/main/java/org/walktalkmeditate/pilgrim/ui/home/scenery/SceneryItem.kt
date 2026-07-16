@@ -33,7 +33,7 @@ internal fun SceneryItem(
     }
 
     val baseTokens = pilgrimColors
-    val baseColor = when (placement.type.tintTokenName) {
+    val baseColor = when (placement.tintTokenName) {
         "moss" -> baseTokens.moss
         "stone" -> baseTokens.stone
         "dawn" -> baseTokens.dawn
@@ -91,12 +91,24 @@ internal fun SceneryItem(
             sizeDp = sizeDp,
             tintColor = tintColor,
             dawnColor = dawnColor,
+            gateKind = placement.gateKind,
         )
         SceneryType.Moon -> MoonScenery(
             sizeDp = sizeDp,
             tintColor = tintColor,
             walkDateMs = snapshot.startMs,
             parchmentColor = parchmentColor,
+        )
+        SceneryType.Cairn -> CairnScenery(
+            sizeDp = sizeDp,
+            tintColor = tintColor,
+            walkDateMs = snapshot.startMs,
+            stones = placement.stones,
+        )
+        SceneryType.Drift -> DriftScenery(
+            sizeDp = sizeDp,
+            tintColor = tintColor,
+            walkDateMs = snapshot.startMs,
         )
     }
 }

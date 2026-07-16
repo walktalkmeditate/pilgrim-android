@@ -95,6 +95,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.MAX_PINS_PER_WALK
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.ReliquaryState
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.resolveReliquaryState
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummaryData
+import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummaryModel
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutInputs
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutProse
 
@@ -241,6 +243,16 @@ data class WalkSummary(
      * row consumes the inputs to decide whether to render at all.
      */
     val calloutInputs: WalkSummaryCalloutInputs,
+    /**
+     * U11: the seek story for "The Seeking" card + provenance line —
+     * clearing groups with found-under captions, grouped signs, and the
+     * "Along the way" strays. Null for wander walks AND zero-arrival
+     * seeks (both render the standard summary untouched; iOS
+     * `WalkSummaryView.swift:12-14,24@c1745e8` computes the same model
+     * once per walk identity). Assembled in [WalkSummaryViewModel.buildState]
+     * via [SeekSummaryModel.summaryData].
+     */
+    val seekSummary: SeekSummaryData? = null,
 )
 
 @HiltViewModel
@@ -1475,7 +1487,15 @@ class WalkSummaryViewModel @Inject constructor(
         _selectedFavicon.value = WalkFavicon.fromRawValue(walk.favicon)
         val samples = repository.locationSamplesFor(walkId)
         val events = repository.eventsFor(walkId)
-        val waypoints = repository.waypointsFor(walkId)
+        val waypoints = try {
+            repository.waypointsFor(walkId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            // A failed waypoint read degrades to no pins/halos/seek card
+            // rather than killing the whole summary.
+            emptyList()
+        }
 
         val points = samples.map {
             LocationPoint(
@@ -1572,6 +1592,10 @@ class WalkSummaryViewModel @Inject constructor(
         val voiceRecordings = repository.voiceRecordingsFor(walkId)
         val altitudeSamples = repository.altitudeSamplesFor(walkId)
         val activityIntervals = repository.activityIntervalsFor(walkId)
+        // U11: one-shot photo read for the seek-summary sign grouping
+        // (photos group to clearings by their EXIF capture fix). The
+        // reliquary carousel keeps its own live observePhotosFor flow.
+        val walkPhotos = repository.photosFor(walkId)
 
         // Stage 13-B: classify each GPS sample's activity (walking /
         // talking / meditating) and group into contiguous segments for
@@ -1589,21 +1613,19 @@ class WalkSummaryViewModel @Inject constructor(
         // ~5400 samples × ~120 predicate evals = ~640K compares — tens
         // of ms on mid-range hardware, enough to trip ANR thresholds
         // when stacked with the other Main-thread work in this build.
-        val (routeSegments, walkAnnotations) = withContext(Dispatchers.Default) {
+        val (routeSegments, walkAnnotations, seekSummary) = withContext(Dispatchers.Default) {
             val seg = computeRouteSegments(
                 samples = samples,
                 intervals = activityIntervals,
                 recordings = voiceRecordings,
             )
-            // Pre-filter to MEDITATING per the function's parameter contract.
-            // The function has a defensive `continue` on non-MEDITATING types
-            // but relying on that as load-bearing means the contract drifts
-            // and a future refactor (e.g. when a new ActivityType gains a
-            // pin) would silently start drawing walking-interval pins.
-            val waypoints = runCatching { repository.waypointsFor(walkId) }
-                .getOrDefault(emptyList())
             val ann = computeWalkMapAnnotations(
                 routeSamples = samples,
+                // Pre-filter to MEDITATING per the function's parameter contract.
+                // The function has a defensive `continue` on non-MEDITATING types
+                // but relying on that as load-bearing means the contract drifts
+                // and a future refactor (e.g. when a new ActivityType gains a
+                // pin) would silently start drawing walking-interval pins.
                 meditationIntervals = activityIntervals.filter {
                     it.activityType == ActivityType.MEDITATING
                 },
@@ -1617,7 +1639,20 @@ class WalkSummaryViewModel @Inject constructor(
                 // keeps the renderer pipeline alive without faking
                 // pin data.
             )
-            seg to ann
+            // U11: the seek story (haversine grouping + solar-elevation
+            // captions) shares the Default hop with the other pure
+            // route-shaped computations. Null for wander walks and
+            // zero-arrival seeks — the card and its screen slot both
+            // vanish on null.
+            val seek = SeekSummaryModel.summaryData(
+                events = events,
+                waypoints = waypoints,
+                photos = walkPhotos,
+                voiceRecordings = voiceRecordings,
+                routeSamples = samples,
+                intention = walk.intention,
+            )
+            Triple(seg, ann, seek)
         }
 
         val talkMillis = voiceRecordings.sumOf { it.durationMillis }
@@ -1743,6 +1778,7 @@ class WalkSummaryViewModel @Inject constructor(
                 etegamiSpec = etegamiSpec,
                 celestialSnapshot = celestialSnapshot,
                 calloutInputs = calloutInputs,
+                seekSummary = seekSummary,
             ),
         )
     }
@@ -1762,6 +1798,13 @@ class WalkSummaryViewModel @Inject constructor(
         // First-route latitude per walk (one query) so each walk's season is
         // computed against its own location, matching iOS GoshuinMilestones.
         val firstLats = repository.firstRouteLatitudesByWalk()
+        // U11/U12: arrival-waypoint counts per walk for the seeking seals
+        // (FirstUnknown / UnknownsFound thresholds). One waypoint-icons
+        // read for the whole history — never per-walk faulting (iOS's own
+        // perf rule; same wiring as GoshuinViewModel). Without this every
+        // input defaulted foundPlaceCount = 0 and seeking seals never
+        // captioned on the summary reveal.
+        val arrivalCounts = GoshuinMilestones.arrivalCounts(repository.waypointIconsByWalk())
         val inputs = finished.map { walk ->
             // For the current walk, use the live event-replay total
             // (currentDistance) — Walk.distanceMeters is populated by
@@ -1800,6 +1843,7 @@ class WalkSummaryViewModel @Inject constructor(
                 distanceMeters = d,
                 meditateDurationMillis = medMillis,
                 latitude = firstLats[walk.id] ?: 0.0,
+                foundPlaceCount = arrivalCounts[walk.id] ?: 0,
             )
         }
         val currentIndex = finished.indexOfFirst { it.id == currentWalk.id }

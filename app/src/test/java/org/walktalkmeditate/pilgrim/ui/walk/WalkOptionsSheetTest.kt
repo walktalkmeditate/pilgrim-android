@@ -134,6 +134,94 @@ class WalkOptionsSheetTest {
         assertTrue(fired)
     }
 
+    // ---- Seek section (iOS WalkOptionsSheet.swift:107-137@c1745e8,
+    // 85373c1; U9 port spec B11) ---------------------------------------
+
+    @Test
+    fun `seek section hidden on wander walks`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = true,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+                isSeekActive = false,
+            )
+        }
+        composeRule.onNodeWithText("Sonar").assertDoesNotExist()
+        composeRule.onNodeWithText("Seek Anew").assertDoesNotExist()
+    }
+
+    @Test
+    fun `seek section renders pre-departure with sonar controls and reroll`() {
+        var rerolled = false
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = true,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                // Pre-departure: no walk row yet — the section must not
+                // depend on the in-walk rows (85373c1).
+                canDropWaypoint = false,
+                onDropWaypoint = {},
+                onDismiss = {},
+                isSeekActive = true,
+                sonarEnabled = true,
+                onSeekAnew = { rerolled = true },
+            )
+        }
+        composeRule.onNodeWithText("Sonar").assertIsDisplayed()
+        composeRule.onNodeWithText("Sonar Volume").assertIsDisplayed()
+        composeRule.onNodeWithText("Seek Anew").performClick()
+        assertTrue(rerolled)
+    }
+
+    @Test
+    fun `sonar volume row hidden while the toggle is off`() {
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onDropWaypoint = {},
+                onDismiss = {},
+                isSeekActive = true,
+                sonarEnabled = false,
+            )
+        }
+        composeRule.onNodeWithText("Sonar").assertIsDisplayed()
+        composeRule.onNodeWithText("Sonar Volume").assertDoesNotExist()
+    }
+
+    @Test
+    fun `after seek complete the reroll row is disabled with the completed subtitle`() {
+        var rerolled = false
+        composeRule.setContent {
+            WalkOptionsSheet(
+                canSetIntention = false,
+                intention = null,
+                onSetIntention = {},
+                waypointCount = 0,
+                canDropWaypoint = true,
+                onDropWaypoint = {},
+                onDismiss = {},
+                isSeekActive = true,
+                isSeekComplete = true,
+                onSeekAnew = { rerolled = true },
+            )
+        }
+        composeRule.onNodeWithText("Seek Anew").assertIsDisplayed()
+        composeRule.onNodeWithText("The seeking is complete").assertIsDisplayed()
+        composeRule.onNodeWithText("Seek Anew").performClick()
+        assertTrue("disabled row must swallow taps", !rerolled)
+    }
+
     @Test
     fun `waypoint subtitle shows None marked when count is zero`() {
         // Android plurals on en-US never select quantity="zero", so a

@@ -26,6 +26,7 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimStats
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWeather
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.AltitudeCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
@@ -40,9 +41,14 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
  * Most schema fields that iOS reads from the Walk object directly
  * are computed on Android from related entities (distance from
  * route, durations from activity intervals, ascent from altitude).
- * Fields Android doesn't track (heart rates, workout events,
- * reflection) emit as null/empty arrays. Weather rides through
- * starting Stage 12 (`Walk.weatherCondition` + 3 friends).
+ * Fields Android doesn't track (heart rates, reflection style)
+ * emit as null/empty arrays. Weather rides through starting
+ * Stage 12 (`Walk.weatherCondition` + 3 friends). Seek events
+ * export under `workoutEvents` with iOS's wire identifiers
+ * (`PilgrimPackageConverter.swift:493-513@c1745e8`); Android's
+ * lifecycle events (pause/meditation/waypoint) stay out of that
+ * array because they already ride as `pauses` / `activities` /
+ * route GeoJSON points.
  */
 object PilgrimPackageConverter {
 
@@ -140,7 +146,7 @@ object PilgrimPackageConverter {
                 org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimReflection(text = it)
             },
             heartRates = emptyList(),
-            workoutEvents = emptyList(),
+            workoutEvents = bundle.walkEvents.mapNotNull { it.toPilgrimWorkoutEvent() },
             favicon = walk.favicon,
             isRace = false,
             isUserModified = false,
@@ -259,11 +265,15 @@ object PilgrimPackageConverter {
      * Drops on import (silently logged in caller):
      * - `reflection` — Android has no reflection storage.
      * - `heartRates` — no HeartRateSample entity.
-     * - `workoutEvents` — Android `WalkEventType` doesn't model
-     *    iOS lap/marker/segment.
      * - `isRace`, `isUserModified` — no schema columns.
      * - `intentions` from manifest, `events` from manifest,
      *   `customPromptStyles` from manifest — all dropped.
+     *
+     * `workoutEvents` import as [WalkEvent] rows: seek identifiers map
+     * to their domain types; anything unrecognized (including iOS's
+     * legacy lap/marker/segment, which Android doesn't model) is KEPT
+     * as [WalkEventType.UNKNOWN] — mirroring iOS's
+     * `walkEventType(from:)` default (`.unknown`, never dropped).
      *
      * Weather (4 cols since Stage 12) rides through unchanged.
      */
@@ -307,7 +317,7 @@ object PilgrimPackageConverter {
                 isEnhanced = vr.isEnhanced,
             )
         }
-        val walkEvents = pilgrim.pauses.flatMap { pause ->
+        val pauseEvents = pilgrim.pauses.flatMap { pause ->
             listOf(
                 WalkEvent(
                     walkId = 0L,
@@ -321,6 +331,14 @@ object PilgrimPackageConverter {
                 ),
             )
         }
+        val workoutEvents = pilgrim.workoutEvents.map { event ->
+            WalkEvent(
+                walkId = 0L,
+                timestamp = event.timestamp.toEpochMilli(),
+                eventType = walkEventTypeFromWire(event.type),
+            )
+        }
+        val walkEvents = (pauseEvents + workoutEvents).sortedBy { it.timestamp }
         val walkPhotos = PilgrimPackagePhotoConverter.importPhotos(exported = pilgrim.photos)
 
         return PendingImport(
@@ -457,6 +475,44 @@ object PilgrimPackageConverter {
             startDate = Instant.ofEpochMilli(startTimestamp),
             endDate = Instant.ofEpochMilli(endTimestamp),
         )
+    }
+
+    /**
+     * Wire identifiers must stay byte-for-byte with iOS
+     * `workoutEventTypeString` (`PilgrimPackageConverter.swift:493-502@c1745e8`)
+     * or cross-platform imports lose seek-ness. Android lifecycle events
+     * return null: PAUSED/RESUMED already export as `pauses`,
+     * MEDITATION_* as `activities`, and WAYPOINT_MARKED's waypoint rides
+     * in the route GeoJSON — a second representation under
+     * `workoutEvents` would double-count on import.
+     */
+    private fun WalkEvent.toPilgrimWorkoutEvent(): PilgrimWorkoutEvent? {
+        val wireType = when (eventType) {
+            WalkEventType.SEEK_MODE -> "seekMode"
+            WalkEventType.SEEK_ARRIVAL -> "seekArrival"
+            WalkEventType.UNKNOWN -> "unknown"
+            WalkEventType.PAUSED,
+            WalkEventType.RESUMED,
+            WalkEventType.MEDITATION_START,
+            WalkEventType.MEDITATION_END,
+            WalkEventType.WAYPOINT_MARKED,
+            -> null
+        } ?: return null
+        return PilgrimWorkoutEvent(
+            timestamp = Instant.ofEpochMilli(timestamp),
+            type = wireType,
+        )
+    }
+
+    /**
+     * iOS `walkEventType(from:)` (`PilgrimPackageConverter.swift:504-513@c1745e8`):
+     * unrecognized identifiers fall back to the unknown sentinel and the
+     * event is kept, never dropped.
+     */
+    private fun walkEventTypeFromWire(type: String): WalkEventType = when (type) {
+        "seekMode" -> WalkEventType.SEEK_MODE
+        "seekArrival" -> WalkEventType.SEEK_ARRIVAL
+        else -> WalkEventType.UNKNOWN
     }
 
     private fun VoiceRecording.toPilgrimVoiceRecording(): PilgrimVoiceRecording =

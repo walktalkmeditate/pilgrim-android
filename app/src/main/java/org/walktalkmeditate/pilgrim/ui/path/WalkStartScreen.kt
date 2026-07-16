@@ -52,11 +52,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.random.Random
+import org.walktalkmeditate.pilgrim.BuildConfig
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.isInProgress
+import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
 import org.walktalkmeditate.pilgrim.ui.design.BreathingLogo
 import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.design.MoonPhaseGlyph
@@ -73,6 +75,14 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
  * delay (and the haptic) entirely.
  */
 private const val MODE_TAP_DISSOLVE_MS = 450L
+
+/**
+ * Device-QA gate: Seek is selectable in debug builds ahead of the U13
+ * availability flip so the Phase 14 smoke check can drive a real seek
+ * walk. U13 flips [WalkMode.isAvailable] and deletes this property.
+ */
+private val WalkMode.isSelectableInThisBuild: Boolean
+    get() = isAvailable || (this == WalkMode.Seek && BuildConfig.DEBUG)
 
 /**
  * The Path tab — Pilgrim's contemplative pre-walk hub. Ports iOS
@@ -92,7 +102,7 @@ private const val MODE_TAP_DISSOLVE_MS = 450L
  */
 @Composable
 fun WalkStartScreen(
-    onEnterActiveWalk: () -> Unit,
+    onEnterActiveWalk: (WalkMode) -> Unit,
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -152,11 +162,15 @@ fun WalkStartScreen(
     // to ActiveWalk if a walk was somehow already in-progress on the
     // controller (warm launch case where the @Singleton survived).
     val didCheck = rememberSaveable { mutableStateOf(false) }
+    // Redirects into an ALREADY-RUNNING walk pass the running walk's
+    // mode when it's knowable (accumulator carries it); the mode arg
+    // only drives the seek setup ritual, which the recovery guard on
+    // ActiveWalkScreen skips for in-progress compositions anyway.
     LaunchedEffect(Unit) {
         if (didCheck.value) return@LaunchedEffect
         didCheck.value = true
         if (isInProgress) {
-            onEnterActiveWalk()
+            onEnterActiveWalk(walkState.walkModeOrNull ?: WalkMode.Wander)
         }
     }
 
@@ -166,7 +180,7 @@ fun WalkStartScreen(
     // false) doesn't fire spuriously on the initial Idle observation.
     LaunchedEffect(isInProgress) {
         if (isInProgress && didCheck.value) {
-            onEnterActiveWalk()
+            onEnterActiveWalk(walkState.walkModeOrNull ?: WalkMode.Wander)
         }
     }
 
@@ -293,8 +307,11 @@ fun WalkStartScreen(
                 // iOS parity: button navigates to the active-walk surface
                 // in its "ready" state. The walk does NOT start recording
                 // until the user taps the Start button on that screen.
-                onClick = { onEnterActiveWalk() },
-                enabled = selectedMode.isAvailable && !isInProgress,
+                // The selected mode rides the nav argument — for Seek it
+                // drives the setup ritual on the active-walk surface (iOS
+                // `MainCoordinator.startWalk(mode:)@c1745e8`).
+                onClick = { onEnterActiveWalk(selectedMode) },
+                enabled = selectedMode.isSelectableInThisBuild && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -396,7 +413,7 @@ private fun ModeSelector(
         }
         Spacer(Modifier.height(PilgrimSpacing.small))
         AnimatedContent(targetState = selectedMode, label = "mode-subtitle") { mode ->
-            val subtitleId = if (mode.isAvailable) {
+            val subtitleId = if (mode.isSelectableInThisBuild) {
                 when (mode) {
                     WalkMode.Wander -> R.string.path_mode_wander_subtitle
                     WalkMode.Together -> R.string.path_mode_together_subtitle

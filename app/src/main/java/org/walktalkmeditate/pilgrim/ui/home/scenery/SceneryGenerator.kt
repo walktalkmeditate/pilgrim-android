@@ -2,13 +2,16 @@
 package org.walktalkmeditate.pilgrim.ui.home.scenery
 
 import androidx.compose.runtime.Immutable
+import kotlin.math.min
 import org.walktalkmeditate.pilgrim.ui.home.WalkSnapshot
 
 /**
  * Deterministic scenery picker — port of iOS
  * `pilgrim-ios/Pilgrim/Models/SceneryGenerator.swift`. Same FNV-1a +
- * SplitMix64 hash, same 35% chance, same 7-type weights. Stable output
- * for the same `WalkSnapshot` inputs (uuid + startMs + distanceM + dur).
+ * SplitMix64 hash, same 35% chance, same lottery weights, and the same
+ * deterministic branch ahead of the lottery (threshold gates + found-place
+ * cairns). Stable output for the same `WalkSnapshot` inputs
+ * (uuid + startMs + distanceM + dur + threshold/seek fields).
  *
  * `Scenery` is `@Immutable` per Stage 4-C / 13-Cel cascade lesson.
  */
@@ -16,32 +19,46 @@ object SceneryGenerator {
 
     private const val SCENERY_CHANCE: Double = 0.35
 
+    // The random torii is retired: gates now mark real thresholds only
+    // (see the deterministic branch in `pick`). Its old band belongs to
+    // drift — the season's breath — so every other walk's rolled item
+    // stays exactly what it has always been.
     private val WEIGHTS: List<Pair<SceneryType, Double>> = listOf(
         SceneryType.Tree to 0.27,
         SceneryType.Lantern to 0.18,
         SceneryType.Grass to 0.22,
         SceneryType.Butterfly to 0.14,
         SceneryType.Mountain to 0.11,
-        SceneryType.Torii to 0.05,
+        SceneryType.Drift to 0.05,
         SceneryType.Moon to 0.03,
     )
 
     fun pick(snapshot: WalkSnapshot): SceneryPlacement? {
         val seed = deterministicSeed(snapshot)
+        val roll3 = seededRandom(seed, 3uL)
+        val side = if (roll3 < 0.5) ScenerySide.Left else ScenerySide.Right
+        val roll4 = seededRandom(seed, 4uL)
+        val offset = (roll4 * 15.0 - 7.5).toFloat()
+
+        // Meaning outranks the lottery: threshold walks stand at a gate,
+        // and a seek that found places raises a cairn.
+        snapshot.threshold?.let { threshold ->
+            return SceneryPlacement(SceneryType.Torii, side, offset, gateKind = threshold)
+        }
+        if (snapshot.isSeek && snapshot.foundPlaces > 0) {
+            return SceneryPlacement(
+                type = SceneryType.Cairn,
+                side = side,
+                offset = offset,
+                stones = min(2 + snapshot.foundPlaces, 5),
+            )
+        }
 
         val roll1 = seededRandom(seed, 1uL)
         if (roll1 >= SCENERY_CHANCE) return null
 
         val roll2 = seededRandom(seed, 2uL)
-        val type = pickType(roll2)
-
-        val roll3 = seededRandom(seed, 3uL)
-        val side = if (roll3 < 0.5) ScenerySide.Left else ScenerySide.Right
-
-        val roll4 = seededRandom(seed, 4uL)
-        val offset = (roll4 * 15.0 - 7.5).toFloat()
-
-        return SceneryPlacement(type, side, offset)
+        return SceneryPlacement(pickType(roll2), side, offset)
     }
 
     /**
@@ -120,7 +137,7 @@ object SceneryGenerator {
 }
 
 enum class SceneryType {
-    Tree, Lantern, Butterfly, Mountain, Grass, Torii, Moon;
+    Tree, Lantern, Butterfly, Mountain, Grass, Torii, Moon, Cairn, Drift;
 
     /** Token name into pilgrimColors.* — same naming as iOS. */
     val tintTokenName: String
@@ -132,6 +149,27 @@ enum class SceneryType {
             Grass -> "moss"
             Torii -> "stone"
             Moon -> "fog"
+            Cairn -> "stone"
+            Drift -> "fog"
+        }
+
+    /**
+     * Parallax drift in dp at the viewport edge — depth of field for
+     * the scroll. Sky and horizon barely move; things at the walker's
+     * feet move most, and drift rides the air nearest of all.
+     * iOS `SceneryGenerator.swift:41-53@c1745e8` (points → dp).
+     */
+    val parallaxWeightDp: Float
+        get() = when (this) {
+            Mountain -> 3f
+            Moon -> 4f
+            Torii -> 6f
+            Tree -> 8f
+            Lantern -> 9f
+            Cairn -> 9f
+            Grass -> 12f
+            Butterfly -> 14f
+            Drift -> 16f
         }
 }
 
@@ -143,4 +181,22 @@ data class SceneryPlacement(
     val side: ScenerySide,
     /** Random ±7.5 dp jitter on top of side-offset. */
     val offset: Float,
-)
+    /**
+     * Cairns only: stones in the stack — a two-stone base plus one per
+     * found place, capped at five.
+     */
+    val stones: Int = 3,
+    /** Gates only: which kind of threshold the torii marks. */
+    val gateKind: WalkThreshold? = null,
+) {
+    /**
+     * Practice gates stand vermilion (rust); everything else keeps its
+     * type's tint — seeking gates weathered stone among them.
+     */
+    val tintTokenName: String
+        get() = if (type == SceneryType.Torii && gateKind == WalkThreshold.Practice) {
+            "rust"
+        } else {
+            type.tintTokenName
+        }
+}

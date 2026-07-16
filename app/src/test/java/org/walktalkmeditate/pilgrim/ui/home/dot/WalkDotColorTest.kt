@@ -177,4 +177,18 @@ class WalkDotColorTest {
         // The dot uses Full intensity, so it must differ from the Moderate thread.
         assertNotEquals(walkDotColor(summerMs, base, Hemisphere.Northern), thread)
     }
+
+    // --- fixed shadow colors (iOS 3c8c443, in c1745e8 history) ---
+    // ".shadow(color: .black.opacity(0.15), ...)" on the core and
+    // ".shadow(color: .black.opacity(0.4), ...)" on the favicon glyph:
+    // "Fixed .black, not adaptive .ink: .ink inverts to near-white in
+    // dark mode and renders as a light halo around every dot."
+
+    @Test fun `core drop shadow is fixed black at 15 percent, never adaptive ink`() {
+        assertEquals(Color.Black.copy(alpha = 0.15f), DOT_SHADOW_COLOR)
+    }
+
+    @Test fun `favicon shadow is fixed black at 40 percent`() {
+        assertEquals(Color.Black.copy(alpha = 0.4f), FAVICON_SHADOW_TINT)
+    }
 }

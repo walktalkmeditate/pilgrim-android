@@ -18,20 +18,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.Air
+import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.MusicOff
+import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.Terrain
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -101,6 +108,20 @@ fun WalkOptionsSheet(
     availableSoundscapes: List<SoundscapeChoice> = emptyList(),
     onToggleSoundscape: () -> Unit = {},
     onSelectSoundscape: (String) -> Unit = {},
+    // iOS parity `WalkOptionsSheet.swift:107-137@c1745e8` (85373c1) —
+    // seek-only section: sonar toggle + volume mirror and the "Seek
+    // Anew" reroll row. Self-gated on an active seek session, which on
+    // Android is a live engine OR the setup's pending session (the
+    // section renders pre-departure too — U9 port spec B11). After
+    // seekComplete the reroll row stays visible, disabled, with the
+    // completed subtitle so the layout holds still.
+    isSeekActive: Boolean = false,
+    isSeekComplete: Boolean = false,
+    sonarEnabled: Boolean = true,
+    sonarVolume: Float = 0.5f,
+    onToggleSonar: (Boolean) -> Unit = {},
+    onSonarVolumeChange: (Float) -> Unit = {},
+    onSeekAnew: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -150,6 +171,22 @@ fun WalkOptionsSheet(
                         )
                     },
                     onClick = onDropWaypoint,
+                )
+            }
+            // iOS parity `WalkOptionsSheet.swift:73-79@c1745e8`: "The
+            // seek is already alive on the ready screen … its controls
+            // appear as soon as the engine exists, letting the walker
+            // check the sonar or reroll before stepping off. Wander
+            // pre-walk renders nothing here." Placed before Traces
+            // (iOS section order).
+            if (isSeekActive) {
+                SeekSection(
+                    isSeekComplete = isSeekComplete,
+                    sonarEnabled = sonarEnabled,
+                    sonarVolume = sonarVolume,
+                    onToggleSonar = onToggleSonar,
+                    onSonarVolumeChange = onSonarVolumeChange,
+                    onSeekAnew = onSeekAnew,
                 )
             }
             // iOS parity `WalkOptionsSheet.swift:90-180@db4196e` —
@@ -206,6 +243,121 @@ fun WalkOptionsSheet(
                 )
             }
         }
+    }
+}
+
+/**
+ * Seek-only controls (iOS `seekSection`,
+ * `WalkOptionsSheet.swift:107-137@c1745e8`): caption header, sonar
+ * toggle, volume slider (only while the toggle is on), and the
+ * "Seek Anew" row — disabled with the completed subtitle after the
+ * final reveal (Traces-row disabled precedent).
+ */
+@Composable
+private fun SeekSection(
+    isSeekComplete: Boolean,
+    sonarEnabled: Boolean,
+    sonarVolume: Float,
+    onToggleSonar: (Boolean) -> Unit,
+    onSonarVolumeChange: (Float) -> Unit,
+    onSeekAnew: () -> Unit,
+) {
+    Text(
+        text = stringResource(R.string.seek_section_title),
+        style = pilgrimType.caption,
+        color = pilgrimColors.fog,
+        modifier = Modifier.padding(
+            top = PilgrimSpacing.small,
+            start = PilgrimSpacing.xs,
+        ),
+    )
+    SonarToggleRow(enabled = sonarEnabled, onToggle = onToggleSonar)
+    if (sonarEnabled) {
+        SonarVolumeRow(volume = sonarVolume, onChange = onSonarVolumeChange)
+    }
+    OptionRow(
+        icon = Icons.Outlined.Autorenew,
+        title = stringResource(R.string.seek_anew_title),
+        subtitle = if (isSeekComplete) {
+            stringResource(R.string.seek_anew_complete_subtitle)
+        } else {
+            null
+        },
+        enabled = !isSeekComplete,
+        onClick = onSeekAnew,
+    )
+}
+
+@Composable
+private fun SonarToggleRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.4f))
+            .padding(
+                horizontal = PilgrimSpacing.normal,
+                vertical = PilgrimSpacing.small,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.normal),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Sensors,
+            contentDescription = null,
+            tint = pilgrimColors.moss,
+            modifier = Modifier.size(24.dp),
+        )
+        Text(
+            text = stringResource(R.string.seek_sonar_title),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = enabled,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = pilgrimColors.stone,
+                checkedThumbColor = pilgrimColors.parchment,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun SonarVolumeRow(volume: Float, onChange: (Float) -> Unit) {
+    // Local drag-state, DataStore write once on finish — the
+    // SoundSettings VolumeRow precedent (every drag tick would
+    // otherwise dispatch a DataStore edit).
+    var dragValue by remember(volume) { mutableFloatStateOf(volume) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.4f))
+            .padding(
+                horizontal = PilgrimSpacing.normal,
+                vertical = PilgrimSpacing.small,
+            ),
+    ) {
+        Text(
+            text = stringResource(R.string.seek_sonar_volume_title),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Slider(
+            value = dragValue,
+            onValueChange = { dragValue = it },
+            onValueChangeFinished = { onChange(dragValue) },
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+                thumbColor = pilgrimColors.stone,
+                activeTrackColor = pilgrimColors.stone,
+                inactiveTrackColor = pilgrimColors.parchmentTertiary,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

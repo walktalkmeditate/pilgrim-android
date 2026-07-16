@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
+import org.walktalkmeditate.pilgrim.domain.seek.SeekVoice
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -57,6 +58,14 @@ fun WeatherGreetingOverlay(
     triggerCondition: WeatherCondition?,
     walkId: Long?,
     modifier: Modifier = Modifier,
+    /**
+     * iOS parity `ActiveWalkView.swift:691-693@c1745e8` — seek speaks
+     * its own weather: `if viewModel.mode == .seek { greeting =
+     * SeekVoice.greeting(for: condition) }`. Sourced from the walk
+     * accumulator's mode (not the nav argument) so a recovered seek
+     * walk still greets in seek language.
+     */
+    isSeek: Boolean = false,
 ) {
     var visibleCondition by rememberSaveable { mutableStateOf<WeatherCondition?>(null) }
     var shownForWalk by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -88,7 +97,13 @@ fun WeatherGreetingOverlay(
         modifier = modifier,
     ) {
         val condition = visibleCondition ?: return@AnimatedVisibility
-        val message = stringResource(greetingStringResFor(condition))
+        val message = stringResource(
+            if (isSeek) {
+                SeekVoice.greetingRes(condition)
+            } else {
+                greetingStringResFor(condition)
+            },
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()

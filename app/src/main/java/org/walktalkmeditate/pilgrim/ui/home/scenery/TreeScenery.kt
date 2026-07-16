@@ -148,10 +148,14 @@ private fun DrawScope.drawFallingLeaves(
  * `LocalReduceMotion = true` returns a constant t=0 — sub-effects collapse
  * to a static frame. `derivedStateOf` would be redundant since the State
  * is the underlying animation State.
+ *
+ * [paused] freezes the clock the same way for callers whose animation is
+ * conditionally off (the unlit lantern) — the Android analogue of iOS's
+ * `TimelineView(.animation(paused: reduceMotion || !isLit))`.
  */
 @Composable
-internal fun sceneryTimeSeconds(): androidx.compose.runtime.State<Float> {
-    if (LocalReduceMotion.current) {
+internal fun sceneryTimeSeconds(paused: Boolean = false): androidx.compose.runtime.State<Float> {
+    if (LocalReduceMotion.current || paused) {
         return remember { androidx.compose.runtime.mutableStateOf(0f) }
     }
     val transition = rememberInfiniteTransition(label = "scenery-clock")

@@ -135,6 +135,30 @@ class VoiceRecorderTest {
     }
 
     @Test
+    fun `isRecording flips on start and clears on stop`() = runBlocking<Unit> {
+        // U9: the recorder-level flow behind @TalkRecordingActive — the
+        // seek ping gate and the voice-guide scheduler suppress on it.
+        assertTrue(!recorder.isRecording.value)
+        recorder.start(walkId = 42L, walkUuid = walkUuidA).getOrThrow()
+        assertTrue(recorder.isRecording.value)
+        waitForCaptureProgress()
+        recorder.stop().getOrThrow()
+        assertTrue(!recorder.isRecording.value)
+    }
+
+    @Test
+    fun `isRecording clears on the focus-loss interruption path`() = runBlocking<Unit> {
+        recorder.start(walkId = 42L, walkUuid = walkUuidA).getOrThrow()
+        assertTrue(recorder.isRecording.value)
+        waitForCaptureProgress()
+        recorder.simulateAudioFocusLoss()
+        withTimeout(CAPTURE_WAIT_TIMEOUT_MS) {
+            recorder.isRecording.first { !it }
+        }
+        assertTrue(!recorder.isRecording.value)
+    }
+
+    @Test
     fun `start without RECORD_AUDIO permission returns PermissionMissing`() {
         shadowOf(context as Application).denyPermissions(Manifest.permission.RECORD_AUDIO)
 

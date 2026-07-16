@@ -3,18 +3,30 @@ package org.walktalkmeditate.pilgrim.ui.home
 
 import android.app.Application
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.junit.Assert.assertTrue
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.home.empty.EmptyJournalState
 import org.walktalkmeditate.pilgrim.ui.home.expand.ExpandCardSheet
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryItem
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryPlacement
+import org.walktalkmeditate.pilgrim.ui.home.scenery.ScenerySide
+import org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryType
+import org.walktalkmeditate.pilgrim.ui.home.scenery.WalkThreshold
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
+import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
 /**
  * Smoke-only Stage 14-BCD task 9 integration assertion. Asserts that
@@ -69,5 +81,121 @@ class JournalScreenIntegrationTest {
             }
         }
         composeRule.onNodeWithText("View details").assertIsDisplayed()
+    }
+
+    @Test
+    fun scenery_item_composes_for_cairn_and_drift_placements() {
+        // U15: cairn stones and drift's seasonal faces render for real —
+        // the journal must compose them without crashing.
+        composeRule.setContent {
+            PilgrimTheme {
+                SceneryItem(
+                    placement = SceneryPlacement(
+                        type = SceneryType.Cairn,
+                        side = ScenerySide.Left,
+                        offset = 0f,
+                        stones = 5,
+                    ),
+                    snapshot = snap.copy(isSeek = true, foundPlaces = 3),
+                    sizeDp = 24.dp,
+                    hemisphere = Hemisphere.Northern,
+                )
+                SceneryItem(
+                    placement = SceneryPlacement(
+                        type = SceneryType.Drift,
+                        side = ScenerySide.Right,
+                        offset = 0f,
+                    ),
+                    snapshot = snap,
+                    sizeDp = 24.dp,
+                    hemisphere = Hemisphere.Northern,
+                )
+            }
+        }
+        composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun deep_journal_scenery_composes_at_scale() {
+        // U16 § 5: Android renders the journal eagerly (Stage 14-D
+        // virtualization deferral) — a 90-walk history's scenery, gates
+        // and cairns among the lottery, must compose in one pass with
+        // the animated types live.
+        val snapshots = (0 until 90).map { i ->
+            snap.copy(
+                id = i.toLong() + 1L,
+                uuid = "00000000-0000-0000-0000-" + i.toString().padStart(12, '0'),
+                startMs = 1_700_000_000_000L + i * 86_400_000L,
+                distanceM = 1_000.0 + i * 37,
+                durationSec = 600.0 + i * 13,
+                threshold = when {
+                    i % 30 == 0 && i > 0 -> WalkThreshold.Seeking
+                    i == 0 || i % 10 == 0 -> WalkThreshold.Practice
+                    else -> null
+                },
+                isSeek = i % 7 == 0,
+                foundPlaces = if (i % 7 == 0) i % 3 else 0,
+            )
+        }
+        val placed = snapshots.mapNotNull { s ->
+            SceneryGenerator.pick(s)?.let { s to it }
+        }
+        // Sanity: the seeded history really exercises the new types.
+        assertTrue(placed.any { it.second.type == SceneryType.Torii })
+        assertTrue(placed.any { it.second.type == SceneryType.Cairn })
+        composeRule.setContent {
+            PilgrimTheme {
+                for ((s, placement) in placed) {
+                    SceneryItem(
+                        placement = placement,
+                        snapshot = s,
+                        sizeDp = 24.dp,
+                        hemisphere = Hemisphere.Northern,
+                    )
+                }
+                // Drift is a 5% lottery band — pin one explicitly so the
+                // travelling face is always part of the pass.
+                SceneryItem(
+                    placement = SceneryPlacement(SceneryType.Drift, ScenerySide.Left, 0f),
+                    snapshot = snap,
+                    sizeDp = 24.dp,
+                    hemisphere = Hemisphere.Northern,
+                )
+            }
+        }
+        composeRule.onRoot().assertExists()
+    }
+
+    @Test
+    fun new_scenery_renders_a_static_frame_under_reduce_motion() {
+        // U15: every new/reworked renderer must freeze to a single frame
+        // when Reduce Motion is on (sceneryTimeSeconds returns t=0).
+        val placements = listOf(
+            SceneryPlacement(SceneryType.Cairn, ScenerySide.Left, 0f, stones = 4),
+            SceneryPlacement(SceneryType.Drift, ScenerySide.Right, 0f),
+            SceneryPlacement(
+                SceneryType.Torii,
+                ScenerySide.Left,
+                0f,
+                gateKind = WalkThreshold.Seeking,
+            ),
+            SceneryPlacement(SceneryType.Moon, ScenerySide.Right, 0f),
+            SceneryPlacement(SceneryType.Lantern, ScenerySide.Left, 0f),
+        )
+        composeRule.setContent {
+            PilgrimTheme {
+                CompositionLocalProvider(LocalReduceMotion provides true) {
+                    for (placement in placements) {
+                        SceneryItem(
+                            placement = placement,
+                            snapshot = snap,
+                            sizeDp = 24.dp,
+                            hemisphere = Hemisphere.Northern,
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.onRoot().assertExists()
     }
 }

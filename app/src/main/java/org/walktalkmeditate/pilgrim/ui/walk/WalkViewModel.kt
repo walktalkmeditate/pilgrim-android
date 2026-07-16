@@ -54,6 +54,7 @@ import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
@@ -1173,13 +1174,19 @@ class WalkViewModel @Inject constructor(
         }
     }
 
-    fun startWalk(intention: String? = null) {
+    fun startWalk(
+        intention: String? = null,
+        mode: WalkMode = WalkMode.Wander,
+    ) {
         viewModelScope.launch {
             // AF45: don't begin a doomed walk without location permission —
             // the :tracker service would hit SecurityException on
             // requestLocationUpdates and finish the walk with no feedback.
             // Hand the intention to the UI so it can request the permission
-            // and retry (or deep-link to Settings on a hard denial).
+            // and retry (or deep-link to Settings on a hard denial). The
+            // retry re-invokes with the screen's own mode value (the mode
+            // is a nav-arg constant for the surface, so it doesn't need to
+            // ride the event payload).
             if (!PermissionChecks.isFineLocationGranted(context)) {
                 // Suspending emit (we're already in a coroutine) so the event
                 // is never dropped by the 1-slot buffer; the UI collector is
@@ -1193,7 +1200,7 @@ class WalkViewModel @Inject constructor(
             // would finish a walk that's ALREADY running — effectively
             // cancelling a legitimate earlier startWalk call.
             val started = try {
-                controller.startWalk(intention)
+                controller.startWalk(intention, mode)
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (e: IllegalStateException) {

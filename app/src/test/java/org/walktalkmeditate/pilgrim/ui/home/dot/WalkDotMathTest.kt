@@ -41,4 +41,32 @@ class WalkDotMathTest {
         assertEquals(0.7f, WalkDotMath.labelOpacity(0, 5), 1e-4f)
         assertEquals(0.35f, WalkDotMath.labelOpacity(4, 5), 1e-4f)
     }
+
+    // iOS WalkDotView @ c1745e8: live dot frame is
+    // `.frame(width: max(44, size * 3.5))`, archived is a fixed 44×44.
+
+    @Test
+    fun `dotBoxDp floors small live dots at the 44 dp tap target`() {
+        assertEquals(44f, WalkDotMath.dotBoxDp(8f, isArchived = false), 1e-4f)
+        assertEquals(44f, WalkDotMath.dotBoxDp(12f, isArchived = false), 1e-4f)
+    }
+
+    @Test
+    fun `dotBoxDp scales large live dots at 3_5x`() {
+        assertEquals(77f, WalkDotMath.dotBoxDp(22f, isArchived = false), 1e-4f)
+        assertEquals(52.5f, WalkDotMath.dotBoxDp(15f, isArchived = false), 1e-4f)
+    }
+
+    @Test
+    fun `dotBoxDp is a fixed 44 dp for archived rings`() {
+        assertEquals(44f, WalkDotMath.dotBoxDp(8f, isArchived = true), 1e-4f)
+        assertEquals(44f, WalkDotMath.dotBoxDp(22f, isArchived = true), 1e-4f)
+    }
+
+    @Test
+    fun `geometry constants pin the iOS spec values`() {
+        assertEquals(3.5f, WalkDotMath.HALO_SCALE, 1e-6f)
+        assertEquals(44f, WalkDotMath.MIN_TOUCH_DP, 1e-6f)
+        assertEquals(0.6f, WalkDotMath.ARCHIVED_RING_SCALE, 1e-6f)
+    }
 }

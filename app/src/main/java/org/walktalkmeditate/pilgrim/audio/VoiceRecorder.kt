@@ -54,6 +54,20 @@ class VoiceRecorder @Inject constructor(
     private val _audioLevel = MutableStateFlow(0f)
     val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
 
+    private val _isRecording = MutableStateFlow(false)
+
+    /**
+     * Recorder-level "a talk is being captured right now" signal. Set on
+     * a successful [start], cleared in the shared [finalizeSession]
+     * teardown that both the user [stop] and the focus-loss interruption
+     * path route through. Consumed (via the `@TalkRecordingActive`
+     * binding) by the seek sonar's suppression gate and the voice-guide
+     * scheduler — iOS reads the same fact from the audio session's
+     * mic-capable mode (`SeekSoundPlayer.swift:131-136@c1745e8`).
+     * U9 port spec B14.
+     */
+    val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
+
     // replay = 0 is safe: a recording can only START via WalkViewModel, which
     // subscribes to this flow in its init (eagerly, on Main.immediate) before
     // any recording is started — so no interruption can be emitted before the
@@ -135,6 +149,7 @@ class VoiceRecorder @Inject constructor(
             // stale callback can't tear down a later recording.
             executor.execute { runCaptureLoop(s) }
             audioFocus.requestTransient(onLossListener = { onAudioFocusLost(s) })
+            _isRecording.value = true
             return Result.success(absolute)
         }
     }
@@ -166,6 +181,10 @@ class VoiceRecorder @Inject constructor(
      * Blocks on the done latch — must run off the main thread.
      */
     private fun finalizeSession(s: ActiveSession): Result<VoiceRecording> {
+        // The session was already claimed (nulled) by the caller — flip
+        // the flow immediately so suppression gates stop reading a live
+        // recording during the drain wait below.
+        _isRecording.value = false
         s.stopRequested.set(true)
         // Block until the capture loop finishes — it reads one more
         // buffer at most (~100 ms), then closes the writer.

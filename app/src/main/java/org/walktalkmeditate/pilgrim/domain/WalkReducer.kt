@@ -20,7 +20,7 @@ object WalkReducer {
 
     private fun reduceIdle(action: WalkAction): Pair<WalkState, WalkEffect> =
         when (action) {
-            is WalkAction.Start -> startFresh(action) to WalkEffect.None
+            is WalkAction.Start -> startFresh(action) to startEffect(action)
             else -> WalkState.Idle to WalkEffect.None
         }
 
@@ -35,12 +35,39 @@ object WalkReducer {
         action: WalkAction,
     ): Pair<WalkState, WalkEffect> =
         when (action) {
-            is WalkAction.Start -> startFresh(action) to WalkEffect.None
+            is WalkAction.Start -> startFresh(action) to startEffect(action)
             else -> state to WalkEffect.None
         }
 
     private fun startFresh(action: WalkAction.Start): WalkState.Active =
-        WalkState.Active(WalkAccumulator(walkId = action.walkId, startedAt = action.at))
+        WalkState.Active(
+            WalkAccumulator(
+                walkId = action.walkId,
+                startedAt = action.at,
+                mode = action.mode,
+            ),
+        )
+
+    /**
+     * iOS parity `ActiveWalkViewModel+Seek.swift:174-177@c1745e8`
+     * (`writeSeekMarkerEventIfNeeded`) — a seek walk writes exactly ONE
+     * SEEK_MODE event at recording start, never for wander. On Android
+     * "recording start" IS the Start transition (there is no separate
+     * waiting → recording ladder), so the marker rides the reducer's
+     * effect channel; restore paths never re-emit it because restore
+     * writes state directly without dispatching Start. The event's
+     * timestamp is the summary's "seeded at" provenance source (U4).
+     */
+    private fun startEffect(action: WalkAction.Start): WalkEffect =
+        if (action.mode == WalkMode.Seek) {
+            WalkEffect.PersistEvent(
+                walkId = action.walkId,
+                eventType = WalkEventType.SEEK_MODE,
+                timestamp = action.at,
+            )
+        } else {
+            WalkEffect.None
+        }
 
     private fun reduceActive(
         state: WalkState.Active,

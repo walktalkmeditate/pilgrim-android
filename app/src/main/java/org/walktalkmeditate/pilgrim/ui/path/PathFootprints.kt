@@ -215,26 +215,41 @@ private fun FootprintGlyph(
     }
 }
 
+/**
+ * One dot of the mode-card seek trail. [x]/[y] are frame fractions,
+ * [radiusDp] absolute dp (iOS points — NOT width-relative), [alpha]
+ * the ink opacity. Verbatim iOS `dissolvingDots`
+ * (`WalkStartView.swift:348-368@c1745e8`): six dots, x jittered
+ * 0.3–0.7 so the trail wanders like steps instead of stacking into
+ * a straight column of circles.
+ */
+internal data class ModeCardTrailDot(
+    val x: Float,
+    val y: Float,
+    val radiusDp: Float,
+    val alpha: Float,
+)
+
+internal fun modeCardTrailDots(): List<ModeCardTrailDot> = listOf(
+    ModeCardTrailDot(x = 0.5f, y = 0.85f, radiusDp = 2.5f, alpha = 0.08f),
+    ModeCardTrailDot(x = 0.3f, y = 0.65f, radiusDp = 2.0f, alpha = 0.07f),
+    ModeCardTrailDot(x = 0.7f, y = 0.55f, radiusDp = 2.0f, alpha = 0.06f),
+    ModeCardTrailDot(x = 0.4f, y = 0.38f, radiusDp = 1.5f, alpha = 0.04f),
+    ModeCardTrailDot(x = 0.6f, y = 0.20f, radiusDp = 1.5f, alpha = 0.03f),
+    ModeCardTrailDot(x = 0.5f, y = 0.05f, radiusDp = 1.0f, alpha = 0.02f),
+)
+
 @Composable
 private fun DissolvingDots(
     ink: Color,
     modifier: Modifier = Modifier,
 ) {
     Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val dots = listOf(
-            Triple(Offset(w * 0.5f, h * 0.85f), w * 0.18f, 0.10f),
-            Triple(Offset(w * 0.5f, h * 0.65f), w * 0.16f, 0.08f),
-            Triple(Offset(w * 0.5f, h * 0.45f), w * 0.13f, 0.06f),
-            Triple(Offset(w * 0.5f, h * 0.25f), w * 0.10f, 0.04f),
-            Triple(Offset(w * 0.5f, h * 0.05f), w * 0.06f, 0.02f),
-        )
-        dots.forEach { (center, radius, alpha) ->
+        modeCardTrailDots().forEach { dot ->
             drawCircle(
-                color = ink.copy(alpha = alpha),
-                radius = radius,
-                center = center,
+                color = ink.copy(alpha = dot.alpha),
+                radius = dot.radiusDp.dp.toPx(),
+                center = Offset(dot.x * size.width, dot.y * size.height),
             )
         }
     }

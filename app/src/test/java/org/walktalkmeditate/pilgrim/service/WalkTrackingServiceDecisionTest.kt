@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.service
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService.StateAction
 
@@ -212,5 +213,109 @@ class WalkTrackingServiceDecisionTest {
                 )
             }
         }
+    }
+
+    // --- Seek × {fresh, cached-Finished, restored-Active} (U8). The
+    // decision function is mode-independent by construction — it
+    // consumes state classes + flags, never accumulator payloads — but
+    // these pin that a seek-mode accumulator can never change any of
+    // the second-walk race gates the wander cross-product established
+    // (the gates that survived 6 review cycles only because of these
+    // tests). ------------------------------------------------------------
+
+    private fun seekWalk(walkId: Long) = WalkAccumulator(
+        walkId = walkId,
+        startedAt = 0L,
+        mode = WalkMode.Seek,
+    )
+
+    @Test
+    fun `seek fresh start from Idle = StartFresh`() {
+        assertEquals(
+            WalkTrackingService.StartAction.StartFresh,
+            WalkTrackingService.decideStartAction(
+                state = WalkState.Idle,
+                isFreshStart = true,
+                hasRestoredWalk = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `seek fresh start against a cached Finished seek walk = StartFresh (second-walk gate)`() {
+        val finishedSeek = WalkState.Finished(walk = seekWalk(1L), endedAt = 1_000L)
+        assertEquals(
+            WalkTrackingService.StartAction.StartFresh,
+            WalkTrackingService.decideStartAction(
+                state = finishedSeek,
+                isFreshStart = true,
+                hasRestoredWalk = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `cached Finished seek walk without freshStart = StopNoWalk`() {
+        val finishedSeek = WalkState.Finished(walk = seekWalk(1L), endedAt = 1_000L)
+        assertEquals(
+            WalkTrackingService.StartAction.StopNoWalk,
+            WalkTrackingService.decideStartAction(
+                state = finishedSeek,
+                isFreshStart = false,
+                hasRestoredWalk = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `restored seek walk on Idle revival = AdoptRestored`() {
+        assertEquals(
+            WalkTrackingService.StartAction.AdoptRestored,
+            WalkTrackingService.decideStartAction(
+                state = WalkState.Idle,
+                isFreshStart = true,
+                hasRestoredWalk = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `in-progress seek states ignore a redundant start regardless of freshStart`() {
+        listOf(
+            WalkState.Active(seekWalk(2L)),
+            WalkState.Paused(seekWalk(2L), pausedAt = 100L),
+            WalkState.Meditating(seekWalk(2L), meditationStartedAt = 100L),
+        ).forEach { state ->
+            listOf(true, false).forEach { freshStart ->
+                assertEquals(
+                    "expected IgnoreInProgress for $state freshStart=$freshStart",
+                    WalkTrackingService.StartAction.IgnoreInProgress,
+                    WalkTrackingService.decideStartAction(
+                        state = state,
+                        isFreshStart = freshStart,
+                        hasRestoredWalk = false,
+                    ),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `seek Finished states keep the notification latch gates`() {
+        val finishedSeek = WalkState.Finished(walk = seekWalk(3L), endedAt = 1_000L)
+
+        val (coldLatch, coldAction) = WalkTrackingService.decideStateAction(
+            state = finishedSeek,
+            hasBeenActive = false,
+        )
+        assertEquals(StateAction.UpdateNotification, coldAction)
+        assertEquals(false, coldLatch)
+
+        val (latch, action) = WalkTrackingService.decideStateAction(
+            state = finishedSeek,
+            hasBeenActive = true,
+        )
+        assertEquals(StateAction.SelfStop, action)
+        assertEquals(true, latch)
     }
 }

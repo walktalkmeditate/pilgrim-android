@@ -7,10 +7,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Terrain
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory
+import org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
@@ -64,6 +67,7 @@ import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
+import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
@@ -71,6 +75,14 @@ import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
+import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
+import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekCrescentStyle
+import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekFogStyle
+import org.walktalkmeditate.pilgrim.ui.walk.map.SeekCrescentRenderer
+import org.walktalkmeditate.pilgrim.ui.walk.map.SeekFogRenderer
+import org.walktalkmeditate.pilgrim.ui.walk.map.hexToColorArgb
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_ZOOM_PLANT_MS
@@ -125,6 +137,19 @@ internal fun PilgrimMap(
     // callback. Empty list → no pin manager work, no allocations.
     proximityPins: List<ProximityPinFilter.Pin> = emptyList(),
     onProximityPinTap: (ProximityPinFilter.Pin) -> Unit = {},
+    // iOS parity `PilgrimMapView+SeekFog.swift@c1745e8` +
+    // `PilgrimMapView+SeekWisp.swift@c1745e8` (port specs
+    // docs/parity/2026-07-14-port-seek-fog-u6.md and
+    // docs/parity/2026-07-14-port-seek-crescent-u7.md) — seek fog circles,
+    // pulse ring, and the guiding crescent as runtime style layers. Null
+    // fog state is the wander default: the renderer's `null == null` fast
+    // path never touches the style, so non-seek walks pay nothing.
+    // [seekPulse] advances its token once per heartbeat. The hour's light
+    // (ring color + crescent tint) is computed internally from the walker's
+    // solar elevation via SeekSkyLight — iOS computes it inside the map
+    // layer at fire time; nothing is passed in (U7 spec D3).
+    seekFog: SeekFogState? = null,
+    seekPulse: SeekPulseVisual = SeekPulseVisual.NONE,
 ) {
     // Mapbox's `MapView(context, initOptions)` constructor throws
     // `MapboxConfigurationException` synchronously when no access
@@ -227,6 +252,8 @@ internal fun PilgrimMap(
     // iOS parity `PilgrimMapView.buildCircles@v1.6.0` — meditation is a
     // duration-scaled dawn CircleAnnotation, not a fixed pin dot. Same
     // for the post-walk summary map (was rendering a tiny static pin).
+    // U11: seek-arrival halos (glow + core circle pair) share this
+    // manager — same delete/rebuild bookkeeping, summary-map-only.
     var meditationCircleManager by remember {
         mutableStateOf<com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager?>(
             null,
@@ -253,6 +280,103 @@ internal fun PilgrimMap(
     // because PointAnnotation has no opaque data slot).
     var proximityPinIndex by remember {
         mutableStateOf<Map<String, ProximityPinFilter.Pin>>(emptyMap())
+    }
+    // 13-B/13-D flicker-class gates for the live-route branch: the update
+    // lambda re-fires on recompositions that change neither the points nor
+    // the camera target (seek fog states, pulse tokens). Without these keys
+    // every such re-fire re-uploaded the unchanged polyline geometry and
+    // re-issued an easeTo to the camera's current target.
+    var renderedLiveLineColor by remember { mutableStateOf<Int?>(null) }
+    var lastFollowCameraKey by remember { mutableStateOf<Pair<Point, Double>?>(null) }
+    // Seek fog + crescent renderers — bookkeeping + Mapbox writes live in
+    // ui/walk/map/SeekFogRenderer.kt + SeekCrescentRenderer.kt; this
+    // composable only owns lifecycle. The fog surface checks the route
+    // layer id for existence at install time, so fog lands below the route
+    // line once the manager exists and at the top of the stack (iOS
+    // fallback parity) before then. The hour's light (ring + crescent) is
+    // read at write time from the cached puck point's solar elevation —
+    // iOS `currentSeekDaypart(on:)`, U7 spec B6 — and the constellation
+    // appearance swaps the family to starlight (read via
+    // rememberUpdatedState so the provider lambdas see the live value
+    // without rebuilding the renderer).
+    val seekFogStyle = remember(mapView) {
+        mapView?.let { view ->
+            MapboxSeekFogStyle(view.mapboxMap) { ROUTE_LINE_LAYER_ID }
+        }
+    }
+    val displayDensity = LocalDensity.current.density
+    val starlightState = rememberUpdatedState(LocalIsConstellation.current)
+    val reduceMotionState = rememberUpdatedState(reduceMotion)
+    val seekFogRenderer = remember(mapView, seekFogStyle) {
+        val view = mapView
+        val fogStyle = seekFogStyle
+        if (view == null || fogStyle == null) {
+            null
+        } else {
+            val daypartNow: () -> SeekSkyLight.Daypart = {
+                val point = fogStyle.latestPuckPoint
+                if (point != null) {
+                    SeekSkyLight.daypartAt(
+                        latitude = point.latitude(),
+                        longitude = point.longitude(),
+                        instant = java.time.Instant.now(),
+                    )
+                } else {
+                    SeekSkyLight.daypart(null)
+                }
+            }
+            val starlightNow: () -> Boolean = { starlightState.value }
+            SeekFogRenderer(
+                style = fogStyle,
+                crescent = SeekCrescentRenderer(
+                    style = MapboxSeekCrescentStyle(view.mapboxMap, displayDensity),
+                    daypart = daypartNow,
+                    starlight = starlightNow,
+                    uptimeMillis = android.os.SystemClock::uptimeMillis,
+                ),
+                lightColorArgb = {
+                    hexToColorArgb(SeekSkyLight.hex(daypartNow(), starlightNow()))
+                },
+            )
+        }
+    }
+    // The pulse ring + hour light ride the puck's rendered position (iOS
+    // reads location.latestLocation at fire time; Android caches the
+    // indicator position — spec D3). The crescent's viewport release
+    // re-checks on camera moves (throttled — per-frame during gestures)
+    // with map-idle as the authoritative trailing check (U7 spec B14).
+    // All registered only while a seek is active so wander walks never
+    // pay for the per-frame callbacks.
+    val seekFogActive = seekFog != null
+    DisposableEffect(mapView, seekFogActive) {
+        val view = mapView
+        val style = seekFogStyle
+        val renderer = seekFogRenderer
+        if (view == null || style == null || renderer == null || !seekFogActive) {
+            return@DisposableEffect onDispose {}
+        }
+        val listener = OnIndicatorPositionChangedListener { point ->
+            style.latestPuckPoint = point
+        }
+        view.location.addOnIndicatorPositionChangedListener(listener)
+        val cameraSub = view.mapboxMap.subscribeCameraChanged {
+            renderer.evaluateCrescentVisibility(
+                throttled = true,
+                reduceMotion = reduceMotionState.value,
+            )
+        }
+        val idleSub = view.mapboxMap.subscribeMapIdle {
+            renderer.evaluateCrescentVisibility(
+                throttled = false,
+                reduceMotion = reduceMotionState.value,
+            )
+        }
+        onDispose {
+            cameraSub.cancel()
+            idleSub.cancel()
+            view.location.removeOnIndicatorPositionChangedListener(listener)
+            style.latestPuckPoint = null
+        }
     }
     val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
         walkAnnotationColors?.let { colors ->
@@ -374,6 +498,8 @@ internal fun PilgrimMap(
         liveMapboxPoints = emptyList()
         renderedSegments = null
         renderedSegmentColors = null
+        renderedLiveLineColor = null
+        lastFollowCameraKey = null
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
@@ -426,7 +552,12 @@ internal fun PilgrimMap(
                     pulsingEnabled = true
                 }
             }
-            polylineManager = view.annotations.createPolylineAnnotationManager()
+            // Named layer id so the seek fog can insert below the route
+            // line without touching Mapbox's restricted associatedLayers
+            // accessor (iOS anchors on its named "pilgrim-route-casing").
+            polylineManager = view.annotations.createPolylineAnnotationManager(
+                com.mapbox.maps.plugin.annotation.AnnotationConfig(layerId = ROUTE_LINE_LAYER_ID),
+            )
             // Above the route line, below the point pins (start/end/voice).
             meditationCircleManager = view.annotations.createCircleAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
@@ -470,6 +601,12 @@ internal fun PilgrimMap(
                     // not crash the map. Errors (OOM, etc.) still propagate.
                 }
             }
+            // The fresh style has no seek layers; reinstall from the
+            // renderer's pending state. Must run AFTER the annotation
+            // managers above so the fog's below-route insert can find the
+            // polyline layer (iOS parity: reinstallSeekFog from
+            // onStyleLoaded, PilgrimMapView.swift:163@c1745e8).
+            seekFogRenderer?.onStyleReloaded(reduceMotion)
             // Style is textured; kick the fade-in animation.
             styleLoaded = true
         }
@@ -574,6 +711,11 @@ internal fun PilgrimMap(
                     sameElement = { a, b -> a == b },
                     transform = { Point.fromLngLat(it.longitude, it.latitude) },
                 )
+                // incrementalMap returns the PREVIOUS list instance when the
+                // route is unchanged, so identity is the rebuild gate: a
+                // re-fire of this lambda without a new fix (seek fog state,
+                // pulse token) must not re-upload unchanged geometry.
+                val routeChanged = mapboxPoints !== liveMapboxPoints
                 liveRoutePoints = points
                 liveMapboxPoints = mapboxPoints
                 val existing = polyline
@@ -584,12 +726,14 @@ internal fun PilgrimMap(
                             .withLineColor(lineColor)
                             .withLineWidth(POLYLINE_WIDTH_DP),
                     )
-                } else {
+                    renderedLiveLineColor = lineColor
+                } else if (routeChanged || renderedLiveLineColor != lineColor) {
                     // Mutate in place — cheaper than delete + create for
                     // walks with thousands of samples.
                     existing.points = mapboxPoints
                     existing.lineColorInt = lineColor
                     manager.update(existing)
+                    renderedLiveLineColor = lineColor
                 }
 
                 if (followLatest) {
@@ -599,18 +743,24 @@ internal fun PilgrimMap(
                     // ease completes before the next cancel/restart. Only
                     // center + zoom are written; bearing, pitch, padding
                     // come from the live camera so user-set rotation /
-                    // tilt survives each sample.
-                    val current = view.mapboxMap.cameraState
-                    view.mapboxMap.easeTo(
-                        CameraOptions.Builder()
-                            .center(mapboxPoints.last())
-                            .zoom(FOLLOW_ZOOM)
-                            .bearing(current.bearing)
-                            .pitch(current.pitch)
-                            .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
-                            .build(),
-                        MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
-                    )
+                    // tilt survives each sample. Keyed on (target, inset)
+                    // so recompositions that move neither don't re-issue
+                    // the ease.
+                    val cameraKey = mapboxPoints.last() to bottomInsetPx
+                    if (lastFollowCameraKey != cameraKey) {
+                        lastFollowCameraKey = cameraKey
+                        val current = view.mapboxMap.cameraState
+                        view.mapboxMap.easeTo(
+                            CameraOptions.Builder()
+                                .center(mapboxPoints.last())
+                                .zoom(FOLLOW_ZOOM)
+                                .bearing(current.bearing)
+                                .pitch(current.pitch)
+                                .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
+                                .build(),
+                            MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
+                        )
+                    }
                 } else if (!didFitBounds && revealPhase == null) {
                     val camera = view.mapboxMap.cameraForCoordinates(
                         mapboxPoints,
@@ -635,17 +785,22 @@ internal fun PilgrimMap(
                 }
             } else if (points.size == 1 && followLatest) {
                 val only = points.first()
-                val current = view.mapboxMap.cameraState
-                view.mapboxMap.easeTo(
-                    CameraOptions.Builder()
-                        .center(Point.fromLngLat(only.longitude, only.latitude))
-                        .zoom(FOLLOW_ZOOM)
-                        .bearing(current.bearing)
-                        .pitch(current.pitch)
-                        .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
-                        .build(),
-                    MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
-                )
+                // Same (target, inset) gate as the multi-point follow branch.
+                val cameraKey = Point.fromLngLat(only.longitude, only.latitude) to bottomInsetPx
+                if (lastFollowCameraKey != cameraKey) {
+                    lastFollowCameraKey = cameraKey
+                    val current = view.mapboxMap.cameraState
+                    view.mapboxMap.easeTo(
+                        CameraOptions.Builder()
+                            .center(cameraKey.first)
+                            .zoom(FOLLOW_ZOOM)
+                            .bearing(current.bearing)
+                            .pitch(current.pitch)
+                            .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
+                            .build(),
+                        MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
+                    )
+                }
             } else if (points.isEmpty() && followLatest && !didSetInitialCenter) {
                 // No GPS samples yet. If the caller handed us a cached
                 // last-known location, snap the camera there so the
@@ -722,35 +877,77 @@ internal fun PilgrimMap(
                             (walkAnnotationColors?.meditation ?: WalkAnnotationColors.Fixed.meditation)
                                 .toArgb()
                         renderedMeditationCircles = walkAnnotations
-                            .mapNotNull { ann ->
-                                val med = ann.kind as? WalkMapAnnotationKind.Meditation
-                                    ?: return@mapNotNull null
-                                val scale = ((med.durationMillis / 1000.0) / 600.0)
-                                    .coerceIn(0.0, 1.0)
-                                val radius = 10.0 + (24.0 - 10.0) * scale
-                                medMgr.create(
-                                    com.mapbox.maps.plugin.annotation.generated
-                                        .CircleAnnotationOptions()
-                                        .withPoint(
-                                            Point.fromLngLat(ann.longitude, ann.latitude),
+                            .flatMap { ann ->
+                                when (val kind = ann.kind) {
+                                    is WalkMapAnnotationKind.Meditation -> {
+                                        val scale = ((kind.durationMillis / 1000.0) / 600.0)
+                                            .coerceIn(0.0, 1.0)
+                                        val radius = 10.0 + (24.0 - 10.0) * scale
+                                        listOf(
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(
+                                                        Point.fromLngLat(ann.longitude, ann.latitude),
+                                                    )
+                                                    .withCircleRadius(radius)
+                                                    .withCircleColor(dawnArgb)
+                                                    .withCircleOpacity(0.7)
+                                                    .withCircleStrokeColor(dawnArgb)
+                                                    .withCircleStrokeWidth(2.0)
+                                                    .withCircleStrokeOpacity(1.0),
+                                            ),
                                         )
-                                        .withCircleRadius(radius)
-                                        .withCircleColor(dawnArgb)
-                                        .withCircleOpacity(0.7)
-                                        .withCircleStrokeColor(dawnArgb)
-                                        .withCircleStrokeWidth(2.0)
-                                        .withCircleStrokeOpacity(1.0),
-                                )
+                                    }
+                                    // Seek arrivals: two-part hour-lit halo,
+                                    // not a pin — 26px glow at 0.28 under a
+                                    // 4px bright core at 0.9, both in the
+                                    // fixed light hex (iOS PilgrimMapView
+                                    // .swift:394-400,426-432@c1745e8). Glow
+                                    // created first so the core draws on top.
+                                    is WalkMapAnnotationKind.SeekArrival -> {
+                                        val lightArgb = hexToColorArgb(kind.lightHex)
+                                        val point = Point.fromLngLat(ann.longitude, ann.latitude)
+                                        listOf(
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(point)
+                                                    .withCircleRadius(26.0)
+                                                    .withCircleColor(lightArgb)
+                                                    .withCircleOpacity(0.28)
+                                                    .withCircleStrokeWidth(0.0),
+                                            ),
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(point)
+                                                    .withCircleRadius(4.0)
+                                                    .withCircleColor(lightArgb)
+                                                    .withCircleOpacity(0.9)
+                                                    .withCircleStrokeWidth(0.0),
+                                            ),
+                                        )
+                                    }
+                                    else -> emptyList()
+                                }
                             }
                     }
                     renderedWalkAnnotations = walkAnnotations
-                        .filter { it.kind !is WalkMapAnnotationKind.Meditation }
+                        .filter {
+                            it.kind !is WalkMapAnnotationKind.Meditation &&
+                                it.kind !is WalkMapAnnotationKind.SeekArrival
+                        }
                         .map { ann ->
                         val bitmap = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
                                 bitmaps.getValue("startEnd")
-                            is WalkMapAnnotationKind.Meditation ->
+                            // Meditation + SeekArrival are filtered out
+                            // above (they render as CircleAnnotations, not
+                            // point pins); branches kept for exhaustiveness.
+                            is WalkMapAnnotationKind.Meditation,
+                            is WalkMapAnnotationKind.SeekArrival ->
                                 bitmaps.getValue("meditation")
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
@@ -831,6 +1028,17 @@ internal fun PilgrimMap(
                 proximityPinIndex = newIndex
                 renderedProximityPins = proximityPins
             }
+            // Seek fog + pulse ring + crescent (iOS parity: applySeekFog at
+            // the end of updateUIView, PilgrimMapView.swift:208@c1745e8).
+            // The renderer gates on whole-state structural equality and
+            // swallows repeat pulse tokens, so this line is a no-op for
+            // wander walks and for recompositions that change neither fog
+            // nor pulse.
+            seekFogRenderer?.apply(
+                state = seekFog,
+                pulse = seekPulse,
+                reduceMotion = reduceMotion,
+            )
         },
         onRelease = { view ->
             // Mapbox v11's lifecycle plugin drives onStart/onStop via the
@@ -854,6 +1062,8 @@ internal fun PilgrimMap(
                 liveMapboxPoints = emptyList()
                 renderedSegments = null
                 renderedSegmentColors = null
+                renderedLiveLineColor = null
+                lastFollowCameraKey = null
                 waypointManager = null
                 waypointAnnotations = emptyList()
                 renderedWaypoints = null
@@ -1141,6 +1351,14 @@ private fun cameraOptionsForFitBounds(
  */
 internal fun activeWalkRouteColor(turning: SeasonalMarker?, colors: PilgrimColors): Color =
     turningAccentColor(turning, colors) ?: RouteSegmentColors.Fixed.walking
+
+/**
+ * Explicit id for the route polyline's backing LineLayer (via
+ * [com.mapbox.maps.plugin.annotation.AnnotationConfig]) so the seek fog
+ * renderer can insert its circles below the route — the analogue of iOS
+ * fog sitting below "pilgrim-route-casing".
+ */
+internal const val ROUTE_LINE_LAYER_ID = "pilgrim-route-line"
 
 private const val POLYLINE_WIDTH_DP = 4.0
 private const val FOLLOW_ZOOM = 16.0

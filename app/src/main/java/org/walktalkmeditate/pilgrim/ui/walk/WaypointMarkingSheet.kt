@@ -24,6 +24,8 @@ import androidx.compose.material.icons.outlined.Chair
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.WbTwilight
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -62,7 +64,9 @@ internal data class WaypointPresetChip(
     val iconKey: String,
 )
 
-private val PRESET_CHIPS: List<WaypointPresetChip> = listOf(
+// Internal (not private) so SeekPersistenceTest can prove the reserved
+// arrival icon never collides with a user-pickable key.
+internal val PRESET_CHIPS: List<WaypointPresetChip> = listOf(
     WaypointPresetChip(R.string.walk_waypoint_chip_peaceful, "leaf"),
     WaypointPresetChip(R.string.walk_waypoint_chip_beautiful, "eye"),
     WaypointPresetChip(R.string.walk_waypoint_chip_grateful, "heart"),
@@ -85,6 +89,10 @@ internal fun iconKeyToVector(key: String): ImageVector = when (key) {
     "sparkles" -> Icons.Outlined.AutoAwesome
     "flag.fill" -> Icons.Filled.Flag
     "mappin" -> Icons.Filled.LocationOn
+    // Reserved seek-arrival marker (SeekPersistence.ARRIVAL_ICON): iOS
+    // renders its "sun.haze" SF symbol on the live-map pin; WbTwilight is
+    // the same mark the summary header uses for this glyph (U11).
+    SeekPersistence.ARRIVAL_WAYPOINT_ICON -> Icons.Outlined.WbTwilight
     else -> {
         // Unknown SF Symbol key — likely from a future iOS-introduced
         // chip imported via .pilgrim ZIP into a stale Android build.

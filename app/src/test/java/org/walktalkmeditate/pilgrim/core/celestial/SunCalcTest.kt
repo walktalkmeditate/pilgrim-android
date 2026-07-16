@@ -5,6 +5,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -177,6 +178,79 @@ class SunCalcTest {
             3,
             "Sydney past-midnight sunrise for local Dec 22",
         )
+    }
+
+    // Solar elevation (U7 port, iOS CelestialCalculator.swift:414-436@c1745e8).
+    // Reference values computed with an independent NOAA-pipeline
+    // implementation (obliquity-corrected declination + equation of time),
+    // which agrees with this port within 0.01°. iOS documents "accuracy
+    // well under a degree"; ±1° tolerance stays within the ≤5× rule.
+
+    @Test fun `london midsummer noon elevation is about 62 degrees`() {
+        // London 51.5074°N, 0.1278°W; solar noon 2026-06-21 ≈ 12:02 UTC.
+        // Reference: 61.93°.
+        val elevation = SunCalc.solarElevationDegrees(
+            latitude = 51.5074,
+            longitude = -0.1278,
+            instant = Instant.parse("2026-06-21T12:02:00Z"),
+        )
+        assertEquals(61.93, elevation, 1.0)
+    }
+
+    @Test fun `london midsummer midnight elevation is about minus 15 degrees`() {
+        // Lower culmination ≈ δ − (90 − φ) = 23.44 − 38.49. Reference: −15.05°.
+        val elevation = SunCalc.solarElevationDegrees(
+            latitude = 51.5074,
+            longitude = -0.1278,
+            instant = Instant.parse("2026-06-21T00:00:00Z"),
+        )
+        assertEquals(-15.05, elevation, 1.0)
+    }
+
+    @Test fun `sydney winter noon elevation is about 33 degrees`() {
+        // Sydney -33.8688°S, 151.2093°E; local solar noon 2026-06-21
+        // ≈ 01:55 UTC. Reference: 32.69°.
+        val elevation = SunCalc.solarElevationDegrees(
+            latitude = -33.8688,
+            longitude = 151.2093,
+            instant = Instant.parse("2026-06-21T01:55:00Z"),
+        )
+        assertEquals(32.69, elevation, 1.0)
+    }
+
+    @Test fun `elevation at the computed sunrise instant is near the horizon`() {
+        // Cross-check against sunTimes: at its sunrise instant the sun
+        // sits at the refraction-corrected horizon, −0.833°.
+        val times = SunCalc.sunTimes(
+            Instant.parse("2026-03-20T12:00:00Z"),
+            latitude = 48.8566,
+            longitude = 2.3522,
+            zoneId = ZoneId.of("Europe/Paris"),
+        )
+        val elevation = SunCalc.solarElevationDegrees(
+            latitude = 48.8566,
+            longitude = 2.3522,
+            instant = times.sunrise!!,
+        )
+        assertEquals(-0.833, elevation, 0.5)
+    }
+
+    @Test fun `polar elevation stays near the declination at any hour`() {
+        // At the North Pole cos(φ) ≈ 0 kills the hour-angle term, so the
+        // elevation IS the declination (23.44° at the June solstice) —
+        // isolating the declination pipeline (λ, ε) from GMST.
+        val noon = SunCalc.solarElevationDegrees(
+            latitude = 90.0,
+            longitude = 0.0,
+            instant = Instant.parse("2026-06-21T12:00:00Z"),
+        )
+        val evening = SunCalc.solarElevationDegrees(
+            latitude = 90.0,
+            longitude = 0.0,
+            instant = Instant.parse("2026-06-21T21:00:00Z"),
+        )
+        assertEquals(23.44, noon, 0.5)
+        assertEquals(noon, evening, 0.1)
     }
 
     private fun assertWithin(

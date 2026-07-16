@@ -22,6 +22,11 @@ import kotlin.math.sin
  * flicker (3.7/5.3/7.1 Hz multipliers from iOS) layered over the static
  * lantern shape + warm window glow. Glow color shifts between dawn
  * (winter) and stone (other seasons).
+ *
+ * The lantern remembers the hour: lit for walks that met the dark
+ * ([walkMetTheDark], the grass's morning-dew idiom), unlit and quiet for
+ * daylight walks — no outer glow, a flat 0.12-tint window, and the
+ * animation clock paused.
  */
 @Composable
 internal fun LanternScenery(
@@ -30,13 +35,12 @@ internal fun LanternScenery(
     walkDateMs: Long,
     glowColor: Color,
 ) {
-    val month = remember(walkDateMs) {
-        Instant.ofEpochMilli(walkDateMs).atZone(ZoneId.systemDefault()).monthValue
+    val hour = remember(walkDateMs) {
+        Instant.ofEpochMilli(walkDateMs).atZone(ZoneId.systemDefault()).hour
     }
-    @Suppress("UNUSED_VARIABLE")
-    val isWinter = month == 12 || month <= 2
+    val isLit = walkMetTheDark(hour)
 
-    val timeSec by sceneryTimeSeconds()
+    val timeSec by sceneryTimeSeconds(paused = !isLit)
 
     Canvas(modifier = Modifier.size(sizeDp * 2f)) {
         val cx = size.width / 2f
@@ -46,27 +50,29 @@ internal fun LanternScenery(
         val flicker1 = (sin(timeSec * 3.7) * 0.15).toFloat()
         val flicker2 = (sin(timeSec * 5.3) * 0.08).toFloat()
         val flicker3 = (sin(timeSec * 7.1) * 0.05).toFloat()
-        val glow = (0.35f + flicker1 + flicker2 + flicker3).coerceIn(0f, 1f)
+        val glow = if (isLit) (0.35f + flicker1 + flicker2 + flicker3).coerceIn(0f, 1f) else 0f
 
-        // Warm radial glow behind the lantern. Radial gradient fades
-        // from center to transparent so it reads as light, not a
-        // visible circle. User feedback: solid drawCircle showed as
-        // a translucent disk; gradient gives the lighting feel.
-        val glowCenter = Offset(cx, cy - s * 0.1f)
-        val glowRadius = s * 1.0f
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    glowColor.copy(alpha = (glow * 0.55f).coerceIn(0f, 1f)),
-                    glowColor.copy(alpha = (glow * 0.2f).coerceIn(0f, 1f)),
-                    Color.Transparent,
+        // Warm radial glow behind the lantern, lit walks only. Radial
+        // gradient fades from center to transparent so it reads as
+        // light, not a visible circle. User feedback: solid drawCircle
+        // showed as a translucent disk; gradient gives the lighting feel.
+        if (isLit) {
+            val glowCenter = Offset(cx, cy - s * 0.1f)
+            val glowRadius = s * 1.0f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        glowColor.copy(alpha = (glow * 0.55f).coerceIn(0f, 1f)),
+                        glowColor.copy(alpha = (glow * 0.2f).coerceIn(0f, 1f)),
+                        Color.Transparent,
+                    ),
+                    center = glowCenter,
+                    radius = glowRadius,
                 ),
-                center = glowCenter,
                 radius = glowRadius,
-            ),
-            radius = glowRadius,
-            center = glowCenter,
-        )
+                center = glowCenter,
+            )
+        }
 
         // Outer ghost layer — slight offset, low alpha (matches iOS blur(1.2)).
         translate(left = cx - s * 1.06f / 2f + 1.5f, top = cy - s * 1.06f / 2f + 1.5f) {
@@ -82,11 +88,18 @@ internal fun LanternScenery(
                 path = lanternPath(GeomSize(s, s)),
                 color = tintColor.copy(alpha = 0.35f),
             )
-            // Window — warm flickering glow
+            // Window — warm flickering glow when lit, flat tint by day.
             drawPath(
                 path = lanternWindowPath(GeomSize(s, s)),
-                color = glowColor.copy(alpha = glow.coerceIn(0f, 1f)),
+                color = if (isLit) glowColor.copy(alpha = glow) else tintColor.copy(alpha = 0.12f),
             )
         }
     }
 }
+
+/**
+ * The walk met the dark when it started at or after 17:00 or before
+ * 06:00 (iOS `SceneryItemView.swift:47,357@c1745e8`). Gates the
+ * lantern's flame and the summer fireflies' glow.
+ */
+internal fun walkMetTheDark(hour: Int): Boolean = hour >= 17 || hour < 6

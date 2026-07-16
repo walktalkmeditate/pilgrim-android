@@ -19,6 +19,20 @@
     <string name="walk_notification_action_mark_waypoint">Waypoint</string>
     <string name="walk_notification_action_end_meditation">End</string>
     <string name="walk_notification_lock_screen_title">Walk in progress</string>
+    <!-- U10 seek glance line (iOS seekGlanceBar,
+         PilgrimWidgetLiveActivity.swift:196-242@c1745e8). %1$s = the
+         WalkFormat walked distance, %2$s = the glance line ("~400 m
+         ahead" / "seeking complete"). Distance-ladder numerics
+         ("~%d m", "~%.1f km", "2 km +") are code-side Locale.US
+         formats in WalkNotificationFactory, matching WalkFormat's
+         hardcoded-unit precedent. -->
+    <string name="walk_notification_seek_active">Walking — %1$s · %2$s</string>
+    <string name="walk_notification_seek_complete">seeking complete</string>
+    <string name="walk_notification_seek_close">close</string>
+    <string name="walk_notification_seek_direction_ahead">ahead</string>
+    <string name="walk_notification_seek_direction_left">left</string>
+    <string name="walk_notification_seek_direction_right">right</string>
+    <string name="walk_notification_seek_direction_behind">behind</string>
 
     <!-- iOS Permissions.* (Base.lproj/Localizable.strings) verbatim. -->
     <string name="onboarding_title">Prepare for the journey</string>
@@ -699,6 +713,43 @@
     <string name="walk_greeting_weather_wind">The wind at your back</string>
     <string name="walk_greeting_weather_haze">A hazy veil over the world</string>
 
+    <!-- iOS parity SeekGatewayView.swift:145-160@c1745e8 SeekVoice — seek
+         weather greetings; replace the wander greeting on seek walks (U8). -->
+    <string name="seek_greeting_weather_clear">A clear day for seeking</string>
+    <string name="seek_greeting_weather_partly_cloudy">Seeking under shifting skies</string>
+    <string name="seek_greeting_weather_overcast">Soft light on the search</string>
+    <string name="seek_greeting_weather_light_rain">The rain joins your seeking</string>
+    <string name="seek_greeting_weather_heavy_rain">The sky seeks with you</string>
+    <string name="seek_greeting_weather_thunderstorm">Thunder over the unknown</string>
+    <string name="seek_greeting_weather_snow">Snow over the hidden way</string>
+    <string name="seek_greeting_weather_fog">Fog seeking fog</string>
+    <string name="seek_greeting_weather_wind">The wind knows the way</string>
+    <string name="seek_greeting_weather_haze">The unknown behind its veil</string>
+
+    <!-- iOS parity SeekGatewayView.swift:115-141@c1745e8 SeekSky — celestial
+         gateway lines (turning tints + full moon), line break verbatim. -->
+    <string name="seek_tint_line_spring_equinox">The year leans toward light.\nSeek with it.</string>
+    <string name="seek_tint_line_summer_solstice">The sun stands still.\nYou don\'t have to.</string>
+    <string name="seek_tint_line_autumn_equinox">The year leans toward dusk.\nSeek while it turns.</string>
+    <string name="seek_tint_line_winter_solstice">The longest night\nhas the most to hide.</string>
+    <string name="seek_tint_line_full_moon">Tonight the moon\nseeks with you.</string>
+
+    <!-- Seek setup ritual (U8) — iOS parity SeekDurationView.swift +
+         SeekSetupFlowModifier.swift + Localizable.strings seek.* @c1745e8. -->
+    <string name="seek_duration_title">How long do you have?</string>
+    <string name="seek_duration_30min">30 minutes</string>
+    <string name="seek_duration_1hour">1 hour</string>
+    <string name="seek_duration_2hours">2 hours</string>
+    <string name="seek_duration_3hours">3 hours</string>
+    <string name="seek_safety_caption">Never trespass, and let your own judgment walk above the pulse. Any clearing may be released — seek anew.</string>
+    <string name="seek_begin">Begin</string>
+    <string name="seek_setup_cancel">Cancel</string>
+    <string name="seek_accuracy_declined_title">Precise Location Needed</string>
+    <string name="seek_accuracy_declined_body">Seeking needs your precise location to sense the clearings. Wander is always open.</string>
+    <string name="seek_gps_timeout_title">Still Reaching for the Sky</string>
+    <string name="seek_gps_timeout_body">The sky hasn\'t answered yet. Try again under more open sky — Wander is always open.</string>
+    <string name="seek_alert_ok">OK</string>
+
     <!-- iOS parity ActiveWalkView.swift:735-748@db4196e celestial greetings. -->
     <string name="walk_greeting_celestial_sun_enters">"The Sun enters %1$s today — %2$s"</string>
     <string name="walk_greeting_celestial_moon_through">The Moon moves through %1$s</string>
@@ -990,4 +1041,49 @@
         <item>@string/welcome_quote_5</item>
         <item>@string/welcome_quote_6</item>
     </string-array>
+
+    <!-- Seek persistence vocabulary (iOS parity SeekPersistence.swift@c1745e8).
+         Arrival labels are resolved at write time and persisted into the
+         waypoint row, like iOS's NSLocalizedString defaults. The event-name
+         strings iOS keeps behind EventType.description were dropped here —
+         no live surface renders them on either platform at c1745e8 (U9 port
+         spec B12). -->
+    <string name="seek_arrival_label_first">First clearing</string>
+    <string name="seek_arrival_label_second">Second clearing</string>
+    <string name="seek_arrival_label_third">Third clearing</string>
+    <string name="seek_arrival_label_nth">Clearing %1$d</string>
+
+    <!-- Seek section of the in-walk options sheet (iOS parity
+         WalkOptionsSheet.swift:107-137 + LS.swift:141-183@c1745e8, commit
+         85373c1). "Sonar"/"Sonar Volume"/"Seek" are shared with the U13
+         Sound Settings mirror. -->
+    <string name="seek_section_title">Seek</string>
+    <string name="seek_sonar_title">Sonar</string>
+    <string name="seek_sonar_volume_title">Sonar Volume</string>
+    <string name="seek_anew_title">Seek Anew</string>
+    <string name="seek_anew_complete_subtitle">The seeking is complete</string>
+
+    <!-- Seek summary section (U11 — iOS parity SeekSummarySection.swift +
+         LS.swift:182-294@c1745e8). The unknowns-found note counts only
+         reached clearings — never totals, never "X of Y" (R19). The seeded
+         lines are the seed's provenance keepsake; %1$s is the time recording
+         began. Sign fragments join with " · " in photos-voices-marks order,
+         singular forms use the indefinite article ("a photo", not "1 photo"). -->
+    <string name="seek_summary_header">The Seeking</string>
+    <string name="seek_summary_found_one">One unknown found</string>
+    <string name="seek_summary_found_two">Two unknowns found</string>
+    <string name="seek_summary_found_three">Three unknowns found</string>
+    <string name="seek_summary_found_many">%1$d unknowns found</string>
+    <string name="seek_summary_found_under_golden">Found in the golden hour</string>
+    <string name="seek_summary_found_under_midday">Found in broad daylight</string>
+    <string name="seek_summary_found_under_night">Found under the night sky</string>
+    <string name="seek_summary_seeded">The way was shaped by your intention and the moment you set out — %1$s.</string>
+    <string name="seek_summary_seeded_quiet">The way was shaped by the moment you set out — %1$s.</string>
+    <string name="seek_summary_along_the_way">Along the way</string>
+    <string name="seek_summary_sign_photo_one">a photo</string>
+    <string name="seek_summary_sign_photo_many">%1$d photos</string>
+    <string name="seek_summary_sign_voice_one">a voice note</string>
+    <string name="seek_summary_sign_voice_many">%1$d voice notes</string>
+    <string name="seek_summary_sign_mark_one">a mark</string>
+    <string name="seek_summary_sign_mark_many">%1$d marks</string>
 </resources>

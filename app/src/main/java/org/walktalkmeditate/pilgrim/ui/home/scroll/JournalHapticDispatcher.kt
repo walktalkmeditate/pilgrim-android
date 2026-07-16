@@ -55,6 +55,11 @@ class JournalHapticDispatcher internal constructor(
 
     private var lastDotDispatchNs: Long = 0L
     private val minIntervalNs: Long = 50_000_000L // 50 ms
+    // Delayed-tail spans of the composed vocabularies: the cairn's
+    // second CLICK lands at +120 ms, the gate/milestone LOW_TICK at
+    // +30 ms (buildEffect below).
+    private val cairnTailNs: Long = 120_000_000L
+    private val thumpTailNs: Long = 30_000_000L
     private val MAX_AMPLITUDE = 255
 
     fun dispatch(event: HapticEvent) {
@@ -63,10 +68,13 @@ class JournalHapticDispatcher internal constructor(
         if (isReduceMotion()) return
 
         // kaijutsu PR #86 review: milestones bypass the throttle (rare +
-        // important events). Dot throttle remains to defend against
-        // scroll-fling flooding when crossing many dots in <50 ms.
+        // important events). Gates and cairns (U16) are the same class —
+        // first walk / every tenth / a seek that found places — and iOS
+        // fires every event unthrottled. Plain-dot throttle remains to
+        // defend against scroll-fling flooding when crossing many dots
+        // in <50 ms.
         val nowNs = SystemClock.elapsedRealtimeNanos()
-        if (event !is HapticEvent.Milestone) {
+        if (event is HapticEvent.LightDot || event is HapticEvent.HeavyDot) {
             if (nowNs - lastDotDispatchNs < minIntervalNs) return
             lastDotDispatchNs = nowNs
         }
@@ -81,6 +89,24 @@ class JournalHapticDispatcher internal constructor(
 
         val effect: VibrationEffect = buildEffect(event) ?: return
         v.vibrate(effect)
+        stampCompositionTail(event, nowNs)
+    }
+
+    /**
+     * `Vibrator.vibrate` replaces any in-flight effect, so a plain dot
+     * landing inside a composition's delayed tail (a fling over dense
+     * cairns) would truncate the success double to a single click.
+     * Stamping the throttle clock forward makes trailing plain dots
+     * wait out the tail plus the normal 50 ms interval — the interval
+     * doubles as the trailing primitive's duration margin. Kinds still
+     * bypass the ENTRY throttle (rare + important; iOS unthrottled).
+     */
+    private fun stampCompositionTail(event: HapticEvent, nowNs: Long) {
+        lastDotDispatchNs = when (event) {
+            is HapticEvent.CairnDot -> nowNs + cairnTailNs
+            is HapticEvent.GateDot, is HapticEvent.Milestone -> nowNs + thumpTailNs
+            else -> lastDotDispatchNs
+        }
     }
 
     private fun buildEffect(event: HapticEvent): VibrationEffect? {
@@ -100,12 +126,24 @@ class JournalHapticDispatcher internal constructor(
                 if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.85f)
                 composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.85f)
             }
-            is HapticEvent.Milestone -> {
+            // A torii speaks the milestone thump regardless of size — iOS
+            // routes gateDot through the same heavy-0.8 sensory-feedback
+            // slot as milestones (InkScrollView.swift:50-54@c1745e8).
+            is HapticEvent.Milestone, is HapticEvent.GateDot -> {
                 val canHeavy = supports(VibrationEffect.Composition.PRIMITIVE_CLICK)
                 val canLow = supports(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)
                 if (!canHeavy) return fallback(1.0f)
                 composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f)
                 if (canLow) composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.7f, 30)
+            }
+            is HapticEvent.CairnDot -> {
+                // The soft double of a found place — iOS `.success`
+                // (InkScrollView.swift:55-58@c1745e8) mapped to two soft
+                // rising clicks in this file's CLICK vocabulary, distinct
+                // from the milestone thump.
+                if (!supports(VibrationEffect.Composition.PRIMITIVE_CLICK)) return fallback(0.7f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.55f)
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.7f, 120)
             }
             is HapticEvent.None -> return null
         }

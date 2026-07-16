@@ -9,11 +9,11 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Pure path builders for the seven scenery types — direct ports of the
- * iOS `*Shape` files in `pilgrim-ios/Pilgrim/Views/Scenery/`. Kept as
- * private helpers so each type Composable can re-derive its path on the
- * fly without allocating a `Shape` wrapper. All paths are normalized to
- * a `Size` rect; consumers translate / scale on draw.
+ * Pure path builders for the standing scenery types — direct ports of
+ * the iOS `*Shape` files in `pilgrim-ios/Pilgrim/Views/Scenery/`. Kept
+ * as private helpers so each type Composable can re-derive its path on
+ * the fly without allocating a `Shape` wrapper. All paths are normalized
+ * to a `Size` rect; consumers translate / scale on draw.
  */
 
 /** TreeShape.swift — two stacked triangles + trunk rect. */
@@ -240,6 +240,35 @@ internal fun moonOuterAndInner(size: Size): Pair<Path, Path> {
     }
     return outer to inner
 }
+
+/**
+ * CairnStonesShape.swift — stacked stones raised by a seek that found
+ * places. Index 0 is the narrowest top stone; the base is widest. Each
+ * non-base stone leans slightly off-axis the way real cairns do.
+ * Geometry exposed as [Rect]s so it stays testable on the JVM
+ * (Stage 3-C: Robolectric Canvas draws are stubs).
+ */
+internal fun cairnStoneRects(size: Size, stones: Int): List<Rect> {
+    val count = stones.coerceIn(2, 5)
+    val w = size.width
+    val rowHeight = size.height / count
+    return (0 until count).map { index ->
+        val fraction = index.toFloat() / (count - 1)
+        val stoneWidth = w * (0.38f + 0.44f * fraction)
+        val lean = when {
+            index == count - 1 -> 0f
+            index % 2 == 0 -> w * 0.05f
+            else -> -w * 0.06f
+        }
+        Rect(
+            offset = Offset(w / 2f - stoneWidth / 2f + lean, index * rowHeight),
+            size = Size(stoneWidth, rowHeight * 1.05f),
+        )
+    }
+}
+
+internal fun cairnStonesPath(size: Size, stones: Int): Path =
+    Path().apply { cairnStoneRects(size, stones).forEach { addOval(it) } }
 
 /** Simple downward triangle for snow caps on mountains. */
 internal fun trianglePath(size: Size): Path {

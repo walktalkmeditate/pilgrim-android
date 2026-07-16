@@ -394,6 +394,14 @@ Computed 2026-05-16 (U7 triage pass). Effective row verdicts (86 rows; L-mode wh
 - **Ship gate: PASS** (A5 owner disposition 2026-05-16). All R8 conditions met: zero `unverified` (every row dispositioned via gate.md triage step 2 — Bucket A cross-cut-accepted, Bucket B dated iOS-infra waiver), zero open `close` (all clusters code-shipped + on-device verified), every `re-justify` dated. **Basis:** all Android *code* parity is implemented, tested (2015-test suite green), and on-device verified; the Bucket B waivers record that the *frozen iOS reference* cannot be deep-captured (a reference-infra limit, explicitly accepted by the A5 owner) — not a fabricated pixel verdict. See § "Gate result (R8)" integrity note + § "A5 waiver-ready disposition".
 - Path to PASS: (1) resolve iOS-sim deep-state capture infra (XCUITest/deep-link) → clear `unverified`; (2) execute the ce-plan clusters for the ~9 open `close` rows; (3) re-capture the 7 remediated rows (D/C+motion) → `match`.
 
+## Gate summary addendum — v1.7.0 residue waiver (2026-07-14)
+
+Scope: the **PR #45/#47 (iOS v1.7.0) parity matrix** (`2026-06-22-pr45-v170-parity-matrix.md`) and its needs-device backlog — a separate artifact from the v1.6.0 rows above.
+
+- **Waived as-is (dated 2026-07-14, user disposition):** all remaining `unverified` re-capture rows (dark-mode/motion re-captures, iOS-sim-infra-blocked rows). The old gate no longer blocks anything.
+- **Carved out — NOT waived:** the live-behavior device probes — the PR #47 phone-call `AUDIOFOCUS_LOSS` vs `LOSS_TRANSIENT` probe and the interruption-resume residuals. These fold into the **Phase 14 (Seek Mode) consolidated device QA pass** (R12 in `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`).
+- Authority: `docs/brainstorms/2026-07-14-ios-main-parity-retarget-requirements.md` R3. Parity anchor re-pinned to pilgrim-ios `c1745e8` in the same change (R1).
+
 ## Notes
 
 - `(NO Android equivalent — gap)` / `(verify Android equivalent)` rows are parity gaps by *absence* — they capture iOS only and enter triage as `close-the-gap`.

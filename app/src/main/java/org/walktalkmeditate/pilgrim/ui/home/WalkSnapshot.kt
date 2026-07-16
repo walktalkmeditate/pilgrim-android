@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import androidx.compose.runtime.Immutable
+import org.walktalkmeditate.pilgrim.ui.home.scenery.WalkThreshold
 
 /**
  * Per-walk Journal struct. Mirrors iOS `WalkSnapshot`. Built once per
@@ -35,6 +36,30 @@ data class WalkSnapshot(
      * "Released" tag w/ "full record removed" footer.
      */
     val isArchived: Boolean = false,
+    /**
+     * True when the walk carries a `SEEK_MODE` event (iOS
+     * `WalkSnapshot.isSeek`, origin R18). Drives the quick-view
+     * walk-mode glyph: seek = print + dissolving trail, wander =
+     * grounded pair. Populated by one bulk event fetch in
+     * `HomeViewModel.buildSnapshots`, never per-walk faulting.
+     */
+    val isSeek: Boolean = false,
+    /**
+     * Seek arrivals recorded on this walk — a found place earns the
+     * walk a cairn on the ink scroll (iOS `WalkSnapshot.foundPlaces`,
+     * `HomeViewModel.swift:18-20@c1745e8`). Populated from the U12
+     * bulk waypoint-icons read, never per-walk faulting.
+     */
+    val foundPlaces: Int = 0,
+    /**
+     * Once-ever gates — threshold walks earn a torii on the ink
+     * scroll (iOS `WalkSnapshot.threshold`,
+     * `HomeViewModel.swift:21-24@c1745e8`). Practice gates (first
+     * walk, every tenth) stand vermilion; seeking gates (first
+     * unknown, unknown milestones) stand weathered stone. Recomputed
+     * from history on every snapshot build, never stored.
+     */
+    val threshold: WalkThreshold? = null,
 ) {
     /** Walk-only duration (total minus talk minus meditate, floored at 0). */
     val walkOnlyDurationSec: Long

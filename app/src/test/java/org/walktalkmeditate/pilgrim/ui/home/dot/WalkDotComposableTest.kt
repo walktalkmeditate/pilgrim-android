@@ -8,11 +8,14 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsEqualTo
+import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -120,4 +123,76 @@ class WalkDotComposableTest {
         dot.performSemanticsAction(SemanticsActions.OnClick)
         assertTrue("the archived dot's TalkBack click action must invoke onTap", tapped)
     }
+
+    // iOS a11y frame parity (WalkDotView @ c1745e8): live dots use
+    // `.frame(width: max(44, size * 3.5))`, archived rings a fixed 44×44.
+
+    @Test
+    fun `smallest live dot still spans the 44 dp minimum tap target`() {
+        composeRule.setContent {
+            WalkDot(
+                snapshot = snapshot(),
+                sizeDp = 8f,
+                color = Color.Black,
+                talkColor = Color.Red,
+                meditateColor = Color.Blue,
+                opacity = 1f,
+                isNewest = false,
+                contentDescription = "small-dot",
+                onTap = {},
+            )
+        }
+        composeRule.onNodeWithContentDescription("small-dot")
+            .assertWidthIsEqualTo(44.dp)
+            .assertHeightIsEqualTo(44.dp)
+    }
+
+    @Test
+    fun `largest live dot box scales to 3_5x its core size`() {
+        composeRule.setContent {
+            WalkDot(
+                snapshot = snapshot(),
+                sizeDp = 22f,
+                color = Color.Black,
+                talkColor = Color.Red,
+                meditateColor = Color.Blue,
+                opacity = 1f,
+                isNewest = false,
+                contentDescription = "large-dot",
+                onTap = {},
+            )
+        }
+        composeRule.onNodeWithContentDescription("large-dot")
+            .assertWidthIsEqualTo(77.dp)
+            .assertHeightIsEqualTo(77.dp)
+    }
+
+    @Test
+    fun `archived ring keeps a fixed 44 dp tap target`() {
+        composeRule.setContent {
+            WalkDot(
+                snapshot = snapshot(),
+                sizeDp = 8f,
+                color = Color.Black,
+                talkColor = Color.Red,
+                meditateColor = Color.Blue,
+                opacity = 0.5f,
+                isNewest = false,
+                isArchived = true,
+                contentDescription = "archived-small",
+                onTap = {},
+            )
+        }
+        composeRule.onNodeWithContentDescription("archived-small")
+            .assertWidthIsEqualTo(44.dp)
+            .assertHeightIsEqualTo(44.dp)
+    }
+
+    private fun snapshot() = WalkSnapshot(
+        id = 1L, uuid = "u", startMs = 0L, distanceM = 1000.0,
+        durationSec = 600.0, averagePaceSecPerKm = 360.0,
+        cumulativeDistanceM = 1000.0, talkDurationSec = 0L,
+        meditateDurationSec = 0L, favicon = null, isShared = false,
+        weatherCondition = null,
+    )
 }

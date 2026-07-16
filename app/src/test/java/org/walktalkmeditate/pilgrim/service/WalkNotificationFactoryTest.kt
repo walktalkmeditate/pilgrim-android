@@ -21,7 +21,10 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
+import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 
 /**
  * Validates the per-state notification action set built by
@@ -151,6 +154,144 @@ class WalkNotificationFactoryTest {
             assertTrue("empty text for $state", text.isNotEmpty())
         }
     }
+
+    // ─── U10 seek glance line (port spec
+    //     docs/parity/2026-07-14-port-seek-glance-u10.md B5) ──────────
+
+    @Test
+    fun `wander Active text is byte-identical to the pre-seek rendering`() {
+        // Golden string: U10 must not perturb wander notifications in
+        // any way, glance parameter present or not.
+        val state = WalkState.Active(
+            WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_234.0),
+        )
+        assertEquals(
+            "Walking — 1.23 km",
+            walkNotificationText(context, state, UnitSystem.Metric),
+        )
+        assertEquals(
+            "Walking — 1.23 km",
+            walkNotificationText(context, state, UnitSystem.Metric, seekGlance = null),
+        )
+    }
+
+    @Test
+    fun `stray glance on a wander walk never renders a seek line`() {
+        val state = WalkState.Active(
+            WalkAccumulator(walkId = 1L, startedAt = 0L, distanceMeters = 1_234.0, mode = WalkMode.Wander),
+        )
+        val text = walkNotificationText(
+            context,
+            state,
+            UnitSystem.Metric,
+            seekGlance = SeekGlanceState(400, SeekDirectionHint.AHEAD, isComplete = false),
+        )
+        assertEquals("Walking — 1.23 km", text)
+    }
+
+    @Test
+    fun `seek Active with a glance renders bucket and direction`() {
+        val text = walkNotificationText(
+            context,
+            seekActiveState(),
+            UnitSystem.Metric,
+            seekGlance = SeekGlanceState(400, SeekDirectionHint.AHEAD, isComplete = false),
+        )
+        assertEquals("Walking — 1.23 km · ~400 m ahead", text)
+    }
+
+    @Test
+    fun `seek Active without a glance renders the plain walking line`() {
+        val text = walkNotificationText(context, seekActiveState(), UnitSystem.Metric)
+        assertEquals("Walking — 1.23 km", text)
+    }
+
+    @Test
+    fun `seek Active hidden hint renders the bucket alone`() {
+        val text = walkNotificationText(
+            context,
+            seekActiveState(),
+            UnitSystem.Metric,
+            seekGlance = SeekGlanceState(400, directionHint = null, isComplete = false),
+        )
+        assertEquals("Walking — 1.23 km · ~400 m", text)
+    }
+
+    @Test
+    fun `seek Active completion renders seeking complete`() {
+        val text = walkNotificationText(
+            context,
+            seekActiveState(),
+            UnitSystem.Metric,
+            seekGlance = SeekGlanceState(0, directionHint = null, isComplete = true),
+        )
+        assertEquals("Walking — 1.23 km · seeking complete", text)
+    }
+
+    @Test
+    fun `seek distance ladder metric`() {
+        // iOS seekDistanceText (PilgrimWidgetLiveActivity.swift:232-242
+        // @c1745e8) — the metric arm.
+        assertEquals("close", seekGlanceDistanceText(context, 0, UnitSystem.Metric))
+        assertEquals("~400 m", seekGlanceDistanceText(context, 400, UnitSystem.Metric))
+        assertEquals("~900 m", seekGlanceDistanceText(context, 900, UnitSystem.Metric))
+        assertEquals("~1.0 km", seekGlanceDistanceText(context, 1_000, UnitSystem.Metric))
+        assertEquals("~1.2 km", seekGlanceDistanceText(context, 1_200, UnitSystem.Metric))
+        assertEquals("~1.9 km", seekGlanceDistanceText(context, 1_900, UnitSystem.Metric))
+        assertEquals("2 km +", seekGlanceDistanceText(context, 2_000, UnitSystem.Metric))
+    }
+
+    @Test
+    fun `seek distance ladder imperial`() {
+        assertEquals("close", seekGlanceDistanceText(context, 0, UnitSystem.Imperial))
+        assertEquals("~0.1 mi", seekGlanceDistanceText(context, 100, UnitSystem.Imperial))
+        assertEquals("~0.3 mi", seekGlanceDistanceText(context, 500, UnitSystem.Imperial))
+        assertEquals("~0.7 mi", seekGlanceDistanceText(context, 1_200, UnitSystem.Imperial))
+        assertEquals("~1.2 mi", seekGlanceDistanceText(context, 1_900, UnitSystem.Imperial))
+        assertEquals("1.2 mi +", seekGlanceDistanceText(context, 2_000, UnitSystem.Imperial))
+    }
+
+    @Test
+    fun `seek glance line imperial with direction`() {
+        val line = seekGlanceLine(
+            context,
+            SeekGlanceState(500, SeekDirectionHint.LEFT, isComplete = false),
+            UnitSystem.Imperial,
+        )
+        assertEquals("~0.3 mi left", line)
+    }
+
+    @Test
+    fun `seek mode notification builds with actions and seek text intact`() {
+        // R11 house rule: the platform builder path must be exercised
+        // for real — .build() on the seek-rendered notification with
+        // the Active action set attached.
+        val state = seekActiveState()
+        val glance = SeekGlanceState(400, SeekDirectionHint.AHEAD, isComplete = false)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Pilgrim")
+            .setContentText(walkNotificationText(context, state, UnitSystem.Metric, glance))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+        addWalkActionsForState(builder, context, state, actions)
+        val notification = builder.build()
+        assertEquals(3, notification.actions.size)
+        assertEquals(getString(R.string.walk_notification_action_pause), notification.actions[0].title)
+        assertEquals(
+            "Walking — 1.23 km · ~400 m ahead",
+            notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString(),
+        )
+    }
+
+    private fun seekActiveState(): WalkState.Active = WalkState.Active(
+        WalkAccumulator(
+            walkId = 1L,
+            startedAt = 0L,
+            distanceMeters = 1_234.0,
+            mode = WalkMode.Seek,
+        ),
+    )
 
     private fun buildAndCollect(state: WalkState): android.app.Notification {
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)

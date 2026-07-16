@@ -17,13 +17,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import android.database.sqlite.SQLiteException
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 
@@ -288,6 +291,120 @@ class WalkControllerTest {
         assertNull(restored)
         assertEquals(activeIdBefore, (controller.state.value as WalkState.Active).walk.walkId)
     }
+
+    // ---- Walk-mode carriage + SEEK_MODE marker (U8) ----------------------
+
+    @Test
+    fun `seek startWalk persists exactly one SEEK_MODE event and carries the mode`() = runTest {
+        val walk = controller.startWalk(intention = "find the river", mode = WalkMode.Seek)
+
+        val events = repository.eventsFor(walk.id)
+        assertEquals(1, events.count { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(clock.now(), events.single { it.eventType == WalkEventType.SEEK_MODE }.timestamp)
+
+        val active = controller.state.value as WalkState.Active
+        assertEquals(WalkMode.Seek, active.walk.mode)
+    }
+
+    @Test
+    fun `wander startWalk never writes a SEEK_MODE event`() = runTest {
+        val walk = controller.startWalk()
+
+        assertTrue(repository.eventsFor(walk.id).none { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(WalkMode.Wander, (controller.state.value as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `second seek walk from cached Finished controller writes its own single marker`() = runTest {
+        val first = controller.startWalk(mode = WalkMode.Seek)
+        clock.advanceTo(5_000L)
+        controller.finishWalk()
+        assertTrue(controller.state.value is WalkState.Finished)
+
+        clock.advanceTo(6_000L)
+        val second = controller.startWalk(mode = WalkMode.Seek)
+
+        assertEquals(1, repository.eventsFor(first.id).count { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(1, repository.eventsFor(second.id).count { it.eventType == WalkEventType.SEEK_MODE })
+        assertEquals(WalkMode.Seek, (controller.state.value as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `restoreActiveWalk re-derives Seek mode from the persisted marker without re-writing it`() =
+        runTest {
+            val walk = controller.startWalk(mode = WalkMode.Seek)
+            // Simulate process death: fresh controller over the same Room.
+            val revived = WalkControllerImpl(repository, clock, fakeStepCounter())
+
+            val restored = revived.restoreActiveWalk()
+
+            assertNotNull(restored)
+            val active = revived.state.value as WalkState.Active
+            assertEquals(WalkMode.Seek, active.walk.mode)
+            // Restore must not dispatch Start — the marker stays single.
+            assertEquals(
+                1,
+                repository.eventsFor(walk.id).count { it.eventType == WalkEventType.SEEK_MODE },
+            )
+        }
+
+    @Test
+    fun `restoreActiveWalk derives Wander mode for an ordinary walk`() = runTest {
+        controller.startWalk()
+        val revived = WalkControllerImpl(repository, clock, fakeStepCounter())
+
+        assertNotNull(revived.restoreActiveWalk())
+        assertEquals(WalkMode.Wander, (revived.state.value as WalkState.Active).walk.mode)
+    }
+
+    @Test
+    fun `seek startWalk survives a failing SEEK_MODE event write`() = runTest {
+        // WalkTrackingService catches only IllegalStateException around
+        // startWalk — an escaping SQLiteException from the marker write
+        // would crash the :tracker recording process. The marker is best
+        // effort: the walk must start (as a functional wander-equivalent
+        // recording) even when the event row fails.
+        val throwingDao = ThrowingWalkEventDao(db.walkEventDao())
+        val fragileRepository = WalkRepository(
+            database = db,
+            walkDao = db.walkDao(),
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = throwingDao,
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+        )
+        val fragile = WalkControllerImpl(fragileRepository, clock, fakeStepCounter())
+        throwingDao.throwOnInsert = true
+
+        val walk = fragile.startWalk(intention = "find the river", mode = WalkMode.Seek)
+
+        val state = fragile.state.value as WalkState.Active
+        assertEquals(walk.id, state.walk.walkId)
+        assertEquals("the in-memory mode survives the dropped marker", WalkMode.Seek, state.walk.mode)
+        assertTrue(
+            "the marker row was dropped, not retried",
+            repository.eventsFor(walk.id).none { it.eventType == WalkEventType.SEEK_MODE },
+        )
+    }
+}
+
+/** Delegates to the real DAO; [throwOnInsert] simulates a disk failure. */
+private class ThrowingWalkEventDao(private val delegate: WalkEventDao) : WalkEventDao {
+    var throwOnInsert = false
+
+    override suspend fun insert(event: WalkEvent): Long {
+        if (throwOnInsert) throw SQLiteException("disk I/O error")
+        return delegate.insert(event)
+    }
+
+    override suspend fun getForWalk(walkId: Long) = delegate.getForWalk(walkId)
+    override fun observeForWalk(walkId: Long) = delegate.observeForWalk(walkId)
+    override suspend fun walkIdsWithEvent(eventTypeName: String) =
+        delegate.walkIdsWithEvent(eventTypeName)
+    override suspend fun deleteByWalkId(walkId: Long) = delegate.deleteByWalkId(walkId)
 }
 
 private class FakeClock(initial: Long) : Clock {
