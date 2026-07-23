@@ -16,6 +16,10 @@ import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestScope
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestUrl
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteBootstrapAsset
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogScope
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogUrl
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRoutesConfig
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeBaseUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
@@ -118,6 +122,35 @@ object NetworkModule {
     @Singleton
     @AudioManifestScope
     fun provideAudioManifestScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Collective route-catalog URL (U3) — qualified so tests can substitute MockWebServer. */
+    @Provides
+    @Singleton
+    @CollectiveRouteCatalogUrl
+    fun provideCollectiveRouteCatalogUrl(): String = CollectiveRoutesConfig.CATALOG_URL
+
+    /**
+     * Bundled-bootstrap asset path (U3) — the injectable stand-in for iOS's
+     * `bootstrapCatalogURL` closure, so tests can exercise the
+     * missing-bootstrap path.
+     */
+    @Provides
+    @Singleton
+    @CollectiveRouteBootstrapAsset
+    fun provideCollectiveRouteBootstrapAsset(): String = CollectiveRoutesConfig.BOOTSTRAP_ASSET_PATH
+
+    /**
+     * Long-lived scope for
+     * [org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService]'s
+     * initial load + sync coroutines. Same shape as the voice-guide
+     * manifest scope; lives here because the catalog fetcher is a
+     * network/data concern (Stage 5-C module-ownership lesson).
+     */
+    @Provides
+    @Singleton
+    @CollectiveRouteCatalogScope
+    fun provideCollectiveRouteCatalogScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
