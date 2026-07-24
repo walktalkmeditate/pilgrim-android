@@ -44,7 +44,9 @@ import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -110,7 +112,8 @@ class SettingsViewModelTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        repo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
+        repo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker,
+            ContributionLedger(FakePreferencesDataStore(), json))
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()

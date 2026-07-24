@@ -48,6 +48,14 @@ data class CollectiveCounterDelta(
 }
 
 data class CollectiveWalkSnapshot(
+    /**
+     * Room `walks.uuid` for the finished walk — the contribution
+     * ledger's claim key. Null when the row lookup failed: the delta
+     * still queues, but no summary claim is recorded (iOS parity
+     * `recordWalk(walkUUID: UUID?)@9a418e4` — under-claim rather than
+     * show a line the summary cannot substantiate).
+     */
+    val walkUuid: String?,
     val distanceKm: Double,
     val meditationMin: Int,
     val talkMin: Int,

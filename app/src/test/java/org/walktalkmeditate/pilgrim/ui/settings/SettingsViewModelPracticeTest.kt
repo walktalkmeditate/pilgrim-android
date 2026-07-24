@@ -35,7 +35,9 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -95,7 +97,8 @@ class SettingsViewModelPracticeTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker,
+            ContributionLedger(FakePreferencesDataStore(), json))
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()

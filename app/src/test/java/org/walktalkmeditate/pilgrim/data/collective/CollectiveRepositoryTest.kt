@@ -12,20 +12,25 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 
 @RunWith(RobolectricTestRunner::class)
@@ -36,7 +41,9 @@ class CollectiveRepositoryTest {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private lateinit var dataStoreScope: CoroutineScope
     private lateinit var dataStore: DataStore<Preferences>
+    private lateinit var ledgerDataStore: DataStore<Preferences>
     private lateinit var cacheStore: CollectiveCacheStore
+    private lateinit var ledger: ContributionLedger
     private lateinit var fakeService: FakeCounterService
     private lateinit var scope: CoroutineScope
 
@@ -48,7 +55,12 @@ class CollectiveRepositoryTest {
             scope = dataStoreScope,
             produceFile = { File(context.filesDir, "datastore/$unique.preferences_pb") },
         )
+        ledgerDataStore = PreferenceDataStoreFactory.create(
+            scope = dataStoreScope,
+            produceFile = { File(context.filesDir, "datastore/${unique}_ledger.preferences_pb") },
+        )
         cacheStore = CollectiveCacheStore(dataStore, json)
+        ledger = ContributionLedger(ledgerDataStore, json)
         fakeService = FakeCounterService(context)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     }
@@ -61,7 +73,7 @@ class CollectiveRepositoryTest {
     }
 
     private fun newRepo(milestoneChecker: MilestoneChecking = NoopMilestoneChecker) =
-        CollectiveRepository(cacheStore, fakeService, scope, milestoneChecker)
+        CollectiveRepository(cacheStore, fakeService, scope, milestoneChecker, ledger)
 
     private object NoopMilestoneChecker : MilestoneChecking {
         override suspend fun check(totalWalks: Int) = Unit
@@ -189,13 +201,24 @@ class CollectiveRepositoryTest {
 
     @Test
     fun `recordWalk no-op when opt-in OFF`() = runBlocking {
+        // Matrix cell OFF→OFF: no POST, no pending, no ledger claim —
+        // "no trace to be sent later … the privacy claim the toggle
+        // makes" (CollectiveCounterServiceRecordWalkTests@9a418e4).
         cacheStore.setOptIn(false)
         val repo = newRepo()
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.0, meditationMin = 0, talkMin = 0))
-        // Drain any in-flight launched body via a DataStore read.
-        cacheStore.pendingFlow.first()
+        val baseline = repoScopeChildren()
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = "walk-off",
+                distanceKm = 1.0,
+                meditationMin = 0,
+                talkMin = 0,
+            ),
+        )
+        awaitRecordWalkWorkers(baseline)
         assertEquals(0, fakeService.postCount.get())
         assertTrue(cacheStore.pendingFlow.first().isEmpty())
+        assertFalse(ledger.wasContributed("walk-off"))
     }
 
     @Test
@@ -206,7 +229,7 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 2.0, meditationMin = 5, talkMin = 1))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 2.0, meditationMin = 5, talkMin = 1))
         awaitPostCount(1)
 
         val posted = fakeService.lastPosted!!
@@ -224,7 +247,7 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.0, meditationMin = 1, talkMin = 0))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.0, meditationMin = 1, talkMin = 0))
         awaitPostCount(1)
         // Bounded poll instead of `flow.first { predicate }` — the latter
         // hangs in multi-class run ordering due to a Robolectric main-Looper
@@ -251,7 +274,7 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.5, meditationMin = 2, talkMin = 0))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.5, meditationMin = 2, talkMin = 0))
         awaitPostCount(1)
 
         val pending = cacheStore.pendingFlow.first()
@@ -267,7 +290,7 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 0.5, meditationMin = 0, talkMin = 1))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 0.5, meditationMin = 0, talkMin = 1))
         awaitPostCount(1)
 
         val pending = cacheStore.pendingFlow.first()
@@ -283,13 +306,13 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.0, meditationMin = 1, talkMin = 0))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.0, meditationMin = 1, talkMin = 0))
         awaitPostCount(1)
         assertEquals(1, cacheStore.pendingFlow.first().walks)
 
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats(2)
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 2.0, meditationMin = 3, talkMin = 1))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 2.0, meditationMin = 3, talkMin = 1))
         awaitPostCount(2)
 
         val posted = fakeService.lastPosted!!
@@ -321,7 +344,7 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 0.0, meditationMin = 0, talkMin = 0))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 0.0, meditationMin = 0, talkMin = 0))
         awaitPostCount(1)
 
         // POST clamped to walks=10 (9 + 1 new = 10, at cap), distance=200 (270 capped).
@@ -355,7 +378,7 @@ class CollectiveRepositoryTest {
         val repo = newRepo()
         repo.optIn.first { it }
 
-        repo.recordWalk(CollectiveWalkSnapshot(distanceKm = 1.0, meditationMin = 0, talkMin = 0))
+        repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.0, meditationMin = 0, talkMin = 0))
         awaitPostCount(1)
 
         // POST payload was clamped to MAX_WALKS_PER_POST (10).
@@ -363,6 +386,164 @@ class CollectiveRepositoryTest {
         // After Success: pending = (12 - 10) = 2 walks remaining for the next POST.
         awaitPending { it.walks == 2 }
         Unit
+    }
+
+    @Test
+    fun `recordWalk opted-in records the walk against the ledger`() = runBlocking {
+        // Matrix cell ON→ON. The ledger write precedes the pending
+        // merge in the same coroutine, so a completed POST implies
+        // the claim is already readable.
+        cacheStore.setOptIn(true)
+        fakeService.postResult = PostResult.Success
+        fakeService.fetchResult = sampleStats()
+        val repo = newRepo()
+        repo.optIn.first { it }
+
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = "walk-on-on",
+                distanceKm = 4.2,
+                meditationMin = 10,
+                talkMin = 3,
+            ),
+        )
+        awaitPostCount(1)
+
+        assertTrue(ledger.wasContributed("walk-on-on"))
+        assertEquals(1, fakeService.lastPosted!!.walks)
+    }
+
+    @Test
+    fun `ledger entry survives the toggle being turned off later`() = runBlocking {
+        // Matrix cell ON→OFF: "A pilgrim who contributes a walk and
+        // later turns the toggle off must keep the line on that walk"
+        // (CollectiveCounterServiceRecordWalkTests@9a418e4).
+        cacheStore.setOptIn(true)
+        fakeService.postResult = PostResult.Success
+        fakeService.fetchResult = sampleStats()
+        val repo = newRepo()
+        repo.optIn.first { it }
+
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = "walk-on-off",
+                distanceKm = 4.2,
+                meditationMin = 0,
+                talkMin = 0,
+            ),
+        )
+        awaitPostCount(1)
+        cacheStore.setOptIn(false)
+
+        assertTrue(ledger.wasContributed("walk-on-off"))
+        assertEquals(1, fakeService.postCount.get())
+    }
+
+    @Test
+    fun `opting in after finalize does not back-fill the ledger`() = runBlocking {
+        // Matrix cell OFF→ON: the toggle is read once, when the walk
+        // ends — a walk finalized opted-out gains no claim and no
+        // queued delta when the pilgrim opts in afterwards; the NEXT
+        // walk earns both (forward-looking only).
+        cacheStore.setOptIn(false)
+        val repo = newRepo()
+        val baseline = repoScopeChildren()
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = "walk-off-on",
+                distanceKm = 2.0,
+                meditationMin = 0,
+                talkMin = 0,
+            ),
+        )
+        awaitRecordWalkWorkers(baseline)
+        cacheStore.setOptIn(true)
+        repo.optIn.first { it }
+
+        assertFalse(ledger.wasContributed("walk-off-on"))
+        assertTrue(cacheStore.pendingFlow.first().isEmpty())
+        assertEquals(0, fakeService.postCount.get())
+
+        fakeService.postResult = PostResult.Success
+        fakeService.fetchResult = sampleStats()
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = "walk-next",
+                distanceKm = 1.0,
+                meditationMin = 0,
+                talkMin = 0,
+            ),
+        )
+        awaitPostCount(1)
+        assertTrue(ledger.wasContributed("walk-next"))
+    }
+
+    @Test
+    fun `ledger records even when the POST fails`() = runBlocking {
+        // Ledger truth is "opted-in and queued at finalize" — an
+        // offline finish still earns the summary line, and the delta
+        // rides along with the next POST (iOS: "Recording the fact
+        // here rather than on POST success is what lets a walk that
+        // ended with no signal still say something true").
+        cacheStore.setOptIn(true)
+        fakeService.postResult = PostResult.Failed(IOException("offline finish"))
+        val repo = newRepo()
+        repo.optIn.first { it }
+
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = "walk-offline",
+                distanceKm = 3.0,
+                meditationMin = 0,
+                talkMin = 0,
+            ),
+        )
+        awaitPostCount(1)
+
+        assertTrue(ledger.wasContributed("walk-offline"))
+        assertEquals(1, cacheStore.pendingFlow.first().walks)
+    }
+
+    @Test
+    fun `recordWalk with null walkUuid queues the delta but claims nothing`() = runBlocking {
+        // iOS testRecordWalk_withoutAWalkIdentifier@9a418e4: the walk
+        // counts and stays silent — the app under-claims rather than
+        // showing a line it cannot substantiate.
+        cacheStore.setOptIn(true)
+        fakeService.postResult = PostResult.Success
+        fakeService.fetchResult = sampleStats()
+        val repo = newRepo()
+        repo.optIn.first { it }
+
+        repo.recordWalk(
+            CollectiveWalkSnapshot(
+                walkUuid = null,
+                distanceKm = 4.2,
+                meditationMin = 10,
+                talkMin = 3,
+            ),
+        )
+        awaitPostCount(1)
+
+        assertEquals(1, fakeService.lastPosted!!.walks)
+        assertNull(
+            ledgerDataStore.data.first()[ContributionLedger.KEY_CONTRIBUTED_WALK_UUIDS],
+        )
+    }
+
+    private fun repoScopeChildren(): Set<Job> =
+        scope.coroutineContext[Job]?.children?.toSet() ?: emptySet()
+
+    /**
+     * Joins only the coroutines launched on the repo scope after
+     * [baseline] was snapshotted. The opted-out recordWalk path has no
+     * observable side effect to poll for, so the OFF-cell tests need a
+     * completion signal that isn't a DataStore read racing the gate —
+     * but joining ALL children would hang forever on the repository's
+     * two Eagerly-started stateIn collectors, which never complete.
+     */
+    private suspend fun awaitRecordWalkWorkers(baseline: Set<Job>) {
+        (repoScopeChildren() - baseline).joinAll()
     }
 
     /**

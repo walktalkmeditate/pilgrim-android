@@ -28,6 +28,8 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -116,6 +118,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             service = fakeCollectiveService,
             scope = collectiveScope,
             milestoneChecker = NoopMilestoneCheckerForAutoTranscribe,
+            contributionLedger = ContributionLedger(FakePreferencesDataStore(), collectiveJson),
         )
         widgetRefreshScheduler = NoopWidgetRefreshScheduler()
 

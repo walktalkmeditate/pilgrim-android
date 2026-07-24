@@ -55,6 +55,8 @@ import org.walktalkmeditate.pilgrim.data.weather.FakeWeatherFetching
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -180,6 +182,7 @@ class WalkViewModelTest {
             service = fakeCollectiveService,
             scope = collectiveScope,
             milestoneChecker = NoopMilestoneChecker,
+            contributionLedger = ContributionLedger(FakePreferencesDataStore(), collectiveJson),
         )
         fakeWidgetRefreshScheduler = FakeWidgetRefreshScheduler()
         fakeVoiceGuidePauseController =

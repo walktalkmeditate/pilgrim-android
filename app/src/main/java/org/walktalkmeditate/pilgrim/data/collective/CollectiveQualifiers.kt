@@ -18,3 +18,7 @@ annotation class CollectiveRepoScope
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class CollectiveDataStore
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ContributionLedgerDataStore

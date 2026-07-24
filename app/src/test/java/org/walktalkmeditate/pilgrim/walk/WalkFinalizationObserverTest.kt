@@ -31,6 +31,7 @@ import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -73,6 +74,7 @@ class WalkFinalizationObserverTest {
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
     private lateinit var fakeCollectiveService: FakeCollectiveCounterService
+    private lateinit var contributionLedger: ContributionLedger
     private lateinit var collectiveRepository: CollectiveRepository
     private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
     private lateinit var walkMetricsCache: RecordingWalkMetricsCache
@@ -113,11 +115,13 @@ class WalkFinalizationObserverTest {
         collectiveCacheStore = CollectiveCacheStore(collectiveDataStore, collectiveJson)
         fakeCollectiveService = FakeCollectiveCounterService(context, collectiveJson)
         collectiveScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        contributionLedger = ContributionLedger(FakePreferencesDataStore(), collectiveJson)
         collectiveRepository = CollectiveRepository(
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
             milestoneChecker = NoopMilestoneChecker,
+            contributionLedger = contributionLedger,
         )
         widgetRefreshScheduler = CountingWidgetRefreshScheduler()
         walkMetricsCache = RecordingWalkMetricsCache()
@@ -264,6 +268,28 @@ class WalkFinalizationObserverTest {
         assertTrue("expected non-zero distance, got ${posted.distanceKm}", posted.distanceKm > 0.0)
         assertEquals(3, posted.meditationMin)
         assertEquals(2, posted.talkMin)
+    }
+
+    @Test
+    fun `contributed walk is claimed in the ledger by uuid even when finalize crosses UTC midnight`() = runBlocking {
+        // U4: the ledger stores only the walk uuid — no date — so the
+        // summary's route anchor (the walk row's start_timestamp, read
+        // at render time) cannot drift when the finalize clock lands on
+        // the next UTC day. Pinned here at the call-site level; the
+        // resolution against the catalog is U6's test surface.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+        val start = java.time.Instant.parse("2026-07-22T23:50:00Z").toEpochMilli()
+        val walk = repository.startWalk(startTimestamp = start, intention = null)
+
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walk.id, startedAt = start))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walk.id, startedAt = start, distanceMeters = 1_500.0),
+            endedAt = java.time.Instant.parse("2026-07-23T00:10:00Z").toEpochMilli(),
+        )
+        awaitUntil { fakeCollectiveService.recordedPosts.isNotEmpty() }
+
+        assertTrue(contributionLedger.wasContributed(walk.uuid))
     }
 
     // Voice auto-stop on Finished moved to WalkLifecycleObserver in

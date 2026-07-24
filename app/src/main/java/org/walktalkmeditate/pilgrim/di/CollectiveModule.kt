@@ -28,11 +28,13 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestoneDetector
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepositoryStatsSource
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedgerDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 
 /**
  * Stage 8-B: DI wiring for the Collective Counter — short-call HTTP
@@ -143,6 +145,22 @@ object CollectiveModule {
         // fetch) but keeps the app alive.
         corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
         produceFile = { context.preferencesDataStoreFile(CollectiveCacheStore.DATASTORE_NAME) },
+    )
+
+    @Provides
+    @Singleton
+    @ContributionLedgerDataStore
+    fun provideContributionLedgerDataStore(
+        @ApplicationContext context: Context,
+    ): DataStore<Preferences> = PreferenceDataStoreFactory.create(
+        // Deliberately a separate file from collective_counter: that
+        // store's corruption-reset is cheap because everything in it
+        // is forward-recoverable on the next fetch. Ledger entries are
+        // historical facts — which walks moved the counter — that no
+        // fetch can reconstruct, so they get their own corruption
+        // blast radius. The reset here loses only the ledger.
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+        produceFile = { context.preferencesDataStoreFile(ContributionLedger.DATASTORE_NAME) },
     )
 
     private const val COUNTER_CALL_TIMEOUT_SEC = 10L
