@@ -76,10 +76,12 @@ class CollectiveRouteBundledArtifactTest {
 
     // Which array an entry shipped in decides where it lands in the pool, and
     // a cosmic entry mis-filed among the pilgrimages splits Android from the
-    // web without either side complaining.
+    // web without either side complaining. Kind equality also carries
+    // nameEn/preposition/body, so a re-copied bootstrap that renames a route
+    // fails here instead of shipping phrasing the vectors never pinned.
     @Test
     fun `bundled artifact files each entry under the same kind as the parity fixture`() {
-        assertEquals(DRIFT_ADVICE, fixture.entries.map { it.isCosmic }, bundled.entries.map { it.isCosmic })
+        assertEquals(DRIFT_ADVICE, fixture.entries.map { it.kind }, bundled.entries.map { it.kind })
     }
 
     private companion object {
