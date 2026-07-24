@@ -29,8 +29,10 @@ import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.rounded.Signpost
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Icon
@@ -363,6 +365,35 @@ private fun DataSourcesSection() {
                 CustomTabs.launch(
                     context,
                     Uri.parse("https://open-meteo.com/en/license"),
+                )
+            },
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.about_data_sources_routes_body),
+            style = pilgrimType.body,
+            color = pilgrimColors.ink,
+        )
+        Spacer(Modifier.height(8.dp))
+        OpenSourceLinkRow(
+            icon = Icons.Rounded.Signpost,
+            label = stringResource(R.string.about_data_sources_routes_link),
+            external = false,
+            onClick = {
+                CustomTabs.launch(
+                    context,
+                    Uri.parse("https://github.com/walktalkmeditate/open-pilgrimages"),
+                )
+            },
+        )
+        OpenSourceLinkRow(
+            icon = Icons.Filled.Description,
+            label = stringResource(R.string.about_data_sources_odbl_link),
+            external = false,
+            onClick = {
+                CustomTabs.launch(
+                    context,
+                    Uri.parse("https://opendatacommons.org/licenses/odbl/1-0/"),
                 )
             },
         )
