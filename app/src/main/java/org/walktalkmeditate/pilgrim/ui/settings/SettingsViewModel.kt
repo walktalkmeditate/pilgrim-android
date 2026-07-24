@@ -24,6 +24,8 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalog
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
@@ -65,9 +67,20 @@ class SettingsViewModel @Inject constructor(
     private val voiceRecordingFileSystem: VoiceRecordingFileSystem,
     private val milestoneSurface: MilestoneSurface,
     private val bellPlayer: BellPlaying,
+    routeCatalogService: CollectiveRouteCatalogService,
 ) : ViewModel() {
 
     val stats: StateFlow<CollectiveStats?> = collectiveRepository.stats
+
+    /**
+     * U5 (parity spec `docs/parity/2026-07-23-port-settings-line-u5.md`):
+     * hot passthrough of the published route catalog so
+     * [PracticeSummaryHeader] can resolve the day's-entry line. Direct
+     * Singleton passthrough (Stage 5-G lesson) — `EMPTY` until the
+     * service's initial load lands, and `EMPTY` resolves no entry, so
+     * the line renders nothing rather than blocking.
+     */
+    val routeCatalog: StateFlow<CollectiveRouteCatalog> = routeCatalogService.catalog
     val optIn: StateFlow<Boolean> = collectiveRepository.optIn
     val appearanceMode: StateFlow<AppearanceMode> = appearancePreferences.appearanceMode
     val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled

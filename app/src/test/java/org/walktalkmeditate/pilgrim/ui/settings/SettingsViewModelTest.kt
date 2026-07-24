@@ -46,6 +46,7 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
 import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -98,6 +99,7 @@ class SettingsViewModelTest {
     private lateinit var voiceFs: VoiceRecordingFileSystem
     private lateinit var milestoneSurface: FakeMilestoneSurface
     private lateinit var bellPlayer: RecordingBellPlayer
+    private lateinit var routeCatalogService: CollectiveRouteCatalogService
     private lateinit var vm: SettingsViewModel
 
     @Before
@@ -132,6 +134,13 @@ class SettingsViewModelTest {
         voiceFs = VoiceRecordingFileSystem(context)
         milestoneSurface = FakeMilestoneSurface()
         bellPlayer = RecordingBellPlayer()
+        routeCatalogService = CollectiveRouteCatalogService(
+            context = context,
+            httpClient = OkHttpClient(),
+            scope = scope,
+            catalogUrl = "http://localhost/routes.json",
+            bootstrapAssetPath = "collective/collective-routes-bootstrap.json",
+        )
         vm = SettingsViewModel(
             collectiveRepository = repo,
             appearancePreferences = FakeAppearancePreferencesRepository(),
@@ -142,7 +151,9 @@ class SettingsViewModelTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = milestoneSurface,
-            bellPlayer = bellPlayer,        )
+            bellPlayer = bellPlayer,
+            routeCatalogService = routeCatalogService,
+        )
     }
 
     @After
@@ -178,6 +189,16 @@ class SettingsViewModelTest {
         assertFalse(vm.optIn.first())
         cacheStore.setOptIn(true)
         assertTrue(vm.optIn.first { it })
+    }
+
+    @Test
+    fun `routeCatalog StateFlow proxies the catalog service`() = runBlocking {
+        routeCatalogService.initialLoad.await()
+        // The bundled bootstrap is the pre-network tier, so after the
+        // initial load the passthrough publishes a non-empty catalog
+        // verbatim (U5 parity spec D1: direct hot passthrough).
+        assertEquals(routeCatalogService.catalog.value, vm.routeCatalog.value)
+        assertTrue(vm.routeCatalog.value.entries.isNotEmpty())
     }
 
     @Test
@@ -331,7 +352,9 @@ class SettingsViewModelTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = FakeMilestoneSurface(),
-            bellPlayer = mutedBell,        )
+            bellPlayer = mutedBell,
+            routeCatalogService = routeCatalogService,
+        )
         mutedVm.onMilestoneShown(CollectiveMilestone.forNumber(108))
         assertEquals(emptyList<Float>(), mutedBell.scaleCalls)
     }

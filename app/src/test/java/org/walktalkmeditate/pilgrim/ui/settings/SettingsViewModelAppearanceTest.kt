@@ -34,6 +34,7 @@ import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
 import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -79,6 +80,7 @@ class SettingsViewModelAppearanceTest {
     private lateinit var db: PilgrimDatabase
     private lateinit var walkRepository: WalkRepository
     private lateinit var voiceFs: VoiceRecordingFileSystem
+    private lateinit var routeCatalogService: CollectiveRouteCatalogService
 
     @Before
     fun setUp() {
@@ -109,6 +111,13 @@ class SettingsViewModelAppearanceTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         voiceFs = VoiceRecordingFileSystem(context)
+        routeCatalogService = CollectiveRouteCatalogService(
+            context = context,
+            httpClient = OkHttpClient(),
+            scope = scope,
+            catalogUrl = "http://localhost/routes.json",
+            bootstrapAssetPath = "collective/collective-routes-bootstrap.json",
+        )
     }
 
     @After
@@ -132,7 +141,9 @@ class SettingsViewModelAppearanceTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,        )
+            bellPlayer = NoopBellPlayer,
+            routeCatalogService = routeCatalogService,
+        )
         assertEquals(AppearanceMode.Dark, vm.appearanceMode.first())
     }
 
@@ -149,7 +160,9 @@ class SettingsViewModelAppearanceTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,        )
+            bellPlayer = NoopBellPlayer,
+            routeCatalogService = routeCatalogService,
+        )
         assertEquals(AppearanceMode.System, vm.appearanceMode.first())
         vm.setAppearanceMode(AppearanceMode.Light)
         assertEquals(AppearanceMode.Light, vm.appearanceMode.first { it == AppearanceMode.Light })

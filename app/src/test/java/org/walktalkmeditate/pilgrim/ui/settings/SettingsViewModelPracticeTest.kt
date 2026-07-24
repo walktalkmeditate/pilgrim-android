@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
 import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
@@ -84,6 +85,7 @@ class SettingsViewModelPracticeTest {
     private lateinit var db: PilgrimDatabase
     private lateinit var walkRepository: WalkRepository
     private lateinit var voiceFs: VoiceRecordingFileSystem
+    private lateinit var routeCatalogService: CollectiveRouteCatalogService
 
     @Before
     fun setUp() {
@@ -114,6 +116,13 @@ class SettingsViewModelPracticeTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         voiceFs = VoiceRecordingFileSystem(context)
+        routeCatalogService = CollectiveRouteCatalogService(
+            context = context,
+            httpClient = OkHttpClient(),
+            scope = scope,
+            catalogUrl = "http://localhost/routes.json",
+            bootstrapAssetPath = "collective/collective-routes-bootstrap.json",
+        )
     }
 
     @After
@@ -137,7 +146,9 @@ class SettingsViewModelPracticeTest {
         walkRepository = walkRepository,
         voiceRecordingFileSystem = voiceFs,
         milestoneSurface = NoopMilestoneSurface,
-        bellPlayer = NoopBellPlayer,    )
+        bellPlayer = NoopBellPlayer,
+        routeCatalogService = routeCatalogService,
+    )
 
     @Test
     fun `beginWithIntention reflects repo value`() = runBlocking {

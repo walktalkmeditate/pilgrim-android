@@ -77,6 +77,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val routeCatalog by viewModel.routeCatalog.collectAsStateWithLifecycle()
     val optIn by viewModel.optIn.collectAsStateWithLifecycle()
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
     val soundsEnabled by viewModel.soundsEnabled.collectAsStateWithLifecycle()
@@ -141,6 +142,7 @@ fun SettingsScreen(
                     firstWalkInstant = practiceSummary.firstWalkInstant,
                     distanceUnits = distanceUnits,
                     collectiveStats = stats,
+                    routeCatalog = routeCatalog,
                     milestone = milestone,
                     onMilestoneShown = viewModel::onMilestoneShown,
                     onMilestoneDismiss = viewModel::dismissMilestone,

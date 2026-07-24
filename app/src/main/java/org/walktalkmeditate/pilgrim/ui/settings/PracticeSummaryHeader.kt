@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.Air
@@ -40,6 +41,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -48,7 +50,7 @@ import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
-import org.walktalkmeditate.pilgrim.data.collective.PilgrimageProgress
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalog
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.settings.about.AboutSeasonHelpers
 import org.walktalkmeditate.pilgrim.ui.settings.about.Season
@@ -62,7 +64,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * Four sections (top-to-bottom):
  *  - Seasonal label "{Season} {Year}" with a faded glyph
  *  - Per-user stats whisper (tap to cycle distance/meditation/since)
- *  - Pilgrimage progress (when collective stats present, plus streak)
+ *  - Collective block (when collective stats present): the day's route
+ *    entry resolved from [routeCatalog], the walks·distance line, streak
  *  - Optional milestone overlay (italic moss banner, bell + auto-dismiss
  *    after 8s) when [milestone] is non-null. The bell fires exactly once
  *    per milestone *number* — re-keyed `LaunchedEffect` plus a
@@ -76,9 +79,11 @@ fun PracticeSummaryHeader(
     firstWalkInstant: Instant?,
     distanceUnits: UnitSystem,
     collectiveStats: CollectiveStats?,
+    routeCatalog: CollectiveRouteCatalog,
     milestone: CollectiveMilestone? = null,
     onMilestoneShown: (CollectiveMilestone) -> Unit = {},
     onMilestoneDismiss: () -> Unit = {},
+    nowEpochMillis: () -> Long = System::currentTimeMillis,
     modifier: Modifier = Modifier,
 ) {
     var statPhase by rememberSaveable { mutableIntStateOf(0) }
@@ -121,12 +126,39 @@ fun PracticeSummaryHeader(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    text = PilgrimageProgress.from(stats.totalDistanceKm).message,
-                    style = pilgrimType.caption.copy(fontStyle = FontStyle.Italic),
-                    color = pilgrimColors.stone,
-                    textAlign = TextAlign.Center,
-                )
+                // Resolved once and held (iOS resolves into @State from
+                // trigger modifiers, not per body pass): phrasing costs an
+                // entry lookup, a calendar call and a formatter, so it
+                // recomputes only when a key changes or the header re-enters
+                // composition (iOS `.onAppear`). The `distanceUnits` key is
+                // the UserDefaults-observer analogue — the sub-one-percent
+                // horizon branch carries a raw distance, and re-resolving is
+                // what makes a unit toggle reach the cached string. Null —
+                // catalog not loaded, or no counter fetch has ever landed —
+                // renders nothing: coercing an unknown total to zero would
+                // claim the path is beginning while the collective is
+                // hundreds of kilometres in.
+                val dailyLine = remember(routeCatalog, stats.totalDistanceKm, distanceUnits) {
+                    routeCatalog.dailyLine(nowEpochMillis(), stats.totalDistanceKm, distanceUnits)
+                }
+                if (dailyLine != null) {
+                    Text(
+                        text = dailyLine,
+                        style = pilgrimType.caption.copy(fontStyle = FontStyle.Italic),
+                        color = pilgrimColors.stone,
+                        textAlign = TextAlign.Center,
+                        // Two lines where the sibling below takes one: the
+                        // route name is curator-editable after ship, so a
+                        // hard single line would truncate a longer one at
+                        // accessibility sizes.
+                        maxLines = 2,
+                        autoSize = TextAutoSize.StepBased(
+                            minFontSize = pilgrimType.caption.fontSize * 0.7f,
+                            maxFontSize = pilgrimType.caption.fontSize,
+                            stepSize = 0.5.sp,
+                        ),
+                    )
+                }
                 Text(
                     text = collectiveStatsLine(stats, distanceUnits),
                     style = pilgrimType.caption,
