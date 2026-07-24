@@ -1595,10 +1595,41 @@ class WalkSummaryViewModelTest {
         val vm = newViewModel(walkId = walk.id)
         awaitLoaded(vm)
 
-        assertFalse(vm.walkWasContributed.value)
+        vm.walkWasContributed.test(timeout = 10.seconds) {
+            assertFalse(awaitItem())
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
         vm.collectiveContributionLine.test(timeout = 10.seconds) {
             assertNull(awaitItem())
             expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `collective line appears when the ledger write lands after the summary opens`() = runTest(dispatcher) {
+        // Regression for the finalize race: WalkFinalizationObserver's
+        // ledger write is a late step in an async chain, so the
+        // auto-opened summary can subscribe first. The reactive
+        // derivation must fill the line the moment the claim lands
+        // rather than leaving it blank for the visit.
+        val start = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        val walk = createContributableWalk(start)
+        routeCatalogService.initialLoad.await()
+
+        val vm = newViewModel(walkId = walk.id)
+        val loaded = awaitLoaded(vm)
+        val expected = routeCatalogService.catalog.value.contributionLine(
+            epochMillis = start,
+            walkKm = loaded.summary.distanceMeters / 1_000.0,
+            units = UnitSystem.Metric,
+        )
+
+        vm.collectiveContributionLine.test(timeout = 10.seconds) {
+            assertNull(awaitItem())
+            contributionLedger.record(walk.uuid)
+            assertEquals(expected, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -1621,7 +1652,11 @@ class WalkSummaryViewModelTest {
         val vm = newViewModel(walkId = walk.id, routeCatalogServiceOverride = brokenService)
         awaitLoaded(vm)
 
-        assertTrue(vm.walkWasContributed.value)
+        assertTrue(
+            withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+                withTimeout(10_000L) { vm.walkWasContributed.first { it } }
+            },
+        )
         vm.collectiveContributionLine.test(timeout = 10.seconds) {
             assertNull(awaitItem())
             expectNoEvents()

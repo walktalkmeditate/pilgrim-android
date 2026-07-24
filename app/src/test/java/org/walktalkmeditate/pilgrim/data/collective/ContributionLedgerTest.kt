@@ -103,6 +103,17 @@ class ContributionLedgerTest {
     }
 
     @Test
+    fun `contributedFlow flips once the walk is recorded`() = runBlocking {
+        val flow = ledger.contributedFlow("walk-1")
+        assertFalse(flow.first())
+
+        ledger.record("walk-1")
+
+        assertTrue(flow.first { it })
+        assertFalse(ledger.contributedFlow("walk-2").first())
+    }
+
+    @Test
     fun `record is idempotent and stores a JSON string-array under the verbatim iOS key`() =
         runBlocking {
             ledger.record("walk-1")

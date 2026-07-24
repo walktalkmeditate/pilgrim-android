@@ -8,7 +8,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -40,6 +44,21 @@ class ContributionLedger @Inject constructor(
         val blob = dataStore.data.first()[KEY_CONTRIBUTED_WALK_UUIDS]
         return withContext(Dispatchers.Default) { walkUuid in decode(blob) }
     }
+
+    /**
+     * Reactive companion to [wasContributed] for the walk summary:
+     * [record] runs late in the async finalize chain, so a summary
+     * auto-opened at walk finish can subscribe before the claim
+     * lands — this flow flips the moment it does. The fact stays
+     * past-tense: opting out later never removes an entry (only
+     * capacity eviction does). Decode hops off the collector's
+     * dispatcher, mirroring [wasContributed].
+     */
+    fun contributedFlow(walkUuid: String): Flow<Boolean> =
+        dataStore.data
+            .map { prefs -> walkUuid in decode(prefs[KEY_CONTRIBUTED_WALK_UUIDS]) }
+            .flowOn(Dispatchers.Default)
+            .distinctUntilChanged()
 
     /**
      * Idempotent: a walk re-recorded after a retry keeps its original

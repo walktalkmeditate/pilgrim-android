@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -406,17 +407,6 @@ class WalkSummaryViewModel @Inject constructor(
     private val _showSealReveal = MutableStateFlow(false)
     val showSealReveal: StateFlow<Boolean> = _showSealReveal.asStateFlow()
 
-    /**
-     * U6: whether THIS walk moved the collective counter — a
-     * past-tense fact from [ContributionLedger], never the live
-     * opt-in preference (toggling off must not erase a true line;
-     * toggling on must not fabricate one). Seeded in [buildState]
-     * like [_showSealReveal], and declared before [state] for the
-     * same Eagerly-runs-during-field-init reason.
-     */
-    private val _walkWasContributed = MutableStateFlow(false)
-    val walkWasContributed: StateFlow<Boolean> = _walkWasContributed.asStateFlow()
-
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
     }.stateIn(
@@ -424,6 +414,34 @@ class WalkSummaryViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = WalkSummaryUiState.Loading,
     )
+
+    /**
+     * U6: whether THIS walk moved the collective counter — a
+     * past-tense fact from [ContributionLedger], never the live
+     * opt-in preference (toggling off must not erase a true line;
+     * toggling on must not fabricate one). Derived reactively from
+     * [ContributionLedger.contributedFlow] rather than seeded once in
+     * [buildState]: the ledger write is a late step in
+     * [org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver]'s
+     * async finalize chain, so an auto-opened summary can load before
+     * the claim lands — a one-shot read would leave the line blank
+     * for that whole visit. A ledger read failure degrades to
+     * "no line", never a broken summary.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val walkWasContributed: StateFlow<Boolean> = state
+        .flatMapLatest { s ->
+            if (s is WalkSummaryUiState.Loaded) {
+                contributionLedger.contributedFlow(s.summary.walk.uuid).catch { emit(false) }
+            } else {
+                kotlinx.coroutines.flow.flowOf(false)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = false,
+        )
 
     fun markSealRevealed() {
         _showSealReveal.value = false
@@ -544,7 +562,7 @@ class WalkSummaryViewModel @Inject constructor(
     val collectiveContributionLine: StateFlow<String?> =
         combine(
             state,
-            _walkWasContributed,
+            walkWasContributed,
             routeCatalogService.catalog,
             distanceUnits,
         ) { s, contributed, catalog, units ->
@@ -1536,18 +1554,6 @@ class WalkSummaryViewModel @Inject constructor(
         // walk's uuid is already in the SealRevealStore. User-requested
         // divergence from iOS (which replays on every entry).
         _showSealReveal.value = !sealRevealStore.isRevealed(walk.uuid)
-        // U6: load-time ledger read (iOS reads on `.onAppear`). The
-        // ledger records at finalize, strictly before any summary for
-        // the walk can open, so once-per-VM is enough. A read failure
-        // degrades to "no line", never a broken summary.
-        _walkWasContributed.value = try {
-            contributionLedger.wasContributed(walk.uuid)
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (t: Throwable) {
-            android.util.Log.w(TAG, "contribution ledger read failed for walk $walkId", t)
-            false
-        }
         // Stage 13-E: seed the favicon StateFlow from the persisted
         // column so the selector reflects prior user choice on load.
         _selectedFavicon.value = WalkFavicon.fromRawValue(walk.favicon)

@@ -433,6 +433,21 @@ class CollectiveRouteCatalogTest {
     }
 
     @Test
+    fun `daily line nonsense total clamps completions to the ceiling`() {
+        // "Misprint, not crash": an absurd total from a bad API response
+        // must clamp at COMPLETIONS_CEILING instead of overflowing the
+        // Long conversion.
+        assertEquals(
+            "Together, we've walked the Kumano Kodo 1000000000000 times.",
+            kumano.dailyLine(collectiveKm = Double.MAX_VALUE, units = UnitSystem.Metric),
+        )
+        assertEquals(
+            "Together, 1000000000000 times around the Earth.",
+            earth.dailyLine(collectiveKm = Double.MAX_VALUE, units = UnitSystem.Metric),
+        )
+    }
+
+    @Test
     fun `daily line non finite total says the path is beginning`() {
         assertEquals(
             "The path is beginning.",
