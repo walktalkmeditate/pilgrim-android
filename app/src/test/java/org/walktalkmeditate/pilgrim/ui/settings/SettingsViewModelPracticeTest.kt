@@ -36,6 +36,9 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -82,6 +85,7 @@ class SettingsViewModelPracticeTest {
     private lateinit var db: PilgrimDatabase
     private lateinit var walkRepository: WalkRepository
     private lateinit var voiceFs: VoiceRecordingFileSystem
+    private lateinit var routeCatalogService: CollectiveRouteCatalogService
 
     @Before
     fun setUp() {
@@ -95,7 +99,8 @@ class SettingsViewModelPracticeTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker,
+            inMemoryContributionLedger())
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -111,6 +116,7 @@ class SettingsViewModelPracticeTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         voiceFs = VoiceRecordingFileSystem(context)
+        routeCatalogService = bootstrapRouteCatalogService(context, scope)
     }
 
     @After
@@ -134,7 +140,9 @@ class SettingsViewModelPracticeTest {
         walkRepository = walkRepository,
         voiceRecordingFileSystem = voiceFs,
         milestoneSurface = NoopMilestoneSurface,
-        bellPlayer = NoopBellPlayer,    )
+        bellPlayer = NoopBellPlayer,
+        routeCatalogService = routeCatalogService,
+    )
 
     @Test
     fun `beginWithIntention reflects repo value`() = runBlocking {

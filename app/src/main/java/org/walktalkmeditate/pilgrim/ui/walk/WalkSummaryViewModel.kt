@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -52,6 +53,8 @@ import org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
@@ -274,6 +277,8 @@ class WalkSummaryViewModel @Inject constructor(
     private val transcriptionScheduler:
         org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
     private val waveformCache: org.walktalkmeditate.pilgrim.audio.WaveformCache,
+    routeCatalogService: CollectiveRouteCatalogService,
+    private val contributionLedger: ContributionLedger,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -410,6 +415,34 @@ class WalkSummaryViewModel @Inject constructor(
         initialValue = WalkSummaryUiState.Loading,
     )
 
+    /**
+     * U6: whether THIS walk moved the collective counter — a
+     * past-tense fact from [ContributionLedger], never the live
+     * opt-in preference (toggling off must not erase a true line;
+     * toggling on must not fabricate one). Derived reactively from
+     * [ContributionLedger.contributedFlow] rather than seeded once in
+     * [buildState]: the ledger write is a late step in
+     * [org.walktalkmeditate.pilgrim.walk.WalkFinalizationObserver]'s
+     * async finalize chain, so an auto-opened summary can load before
+     * the claim lands — a one-shot read would leave the line blank
+     * for that whole visit. A ledger read failure degrades to
+     * "no line", never a broken summary.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val walkWasContributed: StateFlow<Boolean> = state
+        .flatMapLatest { s ->
+            if (s is WalkSummaryUiState.Loaded) {
+                contributionLedger.contributedFlow(s.summary.walk.uuid).catch { emit(false) }
+            } else {
+                kotlinx.coroutines.flow.flowOf(false)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = false,
+        )
+
     fun markSealRevealed() {
         _showSealReveal.value = false
         val uuid = (state.value as? WalkSummaryUiState.Loaded)?.summary?.walk?.uuid ?: return
@@ -499,6 +532,45 @@ class WalkSummaryViewModel @Inject constructor(
                 inputs = s.summary.calloutInputs,
                 celestialEnabled = enabled,
                 context = context,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = null,
+        )
+
+    /**
+     * U6: the walk-summary collective line, resolved in the parent so
+     * [org.walktalkmeditate.pilgrim.ui.walk.summary.CollectiveTrailSection]
+     * stays a bare if-let (iOS
+     * `WalkSummaryView.resolveCollectiveContributionLine@9a418e4`;
+     * parity spec `docs/parity/2026-07-23-port-collective-trail-u6.md`).
+     * Anchored to the walk row's start timestamp, never `now` — the
+     * summary opens for any journal walk, and anchoring to today would
+     * silently re-route an old walk on every reopen. Needs NO
+     * collective total (unlike the Settings line), so it resolves on a
+     * fresh offline install from the bundled catalog. Null while the
+     * catalog is still `EMPTY` (half a line is worse than none) and
+     * for non-contributed walks (phrasing skipped outright, mirroring
+     * the iOS guard — most journal walks predate the feature). The
+     * catalog combine key is iOS's `.onReceive($catalog)`: a summary
+     * opened before the detached catalog load lands still fills its
+     * line. `walkKm` converts from [WalkSummary.distanceMeters] — the
+     * live event-replay value the adjacent stats row displays; the
+     * Room cached column races freshly-finished walks (D3).
+     */
+    val collectiveContributionLine: StateFlow<String?> =
+        combine(
+            state,
+            walkWasContributed,
+            routeCatalogService.catalog,
+            distanceUnits,
+        ) { s, contributed, catalog, units ->
+            if (s !is WalkSummaryUiState.Loaded || !contributed) return@combine null
+            catalog.contributionLine(
+                epochMillis = s.summary.walk.startTimestamp,
+                walkKm = s.summary.distanceMeters / 1_000.0,
+                units = units,
             )
         }.stateIn(
             scope = viewModelScope,

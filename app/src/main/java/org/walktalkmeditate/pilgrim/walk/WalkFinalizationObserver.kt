@@ -134,12 +134,25 @@ class WalkFinalizationObserver @Inject constructor(
             }
         }
         try {
+            // U4: the contribution ledger claims walks by their Room
+            // uuid. A failed lookup degrades to null — the delta still
+            // queues, but no summary claim is recorded (under-claim in
+            // the safe direction, iOS `walkUUID: UUID?` parity).
+            val walkUuid = try {
+                repository.getWalk(walkId)?.uuid
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.w(TAG, "walk uuid lookup failed for walk $walkId; contributing without a claim", t)
+                null
+            }
             val talkMin = (
                 repository.voiceRecordingsFor(walkId)
                     .sumOf { it.durationMillis } / 60_000L
                 ).toInt()
             collectiveRepository.recordWalk(
                 CollectiveWalkSnapshot(
+                    walkUuid = walkUuid,
                     distanceKm = state.walk.distanceMeters / 1_000.0,
                     meditationMin = (state.walk.totalMeditatedMillis / 60_000L).toInt(),
                     talkMin = talkMin,

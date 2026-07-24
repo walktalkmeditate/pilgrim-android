@@ -402,6 +402,12 @@ Scope: the **PR #45/#47 (iOS v1.7.0) parity matrix** (`2026-06-22-pr45-v170-pari
 - **Carved out — NOT waived:** the live-behavior device probes — the PR #47 phone-call `AUDIOFOCUS_LOSS` vs `LOSS_TRANSIENT` probe and the interruption-resume residuals. These fold into the **Phase 14 (Seek Mode) consolidated device QA pass** (R12 in `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`).
 - Authority: `docs/brainstorms/2026-07-14-ios-main-parity-retarget-requirements.md` R3. Parity anchor re-pinned to pilgrim-ios `c1745e8` in the same change (R1).
 
+### 2026-07-23 anchor re-pin — v1.9.0 retarget
+
+- Parity anchor re-pinned from `c1745e8` to pilgrim-ios `9a418e4` (v1.9.0 tip, 2026-07-21) per `docs/brainstorms/2026-07-22-ios-v190-parity-retarget-requirements.md` R1.
+- New scope: Phases 16-18 (collective route rotation, whisper base + prompt pipeline, SVG map glyphs) → Android v1.3.0. Plan: `docs/plans/2026-07-23-001-feat-ios-v190-parity-port-plan.md`.
+- Per-unit port specs for the new phases land in this directory pinned to `9a418e4`.
+
 ## Notes
 
 - `(NO Android equivalent — gap)` / `(verify Android equivalent)` rows are parity gaps by *absence* — they capture iOS only and enter triage as `close-the-gap`.

@@ -1,0 +1,12 @@
+{
+  "version": "fixture",
+  "pilgrimages": [
+    { "id": "kumano-kodo", "kind": "route", "nameEn": "Kumano Kodo", "companyLine": "K walked it.", "km": 39, "bestMonths": [3,4,5,10,11], "peakMonths": [4,5,10,11] },
+    { "id": "camino-frances", "kind": "route", "nameEn": "Camino Francés", "companyLine": "F walked it.", "km": 764, "bestMonths": [5,6,9,10], "peakMonths": [7,8] }
+  ],
+  "horizons": [
+    { "id": "around-earth", "kind": "cosmic", "preposition": "around", "body": "the Earth", "companyLine": "A handful have.", "km": 40075 },
+    { "id": "to-the-moon", "kind": "cosmic", "preposition": "to", "body": "the Moon", "companyLine": "No one has.", "km": 384400 },
+    { "id": "to-the-sun", "kind": "cosmic", "preposition": "to", "body": "the Sun", "companyLine": "No one ever will.", "km": 149600000 }
+  ]
+}

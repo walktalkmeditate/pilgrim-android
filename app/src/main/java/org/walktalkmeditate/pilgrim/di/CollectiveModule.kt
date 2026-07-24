@@ -28,11 +28,17 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestoneDetector
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepositoryStatsSource
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedgerDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteBootstrapAsset
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogScope
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogUrl
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRoutesConfig
 
 /**
  * Stage 8-B: DI wiring for the Collective Counter — short-call HTTP
@@ -54,6 +60,34 @@ object CollectiveModule {
     @Singleton
     @CounterBaseUrl
     fun provideCounterBaseUrl(): String = CollectiveConfig.BASE_URL
+
+    /** Collective route-catalog URL (U3) — qualified so tests can substitute MockWebServer. */
+    @Provides
+    @Singleton
+    @CollectiveRouteCatalogUrl
+    fun provideCollectiveRouteCatalogUrl(): String = CollectiveRoutesConfig.CATALOG_URL
+
+    /**
+     * Bundled-bootstrap asset path (U3) — the injectable stand-in for iOS's
+     * `bootstrapCatalogURL` closure, so tests can exercise the
+     * missing-bootstrap path.
+     */
+    @Provides
+    @Singleton
+    @CollectiveRouteBootstrapAsset
+    fun provideCollectiveRouteBootstrapAsset(): String = CollectiveRoutesConfig.BOOTSTRAP_ASSET_PATH
+
+    /**
+     * Long-lived scope for
+     * [org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService]'s
+     * initial load + sync coroutines. Same shape as the voice-guide
+     * manifest scope in `NetworkModule`.
+     */
+    @Provides
+    @Singleton
+    @CollectiveRouteCatalogScope
+    fun provideCollectiveRouteCatalogScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
      * Storage seam for `CollectiveMilestoneDetector` (Stage 11-B).
@@ -143,6 +177,22 @@ object CollectiveModule {
         // fetch) but keeps the app alive.
         corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
         produceFile = { context.preferencesDataStoreFile(CollectiveCacheStore.DATASTORE_NAME) },
+    )
+
+    @Provides
+    @Singleton
+    @ContributionLedgerDataStore
+    fun provideContributionLedgerDataStore(
+        @ApplicationContext context: Context,
+    ): DataStore<Preferences> = PreferenceDataStoreFactory.create(
+        // Deliberately a separate file from collective_counter: that
+        // store's corruption-reset is cheap because everything in it
+        // is forward-recoverable on the next fetch. Ledger entries are
+        // historical facts — which walks moved the counter — that no
+        // fetch can reconstruct, so they get their own corruption
+        // blast radius. The reset here loses only the ledger.
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+        produceFile = { context.preferencesDataStoreFile(ContributionLedger.DATASTORE_NAME) },
     )
 
     private const val COUNTER_CALL_TIMEOUT_SEC = 10L

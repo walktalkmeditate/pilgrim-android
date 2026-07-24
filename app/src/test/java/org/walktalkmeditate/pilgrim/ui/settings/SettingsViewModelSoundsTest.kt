@@ -36,6 +36,9 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -74,6 +77,7 @@ class SettingsViewModelSoundsTest {
     private lateinit var db: PilgrimDatabase
     private lateinit var walkRepository: WalkRepository
     private lateinit var voiceFs: VoiceRecordingFileSystem
+    private lateinit var routeCatalogService: CollectiveRouteCatalogService
 
     @Before
     fun setUp() {
@@ -87,7 +91,8 @@ class SettingsViewModelSoundsTest {
         cacheStore = CollectiveCacheStore(dataStore, json)
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker)
+        collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker,
+            inMemoryContributionLedger())
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -103,6 +108,7 @@ class SettingsViewModelSoundsTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         voiceFs = VoiceRecordingFileSystem(context)
+        routeCatalogService = bootstrapRouteCatalogService(context, scope)
     }
 
     @After
@@ -126,7 +132,9 @@ class SettingsViewModelSoundsTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,        )
+            bellPlayer = NoopBellPlayer,
+            routeCatalogService = routeCatalogService,
+        )
         assertEquals(false, vm.soundsEnabled.first())
     }
 
@@ -143,7 +151,9 @@ class SettingsViewModelSoundsTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,        )
+            bellPlayer = NoopBellPlayer,
+            routeCatalogService = routeCatalogService,
+        )
         assertEquals(true, vm.soundsEnabled.first())
         vm.setSoundsEnabled(false)
         assertEquals(false, vm.soundsEnabled.first { it == false })
@@ -164,7 +174,9 @@ class SettingsViewModelSoundsTest {
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = NoopMilestoneSurface,
-            bellPlayer = NoopBellPlayer,        )
+            bellPlayer = NoopBellPlayer,
+            routeCatalogService = routeCatalogService,
+        )
         // Calling the setter must NOT throw — runCatching inside the
         // VM swallows the IOException and logs it.
         vm.setSoundsEnabled(false)

@@ -32,6 +32,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -40,10 +42,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.Instant
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -75,6 +83,9 @@ class WalkSummaryViewModelTest {
     private lateinit var hemisphereRepo: HemisphereRepository
     private lateinit var hemisphereScope: CoroutineScope
     private lateinit var persistenceScope: CoroutineScope
+    private lateinit var routeCatalogScope: CoroutineScope
+    private lateinit var routeCatalogService: CollectiveRouteCatalogService
+    private lateinit var contributionLedger: ContributionLedger
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -124,6 +135,12 @@ class WalkSummaryViewModelTest {
         // so DAO calls land on Room's test executor (set up at line ~95).
         // SupervisorJob mirrors the production provider's failure isolation.
         persistenceScope = CoroutineScope(SupervisorJob() + dispatcher)
+        // U6: real service over the bundled bootstrap asset (never
+        // fetches — syncIfNeeded is not called and the URL resolves
+        // nowhere). Tests that need the catalog await initialLoad.
+        routeCatalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        routeCatalogService = bootstrapRouteCatalogService(context, routeCatalogScope)
+        contributionLedger = inMemoryContributionLedger()
     }
 
     private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
@@ -131,6 +148,7 @@ class WalkSummaryViewModelTest {
     private fun newViewModel(
         walkId: Long,
         repositoryOverride: WalkRepository = repository,
+        routeCatalogServiceOverride: CollectiveRouteCatalogService = routeCatalogService,
         practicePreferences: org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository =
             // Stage 10-C: light reading is gated on celestialAwarenessEnabled.
             // The legacy tests in this file all assert non-null lightReading
@@ -200,6 +218,8 @@ class WalkSummaryViewModelTest {
             waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
                 fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
             ),
+            routeCatalogService = routeCatalogServiceOverride,
+            contributionLedger = contributionLedger,
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
@@ -272,6 +292,7 @@ class WalkSummaryViewModelTest {
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         persistenceScope.coroutineContext[Job]?.cancel()
+        routeCatalogScope.coroutineContext[Job]?.cancel()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
         // cachedShareStore now uses a per-test DataStore file (unique
         // UUID), so the old shared global share_cache.preferences_pb
@@ -1493,6 +1514,204 @@ class WalkSummaryViewModelTest {
         val loaded = awaitLoaded(vm)
 
         assertEquals(GoshuinMilestone.FirstUnknown, loaded.summary.milestone)
+    }
+
+    // --- U6: walk-summary collective line ------------------------------
+    // Parity spec docs/parity/2026-07-23-port-collective-trail-u6.md.
+    // The gate + date-anchor semantics are pinned fixture-level in
+    // CollectiveTrailSectionTest; these pin the VM plumbing iOS has no
+    // ViewModel for (resolve in the parent, walk-row anchor, no clock).
+
+    private suspend fun createContributableWalk(
+        startTimestamp: Long,
+        endTimestamp: Long = startTimestamp + 3_600_000L,
+        latitudeSpan: Double = 0.001,
+    ): org.walktalkmeditate.pilgrim.data.entity.Walk {
+        val walk = repository.startWalk(startTimestamp = startTimestamp)
+        repository.recordLocation(
+            RouteDataSample(
+                walkId = walk.id,
+                timestamp = startTimestamp + 1_000L,
+                latitude = 0.0,
+                longitude = 0.0,
+            ),
+        )
+        repository.recordLocation(
+            RouteDataSample(
+                walkId = walk.id,
+                timestamp = startTimestamp + 2_000L,
+                latitude = latitudeSpan,
+                longitude = 0.0,
+            ),
+        )
+        repository.finishWalk(walk, endTimestamp = endTimestamp)
+        return walk
+    }
+
+    private suspend fun awaitCollectiveLine(vm: WalkSummaryViewModel): String {
+        return withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                vm.collectiveContributionLine.first { it != null }!!
+            }
+        }
+    }
+
+    @Test
+    fun `collective line resolves a contributed walk against its start days entry`() = runTest(dispatcher) {
+        val start = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        val walk = createContributableWalk(start)
+        contributionLedger.record(walk.uuid)
+        routeCatalogService.initialLoad.await()
+
+        val vm = newViewModel(walkId = walk.id)
+        val loaded = awaitLoaded(vm)
+        val line = awaitCollectiveLine(vm)
+
+        val catalog = routeCatalogService.catalog.value
+        val walkKm = loaded.summary.distanceMeters / 1_000.0
+        // The bundled artifact agrees with the parity fixture on ids
+        // (CollectiveRouteBundledArtifactTest), so the fixture's pinned
+        // day holds here too.
+        assertEquals("camino-primitivo", catalog.entry(start)?.id)
+        assertEquals(
+            catalog.contributionLine(start, walkKm, UnitSystem.Metric),
+            line,
+        )
+        // Reopened weeks later it says the same thing: the resolve
+        // carries no clock, so another day's entry is never consulted.
+        val reopened = Instant.parse("2026-10-12T12:00:00Z").toEpochMilli()
+        assertNotEquals(
+            catalog.contributionLine(reopened, walkKm, UnitSystem.Metric),
+            line,
+        )
+    }
+
+    @Test
+    fun `collective line is null for a walk that never contributed`() = runTest(dispatcher) {
+        val start = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        val walk = createContributableWalk(start)
+        routeCatalogService.initialLoad.await()
+
+        val vm = newViewModel(walkId = walk.id)
+        awaitLoaded(vm)
+
+        vm.walkWasContributed.test(timeout = 10.seconds) {
+            assertFalse(awaitItem())
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        vm.collectiveContributionLine.test(timeout = 10.seconds) {
+            assertNull(awaitItem())
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `collective line appears when the ledger write lands after the summary opens`() = runTest(dispatcher) {
+        // Regression for the finalize race: WalkFinalizationObserver's
+        // ledger write is a late step in an async chain, so the
+        // auto-opened summary can subscribe first. The reactive
+        // derivation must fill the line the moment the claim lands
+        // rather than leaving it blank for the visit.
+        val start = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        val walk = createContributableWalk(start)
+        routeCatalogService.initialLoad.await()
+
+        val vm = newViewModel(walkId = walk.id)
+        val loaded = awaitLoaded(vm)
+        val expected = routeCatalogService.catalog.value.contributionLine(
+            epochMillis = start,
+            walkKm = loaded.summary.distanceMeters / 1_000.0,
+            units = UnitSystem.Metric,
+        )
+
+        vm.collectiveContributionLine.test(timeout = 10.seconds) {
+            assertNull(awaitItem())
+            contributionLedger.record(walk.uuid)
+            assertEquals(expected, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `collective line stays null when the catalog never loads`() = runTest(dispatcher) {
+        // A missing bootstrap leaves the service on EMPTY forever —
+        // the Android analogue of iOS's forever-nil catalog. The gate
+        // must render nothing rather than a partial line.
+        val brokenService = bootstrapRouteCatalogService(
+            context,
+            routeCatalogScope,
+            bootstrapAssetPath = "collective/absent-bootstrap.json",
+        )
+        brokenService.initialLoad.await()
+        val start = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        val walk = createContributableWalk(start)
+        contributionLedger.record(walk.uuid)
+
+        val vm = newViewModel(walkId = walk.id, routeCatalogServiceOverride = brokenService)
+        awaitLoaded(vm)
+
+        assertTrue(
+            withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+                withTimeout(10_000L) { vm.walkWasContributed.first { it } }
+            },
+        )
+        vm.collectiveContributionLine.test(timeout = 10.seconds) {
+            assertNull(awaitItem())
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `midnight-spanning walk anchors the collective line to its start day`() = runTest(dispatcher) {
+        val start = Instant.parse("2026-10-07T23:30:00Z").toEpochMilli()
+        val end = Instant.parse("2026-10-08T00:30:00Z").toEpochMilli()
+        val walk = createContributableWalk(start, endTimestamp = end)
+        contributionLedger.record(walk.uuid)
+        routeCatalogService.initialLoad.await()
+
+        val vm = newViewModel(walkId = walk.id)
+        val loaded = awaitLoaded(vm)
+        val line = awaitCollectiveLine(vm)
+
+        val catalog = routeCatalogService.catalog.value
+        val walkKm = loaded.summary.distanceMeters / 1_000.0
+        val startDayNoon = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        val endDayNoon = Instant.parse("2026-10-08T12:00:00Z").toEpochMilli()
+        // Guard: the two days must resolve different entries or the
+        // anchor assertion below proves nothing.
+        assertNotEquals(catalog.entry(startDayNoon)?.id, catalog.entry(endDayNoon)?.id)
+        assertEquals(catalog.contributionLine(startDayNoon, walkKm, UnitSystem.Metric), line)
+        assertNotEquals(catalog.contributionLine(endDayNoon, walkKm, UnitSystem.Metric), line)
+    }
+
+    @Test
+    fun `milestone callout and the collective line render together`() = runTest(dispatcher) {
+        val start = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
+        // ~11.1 km of route crosses the 10 km TotalDistance threshold
+        // on this first walk, so the callout prose fires without any
+        // seasonal-marker dependency (celestial pref off below).
+        val walk = createContributableWalk(start, latitudeSpan = 0.1)
+        contributionLedger.record(walk.uuid)
+        routeCatalogService.initialLoad.await()
+
+        val vm = newViewModel(
+            walkId = walk.id,
+            practicePreferences = org.walktalkmeditate.pilgrim.data.practice
+                .FakePracticePreferencesRepository(initialCelestialAwarenessEnabled = false),
+        )
+        awaitLoaded(vm)
+
+        val prose = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                vm.walkSummaryCalloutProseDisplay.first { it != null }
+            }
+        }
+        val line = awaitCollectiveLine(vm)
+        assertNotNull(prose)
+        assertNotNull(line)
     }
 
     private suspend fun createFinishedWalk(

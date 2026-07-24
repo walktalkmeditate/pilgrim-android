@@ -20,6 +20,8 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -32,6 +34,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -39,6 +42,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
@@ -73,6 +77,8 @@ class WalkFinalizationObserverTest {
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
     private lateinit var fakeCollectiveService: FakeCollectiveCounterService
+    private lateinit var contributionLedgerStore: DataStore<Preferences>
+    private lateinit var contributionLedger: ContributionLedger
     private lateinit var collectiveRepository: CollectiveRepository
     private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
     private lateinit var walkMetricsCache: RecordingWalkMetricsCache
@@ -113,11 +119,14 @@ class WalkFinalizationObserverTest {
         collectiveCacheStore = CollectiveCacheStore(collectiveDataStore, collectiveJson)
         fakeCollectiveService = FakeCollectiveCounterService(context, collectiveJson)
         collectiveScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        contributionLedgerStore = FakePreferencesDataStore()
+        contributionLedger = ContributionLedger(contributionLedgerStore, collectiveJson)
         collectiveRepository = CollectiveRepository(
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
             milestoneChecker = NoopMilestoneChecker,
+            contributionLedger = contributionLedger,
         )
         widgetRefreshScheduler = CountingWidgetRefreshScheduler()
         walkMetricsCache = RecordingWalkMetricsCache()
@@ -266,6 +275,92 @@ class WalkFinalizationObserverTest {
         assertEquals(2, posted.talkMin)
     }
 
+    @Test
+    fun `contributed walk is claimed in the ledger by uuid even when finalize crosses UTC midnight`() = runBlocking {
+        // U4: the ledger stores only the walk uuid — no date — so the
+        // summary's route anchor (the walk row's start_timestamp, read
+        // at render time) cannot drift when the finalize clock lands on
+        // the next UTC day. Pinned here at the call-site level; the
+        // resolution against the catalog is U6's test surface.
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+        val start = java.time.Instant.parse("2026-07-22T23:50:00Z").toEpochMilli()
+        val walk = repository.startWalk(startTimestamp = start, intention = null)
+
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walk.id, startedAt = start))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walk.id, startedAt = start, distanceMeters = 1_500.0),
+            endedAt = java.time.Instant.parse("2026-07-23T00:10:00Z").toEpochMilli(),
+        )
+        awaitUntil { fakeCollectiveService.recordedPosts.isNotEmpty() }
+
+        assertTrue(contributionLedger.wasContributed(walk.uuid))
+    }
+
+    @Test
+    fun `missing walk row still queues the delta without a ledger claim`() = runBlocking {
+        // U4: getWalk returning null must degrade to a null uuid —
+        // the contribution POSTs, the summary claim is skipped
+        // (under-claim in the safe direction).
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+        val walkId = 404L
+
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 1_500.0),
+            endedAt = 5_000L,
+        )
+        awaitUntil { fakeCollectiveService.recordedPosts.isNotEmpty() }
+
+        assertEquals(1, fakeCollectiveService.recordedPosts.size)
+        assertEquals(1, fakeCollectiveService.recordedPosts.single().walks)
+        assertNull(
+            "no ledger claim may be recorded for a walk without a uuid",
+            contributionLedgerStore.data.first()[ContributionLedger.KEY_CONTRIBUTED_WALK_UUIDS],
+        )
+    }
+
+    @Test
+    fun `walk uuid lookup failure still queues the delta without a ledger claim`() = runBlocking {
+        // Same rebuild pattern as runFinalize_doesNotPropagateCacheException:
+        // swap in a repository whose getWalk throws so the observer's
+        // uuid-lookup catch branch is the one under test.
+        observerScope.coroutineContext[Job]?.cancel()
+        observerScope = CoroutineScope(SupervisorJob() + TestRealTimeDispatcher.instance)
+        val throwingObserved = CountingStateFlow(stateFlow)
+        @Suppress("UNUSED_VARIABLE")
+        val throwingObserver = WalkFinalizationObserver(
+            walkState = throwingObserved,
+            scope = observerScope,
+            repository = ThrowingGetWalkRepository(db),
+            transcriptionScheduler = transcriptionScheduler,
+            hemisphereRepository = hemisphereRepo,
+            collectiveRepository = collectiveRepository,
+            widgetRefreshScheduler = widgetRefreshScheduler,
+            voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
+            walkMetricsCache = walkMetricsCache,
+        )
+        awaitCollectorAttached(throwingObserved)
+        collectiveCacheStore.setOptIn(true)
+        collectiveRepository.optIn.first { it }
+        val walk = repository.startWalk(startTimestamp = 0L, intention = null)
+
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walk.id, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walk.id, startedAt = 0L, distanceMeters = 1_500.0),
+            endedAt = 5_000L,
+        )
+        awaitUntil { fakeCollectiveService.recordedPosts.isNotEmpty() }
+
+        assertEquals(1, fakeCollectiveService.recordedPosts.size)
+        assertEquals(1, fakeCollectiveService.recordedPosts.single().walks)
+        assertFalse(
+            "a failed uuid lookup must not claim the walk",
+            contributionLedger.wasContributed(walk.uuid),
+        )
+    }
+
     // Voice auto-stop on Finished moved to WalkLifecycleObserver in
     // Stage 9.5-C — see WalkLifecycleObserverTest for the equivalent
     // assertion (Active→Finished stops + commits the row).
@@ -401,6 +496,21 @@ private class ThrowingWalkMetricsCache : WalkMetricsCaching {
         invocationCount += 1
         throw IllegalStateException("simulated cache failure for walk=$walkId")
     }
+}
+
+private class ThrowingGetWalkRepository(db: PilgrimDatabase) : WalkRepository(
+    database = db,
+    walkDao = db.walkDao(),
+    routeDao = db.routeDataSampleDao(),
+    altitudeDao = db.altitudeSampleDao(),
+    walkEventDao = db.walkEventDao(),
+    activityIntervalDao = db.activityIntervalDao(),
+    waypointDao = db.waypointDao(),
+    voiceRecordingDao = db.voiceRecordingDao(),
+    walkPhotoDao = db.walkPhotoDao(),
+) {
+    override suspend fun getWalk(id: Long): Walk? =
+        throw IllegalStateException("simulated uuid lookup failure for walk=$id")
 }
 
 private class FakeCollectiveCounterService(

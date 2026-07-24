@@ -27,6 +27,7 @@ class CollectiveRepository @Inject constructor(
     private val service: CollectiveCounterService,
     @CollectiveRepoScope private val scope: CoroutineScope,
     private val milestoneChecker: MilestoneChecking,
+    private val contributionLedger: ContributionLedger,
 ) {
     private val recordMutex = Mutex()
 
@@ -143,6 +144,7 @@ class CollectiveRepository @Inject constructor(
             // is a no-op or a one-walk-late contribution, both
             // acceptable for a user-driven setting that changes rarely.
             if (!cacheStore.optInFlow.first()) return@launch
+            recordContribution(snapshot.walkUuid)
             val postOk = recordMutex.withLock {
                 val newDelta = CollectiveCounterDelta(
                     walks = 1,
@@ -225,6 +227,29 @@ class CollectiveRepository @Inject constructor(
             // recordWalk. fetchIfStale is internally TTL-gated so
             // concurrent callers are safe.
             if (postOk) forceFetch()
+        }
+    }
+
+    /**
+     * iOS parity `CollectiveCounterService.recordWalk@9a418e4`: past
+     * the opt-in gate the walk belongs to the ledger, recorded at the
+     * same single preference read that queues the POST so the ledger
+     * and the counter cannot diverge under toggle races. POST outcome
+     * is deliberately not consulted — an offline finish still earns
+     * the summary line. A null uuid queues the delta but claims
+     * nothing (under-claim in the safe direction). A ledger write
+     * failure is swallowed here rather than escaping to the scope
+     * handler because losing the summary line must not lose the
+     * contribution itself.
+     */
+    private suspend fun recordContribution(walkUuid: String?) {
+        if (walkUuid == null) return
+        try {
+            contributionLedger.record(walkUuid)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "contribution ledger write failed; POST continues", t)
         }
     }
 

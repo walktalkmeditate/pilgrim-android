@@ -76,6 +76,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_INTERVAL_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_STEPS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CelestialLineRow
+import org.walktalkmeditate.pilgrim.ui.walk.summary.CollectiveTrailSection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CustomPromptEditorDialog
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
 import org.walktalkmeditate.pilgrim.ui.walk.summary.FaviconSelectorCard
@@ -127,6 +128,10 @@ fun WalkSummaryScreen(
     val selectedFavicon by viewModel.selectedFavicon.collectAsStateWithLifecycle()
     val celestialSnapshot by viewModel.celestialSnapshotDisplay.collectAsStateWithLifecycle()
     val walkSummaryCalloutProse by viewModel.walkSummaryCalloutProseDisplay.collectAsStateWithLifecycle()
+    // U6: collective trail inputs, resolved in the VM (parity spec
+    // docs/parity/2026-07-23-port-collective-trail-u6.md T3).
+    val walkWasContributed by viewModel.walkWasContributed.collectAsStateWithLifecycle()
+    val collectiveContributionLine by viewModel.collectiveContributionLine.collectAsStateWithLifecycle()
     // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
     // the user taps the section-17 row; transitions through Loading →
     // Listing → Detail / Editor.
@@ -502,6 +507,22 @@ fun WalkSummaryScreen(
                                     ),
                                 )
                             }
+
+                            // 7b. Collective trail (U6 — iOS
+                            // WalkSummaryView.swift@9a418e4: beneath the
+                            // personal milestone, above the stats row).
+                            // Bare if-let inside the section: a
+                            // non-contributed walk (or a still-loading
+                            // catalog) emits no node, so spacedBy inserts
+                            // no gap. Reveal lands a beat (550ms) behind
+                            // the milestone's 300ms — the fact, then your
+                            // arc, then the larger one.
+                            CollectiveTrailSection(
+                                contributionLine = collectiveContributionLine,
+                                wasContributed = walkWasContributed,
+                                revealPhase = revealPhase,
+                                reduceMotion = reduceMotion,
+                            )
 
                             // 8. Stats row — distance value animates 0 → final
                             // on reveal. Duration 600ms, delay 200ms.

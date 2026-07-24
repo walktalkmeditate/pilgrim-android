@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalog
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
@@ -50,6 +51,7 @@ class PracticeSummaryHeaderMilestoneTest {
                     firstWalkInstant = null,
                     distanceUnits = UnitSystem.Metric,
                     collectiveStats = null,
+                    routeCatalog = CollectiveRouteCatalog.EMPTY,
                     milestone = milestone.value,
                     onMilestoneShown = { bellCount++ },
                     onMilestoneDismiss = {},
@@ -81,6 +83,7 @@ class PracticeSummaryHeaderMilestoneTest {
                     firstWalkInstant = null,
                     distanceUnits = UnitSystem.Metric,
                     collectiveStats = null,
+                    routeCatalog = CollectiveRouteCatalog.EMPTY,
                     milestone = CollectiveMilestone.forNumber(108),
                     onMilestoneShown = {},
                     onMilestoneDismiss = { dismissCount++ },
@@ -119,6 +122,7 @@ class PracticeSummaryHeaderMilestoneTest {
                     firstWalkInstant = null,
                     distanceUnits = UnitSystem.Metric,
                     collectiveStats = null,
+                    routeCatalog = CollectiveRouteCatalog.EMPTY,
                     milestone = milestone.value,
                     onMilestoneShown = {},
                     onMilestoneDismiss = {},
@@ -154,6 +158,7 @@ class PracticeSummaryHeaderMilestoneTest {
                     firstWalkInstant = null,
                     distanceUnits = UnitSystem.Metric,
                     collectiveStats = null,
+                    routeCatalog = CollectiveRouteCatalog.EMPTY,
                     milestone = CollectiveMilestone.forNumber(108),
                     onMilestoneShown = {},
                     onMilestoneDismiss = {},

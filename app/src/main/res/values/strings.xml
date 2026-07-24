@@ -1021,6 +1021,9 @@
     <string name="about_data_sources_header">DATA SOURCES</string>
     <string name="about_data_sources_body">Weather conditions and temperature recorded with each walk are fetched at the start of the walk from Open-Meteo, a free open-data weather service.</string>
     <string name="about_data_sources_weather_link">Open-Meteo — Attribution &amp; terms</string>
+    <string name="about_data_sources_routes_body">The pilgrimage routes named alongside the collective\'s distance — their lengths, their seasons, and how many people walk them each year — come from the open-pilgrimages dataset, shared under the Open Database License.</string>
+    <string name="about_data_sources_routes_link">Pilgrimage routes — open-pilgrimages</string>
+    <string name="about_data_sources_odbl_link">Open Database License (ODbL 1.0)</string>
 
     <!-- Welcome screen (iOS v1.6.0 parity Setup/Welcome/WelcomeView.swift) -->
     <string name="welcome_begin_button">Begin</string>

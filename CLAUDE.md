@@ -12,14 +12,14 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 
 ## Parity scope (frozen)
 
-**Parity target: pilgrim-ios main @ `c1745e8`** (2026-07-14; post-v1.8.0, includes the 1.8.1-in-review journal scenery). Anything iOS shipped AT OR BEFORE that commit is in-scope for Android port. Anything iOS ships AFTER `c1745e8` is OUT OF SCOPE — with one bounded exception: deltas landing before Android v1.2.0 ships are re-diffed and triaged per the fold-in rule (R2 in `docs/brainstorms/2026-07-14-ios-main-parity-retarget-requirements.md`): chores, hotfixes, and incremental refinements to Seek Mode / journal scenery fold into the owning phase; new headline features, reverts of ported work, or redesigns require explicit user re-triage.
+**Parity target: pilgrim-ios main @ `9a418e4`** (2026-07-21; the v1.9.0 tip — collective route rotation, whisper base + prompt pipeline, SVG map glyphs). Anything iOS shipped AT OR BEFORE that commit is in-scope for Android port. Anything iOS ships AFTER `9a418e4` is OUT OF SCOPE — with one bounded exception: deltas landing before Android v1.3.0 ships are re-diffed and triaged per the fold-in rule (R2 in `docs/brainstorms/2026-07-22-ios-v190-parity-retarget-requirements.md`): chores, hotfixes, and incremental refinements to route rotation / whisper base / map glyphs fold into the owning phase; new headline features, reverts of ported work, or redesigns require explicit user re-triage.
 
 To diff iOS for in-scope work that hasn't landed on Android yet:
 ```bash
-cd ../pilgrim-ios && git log --oneline c1745e8
+cd ../pilgrim-ios && git log --oneline 9a418e4
 ```
 
-Comparing to a future iOS HEAD past `c1745e8` is fine for context, but parity work targets `c1745e8` only.
+Comparing to a future iOS HEAD past `9a418e4` is fine for context, but parity work targets `9a418e4` only.
 
 ## Architecture
 
@@ -85,4 +85,4 @@ The hardest part of this app is surviving a 45-90 minute walk with screen off, b
 
 ## Phasing — current state
 
-Phases 0-15 shipped: 0-13 through Stage 13-XZ (PR #83) + v1.7.0 parity sweep (PRs #177–#193); **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** landed 2026-07-16 (PRs #198/#199, plan `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`), released as v1.2.0. The R2 re-diff at release time found iOS main unmoved from `c1745e8` — parity is exact. Next up: Phase N future items (Health Connect, App Actions, screenshot tests). See the port plan + autopilot memory entries for stage-level history.
+Phases 0-15 shipped: 0-13 through Stage 13-XZ (PR #83) + v1.7.0 parity sweep (PRs #177–#193); **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** landed 2026-07-16 (PRs #198/#199, plan `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`), released as v1.2.0 at exact parity with `c1745e8`. **Phases 16-18 (v1.9.0 parity: route rotation, whisper base, map glyphs) are in flight** per `docs/plans/2026-07-23-001-feat-ios-v190-parity-port-plan.md`, targeting a single v1.3.0 release. See the port plan + autopilot memory entries for stage-level history.

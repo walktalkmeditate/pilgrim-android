@@ -18,6 +18,7 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
 import org.walktalkmeditate.pilgrim.data.launcher.IconSwitcher
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeAutoDownloadObserver
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadObserver
@@ -118,6 +119,14 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var collectiveRepositoryProvider: Provider<CollectiveRepository>
 
     @Inject @CollectiveRepoScope lateinit var collectiveScopeProvider: Provider<CoroutineScope>
+
+    /**
+     * U3: collective route-catalog CDN refresh. Fire-and-forget off the
+     * launch path, mirroring iOS AppDelegate's post-setup `syncIfNeeded`
+     * family. The service awaits its own initial load internally, so the
+     * cache/bootstrap tier can never be stomped by a fast response.
+     */
+    @Inject lateinit var collectiveRouteCatalogServiceProvider: Provider<CollectiveRouteCatalogService>
 
     /**
      * Stage 9-A: home-screen widget refresh scheduler. PilgrimApp.onCreate
@@ -269,6 +278,11 @@ class PilgrimApp : Application(), Configuration.Provider {
         // manifest sync and enqueues background downloads for any
         // soundscape assets not already on disk (iOS parity).
         soundscapeAutoDownloadObserverProvider.get().start()
+
+        // U3: refresh the collective route catalog once per process —
+        // Application.onCreate matches iOS AppDelegate's once-per-launch
+        // semantics, and the service's CAS dedup makes re-entry a no-op.
+        collectiveRouteCatalogServiceProvider.get().syncIfNeeded()
 
         // Stage 8-B: warm the collective-counter cache once per
         // process. fetchIfStale is TTL-gated so a re-launch within
