@@ -52,6 +52,8 @@ import org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
@@ -274,6 +276,8 @@ class WalkSummaryViewModel @Inject constructor(
     private val transcriptionScheduler:
         org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
     private val waveformCache: org.walktalkmeditate.pilgrim.audio.WaveformCache,
+    routeCatalogService: CollectiveRouteCatalogService,
+    private val contributionLedger: ContributionLedger,
     @PersistenceScope private val persistenceScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -402,6 +406,17 @@ class WalkSummaryViewModel @Inject constructor(
     private val _showSealReveal = MutableStateFlow(false)
     val showSealReveal: StateFlow<Boolean> = _showSealReveal.asStateFlow()
 
+    /**
+     * U6: whether THIS walk moved the collective counter — a
+     * past-tense fact from [ContributionLedger], never the live
+     * opt-in preference (toggling off must not erase a true line;
+     * toggling on must not fabricate one). Seeded in [buildState]
+     * like [_showSealReveal], and declared before [state] for the
+     * same Eagerly-runs-during-field-init reason.
+     */
+    private val _walkWasContributed = MutableStateFlow(false)
+    val walkWasContributed: StateFlow<Boolean> = _walkWasContributed.asStateFlow()
+
     val state: StateFlow<WalkSummaryUiState> = flow {
         emit(buildState())
     }.stateIn(
@@ -499,6 +514,44 @@ class WalkSummaryViewModel @Inject constructor(
                 inputs = s.summary.calloutInputs,
                 celestialEnabled = enabled,
                 context = context,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = null,
+        )
+
+    /**
+     * U6: the walk-summary collective line, resolved in the parent so
+     * [CollectiveTrailSection] stays a bare if-let (iOS
+     * `WalkSummaryView.resolveCollectiveContributionLine@9a418e4`;
+     * parity spec `docs/parity/2026-07-23-port-collective-trail-u6.md`).
+     * Anchored to the walk row's start timestamp, never `now` — the
+     * summary opens for any journal walk, and anchoring to today would
+     * silently re-route an old walk on every reopen. Needs NO
+     * collective total (unlike the Settings line), so it resolves on a
+     * fresh offline install from the bundled catalog. Null while the
+     * catalog is still `EMPTY` (half a line is worse than none) and
+     * for non-contributed walks (phrasing skipped outright, mirroring
+     * the iOS guard — most journal walks predate the feature). The
+     * catalog combine key is iOS's `.onReceive($catalog)`: a summary
+     * opened before the detached catalog load lands still fills its
+     * line. `walkKm` converts from [WalkSummary.distanceMeters] — the
+     * live event-replay value the adjacent stats row displays; the
+     * Room cached column races freshly-finished walks (D3).
+     */
+    val collectiveContributionLine: StateFlow<String?> =
+        combine(
+            state,
+            _walkWasContributed,
+            routeCatalogService.catalog,
+            distanceUnits,
+        ) { s, contributed, catalog, units ->
+            if (s !is WalkSummaryUiState.Loaded || !contributed) return@combine null
+            catalog.contributionLine(
+                epochMillis = s.summary.walk.startTimestamp,
+                walkKm = s.summary.distanceMeters / 1_000.0,
+                units = units,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -1482,6 +1535,18 @@ class WalkSummaryViewModel @Inject constructor(
         // walk's uuid is already in the SealRevealStore. User-requested
         // divergence from iOS (which replays on every entry).
         _showSealReveal.value = !sealRevealStore.isRevealed(walk.uuid)
+        // U6: load-time ledger read (iOS reads on `.onAppear`). The
+        // ledger records at finalize, strictly before any summary for
+        // the walk can open, so once-per-VM is enough. A read failure
+        // degrades to "no line", never a broken summary.
+        _walkWasContributed.value = try {
+            contributionLedger.wasContributed(walk.uuid)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "contribution ledger read failed for walk $walkId", t)
+            false
+        }
         // Stage 13-E: seed the favicon StateFlow from the persisted
         // column so the selector reflects prior user choice on load.
         _selectedFavicon.value = WalkFavicon.fromRawValue(walk.favicon)

@@ -182,6 +182,17 @@ class WalkSummaryViewModelLightReadingGateTest {
             waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
                 fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
             ),
+            routeCatalogService = org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService(
+                context = context,
+                httpClient = okhttp3.OkHttpClient(),
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+                catalogUrl = "http://localhost/routes.json",
+                bootstrapAssetPath = "collective/collective-routes-bootstrap.json",
+            ),
+            contributionLedger = org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger(
+                org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore(),
+                kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+            ),
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
