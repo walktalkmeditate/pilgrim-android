@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package org.walktalkmeditate.pilgrim.ui.walk
+package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -20,8 +20,6 @@ import androidx.compose.ui.unit.sp
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
-import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 
 /**
  * The render gate as a pure function, so it is testable without a view
@@ -49,7 +47,8 @@ internal const val COLLECTIVE_TRAIL_REVEAL_DELAY_MS = 550
  * `docs/parity/2026-07-23-port-collective-trail-u6.md`).
  *
  * [contributionLine] arrives already phrased, resolved by
- * [WalkSummaryViewModel] rather than here — the summary recomposes
+ * [org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel] rather than
+ * here — the summary recomposes
  * roughly thirty times during the distance count-up, and phrasing
  * costs an entry lookup, a calendar call and a formatter per pass.
  * [wasContributed] is a past-tense fact from the contribution ledger,

@@ -76,6 +76,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_INTERVAL_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_STEPS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CelestialLineRow
+import org.walktalkmeditate.pilgrim.ui.walk.summary.CollectiveTrailSection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.CustomPromptEditorDialog
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ElevationProfile
 import org.walktalkmeditate.pilgrim.ui.walk.summary.FaviconSelectorCard

@@ -9,7 +9,7 @@ import javax.inject.Qualifier
  * shape as `VoiceGuideManifestScope`: `SupervisorJob` so a failed fetch
  * doesn't tear the scope down, `Dispatchers.Default` with explicit
  * `withContext(Dispatchers.IO)` hops at the file/network seams. Production
- * binding lives in `NetworkModule`.
+ * binding lives in `CollectiveModule`.
  */
 @Qualifier
 @Retention(AnnotationRetention.BINARY)

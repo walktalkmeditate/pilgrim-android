@@ -19,6 +19,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRoute
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalog
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 /**
@@ -80,7 +81,7 @@ class PracticeSummaryHeaderDailyLineTest {
         routeCatalog: () -> CollectiveRouteCatalog,
         distanceUnits: () -> UnitSystem = { UnitSystem.Metric },
         visible: () -> Boolean = { true },
-        nowEpochMillis: () -> Long = { fixedEpoch },
+        clock: Clock = Clock { fixedEpoch },
     ) {
         composeRule.setContent {
             PilgrimTheme {
@@ -93,7 +94,7 @@ class PracticeSummaryHeaderDailyLineTest {
                         distanceUnits = distanceUnits(),
                         collectiveStats = collectiveStats,
                         routeCatalog = routeCatalog(),
-                        nowEpochMillis = nowEpochMillis,
+                        clock = clock,
                     )
                 }
             }
@@ -182,7 +183,7 @@ class PracticeSummaryHeaderDailyLineTest {
             collectiveStats = stats(12.6),
             routeCatalog = { twoRouteCatalog },
             visible = { visible.value },
-            nowEpochMillis = { now },
+            clock = Clock { now },
         )
         composeRule.onNodeWithText(lineA).assertIsDisplayed()
 

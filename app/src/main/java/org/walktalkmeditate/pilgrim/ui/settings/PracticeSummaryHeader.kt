@@ -52,6 +52,7 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestone
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalog
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.ui.settings.about.AboutSeasonHelpers
 import org.walktalkmeditate.pilgrim.ui.settings.about.Season
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -83,7 +84,7 @@ fun PracticeSummaryHeader(
     milestone: CollectiveMilestone? = null,
     onMilestoneShown: (CollectiveMilestone) -> Unit = {},
     onMilestoneDismiss: () -> Unit = {},
-    nowEpochMillis: () -> Long = System::currentTimeMillis,
+    clock: Clock = Clock.System,
     modifier: Modifier = Modifier,
 ) {
     var statPhase by rememberSaveable { mutableIntStateOf(0) }
@@ -139,7 +140,7 @@ fun PracticeSummaryHeader(
                 // claim the path is beginning while the collective is
                 // hundreds of kilometres in.
                 val dailyLine = remember(routeCatalog, stats.totalDistanceKm, distanceUnits) {
-                    routeCatalog.dailyLine(nowEpochMillis(), stats.totalDistanceKm, distanceUnits)
+                    routeCatalog.dailyLine(clock.now(), stats.totalDistanceKm, distanceUnits)
                 }
                 if (dailyLine != null) {
                     Text(

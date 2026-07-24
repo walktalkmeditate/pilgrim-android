@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package org.walktalkmeditate.pilgrim.data.collective.routes
+package org.walktalkmeditate.pilgrim.data.collective
 
 import android.app.Application
 import androidx.datastore.core.DataStore

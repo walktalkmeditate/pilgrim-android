@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package org.walktalkmeditate.pilgrim.ui.walk
+package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
@@ -19,9 +19,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRoute
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalog
+import org.walktalkmeditate.pilgrim.data.collective.routes.loadParityCatalog
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
-import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 
 /**
  * Ports iOS `UnitTests/CollectiveTrailSectionTests.swift@9a418e4`
@@ -48,14 +48,7 @@ class CollectiveTrailSectionTest {
     private val walkDay = Instant.parse("2026-10-07T12:00:00Z").toEpochMilli()
     private val reopenedOn = Instant.parse("2026-10-12T12:00:00Z").toEpochMilli()
 
-    private val parityCatalog: CollectiveRouteCatalog by lazy {
-        val stream = checkNotNull(
-            javaClass.classLoader?.getResourceAsStream(
-                "collective/collective-routes-parity-fixture.json",
-            ),
-        ) { "missing test resource collective/collective-routes-parity-fixture.json" }
-        CollectiveRouteCatalog.decode(stream.bufferedReader().readText())
-    }
+    private val parityCatalog: CollectiveRouteCatalog by lazy { loadParityCatalog() }
 
     private val line: String by lazy {
         checkNotNull(parityCatalog.contributionLine(walkDay, walkKm = 4.2, units = UnitSystem.Metric))

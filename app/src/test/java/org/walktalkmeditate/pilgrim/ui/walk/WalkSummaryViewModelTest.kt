@@ -43,14 +43,14 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.time.Instant
-import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
-import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
-import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
+import org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -139,17 +139,8 @@ class WalkSummaryViewModelTest {
         // fetches — syncIfNeeded is not called and the URL resolves
         // nowhere). Tests that need the catalog await initialLoad.
         routeCatalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        routeCatalogService = CollectiveRouteCatalogService(
-            context = context,
-            httpClient = OkHttpClient(),
-            scope = routeCatalogScope,
-            catalogUrl = "http://localhost/routes.json",
-            bootstrapAssetPath = "collective/collective-routes-bootstrap.json",
-        )
-        contributionLedger = ContributionLedger(
-            FakePreferencesDataStore(),
-            kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
-        )
+        routeCatalogService = bootstrapRouteCatalogService(context, routeCatalogScope)
+        contributionLedger = inMemoryContributionLedger()
     }
 
     private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
@@ -1617,11 +1608,9 @@ class WalkSummaryViewModelTest {
         // A missing bootstrap leaves the service on EMPTY forever —
         // the Android analogue of iOS's forever-nil catalog. The gate
         // must render nothing rather than a partial line.
-        val brokenService = CollectiveRouteCatalogService(
-            context = context,
-            httpClient = OkHttpClient(),
-            scope = routeCatalogScope,
-            catalogUrl = "http://localhost/routes.json",
+        val brokenService = bootstrapRouteCatalogService(
+            context,
+            routeCatalogScope,
             bootstrapAssetPath = "collective/absent-bootstrap.json",
         )
         brokenService.initialLoad.await()

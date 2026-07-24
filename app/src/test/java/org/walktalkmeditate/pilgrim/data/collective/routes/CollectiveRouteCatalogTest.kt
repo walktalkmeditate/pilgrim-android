@@ -30,9 +30,7 @@ class CollectiveRouteCatalogTest {
         CollectiveRouteCatalog.decode(loadFixture("collective/collective-routes-two-route-fixture.json"))
     }
 
-    private val production: CollectiveRouteCatalog by lazy {
-        CollectiveRouteCatalog.decode(loadFixture("collective/collective-routes-parity-fixture.json"))
-    }
+    private val production: CollectiveRouteCatalog by lazy { loadParityCatalog() }
 
     private fun loadFixture(name: String): String =
         checkNotNull(javaClass.classLoader?.getResourceAsStream(name)) { "missing test resource $name" }
@@ -209,12 +207,12 @@ class CollectiveRouteCatalogTest {
 
     @Test
     fun `utc seed packs the utc calendar date`() {
-        assertEquals(20_261_007u, CollectiveRouteSeed.utcSeed(utcMillis(2026, 10, 7)))
+        assertEquals(20_261_007u, CollectiveRouteSeed.utcDay(utcMillis(2026, 10, 7)).seed)
     }
 
     @Test
     fun `utc seed ignores the time of day`() {
-        assertEquals(20_261_007u, CollectiveRouteSeed.utcSeed(utcMillis(2026, 10, 7, 23, 59, 59)))
+        assertEquals(20_261_007u, CollectiveRouteSeed.utcDay(utcMillis(2026, 10, 7, 23, 59, 59)).seed)
     }
 
     @Test

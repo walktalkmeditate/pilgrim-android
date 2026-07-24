@@ -32,10 +32,10 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.FakeAppearancePreferencesRepository
-import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
-import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
+import org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService
+import org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
@@ -95,7 +95,7 @@ class SettingsViewModelAppearanceTest {
         fakeService = FakeCounterService(context, json)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         collectiveRepo = CollectiveRepository(cacheStore, fakeService, scope, NoopMilestoneChecker,
-            ContributionLedger(FakePreferencesDataStore(), json))
+            inMemoryContributionLedger())
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -111,13 +111,7 @@ class SettingsViewModelAppearanceTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         voiceFs = VoiceRecordingFileSystem(context)
-        routeCatalogService = CollectiveRouteCatalogService(
-            context = context,
-            httpClient = OkHttpClient(),
-            scope = scope,
-            catalogUrl = "http://localhost/routes.json",
-            bootstrapAssetPath = "collective/collective-routes-bootstrap.json",
-        )
+        routeCatalogService = bootstrapRouteCatalogService(context, scope)
     }
 
     @After

@@ -28,13 +28,17 @@ import org.walktalkmeditate.pilgrim.data.collective.CollectiveMilestoneDetector
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepoScope
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepositoryStatsSource
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStatsSource
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.ContributionLedgerDataStore
 import org.walktalkmeditate.pilgrim.data.collective.CounterBaseUrl
 import org.walktalkmeditate.pilgrim.data.collective.CounterHttpClient
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneStorage
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneSurface
-import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteBootstrapAsset
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogScope
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogUrl
+import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRoutesConfig
 
 /**
  * Stage 8-B: DI wiring for the Collective Counter — short-call HTTP
@@ -56,6 +60,34 @@ object CollectiveModule {
     @Singleton
     @CounterBaseUrl
     fun provideCounterBaseUrl(): String = CollectiveConfig.BASE_URL
+
+    /** Collective route-catalog URL (U3) — qualified so tests can substitute MockWebServer. */
+    @Provides
+    @Singleton
+    @CollectiveRouteCatalogUrl
+    fun provideCollectiveRouteCatalogUrl(): String = CollectiveRoutesConfig.CATALOG_URL
+
+    /**
+     * Bundled-bootstrap asset path (U3) — the injectable stand-in for iOS's
+     * `bootstrapCatalogURL` closure, so tests can exercise the
+     * missing-bootstrap path.
+     */
+    @Provides
+    @Singleton
+    @CollectiveRouteBootstrapAsset
+    fun provideCollectiveRouteBootstrapAsset(): String = CollectiveRoutesConfig.BOOTSTRAP_ASSET_PATH
+
+    /**
+     * Long-lived scope for
+     * [org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService]'s
+     * initial load + sync coroutines. Same shape as the voice-guide
+     * manifest scope in `NetworkModule`.
+     */
+    @Provides
+    @Singleton
+    @CollectiveRouteCatalogScope
+    fun provideCollectiveRouteCatalogScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
      * Storage seam for `CollectiveMilestoneDetector` (Stage 11-B).

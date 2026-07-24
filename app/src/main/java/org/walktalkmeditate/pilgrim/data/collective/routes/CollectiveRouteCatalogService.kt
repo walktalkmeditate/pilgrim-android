@@ -82,12 +82,18 @@ class CollectiveRouteCatalogService @Inject constructor(
         }
     }
 
+    /**
+     * Non-reactive snapshot read of the current catalog — UI surfaces must
+     * consume the [catalog] StateFlow instead (the Stage 5-G staleness class).
+     */
     fun dailyLine(epochMillis: Long, collectiveKm: Double?, units: UnitSystem): String? =
         _catalog.value.dailyLine(epochMillis, collectiveKm, units)
 
     /**
      * Anchored to the walk's own date, so reopening an old walk shows what it
-     * showed the day it ended.
+     * showed the day it ended. Non-reactive snapshot read of the current
+     * catalog — UI surfaces must consume the [catalog] StateFlow instead
+     * (the Stage 5-G staleness class).
      */
     fun contributionLine(epochMillis: Long, walkKm: Double, units: UnitSystem): String? =
         _catalog.value.contributionLine(epochMillis, walkKm, units)
@@ -159,8 +165,6 @@ class CollectiveRouteCatalogService @Inject constructor(
     private fun decodeRemoteCatalog(body: String): CollectiveRouteCatalog? =
         try {
             CollectiveRouteCatalog.decode(body)
-        } catch (ce: CancellationException) {
-            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "undecodable remote catalog", t)
             null
@@ -182,8 +186,6 @@ class CollectiveRouteCatalogService @Inject constructor(
         return try {
             CollectiveRouteCatalog.decode(cacheFile.readText())
                 .takeIf { it.entries.isNotEmpty() }
-        } catch (ce: CancellationException) {
-            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "corrupt cached catalog; falling back to bootstrap", t)
             null
@@ -199,8 +201,6 @@ class CollectiveRouteCatalogService @Inject constructor(
         try {
             val text = context.assets.open(bootstrapAssetPath).bufferedReader().use { it.readText() }
             CollectiveRouteCatalog.decode(text)
-        } catch (ce: CancellationException) {
-            throw ce
         } catch (t: Throwable) {
             Log.wtf(
                 TAG,
@@ -228,9 +228,6 @@ class CollectiveRouteCatalogService @Inject constructor(
                     StandardCopyOption.REPLACE_EXISTING,
                 )
             }
-        } catch (ce: CancellationException) {
-            tmp.delete()
-            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "failed to save catalog; in-memory state retains it", t)
             tmp.delete()

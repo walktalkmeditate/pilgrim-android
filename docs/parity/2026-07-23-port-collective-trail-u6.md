@@ -4,7 +4,7 @@
 > **iOS pin:** `pilgrim-ios` @ `9a418e4` (HEAD of `main`, 2026-07-21). All Swift quotes cite `file@9a418e4` unless a historical commit is named.
 > **Authority:** SHIPPED Swift over plan docs and commit messages. The shipped end-state is `9a418e4` after four commits (`ce7a750` feature → `8c83c36` perf pass → `b131de7` empty-catalog refusal → `8b33711` comment compression); the parent-resolve shape quoted below is the final one.
 > **Companions:** `2026-07-23-port-route-catalog-u2.md` (B4 contribution phrasing, B5 unit seam), `2026-07-23-port-route-catalog-service-u3.md` (hot `catalog: StateFlow`, `EMPTY` pre-load), `2026-07-23-port-contribution-ledger-u4.md` (L6 read surface — this spec implements its "U6 consumption contract"), `2026-07-23-port-settings-line-u5.md` (the sibling surface that DOES need the collective total).
-> **Android files:** create `ui/walk/CollectiveTrailSection.kt`; modify `ui/walk/WalkSummaryScreen.kt` + `ui/walk/WalkSummaryViewModel.kt`; test `ui/walk/CollectiveTrailSectionTest.kt` + `WalkSummaryViewModelTest.kt` extension.
+> **Android files:** create `ui/walk/summary/CollectiveTrailSection.kt`; modify `ui/walk/WalkSummaryScreen.kt` + `ui/walk/WalkSummaryViewModel.kt`; test `ui/walk/summary/CollectiveTrailSectionTest.kt` + `WalkSummaryViewModelTest.kt` extension.
 
 ## T1. The section — a bare if-let, no background fill
 

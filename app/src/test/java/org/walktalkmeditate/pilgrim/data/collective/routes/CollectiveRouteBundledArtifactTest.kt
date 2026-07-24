@@ -38,12 +38,7 @@ class CollectiveRouteBundledArtifactTest {
         CollectiveRouteCatalog.decode(text)
     }
 
-    private val fixture: CollectiveRouteCatalog by lazy {
-        val stream = checkNotNull(
-            javaClass.classLoader?.getResourceAsStream("collective/collective-routes-parity-fixture.json"),
-        ) { "missing test resource collective/collective-routes-parity-fixture.json" }
-        CollectiveRouteCatalog.decode(stream.bufferedReader().readText())
-    }
+    private val fixture: CollectiveRouteCatalog by lazy { loadParityCatalog() }
 
     // The cheapest guard here: a bake that emits an envelope with nothing in
     // it decodes cleanly — both arrays are optional and every element decodes

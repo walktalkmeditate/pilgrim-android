@@ -210,8 +210,6 @@ object CollectiveRouteSeed {
         return UtcDay(seed = packed.toUInt(), month = date.monthValue)
     }
 
-    fun utcSeed(epochMillis: Long): UInt = utcDay(epochMillis).seed
-
     /**
      * The fmix32 finalizer the web scrambles its date seed with. Kotlin `UInt`
      * multiplication wraps, matching JavaScript's `Math.imul` keeping the low

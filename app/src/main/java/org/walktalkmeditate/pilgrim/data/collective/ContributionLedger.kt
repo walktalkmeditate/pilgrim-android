@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package org.walktalkmeditate.pilgrim.data.collective.routes
+package org.walktalkmeditate.pilgrim.data.collective
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -7,12 +7,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import org.walktalkmeditate.pilgrim.data.collective.ContributionLedgerDataStore
 
 /**
  * iOS parity `CollectiveContributionLog`
@@ -36,8 +36,10 @@ class ContributionLedger @Inject constructor(
     @ContributionLedgerDataStore private val dataStore: DataStore<Preferences>,
     private val json: Json,
 ) {
-    suspend fun wasContributed(walkUuid: String): Boolean =
-        walkUuid in decode(dataStore.data.first()[KEY_CONTRIBUTED_WALK_UUIDS])
+    suspend fun wasContributed(walkUuid: String): Boolean {
+        val blob = dataStore.data.first()[KEY_CONTRIBUTED_WALK_UUIDS]
+        return withContext(Dispatchers.Default) { walkUuid in decode(blob) }
+    }
 
     /**
      * Idempotent: a walk re-recorded after a retry keeps its original
@@ -59,8 +61,6 @@ class ContributionLedger @Inject constructor(
         if (blob == null) return emptyList()
         return try {
             json.decodeFromString(SERIALIZER, blob)
-        } catch (ce: CancellationException) {
-            throw ce
         } catch (_: Throwable) {
             emptyList()
         }

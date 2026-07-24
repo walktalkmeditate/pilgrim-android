@@ -52,8 +52,8 @@ import org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator
 import org.walktalkmeditate.pilgrim.data.PhotoPinRef
 import org.walktalkmeditate.pilgrim.data.UnpinPhotoResult
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.routes.CollectiveRouteCatalogService
-import org.walktalkmeditate.pilgrim.data.collective.routes.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
@@ -523,7 +523,8 @@ class WalkSummaryViewModel @Inject constructor(
 
     /**
      * U6: the walk-summary collective line, resolved in the parent so
-     * [CollectiveTrailSection] stays a bare if-let (iOS
+     * [org.walktalkmeditate.pilgrim.ui.walk.summary.CollectiveTrailSection]
+     * stays a bare if-let (iOS
      * `WalkSummaryView.resolveCollectiveContributionLine@9a418e4`;
      * parity spec `docs/parity/2026-07-23-port-collective-trail-u6.md`).
      * Anchored to the walk row's start timestamp, never `now` — the
