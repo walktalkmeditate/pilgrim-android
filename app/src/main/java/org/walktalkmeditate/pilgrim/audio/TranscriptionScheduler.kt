@@ -14,6 +14,14 @@ import javax.inject.Singleton
 
 interface TranscriptionScheduler {
     fun scheduleForWalk(walkId: Long)
+
+    /**
+     * REPLACE-policy variant for the U9 model-download success re-kick:
+     * a batch that failed on the missing/old model may be hours into
+     * WorkManager's backoff window, so the re-kick must supersede the
+     * existing work rather than KEEP-deferring to it.
+     */
+    fun rescheduleForWalk(walkId: Long)
 }
 
 @Singleton
@@ -21,7 +29,15 @@ class WorkManagerTranscriptionScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : TranscriptionScheduler {
 
-    override fun scheduleForWalk(walkId: Long) {
+    // KEEP, not REPLACE: TranscriptionRunner re-reads pending rows from
+    // Room on each run, so a second schedule call for the same walk
+    // (e.g., user double-tapping Finish) should be a no-op rather than
+    // cancelling and restarting an already-running batch.
+    override fun scheduleForWalk(walkId: Long) = enqueue(walkId, ExistingWorkPolicy.KEEP)
+
+    override fun rescheduleForWalk(walkId: Long) = enqueue(walkId, ExistingWorkPolicy.REPLACE)
+
+    private fun enqueue(walkId: Long, policy: ExistingWorkPolicy) {
         // WorkRequest.Builder.build() throws IllegalArgumentException if
         // an expedited work request carries any constraint other than
         // network or storage. Pairing `setExpedited` with
@@ -42,12 +58,7 @@ class WorkManagerTranscriptionScheduler @Inject constructor(
 
         WorkManager.getInstance(context).enqueueUniqueWork(
             "transcribe-walk-$walkId",
-            // KEEP, not REPLACE: TranscriptionRunner re-reads pending
-            // rows from Room on each run, so a second schedule call for
-            // the same walk (e.g., user double-tapping Finish) should
-            // be a no-op rather than cancelling and restarting an
-            // already-running batch.
-            ExistingWorkPolicy.KEEP,
+            policy,
             request,
         )
     }

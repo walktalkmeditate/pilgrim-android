@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -56,17 +55,13 @@ sealed interface ModelDownloadWork {
 }
 
 /**
- * Seam over the model-download WorkManager observation. The default
- * binding is [NoOpModelDownloadWorkSource] until U9's scheduler lands
- * and replaces it in `TranscriptionModule`.
+ * Seam over the model-download WorkManager observation. Implemented by
+ * `WorkManagerWhisperModelDownloadScheduler` (U9), bound in
+ * `TranscriptionModule`.
  */
 interface ModelDownloadWorkSource {
     /** Emits null while no download work is tracked. */
     fun observe(): Flow<ModelDownloadWork?>
-}
-
-class NoOpModelDownloadWorkSource @Inject constructor() : ModelDownloadWorkSource {
-    override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
 }
 
 /**
@@ -105,7 +100,7 @@ class ConnectivityUnmeteredNetworkProbe @Inject constructor(
  * lesson) and "clear app storage" degrades cleanly to [WhisperModelState.Absent].
  */
 @Singleton
-class WhisperModelStore @Inject constructor(
+open class WhisperModelStore @Inject constructor(
     @ApplicationContext context: Context,
     workSource: ModelDownloadWorkSource,
     private val unmeteredProbe: UnmeteredNetworkProbe,
@@ -129,9 +124,19 @@ class WhisperModelStore @Inject constructor(
      * cleanup). Dropped emissions are harmless: every fresh
      * subscription re-probes via `onStart`.
      */
-    fun invalidate() {
+    open fun invalidate() {
         invalidations.tryEmit(Unit)
     }
+
+    /**
+     * Success hook the U9 download worker invokes after the verified
+     * base model's sha marker lands (marker-last ordering, spec L4).
+     * U10 implements the atomic engine switch + legacy-tiny delete
+     * behind this; until then it is a deliberate no-op — the worker's
+     * separate [invalidate] call is what re-probes [state] to
+     * `Ready(Base)`.
+     */
+    open suspend fun onBaseVerified() = Unit
 
     /**
      * The model the engine should load right now: verified base

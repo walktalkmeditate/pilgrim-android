@@ -178,7 +178,7 @@ class WalkSummaryViewModelLightReadingGateTest {
             photoLibraryScanner = org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner(
                 context = context,
             ),
-            transcriptionScheduler = object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler { override fun scheduleForWalk(walkId: Long) {} },
+            transcriptionScheduler = object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler { override fun scheduleForWalk(walkId: Long) {}; override fun rescheduleForWalk(walkId: Long) {} },
             waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
                 fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
             ),

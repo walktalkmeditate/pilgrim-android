@@ -16,9 +16,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.onboarding.OnboardingPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
@@ -54,6 +59,7 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var hemisphereRepository:
         org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
+    @Inject lateinit var modelDownloadScheduler: WhisperModelDownloadScheduler
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -151,6 +157,28 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * U9 model-download trigger: first *foreground Activity* resume —
+     * deliberately not `Application.onCreate`, so widget/broadcast/
+     * service process starts never schedule the 148 MB transfer. The
+     * process-level flag keeps this to one WorkManager round-trip per
+     * process; `ensureEnqueued` itself is KEEP-idempotent, so a rare
+     * double-fire (resume racing a slow first call) is harmless.
+     */
+    override fun onResume() {
+        super.onResume()
+        if (!modelDownloadEnsureRequested.compareAndSet(false, true)) return
+        lifecycleScope.launch {
+            try {
+                modelDownloadScheduler.ensureEnqueued()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "model download ensure failed", t)
+            }
+        }
+    }
+
+    /**
      * Stage 9-A: singleTop launch mode means widget taps land here for
      * a re-running activity. setIntent() first so subsequent
      * getIntent() reads the fresh intent (Android docs requirement),
@@ -196,5 +224,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "MainActivity"
+        val modelDownloadEnsureRequested = AtomicBoolean(false)
     }
 }

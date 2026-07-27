@@ -265,6 +265,9 @@ open class WalkRepository @Inject constructor(
     open suspend fun voiceRecordingsFor(walkId: Long): List<VoiceRecording> =
         voiceRecordingDao.getForWalk(walkId)
 
+    open suspend fun walkIdsWithPendingTranscriptions(): List<Long> =
+        voiceRecordingDao.walkIdsWithNullTranscription()
+
     fun observeVoiceRecordings(walkId: Long): Flow<List<VoiceRecording>> =
         voiceRecordingDao.observeForWalk(walkId)
 

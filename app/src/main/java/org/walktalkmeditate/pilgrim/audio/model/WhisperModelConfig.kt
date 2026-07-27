@@ -40,6 +40,8 @@ object WhisperModelConfig {
 
     private const val MODEL_ROOT_DIR = "whisper-model"
     private const val SHA_MARKER_SUFFIX = ".sha256"
+    private const val PARTIAL_SUFFIX = ".part"
+    private const val ETAG_SUFFIX = ".etag"
 
     fun baseModelPath(filesDir: Path): Path =
         filesDir.resolve(MODEL_ROOT_DIR).resolve(VARIANT).resolve(FILE_NAME)
@@ -51,6 +53,22 @@ object WhisperModelConfig {
      */
     fun baseShaMarkerPath(filesDir: Path): Path =
         filesDir.resolve(MODEL_ROOT_DIR).resolve(VARIANT).resolve(FILE_NAME + SHA_MARKER_SUFFIX)
+
+    /**
+     * The U9 worker's resumable partial. Survives cancellation and
+     * transient failures by design (U9 spec C3); renamed atomically
+     * onto [baseModelPath] once the streamed SHA-256 verifies.
+     */
+    fun basePartialPath(filesDir: Path): Path =
+        filesDir.resolve(MODEL_ROOT_DIR).resolve(VARIANT).resolve(FILE_NAME + PARTIAL_SUFFIX)
+
+    /**
+     * ETag of the CDN object the partial belongs to, persisted beside
+     * it so a resumed transfer can send `If-Range` and never splice two
+     * object versions. A partial without its etag restarts from zero.
+     */
+    fun baseEtagPath(filesDir: Path): Path =
+        filesDir.resolve(MODEL_ROOT_DIR).resolve(VARIANT).resolve(FILE_NAME + ETAG_SUFFIX)
 
     /**
      * The flat pre-base path `WhisperModelInstaller` populated on

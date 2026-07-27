@@ -15,10 +15,17 @@ import org.walktalkmeditate.pilgrim.audio.WhisperCppEngine
 import org.walktalkmeditate.pilgrim.audio.WhisperEngine
 import org.walktalkmeditate.pilgrim.audio.WorkManagerTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.model.ConnectivityUnmeteredNetworkProbe
+import org.walktalkmeditate.pilgrim.audio.model.FreeSpaceProbe
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
-import org.walktalkmeditate.pilgrim.audio.model.NoOpModelDownloadWorkSource
+import org.walktalkmeditate.pilgrim.audio.model.PendingTranscriptionWalkSource
+import org.walktalkmeditate.pilgrim.audio.model.StatFsFreeSpaceProbe
 import org.walktalkmeditate.pilgrim.audio.model.UnmeteredNetworkProbe
+import org.walktalkmeditate.pilgrim.audio.model.WalkRepositoryPendingTranscriptionWalkSource
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadSpec
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelScope
+import org.walktalkmeditate.pilgrim.audio.model.WorkManagerWhisperModelDownloadScheduler
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -34,12 +41,32 @@ abstract class TranscriptionModule {
         impl: WorkManagerTranscriptionScheduler,
     ): TranscriptionScheduler
 
-    /** Placeholder until U9's download scheduler replaces this binding. */
+    @Binds
+    @Singleton
+    abstract fun bindWhisperModelDownloadScheduler(
+        impl: WorkManagerWhisperModelDownloadScheduler,
+    ): WhisperModelDownloadScheduler
+
+    /**
+     * The scheduler doubles as the store's work source — one WorkInfo
+     * observation feeds both the UI-facing scheduling surface and the
+     * state composition.
+     */
     @Binds
     @Singleton
     abstract fun bindModelDownloadWorkSource(
-        impl: NoOpModelDownloadWorkSource,
+        impl: WorkManagerWhisperModelDownloadScheduler,
     ): ModelDownloadWorkSource
+
+    @Binds
+    @Singleton
+    abstract fun bindFreeSpaceProbe(impl: StatFsFreeSpaceProbe): FreeSpaceProbe
+
+    @Binds
+    @Singleton
+    abstract fun bindPendingTranscriptionWalkSource(
+        impl: WalkRepositoryPendingTranscriptionWalkSource,
+    ): PendingTranscriptionWalkSource
 
     @Binds
     @Singleton
@@ -61,5 +88,14 @@ abstract class TranscriptionModule {
         @WhisperModelScope
         fun provideWhisperModelScope(): CoroutineScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        @Provides
+        @Singleton
+        fun provideWhisperModelDownloadSpec(): WhisperModelDownloadSpec =
+            WhisperModelDownloadSpec(
+                url = WhisperModelConfig.CDN_URL,
+                expectedBytes = WhisperModelConfig.EXPECTED_BYTES,
+                expectedSha256 = WhisperModelConfig.EXPECTED_SHA256,
+            )
     }
 }
