@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -9,37 +10,40 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
- * iOS parity `StonePlacementSheet.swift@db4196e` — ModalBottomSheet at
+ * iOS parity `StonePlacementSheet.swift@9a418e4` — ModalBottomSheet at
  * medium detent (the M3 PartiallyExpanded ~50% height). No text input,
  * no expiry picker: tap "Place Stone" → caller fires the HTTP round
  * trip with server-confirm-then-haptic ordering.
  *
- * Two branches per iOS:
- *  - [nearbyCairn] != null → "Add your stone to this cairn" + stone
- *    count. SF symbol `mountain.2.fill` for tier >= medium (>= 7
- *    stones), else `mountain.2`.
- *  - [nearbyCairn] == null → "Start a new cairn here".
+ * Two branches per iOS, each carrying the tier the walker's stone
+ * makes (U16 glyph spec `docs/parity/2026-07-27-port-glyph-sheets-u16.md`):
+ *  - [nearbyCairn] != null → becoming-tier art (96dp) + stone count +
+ *    "Add your stone to this cairn".
+ *  - [nearbyCairn] == null → ghosted faint-tier art (112dp, alpha 0.4 —
+ *    view alpha, never a tint: the baked-color art ignores tints and
+ *    "not yet placed" must still read as ghost) + "Start a new cairn
+ *    here".
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,15 +73,18 @@ fun StonePlacementSheet(
                 style = pilgrimType.heading,
                 color = pilgrimColors.ink,
             )
-            Icon(
-                imageVector = Icons.Outlined.Terrain,
-                contentDescription = null,
-                tint = if (nearbyCairn != null) pilgrimColors.stone else pilgrimColors.moss,
-                modifier = Modifier.size(56.dp),
-            )
             if (nearbyCairn != null) {
-                // Existing-cairn branch: show stone count + "Add your
-                // stone" copy. iOS `StonePlacementSheet.swift:43-61`.
+                // Existing-cairn branch: becoming-tier art + stone count
+                // + "Add your stone" copy. iOS `existingCairnSection`.
+                val becoming = nearbyCairn.becomingTier
+                Image(
+                    painter = painterResource(becoming.glyphRes),
+                    contentDescription = stringResource(
+                        R.string.stone_sheet_becomes_a11y,
+                        stringResource(becoming.displayNameWithArticleRes),
+                    ),
+                    modifier = Modifier.size(96.dp),
+                )
                 Text(
                     text = if (nearbyCairn.stoneCount == 1) {
                         stringResource(R.string.stone_sheet_existing_count_one)
@@ -98,6 +105,15 @@ fun StonePlacementSheet(
                     textAlign = TextAlign.Center,
                 )
             } else {
+                // New-cairn branch: a first stone always begins a faint
+                // cairn; ghost via view alpha. iOS `newCairnSection`.
+                Image(
+                    painter = painterResource(CairnTier.Faint.glyphRes),
+                    contentDescription = stringResource(R.string.stone_sheet_begins_a11y),
+                    modifier = Modifier
+                        .size(112.dp)
+                        .alpha(0.4f),
+                )
                 Text(
                     text = stringResource(R.string.stone_sheet_message),
                     style = pilgrimType.body,

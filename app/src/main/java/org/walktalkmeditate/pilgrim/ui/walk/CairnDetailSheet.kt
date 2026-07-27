@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.text.format.DateUtils
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,12 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Terrain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -25,8 +23,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -43,14 +43,16 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 
 /**
- * iOS parity `CairnDetailView.swift@v1.6.0` — medium-detent
+ * iOS parity `CairnDetailView.swift@9a418e4` — medium-detent
  * ModalBottomSheet shown when the user taps a cairn pin on the map.
- * Read-only summary: tier kanji watermark + scaled mountain glyph +
+ * Read-only summary: tier kanji watermark + the tier's vector master
+ * (U16 glyph spec `docs/parity/2026-07-27-port-glyph-sheets-u16.md`) +
  * stone count + tier description + first/last-stone relative times +
  * progress toward the next tier (or the eternal 108 badge).
  *
  * Deferred (decorative, not parity-critical): the breathing-scale
- * animation + radial glow ring for great+ tiers.
+ * animation, entry spring, and radial glow ring for great+ tiers
+ * (shipped iOS glow: 260dp frame, 116-130 breathing radius).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,7 +73,9 @@ fun CairnDetailSheet(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
         ) {
-            // Hero: faint tier kanji watermark behind a tier-scaled glyph.
+            // Hero: faint tier kanji watermark behind the tier's vector
+            // master, at the per-tier sizes iOS ships (64..136dp — the
+            // doubled table, U16 glyph spec L4).
             Box(contentAlignment = Alignment.Center) {
                 Text(
                     text = tierKanji(cairn.tier),
@@ -81,16 +85,15 @@ fun CairnDetailSheet(
                     color = pilgrimColors.stone.copy(
                         alpha = 0.04f + cairn.tier.ordinal * 0.006f,
                     ),
+                    modifier = Modifier.clearAndSetSemantics {},
                 )
-                val glyphSizeDp = 32 + cairn.tier.ordinal * 6
-                Icon(
-                    imageVector = Icons.Outlined.Terrain,
-                    contentDescription = null,
-                    tint = if (cairn.tier.ordinal >= CairnTier.Great.ordinal) {
-                        pilgrimColors.stone
-                    } else {
-                        pilgrimColors.moss
-                    },
+                val glyphSizeDp = 64 + cairn.tier.ordinal * 12
+                Image(
+                    painter = painterResource(cairn.tier.glyphRes),
+                    contentDescription = stringResource(
+                        R.string.cairn_detail_hero_a11y,
+                        stringResource(cairn.tier.displayNameWithArticleRes),
+                    ),
                     modifier = Modifier.size(glyphSizeDp.dp),
                 )
             }
