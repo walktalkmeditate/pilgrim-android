@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.data.walk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -86,5 +87,23 @@ class MapAnnotationsTest {
         // Closest to t=850 is sample at t=900 (lat=3.0)
         assertEquals(3.0, voiceAnn.latitude, 0.0001)
         assertEquals(50L, (voiceAnn.kind as WalkMapAnnotationKind.VoiceRecording).durationMillis)
+    }
+
+    private fun cairnKind(tier: Int) =
+        WalkMapAnnotationKind.Cairn(cairnId = "c", stoneCount = 1, tier = tier)
+
+    @Test fun resolvedTier_roundTripsEveryEncodedTier() {
+        CairnTier.entries.forEach { tier ->
+            assertEquals(tier, cairnKind(tier.ordinal + 1).resolvedTier)
+        }
+    }
+
+    @Test fun resolvedTier_clampsBelowRangeToFaint() {
+        assertEquals(CairnTier.Faint, cairnKind(0).resolvedTier)
+    }
+
+    @Test fun resolvedTier_clampsAboveRangeToEternal() {
+        assertEquals(CairnTier.Eternal, cairnKind(8).resolvedTier)
+        assertEquals(CairnTier.Eternal, cairnKind(99).resolvedTier)
     }
 }

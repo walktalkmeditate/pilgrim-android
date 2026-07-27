@@ -13,6 +13,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -156,6 +157,51 @@ class MapGlyphBitmapsTest {
     }
 
     @Test
+    fun `density change evicts the previous density's entries`() {
+        val wispAtA = requireNotNull(MapGlyphBitmaps.wisp(context, TINT_RED, 28f, 2f))
+        MapGlyphBitmaps.cairn(context, CairnTier.Faint, 24f, 2f)
+        assertEquals(2, MapGlyphBitmaps.cacheSize())
+
+        MapGlyphBitmaps.wisp(context, TINT_RED, 28f, 3f)
+        assertEquals(1, MapGlyphBitmaps.cacheSize())
+
+        val wispAtAAgain = requireNotNull(MapGlyphBitmaps.wisp(context, TINT_RED, 28f, 2f))
+        assertNotSame(wispAtA, wispAtAAgain)
+    }
+
+    @Test
+    fun `translucent wisp tint is rejected`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            MapGlyphBitmaps.wisp(context, 0x80FF0000.toInt(), 28f, 2f)
+        }
+    }
+
+    @Test
+    fun `every glyph fills a conservative fraction of its canvas`() {
+        val fractions = buildMap {
+            val wisp = requireNotNull(MapGlyphBitmaps.wisp(context, TINT_RED, 48f, 1f))
+            put("wisp", coverageFraction(wisp))
+            CairnTier.entries.forEach { tier ->
+                val cairn = requireNotNull(MapGlyphBitmaps.cairn(context, tier, 48f, 1f))
+                put("cairn-$tier", coverageFraction(cairn))
+            }
+        }
+        println("glyph coverage fractions: $fractions")
+        fractions.forEach { (name, fraction) ->
+            assertTrue(
+                "$name fills only $fraction of its canvas (floor $MIN_COVERAGE_FRACTION) — " +
+                    "a vector <group> translate likely shoved the art off-canvas",
+                fraction >= MIN_COVERAGE_FRACTION,
+            )
+        }
+    }
+
+    private fun coverageFraction(bitmap: Bitmap): Float {
+        val px = pixels(bitmap)
+        return px.count { it ushr 24 != 0 } / px.size.toFloat()
+    }
+
+    @Test
     fun `cairn cache is insensitive to a theme flip`() {
         val day = MapGlyphBitmaps.cairn(context, CairnTier.Sacred, 34f, 2f)
         val nightConfig = Configuration(context.resources.configuration).apply {
@@ -194,5 +240,13 @@ class MapGlyphBitmapsTest {
 
     private companion object {
         const val TINT_RED = 0xFFFF0000.toInt()
+
+        /**
+         * Guards translate-group clipping regressions (art shoved off
+         * the raster), not visual quality. Measured at 48px on
+         * 2026-07-27: wisp 0.112 (the minimum), cairns 0.251-0.479 —
+         * pinned at half the measured minimum for headroom.
+         */
+        const val MIN_COVERAGE_FRACTION = 0.05f
     }
 }

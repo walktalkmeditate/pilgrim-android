@@ -78,4 +78,23 @@ class PilgrimMapWaypointOverlapTest {
         val bitmap = createPuckBitmap(0xFF8B7355.toInt())
         assertEquals(Bitmap.Config.ARGB_8888, bitmap.config)
     }
+
+    @Test
+    fun `icon-less proximity pin options build without withIconImage`() {
+        // The glyph-degrade branch in PilgrimMap's proximity sync: when
+        // the drawable is missing, the options carry point + iconSize +
+        // invisible routing text and never call withIconImage. Same
+        // builder lock-down as above for this second call pattern.
+        val options = PointAnnotationOptions()
+            .withPoint(Point.fromLngLat(139.7, 35.6))
+            .withIconSize(1.0)
+            .withTextField("pin-id")
+            .withTextOpacity(0.0)
+            .withTextSize(0.0)
+
+        val geometry = options.getGeometry()
+        assertNotNull(geometry)
+        assertEquals(139.7, geometry!!.longitude(), 1e-9)
+        assertEquals(35.6, geometry.latitude(), 1e-9)
+    }
 }

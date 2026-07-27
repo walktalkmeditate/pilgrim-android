@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.annotation.VisibleForTesting
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory
@@ -1016,9 +1017,11 @@ internal fun PilgrimMap(
                     // iOS parity `PilgrimMapView.buildPoints@9a418e4` —
                     // the U13 vector masters: mood-tinted wisp, per-tier
                     // cairn art at its shipped size. Sizing lives in the
-                    // raster; iconSize stays 1.0 (a null bitmap leaves
-                    // the pin icon-less but still tappable, matching
-                    // iOS's `if let image` degrade path).
+                    // raster; iconSize stays 1.0. An icon-less annotation
+                    // renders nothing and cannot be tapped (Mapbox Android
+                    // hit-tests icon/text quads only, and the routing text
+                    // below is size 0); the null branch exists solely so a
+                    // missing drawable degrades without crashing.
                     val bitmap: Bitmap? = when (pin) {
                         is ProximityPinFilter.Pin.Whisper ->
                             whisperGlyphBitmaps[packArgbLong(pin.category.borderColor)]
@@ -1192,7 +1195,8 @@ private val UNRESOLVED_WHISPER_TINT = Color(UNRESOLVED_WHISPER_ARGB)
  * [org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind.Whisper.categoryColor]
  * carries, so both map render sites key the whisper-glyph cache identically.
  */
-private fun packArgbLong(c: Color): Long {
+@VisibleForTesting
+internal fun packArgbLong(c: Color): Long {
     val a = (c.alpha * 255f).toInt() and 0xFF
     val r = (c.red * 255f).toInt() and 0xFF
     val g = (c.green * 255f).toInt() and 0xFF

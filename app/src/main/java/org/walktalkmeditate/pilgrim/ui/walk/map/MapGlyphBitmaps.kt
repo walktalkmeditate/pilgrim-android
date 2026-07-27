@@ -39,8 +39,22 @@ object MapGlyphBitmaps {
 
     private val cache = HashMap<String, Bitmap>()
 
-    fun wisp(context: Context, tintArgb: Int, sizeDp: Float, density: Float): Bitmap? =
-        rendered(
+    /**
+     * Every cache key embeds a density, so a density change (display
+     * move, foldable posture) strands the old density's entries as
+     * unreachable Bitmaps. Realistic density count per process is 1-2
+     * and the full set rebuilds in milliseconds, so wholesale clear on
+     * change beats per-key eviction.
+     */
+    private var lastDensity: Float? = null
+
+    fun wisp(context: Context, tintArgb: Int, sizeDp: Float, density: Float): Bitmap? {
+        require(tintArgb ushr 24 == 0xFF) {
+            "wisp tint must be opaque: cache keys are RGB-only (the documented " +
+                "fixed-opaque WhisperCategory assumption), so translucent tints " +
+                "would collide with their opaque counterparts"
+        }
+        return rendered(
             context = context,
             drawableId = R.drawable.glyph_whisper_wisp,
             tintArgb = tintArgb,
@@ -56,6 +70,7 @@ object MapGlyphBitmaps {
             sizeDp = sizeDp,
             density = density,
         )
+    }
 
     fun cairn(context: Context, tier: CairnTier, sizeDp: Float, density: Float): Bitmap? =
         rendered(
@@ -76,6 +91,10 @@ object MapGlyphBitmaps {
         sizeDp: Float,
         density: Float,
     ): Bitmap? {
+        if (lastDensity != density) {
+            if (lastDensity != null) cache.clear()
+            lastDensity = density
+        }
         cache[key]?.let { return it }
         val drawable = try {
             ContextCompat.getDrawable(context, drawableId)
@@ -107,7 +126,11 @@ object MapGlyphBitmaps {
     @VisibleForTesting
     internal fun clearCache() {
         cache.clear()
+        lastDensity = null
     }
+
+    @VisibleForTesting
+    internal fun cacheSize(): Int = cache.size
 
 }
 
