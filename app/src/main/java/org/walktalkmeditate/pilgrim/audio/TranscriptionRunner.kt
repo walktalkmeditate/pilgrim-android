@@ -7,6 +7,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 
 /**
@@ -22,6 +24,8 @@ class TranscriptionRunner @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: WalkRepository,
     private val engine: WhisperEngine,
+    private val modelStore: WhisperModelStore,
+    private val modelDownloadScheduler: WhisperModelDownloadScheduler,
 ) {
     suspend fun transcribePending(walkId: Long): Result<Int> {
         val pending = try {
@@ -30,6 +34,24 @@ class TranscriptionRunner @Inject constructor(
             throw ce
         } catch (t: Throwable) {
             return Result.failure(t)
+        }
+        if (pending.isNotEmpty() && modelStore.readyModelPath() == null) {
+            // No usable model on disk (fresh v1.3.0 install pre-delivery,
+            // or a D2D/restore artifact). Self-heal instead of spinning:
+            // (re-)enqueue the download — KEEP dedupes onto pending work
+            // and the scheduler's FAILED/SUCCEEDED gate holds — and
+            // return the same ModelLoadFailed the worker maps to retry,
+            // so the backoff lands after the model can exist. Genuine
+            // load failures of a PRESENT model keep the plain
+            // escalation below (U10 spec L1).
+            try {
+                modelDownloadScheduler.ensureEnqueued()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "model download enqueue failed", t)
+            }
+            return Result.failure(WhisperError.ModelLoadFailed())
         }
         val filesRoot = context.filesDir.toPath().toAbsolutePath().normalize()
         var count = 0
@@ -86,7 +108,7 @@ class TranscriptionRunner @Inject constructor(
                 )
             }
         } finally {
-            // AF33: release the ~75 MB whisper model after the batch — covers
+            // AF33: release the whisper model's native memory after the batch — covers
             // normal completion, the ModelLoadFailed early return, and
             // cancellation. unloadModel is a no-op when nothing was loaded.
             // (A concurrent batch that was blocked on the engine's nativeLock

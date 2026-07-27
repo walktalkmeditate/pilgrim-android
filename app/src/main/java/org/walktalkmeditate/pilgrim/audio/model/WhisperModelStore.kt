@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.audio.model
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.nio.file.Files
@@ -21,6 +22,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -108,6 +111,7 @@ open class WhisperModelStore @Inject constructor(
 ) {
     private val filesDir: Path = context.filesDir.toPath()
     private val invalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val tinyCleanupMutex = Mutex()
 
     val state: StateFlow<WhisperModelState> =
         combine(
@@ -131,12 +135,32 @@ open class WhisperModelStore @Inject constructor(
     /**
      * Success hook the U9 download worker invokes after the verified
      * base model's sha marker lands (marker-last ordering, spec L4).
-     * U10 implements the atomic engine switch + legacy-tiny delete
-     * behind this; until then it is a deliberate no-op — the worker's
-     * separate [invalidate] call is what re-probes [state] to
-     * `Ready(Base)`.
+     * The Android analogue of iOS `purgeStaleModels(around:)` — the
+     * sibling variant is reclaimed only after its replacement is proven
+     * (U10 spec L1). Sequencing invariant: the verified base exists on
+     * disk BEFORE the tiny is deleted, re-checked here via the same
+     * probe the resolver uses, so a misordered caller can never open a
+     * no-model window. The delete routes through the same
+     * [WhisperModelConfig.legacyTinyPath] the resolver reads
+     * (write/delete coupling). Must never take
+     * `ModelDownloadFiles.writerMutex` — the worker invokes this hook
+     * while holding it.
      */
-    open suspend fun onBaseVerified() = Unit
+    open suspend fun onBaseVerified() {
+        tinyCleanupMutex.withLock {
+            withContext(Dispatchers.IO) {
+                if (!baseVerified()) return@withContext
+                try {
+                    Files.deleteIfExists(WhisperModelConfig.legacyTinyPath(filesDir))
+                } catch (io: IOException) {
+                    // A surviving tiny only wastes storage: the resolver
+                    // already prefers the verified base.
+                    Log.w(TAG, "legacy tiny delete failed", io)
+                }
+            }
+        }
+        invalidate()
+    }
 
     /**
      * The model the engine should load right now: verified base
@@ -203,4 +227,8 @@ open class WhisperModelStore @Inject constructor(
         val baseVerified: Boolean,
         val tinyPresent: Boolean,
     )
+
+    private companion object {
+        const val TAG = "WhisperModelStore"
+    }
 }

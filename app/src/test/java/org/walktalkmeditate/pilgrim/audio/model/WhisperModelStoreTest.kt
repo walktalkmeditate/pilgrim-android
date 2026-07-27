@@ -113,9 +113,9 @@ class WhisperModelStoreTest {
 
     /**
      * The transitional resolver must find the exact file the v1.2.0
-     * [org.walktalkmeditate.pilgrim.audio.WhisperModelInstaller] wrote
-     * (`whisper-model/ggml-tiny.en.bin`, flat, no variant directory) —
-     * U10 deletes the installer, so the literal is pinned here.
+     * asset installer wrote (`whisper-model/ggml-tiny.en.bin`, flat, no
+     * variant directory) — U10 deleted the installer, so the literal is
+     * pinned here.
      */
     @Test fun `legacy tiny path matches the installer's flat layout`() {
         val filesDir = context.filesDir.toPath()
@@ -285,6 +285,43 @@ class WhisperModelStoreTest {
     @Test fun `readyModelPath rejects an unverified base file`() = runTest {
         writeSparse(baseModelFile(), WhisperModelConfig.EXPECTED_BYTES)
         assertNull(buildStore().readyModelPath())
+    }
+
+    // iOS parity: purgeStaleModels reclaims the sibling variant only
+    // after the replacement is proven (U10 spec L1). The delete goes
+    // through WhisperModelConfig.legacyTinyPath — the same function the
+    // resolver reads — pinned by asserting the flat-path file is gone.
+    @Test fun `onBaseVerified deletes the legacy tiny and resolves base afterward`() = runTest {
+        installVerifiedBase()
+        installLegacyTiny()
+        val store = buildStore()
+
+        store.onBaseVerified()
+
+        assertFalse("tiny must be deleted after the verified switch", legacyTinyFile().exists())
+        assertEquals(
+            WhisperModelConfig.baseModelPath(context.filesDir.toPath()),
+            store.readyModelPath(),
+        )
+        val state = awaitState(store) { it is WhisperModelState.Ready }
+        assertEquals(WhisperModelState.Ready(WhisperModelVariant.Base), state)
+    }
+
+    // Sequencing invariant (U10 spec L1): the verified base must exist
+    // BEFORE the tiny is deleted — a misordered caller can never open a
+    // no-model window. iOS: "never removes the working model before its
+    // replacement is proven".
+    @Test fun `onBaseVerified without a verified base never deletes the tiny`() = runTest {
+        installLegacyTiny()
+        val store = buildStore()
+
+        store.onBaseVerified()
+
+        assertTrue("tiny must survive while base is unproven", legacyTinyFile().exists())
+        assertEquals(
+            WhisperModelConfig.legacyTinyPath(context.filesDir.toPath()),
+            store.readyModelPath(),
+        )
     }
 
     @Test fun `connectivity probe with no active network reads false`() {

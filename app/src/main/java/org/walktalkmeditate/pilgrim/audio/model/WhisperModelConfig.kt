@@ -31,10 +31,10 @@ object WhisperModelConfig {
     const val LEGACY_TINY_FILE_NAME = "ggml-tiny.en.bin"
 
     /**
-     * Exact byte size of the v1.2.0 bundled tiny asset. The installer
-     * compared against the asset at runtime; once U10 removes the asset
-     * from the APK, this constant is the only remaining ground truth
-     * for the transitional exact-size probe.
+     * Exact byte size of the v1.2.0 bundled tiny asset. The v1.2.0
+     * installer compared against the asset at runtime; with U10 the
+     * asset and installer are gone, so this constant is the only
+     * remaining ground truth for the transitional exact-size probe.
      */
     const val LEGACY_TINY_EXPECTED_BYTES = 77_704_715L
 
@@ -71,9 +71,10 @@ object WhisperModelConfig {
         filesDir.resolve(MODEL_ROOT_DIR).resolve(VARIANT).resolve(FILE_NAME + ETAG_SUFFIX)
 
     /**
-     * The flat pre-base path `WhisperModelInstaller` populated on
-     * v1.2.0 installs — deliberately NOT variant-keyed, so existing
-     * installs are found without migration.
+     * The flat pre-base path the v1.2.0 asset installer populated —
+     * deliberately NOT variant-keyed, so existing installs are found
+     * without migration. U10's [org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore.onBaseVerified]
+     * deletes through this same function.
      */
     fun legacyTinyPath(filesDir: Path): Path =
         filesDir.resolve(MODEL_ROOT_DIR).resolve(LEGACY_TINY_FILE_NAME)
