@@ -8,8 +8,9 @@ package org.walktalkmeditate.pilgrim.data.cairn
  * detail hero (not on the map pin); `glows` is only true for
  * [Eternal] (gates a radial gradient halo in CairnDetailView).
  *
- * Map-pin size is computed separately as `12 + ordinal` (12..18 dp)
- * — different formula from `circleRadius` to keep map pins ambient.
+ * Map-pin size is computed separately (`cairnGlyphSizeDp`, 24..36 dp
+ * per tier @9a418e4) — different formula from `circleRadius` to keep
+ * map pins ambient.
  */
 enum class CairnTier(
     val minStones: Int,

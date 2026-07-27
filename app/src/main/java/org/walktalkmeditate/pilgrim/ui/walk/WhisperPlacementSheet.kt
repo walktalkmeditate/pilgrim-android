@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,6 +33,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -215,6 +218,15 @@ private fun CategoryRow(
                 tint = category.borderColor,
             )
         }
+        // iOS parity `WhisperPlacementSheet.swift@9a418e4` categoryRow —
+        // the wisp template tinted per mood, decorative (the row carries
+        // the mood name). U16 glyph spec L5.
+        Image(
+            painter = painterResource(R.drawable.glyph_whisper_wisp),
+            contentDescription = null,
+            colorFilter = ColorFilter.tint(category.borderColor),
+            modifier = Modifier.size(20.dp),
+        )
         Text(
             text = stringResource(category.labelRes()),
             style = pilgrimType.body.copy(fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal),
