@@ -540,4 +540,141 @@ class ContextFormatterTest {
         val result = ContextFormatter.formatCelestial(snapshot)
         assertEquals("**Celestial Context (Tropical):**  | Hour of Sun", result)
     }
+
+    // --- formatPauses --------------------------------------------------------
+
+    @Test
+    fun `formatPauses empty is null`() {
+        assertNull(ContextFormatter.formatPauses(emptyList(), nyZone))
+    }
+
+    @Test
+    fun `formatPauses names count total and longest`() {
+        val pauses = listOf(
+            PauseContext(startDate = nyTimestamp(2024, 6, 15, 9, 10), durationSeconds = 180L),
+            PauseContext(startDate = nyTimestamp(2024, 6, 15, 9, 40), durationSeconds = 300L),
+        )
+        assertEquals(
+            "**Pauses:** Paused 2 times (8 min total); the longest, 5 min, began at 9:40 AM.",
+            ContextFormatter.formatPauses(pauses, nyZone),
+        )
+    }
+
+    @Test
+    fun `formatPauses sub-minute pauses are ignored`() {
+        val breath = PauseContext(startDate = nyTimestamp(2024, 6, 15, 9, 10), durationSeconds = 20L)
+        assertNull(
+            "a 20-second pause must not render as 'Paused 1 time (0 min total)'",
+            ContextFormatter.formatPauses(listOf(breath), nyZone),
+        )
+
+        val mixed = listOf(
+            breath,
+            PauseContext(startDate = nyTimestamp(2024, 6, 15, 9, 20), durationSeconds = 300L),
+        )
+        assertEquals(
+            "**Pauses:** Paused 1 time (5 min total); the longest, 5 min, began at 9:20 AM.",
+            ContextFormatter.formatPauses(mixed, nyZone),
+        )
+    }
+
+    @Test
+    fun `formatPauses duration tie resolves to the last pause`() {
+        val pauses = listOf(
+            PauseContext(startDate = nyTimestamp(2024, 6, 15, 9, 10), durationSeconds = 300L),
+            PauseContext(startDate = nyTimestamp(2024, 6, 15, 9, 40), durationSeconds = 300L),
+        )
+        assertEquals(
+            "Swift max(by:) returns the last maximal element (spec D5)",
+            "**Pauses:** Paused 2 times (10 min total); the longest, 5 min, began at 9:40 AM.",
+            ContextFormatter.formatPauses(pauses, nyZone),
+        )
+    }
+
+    // --- formatElevation -----------------------------------------------------
+
+    @Test
+    fun `formatElevation flat walk is null`() {
+        assertNull(ContextFormatter.formatElevation(ascent = 5.0, descent = 5.0, imperial = false))
+        assertNull(ContextFormatter.formatElevation(ascent = null, descent = null, imperial = false))
+    }
+
+    @Test
+    fun `formatElevation climb and descent named metric`() {
+        assertEquals(
+            "**Elevation:** climbed 120 m, descended 80 m.",
+            ContextFormatter.formatElevation(ascent = 120.0, descent = 80.0, imperial = false),
+        )
+    }
+
+    @Test
+    fun `formatElevation climb only when descent under threshold`() {
+        assertEquals(
+            "**Elevation:** climbed 120 m.",
+            ContextFormatter.formatElevation(ascent = 120.0, descent = 8.0, imperial = false),
+        )
+    }
+
+    @Test
+    fun `formatElevation imperial converts to feet`() {
+        assertEquals(
+            "**Elevation:** climbed 394 ft, descended 262 ft.",
+            ContextFormatter.formatElevation(ascent = 120.0, descent = 80.0, imperial = true),
+        )
+    }
+
+    // --- formatMetadata light crossing ---------------------------------------
+
+    @Test
+    fun `formatMetadata walk crossing into night names both hours`() {
+        val eveningStart = nyTimestamp(2024, 6, 15, 17, 30)
+        val moon = MoonPhase(name = "Waxing Crescent", illumination = 0.32, ageInDays = 4.5)
+        val result = ContextFormatter.formatMetadata(
+            durationSeconds = 10_800L,
+            distanceMeters = 9_000.0,
+            startTimestamp = eveningStart,
+            lunarPhase = moon,
+            imperial = false,
+            zone = nyZone,
+        )
+        assertTrue(
+            "crossing phrase: $result",
+            result.contains("Time: began in the evening, ended in the night, on Jun 15, 2024, 5:30 PM"),
+        )
+    }
+
+    @Test
+    fun `formatMetadata paused walk ends at wall-clock time of day`() {
+        val eveningStart = nyTimestamp(2024, 6, 15, 17, 30)
+        val moon = MoonPhase(name = "Waxing Crescent", illumination = 0.32, ageInDays = 4.5)
+        val result = ContextFormatter.formatMetadata(
+            durationSeconds = 7_200L,
+            distanceMeters = 6_000.0,
+            startTimestamp = eveningStart,
+            lunarPhase = moon,
+            imperial = false,
+            zone = nyZone,
+            pauseDurationSeconds = 3_600L,
+        )
+        assertTrue(
+            "an hour of pauses pushes the real end past the active-duration end: $result",
+            result.contains("ended in the night"),
+        )
+    }
+
+    @Test
+    fun `formatMetadata walk within one bucket keeps single time of day`() {
+        val morningStart = nyTimestamp(2024, 6, 15, 9, 0)
+        val moon = MoonPhase(name = "Waxing Crescent", illumination = 0.32, ageInDays = 4.5)
+        val result = ContextFormatter.formatMetadata(
+            durationSeconds = 1_800L,
+            distanceMeters = 2_000.0,
+            startTimestamp = morningStart,
+            lunarPhase = moon,
+            imperial = false,
+            zone = nyZone,
+        )
+        assertTrue("single bucket: $result", result.contains("morning on "))
+        assertTrue("no crossing phrase: $result", !result.contains("began in the"))
+    }
 }

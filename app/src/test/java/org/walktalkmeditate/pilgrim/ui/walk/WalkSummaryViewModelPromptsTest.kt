@@ -46,6 +46,7 @@ import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.core.prompt.ActivityContext
 import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
 import org.walktalkmeditate.pilgrim.core.prompt.GeneratedPrompt
+import org.walktalkmeditate.pilgrim.core.prompt.PracticeMode
 import org.walktalkmeditate.pilgrim.core.prompt.PromptStyle
 import org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
@@ -593,6 +594,11 @@ class WalkSummaryViewModelPromptsTest {
         celestial = null,
         photoContexts = emptyList(),
         narrativeArc = null,
+        mode = PracticeMode.Wander,
+        seekStory = null,
+        pauses = emptyList(),
+        ascentMeters = null,
+        descentMeters = null,
     )
 
     private fun stubPrompts(count: Int): List<GeneratedPrompt> {

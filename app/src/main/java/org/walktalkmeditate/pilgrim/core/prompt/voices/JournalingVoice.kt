@@ -17,4 +17,13 @@ object JournalingVoice : WalkPromptVoice {
         } else {
             "Help the walker create a journal entry from this silent walk. Use the walk's metadata — its timing, distance, pace, waypoints, and any meditation sessions — to reconstruct a narrative. What was the walk like? What might the walker have been thinking? Create a reflective entry they could return to, written in second person ('You walked...')."
         }
+
+    override fun responseConstraints(hasSpeech: Boolean): List<String> = listOf(
+        if (hasSpeech) {
+            "Write the entry in the walker's own first-person voice, keeping their phrasing where it lives."
+        } else {
+            "Keep the entry in second person, as a witness would write it."
+        },
+        "No meta-commentary about what you are doing — only the entry itself, ready to be reread years from now.",
+    )
 }

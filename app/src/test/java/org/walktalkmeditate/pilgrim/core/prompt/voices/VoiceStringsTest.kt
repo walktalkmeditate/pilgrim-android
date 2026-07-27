@@ -3,8 +3,130 @@ package org.walktalkmeditate.pilgrim.core.prompt.voices
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
+import org.walktalkmeditate.pilgrim.core.prompt.StandardPreamble
 
 class VoiceStringsTest {
+
+    @Test
+    fun standardPreamble_hasSpeech_true() {
+        assertEquals(
+            "These are voice recordings captured during a walk, transcribed as spoken. They represent unfiltered thoughts, observations, and feelings that surfaced while moving.",
+            StandardPreamble.text(hasSpeech = true),
+        )
+    }
+
+    @Test
+    fun standardPreamble_hasSpeech_false() {
+        assertEquals(
+            "This walk was taken in silence — no words were spoken, only movement. The walker chose presence over expression, letting the body speak through pace, pauses, and the places it was drawn to.",
+            StandardPreamble.text(hasSpeech = false),
+        )
+    }
+
+    @Test
+    fun contemplative_silentPreamble_isStandardPreamble() {
+        assertEquals(
+            StandardPreamble.text(hasSpeech = false),
+            ContemplativeVoice.preamble(hasSpeech = false),
+        )
+    }
+
+    @Test
+    fun customStyle_preamble_isStandardPreamble_bothBranches() {
+        val voice = CustomPromptStyleVoice(
+            CustomPromptStyle(title = "Letters", icon = "envelope", instruction = "Write a letter."),
+        )
+        assertEquals(StandardPreamble.text(hasSpeech = true), voice.preamble(hasSpeech = true))
+        assertEquals(StandardPreamble.text(hasSpeech = false), voice.preamble(hasSpeech = false))
+    }
+
+    @Test
+    fun customStyle_responseConstraints_empty() {
+        val voice = CustomPromptStyleVoice(
+            CustomPromptStyle(title = "Letters", icon = "envelope", instruction = "Write a letter."),
+        )
+        assertEquals(emptyList<String>(), voice.responseConstraints(hasSpeech = true))
+        assertEquals(emptyList<String>(), voice.responseConstraints(hasSpeech = false))
+    }
+
+    @Test
+    fun contemplative_responseConstraints() {
+        assertEquals(
+            listOf(
+                "Write in unhurried prose — no bullet points, no headings.",
+                "Ask at most one question, and let it be one worth carrying.",
+                "Do not summarize the walk back to the walker; they were there.",
+            ),
+            ContemplativeVoice.responseConstraints(hasSpeech = true),
+        )
+    }
+
+    @Test
+    fun reflective_responseConstraints() {
+        assertEquals(
+            listOf(
+                "Offer observations, not advice; name patterns tentatively rather than diagnosing.",
+                "Avoid therapy clichés — write in connected prose, not lists.",
+            ),
+            ReflectiveVoice.responseConstraints(hasSpeech = false),
+        )
+    }
+
+    @Test
+    fun creative_responseConstraints() {
+        assertEquals(
+            listOf(
+                "Reply with the piece itself — no introduction, no explanation of your choices.",
+                "Let the walk's rhythm shape the form; brevity is welcome.",
+            ),
+            CreativeVoice.responseConstraints(hasSpeech = true),
+        )
+    }
+
+    @Test
+    fun gratitude_responseConstraints() {
+        assertEquals(
+            listOf(
+                "Root every thanksgiving in something specific from this walk — no generic blessings.",
+                "Warm but plain language, in prose; never saccharine.",
+            ),
+            GratitudeVoice.responseConstraints(hasSpeech = true),
+        )
+    }
+
+    @Test
+    fun philosophical_responseConstraints() {
+        assertEquals(
+            listOf(
+                "Invoke thinkers or traditions only when they genuinely illuminate — never name-drop.",
+                "Write as a letter from a thoughtful friend, not a lecture, and end with one question that opens rather than closes.",
+            ),
+            PhilosophicalVoice.responseConstraints(hasSpeech = false),
+        )
+    }
+
+    @Test
+    fun journaling_responseConstraints_hasSpeech_true() {
+        assertEquals(
+            listOf(
+                "Write the entry in the walker's own first-person voice, keeping their phrasing where it lives.",
+                "No meta-commentary about what you are doing — only the entry itself, ready to be reread years from now.",
+            ),
+            JournalingVoice.responseConstraints(hasSpeech = true),
+        )
+    }
+
+    @Test
+    fun journaling_responseConstraints_hasSpeech_false() {
+        assertEquals(
+            listOf(
+                "Keep the entry in second person, as a witness would write it.",
+                "No meta-commentary about what you are doing — only the entry itself, ready to be reread years from now.",
+            ),
+            JournalingVoice.responseConstraints(hasSpeech = false),
+        )
+    }
 
     @Test
     fun contemplative_preamble_hasSpeech_true() {

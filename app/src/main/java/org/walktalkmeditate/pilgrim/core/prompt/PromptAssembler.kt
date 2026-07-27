@@ -11,22 +11,29 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
  * pieces produced by [ContextFormatter] into the single LLM-facing
  * prompt the AI Prompts sheet sends to Anthropic.
  *
- * **Section order (matches iOS exactly):**
- *  1. Voice preamble
+ * **Section order (matches iOS exactly — U12 template, spec
+ * `docs/parity/2026-07-26-port-prompt-pipeline-u12.md`):**
+ *  1. Voice preamble (+ [WalkCharacter] note appended when non-null)
  *  2. `---` divider
- *  3. `**Context:** ...metadata...` (one line)
+ *  3. `**Context:** ...metadata...` (one line, light-crossing phrase
+ *     when start/end time-of-day buckets differ)
  *  4. ` | <weather>` appended inline to (3) when present
  *  5. Celestial block (`**Celestial Context (...):** ...`)
- *  6. Intention prologue block
- *  7. Location block (`**Location:** ...`)
- *  8. Pace block (`**Pace:** ...`)
- *  9. Waypoints block (`**Waypoints marked during walk:**`)
- *  10. Photos block (`**Photos pinned along the walk:**`)
- *  11. Walking transcription block
- *  12. Meditation sessions block
- *  13. Recent walk context block
- *  14. `---` divider
- *  15. Voice instruction (with intention tail when intention is set)
+ *  6. Practice lexicon (`**About this practice:** ...`, always present)
+ *  7. Intention prologue block
+ *  8. Location block (`**Location:** ...`)
+ *  9. Pace block (`**Pace:** ...`)
+ *  10. Pauses block (`**Pauses:** ...`)
+ *  11. Elevation block (`**Elevation:** ...`)
+ *  12. Waypoints block (`**Waypoints marked during walk:**`)
+ *  13. Photos block (`**Photos pinned along the walk:**`)
+ *  14. Walking transcription block
+ *  15. Meditation sessions block
+ *  16. Recent walk context block
+ *  17. Attention directives (`**Attend to:**` bullets, gated)
+ *  18. `---` divider
+ *  19. Voice instruction (with intention tail when intention is set)
+ *  20. Response contract (`**How to respond:**` bullets, always present)
  *
  * Each gated block is rendered iff its source data is present /
  * non-empty / above its own threshold; the iOS template uses the same
@@ -125,16 +132,26 @@ object PromptAssembler {
             lunarPhase = lunarPhase,
             imperial = imperial,
             zone = zone,
+            pauseDurationSeconds = context.pauses.sumOf { it.durationSeconds },
         )
         val location = ContextFormatter.formatPlaceNames(context.placeNames)
         val pace = ContextFormatter.formatPaceContext(context.routeSpeeds, imperial)
+        val pauses = ContextFormatter.formatPauses(context.pauses, zone)
+        val elevation = ContextFormatter.formatElevation(
+            ascent = context.ascentMeters,
+            descent = context.descentMeters,
+            imperial = imperial,
+        )
         val recentWalks = ContextFormatter.formatRecentWalks(
             snippets = context.recentWalkSnippets,
             weatherLabel = weatherLabel,
             zone = zone,
         )
 
-        val preamble = voice.preamble(context.hasSpeech)
+        val preamble = StringBuilder(voice.preamble(context.hasSpeech))
+        WalkCharacter.note(context, zone)?.let { characterNote ->
+            preamble.append(' ').append(characterNote)
+        }
         val instruction = voice.instruction(context.hasSpeech)
 
         val sections = StringBuilder()
@@ -151,6 +168,8 @@ object PromptAssembler {
             sections.append("\n\n").append(ContextFormatter.formatCelestial(celestial))
         }
 
+        sections.append("\n\n").append(practiceLexicon(context, zone))
+
         context.intention?.let { intention ->
             sections.append("\n\n**The walker's intention:** \"")
                 .append(intention)
@@ -161,6 +180,8 @@ object PromptAssembler {
 
         location?.let { sections.append("\n\n").append(it) }
         pace?.let { sections.append("\n\n").append(it) }
+        pauses?.let { sections.append("\n\n").append(it) }
+        elevation?.let { sections.append("\n\n").append(it) }
 
         if (context.waypoints.isNotEmpty()) {
             sections.append("\n\n**Waypoints marked during walk:**\n")
@@ -192,6 +213,12 @@ object PromptAssembler {
             sections.append("\n\n").append(block)
         }
 
+        val directives = AttentionDirectives.detect(context)
+        if (directives.isNotEmpty()) {
+            sections.append("\n\n**Attend to:**\n")
+                .append(directives.joinToString(separator = "\n") { "- $it" })
+        }
+
         val fullInstruction = StringBuilder(instruction)
         context.intention?.let { intention ->
             fullInstruction.append(" Ground your response in the walker's stated intention: '")
@@ -201,7 +228,72 @@ object PromptAssembler {
         }
 
         sections.append("\n\n---\n\n").append(fullInstruction)
+        sections.append("\n\n").append(responseContract(voice, context.hasSpeech))
         return sections.toString()
+    }
+
+    /**
+     * Teaches the downstream model the walk's ritual grammar in Pilgrim's
+     * own vocabulary, so route and pace data read as practice, not as
+     * fitness telemetry. Seek walks carry their story; a zero-arrival seek
+     * is named, not hidden.
+     */
+    internal fun practiceLexicon(context: ActivityContext, zone: ZoneId): String =
+        when (context.mode) {
+            PracticeMode.Wander ->
+                "**About this practice:** This walk was a wander — no destination, no goal; " +
+                    "the path chose itself."
+            PracticeMode.Seek -> {
+                val text = StringBuilder(
+                    "**About this practice:** This walk was a Seek. The walker surrendered the " +
+                        "choice of destination: a seed cast hidden clearings across the map, " +
+                        "veiled in fog, revealed only by nearness and stillness. Arriving is " +
+                        "not achievement; it is consent to be led.",
+                )
+                val arrivals = context.seekStory?.arrivalTimes
+                if (arrivals != null) {
+                    if (arrivals.isEmpty()) {
+                        text.append(
+                            " No clearing was reached this time — the seek honors this too; " +
+                                "some walks are about the looking.",
+                        )
+                    } else if (arrivals.size == 1) {
+                        val hour = ContextFormatter.timeOfDayDescription(arrivals.first(), zone)
+                        text.append(" One clearing was found, reached in the $hour.")
+                    } else {
+                        val first = ContextFormatter.timeOfDayDescription(arrivals.first(), zone)
+                        val last = ContextFormatter.timeOfDayDescription(arrivals.last(), zone)
+                        text.append(
+                            " ${arrivals.size} clearings were found — the first in the $first, " +
+                                "the last in the $last.",
+                        )
+                    }
+                }
+                text.toString()
+            }
+        }
+
+    /**
+     * The closing contract every prompt carries: what the response may not
+     * do (invent, flatten, switch language) plus the voice's own form
+     * constraints. This shapes the *reply's* quality — the part of the
+     * feature the walker actually experiences.
+     */
+    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean): String {
+        val lines = voice.responseConstraints(hasSpeech).toMutableList()
+        if (hasSpeech) {
+            lines.add("Respond in the language the walker speaks in the transcription.")
+            lines.add(
+                "If more than one voice appears in the transcription, honor it as a " +
+                    "conversation — attend to what happened between the speakers, and never " +
+                    "guess at names.",
+            )
+        }
+        lines.add(
+            "Draw only on what this walk actually holds — never invent details, events, or " +
+                "memories that are not in the context above.",
+        )
+        return "**How to respond:**\n" + lines.joinToString(separator = "\n") { "- $it" }
     }
 
     private fun formatPhotoSection(

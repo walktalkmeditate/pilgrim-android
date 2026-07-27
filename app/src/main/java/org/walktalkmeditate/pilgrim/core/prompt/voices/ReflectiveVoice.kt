@@ -17,4 +17,9 @@ object ReflectiveVoice : WalkPromptVoice {
         } else {
             "Read the shape of this walk — its pace, its pauses, its waypoints — as you would read a text. What patterns do you see? What might the walker have been processing? What does the choice of silence itself suggest? Offer observations that help them understand themselves."
         }
+
+    override fun responseConstraints(hasSpeech: Boolean): List<String> = listOf(
+        "Offer observations, not advice; name patterns tentatively rather than diagnosing.",
+        "Avoid therapy clichés — write in connected prose, not lists.",
+    )
 }
