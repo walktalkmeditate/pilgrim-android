@@ -47,16 +47,20 @@ folder).
 - **Source:** Same as whisper.cpp (ggml subtree at the same tag)
 - **Usage:** Tensor library used by whisper.cpp.
 
-### ggml-tiny.en Whisper model
+### ggml-base Whisper model
 
 - **Copyright:** © 2022 OpenAI; converted to ggml format by Georgi
   Gerganov and contributors.
 - **License:** MIT
 - **Source:** https://huggingface.co/ggerganov/whisper.cpp (file
-  `ggml-tiny.en.bin`)
-- **Usage:** Bundled at `app/src/main/assets/models/ggml-tiny.en.bin`
-  (~75 MB). Loaded by the JNI wrapper on first transcription and
-  copied into the app's filesDir at runtime.
+  `ggml-base.bin`), served from the project's own mirror at
+  https://cdn.pilgrimapp.org/models/ggml-base.bin
+- **Usage:** Downloaded on demand (~148 MB, SHA-256 verified against
+  the published upstream digest) into the app's private storage and
+  loaded by the JNI wrapper for voice-note transcription. Installs
+  upgraded from versions that bundled `ggml-tiny.en.bin` (same
+  copyright and license) keep using that file until the base model's
+  download verifies, after which it is deleted.
 
 ## Proprietary / SDK dependencies
 

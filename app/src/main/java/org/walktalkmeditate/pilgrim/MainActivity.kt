@@ -16,9 +16,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.onboarding.OnboardingPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.recovery.WalkRecoveryRepository
@@ -54,6 +59,7 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var hemisphereRepository:
         org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
+    @Inject lateinit var modelDownloadScheduler: WhisperModelDownloadScheduler
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -151,6 +157,21 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * U9 model-download trigger: first *foreground Activity* resume —
+     * deliberately not `Application.onCreate`, so widget/broadcast/
+     * service process starts never schedule the 148 MB transfer. The
+     * process-level flag keeps this to one *successful* WorkManager
+     * round-trip per process — see [ensureModelDownloadOnce] for the
+     * latch-on-success semantics.
+     */
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch {
+            ensureModelDownloadOnce(modelDownloadScheduler, modelDownloadEnsureRequested)
+        }
+    }
+
+    /**
      * Stage 9-A: singleTop launch mode means widget taps land here for
      * a re-running activity. setIntent() first so subsequent
      * getIntent() reads the fresh intent (Android docs requirement),
@@ -196,5 +217,29 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "MainActivity"
+        val modelDownloadEnsureRequested = AtomicBoolean(false)
+    }
+}
+
+/**
+ * U9 trigger body, extracted for direct testing. The CAS keeps
+ * concurrent resumes to one WorkManager round-trip, but [requested]
+ * latches only when `ensureEnqueued` returns normally — cancellation
+ * or failure resets it so the next resume re-fires (`ensureEnqueued`
+ * is KEEP-idempotent, so an extra fire is harmless).
+ */
+internal suspend fun ensureModelDownloadOnce(
+    scheduler: WhisperModelDownloadScheduler,
+    requested: AtomicBoolean,
+) {
+    if (!requested.compareAndSet(false, true)) return
+    try {
+        scheduler.ensureEnqueued()
+    } catch (ce: CancellationException) {
+        requested.set(false)
+        throw ce
+    } catch (t: Throwable) {
+        requested.set(false)
+        Log.w("MainActivity", "model download ensure failed", t)
     }
 }

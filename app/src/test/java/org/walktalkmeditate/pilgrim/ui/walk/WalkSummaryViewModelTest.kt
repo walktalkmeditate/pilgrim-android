@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -86,7 +87,12 @@ class WalkSummaryViewModelTest {
     private lateinit var routeCatalogScope: CoroutineScope
     private lateinit var routeCatalogService: CollectiveRouteCatalogService
     private lateinit var contributionLedger: ContributionLedger
+    private lateinit var modelStoreScope: CoroutineScope
+    private lateinit var modelStore: org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
     private val dispatcher = UnconfinedTestDispatcher()
+
+    private val modelRoot: java.io.File
+        get() = java.io.File(context.filesDir, "whisper-model")
 
     @Before
     fun setUp() {
@@ -141,6 +147,44 @@ class WalkSummaryViewModelTest {
         routeCatalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         routeCatalogService = bootstrapRouteCatalogService(context, routeCatalogScope)
         contributionLedger = inMemoryContributionLedger()
+        // U11: real model store over the Robolectric filesDir
+        // (TranscriptionRunnerTest pattern). Gating tests that need the
+        // retranscribe gate open call installLegacyTiny() and await the
+        // probe; everything else runs with the gate closed (Absent).
+        modelRoot.deleteRecursively()
+        modelStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        modelStore = org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore(
+            context = context,
+            workSource = object : org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource {
+                override fun observe(): kotlinx.coroutines.flow.Flow<org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork?> =
+                    kotlinx.coroutines.flow.flowOf(null)
+            },
+            unmeteredProbe = { true },
+            scope = modelStoreScope,
+        )
+    }
+
+    private fun installLegacyTiny() {
+        val tiny = java.io.File(modelRoot, "ggml-tiny.en.bin")
+        tiny.parentFile?.mkdirs()
+        java.io.RandomAccessFile(tiny, "rw").use {
+            it.setLength(
+                org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig.LEGACY_TINY_EXPECTED_BYTES,
+            )
+        }
+    }
+
+    /**
+     * Bridge the store's real-IO probe to virtual-time runTest on the
+     * dedicated real-clock dispatcher (house pattern — never
+     * Thread.sleep on the shared Default pool).
+     */
+    private suspend fun awaitRetranscribeEnabled(vm: WalkSummaryViewModel) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                vm.retranscribeEnabled.first { it }
+            }
+        }
     }
 
     private lateinit var photoAnalysisScheduler: org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler
@@ -149,6 +193,11 @@ class WalkSummaryViewModelTest {
         walkId: Long,
         repositoryOverride: WalkRepository = repository,
         routeCatalogServiceOverride: CollectiveRouteCatalogService = routeCatalogService,
+        transcriptionSchedulerOverride: org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler =
+            object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler {
+                override fun scheduleForWalk(walkId: Long) {}
+                override fun rescheduleForWalk(walkId: Long) {}
+            },
         practicePreferences: org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository =
             // Stage 10-C: light reading is gated on celestialAwarenessEnabled.
             // The legacy tests in this file all assert non-null lightReading
@@ -214,10 +263,11 @@ class WalkSummaryViewModelTest {
             photoLibraryScanner = org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner(
                 context = context,
             ),
-            transcriptionScheduler = object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler { override fun scheduleForWalk(walkId: Long) {} },
+            transcriptionScheduler = transcriptionSchedulerOverride,
             waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
                 fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
             ),
+            whisperModelStore = modelStore,
             routeCatalogService = routeCatalogServiceOverride,
             contributionLedger = contributionLedger,
             persistenceScope = persistenceScope,
@@ -293,6 +343,8 @@ class WalkSummaryViewModelTest {
         hemisphereScope.coroutineContext[Job]?.cancel()
         persistenceScope.coroutineContext[Job]?.cancel()
         routeCatalogScope.coroutineContext[Job]?.cancel()
+        modelStoreScope.coroutineContext[Job]?.cancel()
+        modelRoot.deleteRecursively()
         context.preferencesDataStoreFile(hemisphereStoreName).delete()
         // cachedShareStore now uses a per-test DataStore file (unique
         // UUID), so the old shared global share_cache.preferences_pb
@@ -1725,6 +1777,77 @@ class WalkSummaryViewModelTest {
         repository.finishWalk(walk, endTimestamp = durationMillis)
         return walk.id
     }
+
+    // --- U11 retranscribe gating (spec section 5) -----------------------
+
+    @Test
+    fun `retranscribeRecording is a no-op while the model is absent`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+        repository.updateVoiceRecordingTranscription(recId, "precious transcription")
+
+        val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+        assertFalse("gate must start closed with no model on disk", vm.retranscribeEnabled.value)
+        vm.retranscribeRecording(recId)
+        advanceUntilIdle()
+
+        assertEquals(
+            "the destructive null write must never land pre-Ready",
+            "precious transcription",
+            repository.getVoiceRecording(recId)?.transcription,
+        )
+        assertTrue(scheduler.scheduledWalkIds.isEmpty())
+    }
+
+    @Test
+    fun `retranscribeRecording clears and reschedules once the model is ready`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            repository.updateVoiceRecordingTranscription(recId, "old transcription")
+
+            val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+            awaitRetranscribeEnabled(vm)
+            vm.retranscribeRecording(recId)
+
+            val cleared = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+                withTimeout(10_000L) {
+                    var row = repository.getVoiceRecording(recId)
+                    while (row?.transcription != null) {
+                        delay(25L)
+                        row = repository.getVoiceRecording(recId)
+                    }
+                    row
+                }
+            }
+            assertNull(cleared?.transcription)
+            assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
+        }
+
+    @Test
+    fun `transcribePendingRecordings no-ops pre-Ready and schedules once ready`() =
+        runTest(dispatcher) {
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+
+            val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+            vm.transcribePendingRecordings()
+            assertTrue(scheduler.scheduledWalkIds.isEmpty())
+
+            installLegacyTiny()
+            modelStore.invalidate()
+            awaitRetranscribeEnabled(vm)
+            vm.transcribePendingRecordings()
+
+            assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
+            // Manual transcribe never touches existing rows — the worker
+            // only fills WHERE transcription IS NULL.
+            assertNull(repository.getVoiceRecording(recId)?.transcription)
+        }
 
     private suspend fun insertVoiceRecording(
         walkId: Long,

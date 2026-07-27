@@ -116,6 +116,7 @@ fun WalkSummaryScreen(
     onDone: () -> Unit,
     onShareJourney: () -> Unit = {},
     viewModel: WalkSummaryViewModel = hiltViewModel(),
+    modelDownloadViewModel: ModelDownloadViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val recordings by viewModel.recordings.collectAsStateWithLifecycle()
@@ -137,6 +138,12 @@ fun WalkSummaryScreen(
     // Listing → Detail / Editor.
     val promptsSheetState by viewModel.promptsSheetState.collectAsStateWithLifecycle()
     val customPromptStyles by viewModel.customPromptStyles.collectAsStateWithLifecycle()
+    // U11: pending-transcription substate + retranscribe gate + model
+    // download sheet (parity spec
+    // docs/parity/2026-07-26-port-download-ux-u11.md, sections 3-5).
+    val pendingSubstate by modelDownloadViewModel.pendingSubstate.collectAsStateWithLifecycle()
+    val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
+    var showModelDownloadSheet by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
 
@@ -675,6 +682,14 @@ fun WalkSummaryScreen(
                                 onSaveTranscription = viewModel::saveTranscription,
                                 onRetranscribe = viewModel::retranscribeRecording,
                                 onEnsureWaveform = viewModel::ensureWaveform,
+                                pendingSubstate = pendingSubstate,
+                                retranscribeEnabled = retranscribeEnabled,
+                                onManualTranscribe = viewModel::transcribePendingRecordings,
+                                onOpenModelDownloadSheet = {
+                                    showModelDownloadSheet = true
+                                },
+                                onRetryModelDownload =
+                                modelDownloadViewModel::retryDownload,
                             )
                         }
 
@@ -907,6 +922,13 @@ fun WalkSummaryScreen(
                 onDismiss = viewModel::dismissDetailOrEditor,
             )
             else -> Unit
+        }
+
+        if (showModelDownloadSheet) {
+            ModelDownloadSheet(
+                onDismiss = { showModelDownloadSheet = false },
+                viewModel = modelDownloadViewModel,
+            )
         }
 
         // Stage 7-D: snackbar anchored to the bottom of the screen so

@@ -143,6 +143,41 @@ object ContextFormatter {
             lines.joinToString(separator = "\n\n")
     }
 
+    /**
+     * Pauses under a minute are breath, not story — surfacing "0 min"
+     * entries would invite the downstream model to interpret a non-event.
+     *
+     * The longest pause resolves ties to the LAST maximal element (Swift
+     * `max(by:)` semantics — spec D5); `maxByOrNull` would take the first.
+     */
+    fun formatPauses(
+        pauses: List<PauseContext>,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): String? {
+        val meaningful = pauses.filter { it.durationSeconds >= 60L }
+        if (meaningful.isEmpty()) return null
+        val longest = meaningful.reduce { best, candidate ->
+            if (candidate.durationSeconds >= best.durationSeconds) candidate else best
+        }
+        val totalMinutes = (meaningful.sumOf { it.durationSeconds } / 60.0).roundToInt()
+        val longestMinutes = (longest.durationSeconds / 60.0).roundToInt()
+        val whenLabel = formatTime(longest.startDate, zone)
+        val timeWord = if (meaningful.size == 1) "time" else "times"
+        return "**Pauses:** Paused ${meaningful.size} $timeWord ($totalMinutes min total); " +
+            "the longest, $longestMinutes min, began at $whenLabel."
+    }
+
+    fun formatElevation(ascent: Double?, descent: Double?, imperial: Boolean): String? {
+        val up = ascent ?: 0.0
+        val down = descent ?: 0.0
+        if (up <= 10.0 && down <= 10.0) return null
+        val units = if (imperial) UnitSystem.Imperial else UnitSystem.Metric
+        val parts = mutableListOf<String>()
+        if (up > 10.0) parts.add("climbed ${WalkFormat.altitude(up, units)}")
+        if (down > 10.0) parts.add("descended ${WalkFormat.altitude(down, units)}")
+        return "**Elevation:** ${parts.joinToString(separator = ", ")}."
+    }
+
     fun formatWeather(
         walk: Walk,
         weatherLabel: (WeatherCondition) -> String,
@@ -168,6 +203,11 @@ object ContextFormatter {
         return "Weather: ${parts.joinToString(separator = ", ")}"
     }
 
+    /**
+     * [durationSeconds] is active walking time; [pauseDurationSeconds]
+     * restores the wall-clock end so a paused walk doesn't claim to have
+     * ended in a time of day it never saw.
+     */
     fun formatMetadata(
         durationSeconds: Long,
         distanceMeters: Double,
@@ -175,15 +215,24 @@ object ContextFormatter {
         lunarPhase: MoonPhase,
         imperial: Boolean,
         zone: ZoneId = ZoneId.systemDefault(),
+        pauseDurationSeconds: Long = 0L,
     ): String {
         val durationMin = (durationSeconds / 60L).toInt()
         val units = if (imperial) UnitSystem.Imperial else UnitSystem.Metric
         val distanceStr = WalkFormat.distance(distanceMeters, units)
-        val timeOfDay = timeOfDayDescription(startTimestamp, zone)
+        val startDescription = timeOfDayDescription(startTimestamp, zone)
+        val endTimestamp = startTimestamp + (durationSeconds + pauseDurationSeconds) * 1000L
+        val endDescription = timeOfDayDescription(endTimestamp, zone)
+        val timePhrase = if (startDescription == endDescription) {
+            "$startDescription on ${formatDateTime(startTimestamp, zone)}"
+        } else {
+            "began in the $startDescription, ended in the $endDescription, " +
+                "on ${formatDateTime(startTimestamp, zone)}"
+        }
         val illuminationPct = (lunarPhase.illumination * 100.0).roundToInt()
         return "Walk duration: $durationMin minutes | " +
             "Distance: $distanceStr | " +
-            "Time: $timeOfDay on ${formatDateTime(startTimestamp, zone)} | " +
+            "Time: $timePhrase | " +
             "Moon: ${lunarPhase.name} ($illuminationPct% illumination)"
     }
 

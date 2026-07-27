@@ -62,6 +62,11 @@ class PromptGeneratorTest {
         celestial = null,
         photoContexts = emptyList(),
         narrativeArc = NarrativeArc.EMPTY,
+        mode = PracticeMode.Wander,
+        seekStory = null,
+        pauses = emptyList(),
+        ascentMeters = null,
+        descentMeters = null,
     )
 
     @Test

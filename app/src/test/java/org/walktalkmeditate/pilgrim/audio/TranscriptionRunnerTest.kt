@@ -5,9 +5,17 @@ import android.app.Application
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
@@ -21,6 +29,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.model.FakeWhisperModelDownloadScheduler
+import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
+import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -28,7 +41,10 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 /**
  * Exercises [TranscriptionRunner] against a real Room database with
  * [FakeWhisperEngine] swapped for the JNI-backed engine. The real engine
- * needs a device; Stage 2-F's instrumented test covers it.
+ * needs a device; Stage 2-F's instrumented test covers it. The model
+ * store is real over the Robolectric filesDir: setUp installs a sparse
+ * legacy tiny so the U10 model-absent pre-check passes for the batch
+ * tests, and the pre-check tests delete it.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -38,7 +54,13 @@ class TranscriptionRunnerTest {
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
     private lateinit var engine: FakeWhisperEngine
+    private lateinit var storeScope: CoroutineScope
+    private lateinit var store: WhisperModelStore
+    private lateinit var downloadScheduler: FakeWhisperModelDownloadScheduler
     private lateinit var runner: TranscriptionRunner
+
+    private val modelRoot: File
+        get() = File(context.filesDir, "whisper-model")
 
     @Before
     fun setUp() {
@@ -58,12 +80,37 @@ class TranscriptionRunnerTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         engine = FakeWhisperEngine()
-        runner = TranscriptionRunner(context, repository, engine)
+        modelRoot.deleteRecursively()
+        installLegacyTiny()
+        storeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        store = WhisperModelStore(
+            context = context,
+            workSource = object : ModelDownloadWorkSource {
+                override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
+            },
+            unmeteredProbe = { true },
+            scope = storeScope,
+        )
+        downloadScheduler = FakeWhisperModelDownloadScheduler()
+        runner = buildRunner(engine)
     }
 
     @After
     fun tearDown() {
+        storeScope.cancel()
+        modelRoot.deleteRecursively()
         db.close()
+    }
+
+    private fun buildRunner(engine: WhisperEngine) =
+        TranscriptionRunner(context, repository, engine, store, downloadScheduler)
+
+    private fun installLegacyTiny() {
+        val tiny = File(modelRoot, "ggml-tiny.en.bin")
+        tiny.parentFile?.mkdirs()
+        RandomAccessFile(tiny, "rw").use {
+            it.setLength(WhisperModelConfig.LEGACY_TINY_EXPECTED_BYTES)
+        }
     }
 
     @Test
@@ -154,7 +201,7 @@ class TranscriptionRunnerTest {
             }
             override fun unloadModel() {}
         }
-        val customRunner = TranscriptionRunner(context, repository, sequencedEngine)
+        val customRunner = buildRunner(sequencedEngine)
 
         val outcome = customRunner.transcribePending(walk.id)
 
@@ -192,6 +239,63 @@ class TranscriptionRunnerTest {
         val updated = repository.getVoiceRecording(zeroDuration.id)
         assertNotNull(updated)
         assertNull("zero-duration recording should have null WPM", updated!!.wordsPerMinute)
+    }
+
+    // U10 self-heal: no usable model + work to do → the download is
+    // (re-)enqueued (KEEP) and the batch returns the retry signal
+    // instead of spinning on an engine that can never load.
+    @Test
+    fun `model absent with pending recordings enqueues the download and returns retry failure`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        modelRoot.deleteRecursively()
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertTrue(
+            "expected ModelLoadFailed, was $outcome",
+            outcome.exceptionOrNull() is WhisperError.ModelLoadFailed,
+        )
+        assertEquals("download must be (re-)enqueued once", 1, downloadScheduler.ensureEnqueuedCalls)
+        assertTrue("engine must never be reached without a model", engine.transcribeCalls.isEmpty())
+        assertNull(
+            "nothing may be written on the pre-check path",
+            repository.getVoiceRecording(recording.id)!!.transcription,
+        )
+    }
+
+    @Test
+    fun `model absent with nothing pending is success zero without an enqueue`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        modelRoot.deleteRecursively()
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertEquals(Result.success(0), outcome)
+        assertEquals(
+            "an empty batch must not schedule a 148 MB download",
+            0,
+            downloadScheduler.ensureEnqueuedCalls,
+        )
+    }
+
+    // The pre-check must not blur the taxonomy: a PRESENT model whose
+    // load genuinely fails keeps the plain ModelLoadFailed escalation —
+    // re-enqueueing a download the filesystem already satisfied would
+    // mask the real failure.
+    @Test
+    fun `load failure of a present model escalates without re-enqueueing the download`() = runBlocking {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        insertRecording(walk.id)
+        engine.failure = WhisperError.ModelLoadFailed()
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertTrue(
+            "expected ModelLoadFailed, was $outcome",
+            outcome.exceptionOrNull() is WhisperError.ModelLoadFailed,
+        )
+        assertEquals(0, downloadScheduler.ensureEnqueuedCalls)
     }
 
     @Test

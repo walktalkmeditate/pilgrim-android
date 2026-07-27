@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import androidx.core.net.toUri
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
+import org.walktalkmeditate.pilgrim.audio.model.modelUsableIn
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner.DiscoveredPhoto
@@ -277,6 +278,7 @@ class WalkSummaryViewModel @Inject constructor(
     private val transcriptionScheduler:
         org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler,
     private val waveformCache: org.walktalkmeditate.pilgrim.audio.WaveformCache,
+    whisperModelStore: org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore,
     routeCatalogService: CollectiveRouteCatalogService,
     private val contributionLedger: ContributionLedger,
     @PersistenceScope private val persistenceScope: CoroutineScope,
@@ -977,20 +979,46 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
+     * U11 gate (parity spec `docs/parity/2026-07-26-port-download-ux-u11.md`
+     * section 5): retranscribe destroys the transcript BEFORE scheduling,
+     * so it stays disabled until a usable model is on disk — verified
+     * base OR the transitional tiny, open through the base download
+     * window. Derivation + Eagerly rationale live on [modelUsableIn].
+     */
+    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.modelUsableIn(viewModelScope)
+
+    /**
      * Walk Summary retranscribe-single action. Clears the existing
      * transcription so the row reverts to the pending placeholder, then
      * schedules the per-walk transcription worker which will pick up
      * the row again (it queries `WHERE transcription IS NULL`). Matches
      * iOS `WalkSummaryView.retranscribeSingle` semantics with the
      * Android worker-queue equivalent.
+     *
+     * Fails closed pre-Ready: the UI disables the affordance, and this
+     * guard catches a stale-UI tap before the destructive null write
+     * (U11 spec section 5).
      */
     fun retranscribeRecording(recordingId: Long) {
+        if (!retranscribeEnabled.value) return
         // persistenceScope — see [saveTranscription] for the
         // back-nav-mid-write rationale.
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
             transcriptionScheduler.scheduleForWalk(walkId)
         }
+    }
+
+    /**
+     * Manual affordance for pref-OFF pending rows (U11 substate matrix,
+     * `ManualPending`): schedules the walk's transcription pass without
+     * touching any existing transcription — the worker only fills rows
+     * `WHERE transcription IS NULL`. Non-destructive, but gated the
+     * same way for consistency (spec section 5).
+     */
+    fun transcribePendingRecordings() {
+        if (!retranscribeEnabled.value) return
+        transcriptionScheduler.scheduleForWalk(walkId)
     }
 
     fun seekPlayback(fraction: Float) = playback.seek(fraction)

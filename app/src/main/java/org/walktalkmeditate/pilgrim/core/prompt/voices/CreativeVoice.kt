@@ -17,4 +17,9 @@ object CreativeVoice : WalkPromptVoice {
         } else {
             "Transform this silent walk into something creative. Let the rhythm of the steps become the rhythm of the writing. You might compose a poem from the walk's shape, write a meditation on silence and motion, or craft a piece that gives voice to what the walker's feet were saying. Preserve the quietness but give it form."
         }
+
+    override fun responseConstraints(hasSpeech: Boolean): List<String> = listOf(
+        "Reply with the piece itself — no introduction, no explanation of your choices.",
+        "Let the walk's rhythm shape the form; brevity is welcome.",
+    )
 }

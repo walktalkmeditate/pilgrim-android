@@ -226,7 +226,38 @@
 
     <!-- Stage 13-G details -->
     <string name="summary_details_paused">Paused</string>
-    <string name="transcription_pending">Transcribing\u2026</string>
+
+    <!-- U11 pending-transcription substates (parity spec
+         docs/parity/2026-07-26-port-download-ux-u11.md section 3).
+         Copy rule: never promise language auto-detection (U10 L2). -->
+    <string name="transcription_not_transcribed">Not yet transcribed</string>
+    <string name="transcription_action_transcribe">Transcribe</string>
+    <string name="transcription_queued">Queued for transcription\u2026</string>
+    <string name="transcription_waiting_model">Waiting to download transcription model</string>
+    <string name="transcription_waiting_model_wifi">Waiting for Wi-Fi to download transcription model</string>
+    <string name="transcription_waiting_model_downloading">Downloading model \u2014 %1$s of %2$s MB</string>
+    <string name="transcription_waiting_model_verifying">Verifying transcription model\u2026</string>
+    <string name="model_state_failed_checksum">Model download failed</string>
+    <string name="model_state_failed_storage">Not enough space for the transcription model</string>
+    <string name="model_state_failed_storage_hint">Not enough space for the transcription model \u2014 free up space to continue</string>
+    <string name="model_action_retry">Retry</string>
+
+    <!-- U11 model download sheet + Settings voice row -->
+    <string name="model_sheet_open_cd">Transcription model download details</string>
+    <string name="model_sheet_title">Transcription Model</string>
+    <string name="model_sheet_size">One-time download \u2022 about %1$s MB</string>
+    <string name="model_sheet_status_waiting">Waiting to download</string>
+    <string name="model_sheet_status_downloading">Downloading \u2014 %1$s of %2$s MB</string>
+    <string name="model_sheet_status_verifying">Verifying download\u2026</string>
+    <string name="model_sheet_status_ready">Model ready</string>
+    <string name="model_sheet_wifi_explanation">The download waits for an unmetered Wi-Fi connection. Turn on Use mobile data to download now.</string>
+    <string name="model_sheet_use_cellular">Use mobile data</string>
+    <string name="model_sheet_use_cellular_caption">Allow the download over your mobile connection</string>
+    <string name="model_sheet_data_saver_note">Data Saver is on. Background downloads over mobile data may pause until you open the app.</string>
+    <string name="model_sheet_failed_checksum_body">The downloaded file did not verify. Retry the download.</string>
+    <string name="model_sheet_failed_storage_body">Not enough free space to finish the download. Free up about %1$s MB and retry.</string>
+    <string name="model_action_retry_download">Retry download</string>
+    <string name="settings_model_downloading_percent">Downloading model %1$d%%</string>
     <string name="recording_play">Play</string>
     <string name="recording_pause">Pause</string>
     <!-- TalkBack label for the Canvas waveform scrubber, exposed as an

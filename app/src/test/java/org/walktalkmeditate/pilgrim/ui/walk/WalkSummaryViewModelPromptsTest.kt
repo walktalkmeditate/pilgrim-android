@@ -46,6 +46,7 @@ import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.core.prompt.ActivityContext
 import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
 import org.walktalkmeditate.pilgrim.core.prompt.GeneratedPrompt
+import org.walktalkmeditate.pilgrim.core.prompt.PracticeMode
 import org.walktalkmeditate.pilgrim.core.prompt.PromptStyle
 import org.walktalkmeditate.pilgrim.core.prompt.PromptsCoordinator
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
@@ -196,9 +197,18 @@ class WalkSummaryViewModelPromptsTest {
             photoLibraryScanner = org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner(
                 context = context,
             ),
-            transcriptionScheduler = object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler { override fun scheduleForWalk(walkId: Long) {} },
+            transcriptionScheduler = object : org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler { override fun scheduleForWalk(walkId: Long) {}; override fun rescheduleForWalk(walkId: Long) {} },
             waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
                 fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
+            ),
+            whisperModelStore = org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore(
+                context = context,
+                workSource = object : org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource {
+                    override fun observe(): kotlinx.coroutines.flow.Flow<org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork?> =
+                        kotlinx.coroutines.flow.flowOf(null)
+                },
+                unmeteredProbe = { true },
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
             ),
             routeCatalogService = org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService(
                 context,
@@ -593,6 +603,11 @@ class WalkSummaryViewModelPromptsTest {
         celestial = null,
         photoContexts = emptyList(),
         narrativeArc = null,
+        mode = PracticeMode.Wander,
+        seekStory = null,
+        pauses = emptyList(),
+        ascentMeters = null,
+        descentMeters = null,
     )
 
     private fun stubPrompts(count: Int): List<GeneratedPrompt> {

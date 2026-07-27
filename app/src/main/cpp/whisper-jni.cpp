@@ -13,7 +13,7 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeInit(
+Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeInit(
     JNIEnv* env, jobject /*this*/, jstring modelPath) {
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
     auto cparams = whisper_context_default_params();
@@ -92,7 +92,7 @@ static std::vector<float> readWavPcmF32(const char* path) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
+Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeTranscribe(
     JNIEnv* env, jobject /*this*/, jlong ctxHandle, jstring wavPath) {
     auto ctx = reinterpret_cast<whisper_context*>(ctxHandle);
     if (!ctx) return nullptr;
@@ -109,6 +109,12 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
     wparams.print_timestamps = false;
     wparams.print_special = false;
     wparams.translate = false;
+    // Forced English is iOS parity, NOT a leftover from the tiny.en era:
+    // iOS v1.9.0 passes no language and WhisperKit 0.16.0's defaults
+    // prefill the multilingual base with <|en|> (detectLanguage defaults
+    // to false when usePrefillPrompt is true). "auto" here would diverge
+    // from shipped iOS and mis-decodes on the transitional English-only
+    // tiny. See docs/parity/2026-07-26-port-engine-switch-u10.md L2.
     wparams.language = "en";
     // Cap threads at 4 (diminishing returns above) and at the device's
     // hardware concurrency so 2-core budget devices don't oversubscribe.
@@ -133,7 +139,7 @@ Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeTranscribe(
 // nativeTranscribe via nativeLock, so the context is never freed mid-
 // inference. A 0 handle (never loaded) is a no-op.
 extern "C" JNIEXPORT void JNICALL
-Java_org_walktalkmeditate_pilgrim_audio_WhisperCppEngine_nativeFree(
+Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeFree(
     JNIEnv* /*env*/, jobject /*this*/, jlong ctxHandle) {
     auto ctx = reinterpret_cast<whisper_context*>(ctxHandle);
     if (!ctx) return;

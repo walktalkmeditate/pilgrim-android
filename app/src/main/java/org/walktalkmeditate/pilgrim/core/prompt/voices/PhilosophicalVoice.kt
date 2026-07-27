@@ -17,4 +17,9 @@ object PhilosophicalVoice : WalkPromptVoice {
         } else {
             "Engage with this silent walk philosophically. What does the act of walking without speaking suggest about the walker's relationship to thought, language, and presence? Connect the walk's physical details — its duration, pace, waypoints — to broader questions about consciousness, embodiment, and meaning."
         }
+
+    override fun responseConstraints(hasSpeech: Boolean): List<String> = listOf(
+        "Invoke thinkers or traditions only when they genuinely illuminate — never name-drop.",
+        "Write as a letter from a thoughtful friend, not a lecture, and end with one question that opens rather than closes.",
+    )
 }

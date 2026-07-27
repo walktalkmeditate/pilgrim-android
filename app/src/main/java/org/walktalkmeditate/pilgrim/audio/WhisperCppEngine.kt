@@ -1,64 +1,120 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio
 
-import android.content.Context
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.file.Path
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.io.path.absolutePathString
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+
+/**
+ * Seam over the whisper.cpp JNI surface so the engine's load-state
+ * machine is unit-testable — the native library needs a device.
+ */
+internal interface WhisperNative {
+    fun init(modelPath: String): Long
+    fun transcribe(handle: Long, wavPath: String): String?
+    fun free(handle: Long)
+}
+
+/**
+ * Production [WhisperNative]. The JNI symbols in `whisper-jni.cpp` are
+ * bound to THIS object's name; the library loads on first reference,
+ * which no unit test ever makes.
+ */
+internal object JniWhisperNative : WhisperNative {
+
+    init {
+        System.loadLibrary("pilgrim-whisper")
+    }
+
+    override fun init(modelPath: String): Long = nativeInit(modelPath)
+    override fun transcribe(handle: Long, wavPath: String): String? =
+        nativeTranscribe(handle, wavPath)
+    override fun free(handle: Long) = nativeFree(handle)
+
+    private external fun nativeInit(modelPath: String): Long
+    private external fun nativeTranscribe(ctx: Long, wavPath: String): String?
+    private external fun nativeFree(ctx: Long)
+}
 
 /**
  * Production [WhisperEngine] backed by whisper.cpp via JNI. The model is
  * lazy-loaded on first transcribe so a user who never records voice
- * notes never pays the ~75 MB RAM cost.
+ * notes never pays the model's RAM cost, and resolved per batch through
+ * [WhisperModelStore.readyModelPath] — verified base preferred, the
+ * legacy tiny transitionally during the upgrade window (U10 spec
+ * `docs/parity/2026-07-26-port-engine-switch-u10.md`).
  *
- * Singleton-scoped so the loaded model survives across multiple
- * transcriptions within one batch; [unloadModel] frees the native
- * context after the batch (AF33) so the ~75 MB doesn't stay resident
- * while the user keeps using the app. The next [transcribe] reloads.
+ * The loaded state is keyed on the resolved path: when the resolution
+ * changes between batches (tiny → base after the verified switch), the
+ * stale native context is freed and the new model loaded. Singleton-
+ * scoped so the loaded model survives across multiple transcriptions
+ * within one batch; [unloadModel] frees the native context after the
+ * batch (AF33) so the weights don't stay resident while the user keeps
+ * using the app. The next [transcribe] reloads.
  */
 @Singleton
-class WhisperCppEngine @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val modelInstaller: WhisperModelInstaller,
+class WhisperCppEngine internal constructor(
+    private val store: WhisperModelStore,
+    private val native: WhisperNative,
 ) : WhisperEngine {
+
+    @Inject
+    constructor(store: WhisperModelStore) : this(store, JniWhisperNative)
 
     private val nativeLock = Any()
 
     @Volatile
     private var nativeHandle: Long = 0L
 
-    private fun ensureLoaded(): Long {
+    /** Guarded by [nativeLock]. */
+    private var loadedModelPath: Path? = null
+
+    private fun ensureLoaded(modelPath: Path): Long {
         synchronized(nativeLock) {
-            if (nativeHandle != 0L) return nativeHandle
-            val modelPath = try {
-                modelInstaller.installIfNeeded()
-            } catch (e: Throwable) {
-                Log.w(TAG, "model install failed", e)
-                throw WhisperError.ModelLoadFailed(e)
+            val current = nativeHandle
+            if (current != 0L && loadedModelPath == modelPath) return current
+            if (current != 0L) {
+                nativeHandle = 0L
+                loadedModelPath = null
+                native.free(current)
             }
-            val handle = nativeInit(modelPath.absolutePathString())
+            val handle = native.init(modelPath.absolutePathString())
             if (handle == 0L) throw WhisperError.ModelLoadFailed()
             nativeHandle = handle
+            loadedModelPath = modelPath
             return handle
         }
     }
 
     override suspend fun transcribe(wavPath: Path): Result<TranscriptionResult> =
         withContext(Dispatchers.Default) {
+            // Resolved BEFORE the monitor — suspending under nativeLock
+            // is forbidden. A resolve that races the post-switch tiny
+            // delete fails native init below → ModelLoadFailed → the
+            // worker's backoff retry re-resolves to base (U10 spec L3).
+            val modelPath = try {
+                store.readyModelPath()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "model resolution failed", t)
+                return@withContext Result.failure(WhisperError.ModelLoadFailed(t))
+            } ?: return@withContext Result.failure(WhisperError.ModelLoadFailed())
             try {
                 // whisper.h is explicit: a single whisper_context must
                 // not be used by multiple threads concurrently. Hold the
                 // monitor across both ensureLoaded (reentrant) and
-                // nativeTranscribe so two simultaneous workers can't
+                // native.transcribe so two simultaneous workers can't
                 // race on the same native ctx.
                 val text = synchronized(nativeLock) {
-                    val handle = ensureLoaded()
-                    nativeTranscribe(handle, wavPath.absolutePathString())
+                    val handle = ensureLoaded(modelPath)
+                    native.transcribe(handle, wavPath.absolutePathString())
                 }
                 // The JNI returns nullptr on whisper_full failure; the
                 // real `whisper_full` rc is logged in whisper-jni.cpp at
@@ -82,16 +138,12 @@ class WhisperCppEngine @Inject constructor(
             val handle = nativeHandle
             if (handle == 0L) return
             nativeHandle = 0L
-            nativeFree(handle)
+            loadedModelPath = null
+            native.free(handle)
         }
     }
 
-    private external fun nativeInit(modelPath: String): Long
-    private external fun nativeTranscribe(ctx: Long, wavPath: String): String?
-    private external fun nativeFree(ctx: Long)
-
     private companion object {
         const val TAG = "WhisperCppEngine"
-        init { System.loadLibrary("pilgrim-whisper") }
     }
 }

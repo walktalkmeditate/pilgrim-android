@@ -22,15 +22,19 @@ import org.walktalkmeditate.pilgrim.core.celestial.Planet
 import org.walktalkmeditate.pilgrim.core.prompt.voices.CustomPromptStyleVoice
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
+import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.walk.AltitudeCalculator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -142,6 +146,8 @@ open class PromptsCoordinator internal constructor(
             val intervalsAsync = async { repository.activityIntervalsFor(walkId) }
             val waypointsAsync = async { repository.waypointsFor(walkId) }
             val photosAsync = async { repository.photosFor(walkId) }
+            val eventsAsync = async { repository.walkEventsFor(walkId) }
+            val altitudesAsync = async { repository.altitudeSamplesFor(walkId) }
             val recentAsync = async {
                 repository.recentFinishedWalksBefore(walk.startTimestamp, RECENT_WALKS_LOOKBACK)
             }
@@ -151,6 +157,8 @@ open class PromptsCoordinator internal constructor(
                 intervals = intervalsAsync.await(),
                 waypoints = waypointsAsync.await(),
                 photos = photosAsync.await(),
+                events = eventsAsync.await(),
+                altitudeSamples = altitudesAsync.await(),
                 recentWalks = recentAsync.await(),
             )
         }
@@ -204,13 +212,14 @@ open class PromptsCoordinator internal constructor(
         val imperial = unitsPreferences.distanceUnits.value == UnitSystem.Imperial
         val weather = ContextFormatter.formatWeather(walk, weatherLabelResolver(), imperial)
         val routeSpeeds = computeRouteSpeeds(locationSamples)
+        val practice = WalkPracticeModel.practice(fetches.events)
+        val pauses = pauseContexts(walk, fetches.events)
+        val (ascent, descent) = AltitudeCalculator.computeAscentDescent(fetches.altitudeSamples)
 
         return@withContext ActivityContext(
             recordings = recordingContexts,
             meditations = meditationContexts,
-            durationSeconds = (walk.endTimestamp ?: walk.startTimestamp).let { end ->
-                ((end - walk.startTimestamp) / 1000L).coerceAtLeast(0L)
-            },
+            durationSeconds = WalkMetricsMath.computeActiveDurationSeconds(walk, fetches.events),
             distanceMeters = walk.distanceMeters ?: 0.0,
             startTimestamp = walk.startTimestamp,
             placeNames = placeNames,
@@ -223,6 +232,11 @@ open class PromptsCoordinator internal constructor(
             celestial = celestial,
             photoContexts = photoContexts,
             narrativeArc = if (photoContexts.isEmpty()) null else NarrativeArc.EMPTY,
+            mode = practice.mode,
+            seekStory = practice.seekStory,
+            pauses = pauses,
+            ascentMeters = ascent,
+            descentMeters = descent,
         )
     }
 
@@ -378,6 +392,20 @@ open class PromptsCoordinator internal constructor(
         return "Sun in $sunSign, Moon in $moonSign"
     }
 
+    /**
+     * Maps [WalkMetricsMath.pauseSpans] into [PauseContext]s — the same
+     * PAUSED/RESUMED automaton [WalkMetricsMath.computeActiveDurationSeconds]
+     * subtracts, so the pause story and the active-duration math can
+     * never drift.
+     */
+    private fun pauseContexts(walk: Walk, events: List<WalkEvent>): List<PauseContext> =
+        WalkMetricsMath.pauseSpans(walk, events).map { span ->
+            PauseContext(
+                startDate = span.startMs,
+                durationSeconds = span.durationMillis / 1_000L,
+            )
+        }
+
     private fun computeRouteSpeeds(samples: List<RouteDataSample>): List<Double> =
         samples.zipWithNext().mapNotNull { (a, b) ->
             val dtSeconds = (b.timestamp - a.timestamp) / 1000.0
@@ -409,6 +437,8 @@ private data class SubFetches(
     val intervals: List<ActivityInterval>,
     val waypoints: List<Waypoint>,
     val photos: List<WalkPhoto>,
+    val events: List<WalkEvent>,
+    val altitudeSamples: List<AltitudeSample>,
     val recentWalks: List<Walk>,
 )
 

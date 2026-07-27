@@ -57,4 +57,12 @@ interface VoiceRecordingDao {
 
     @Query("DELETE FROM voice_recordings WHERE walk_id = :walkId")
     suspend fun deleteByWalkId(walkId: Long): Int
+
+    /**
+     * Walks still holding untranscribed recordings, for the U9
+     * model-download success re-kick — each id gets its
+     * `transcribe-walk-<id>` re-enqueued once the model verifies.
+     */
+    @Query("SELECT DISTINCT walk_id FROM voice_recordings WHERE transcription IS NULL")
+    suspend fun walkIdsWithNullTranscription(): List<Long>
 }

@@ -140,6 +140,25 @@ object NetworkModule {
             .retryOnConnectionFailure(true)
             .build()
 
+    /**
+     * U9: dedicated client for the 148 MB whisper-model download,
+     * derived from the shared client via `newBuilder()` (OkHttp's
+     * recommended customization pattern — shares the connection pool
+     * and dispatcher). The shared client's 45 s *call* timeout would
+     * abort the transfer mid-body on any real-world connection, so it
+     * is unset here — only connect and per-read socket inactivity stay
+     * bounded; total transfer time is unbounded by design (WorkManager
+     * owns the retry cadence).
+     */
+    @Provides
+    @Singleton
+    @ModelDownloadHttpClient
+    fun provideModelDownloadHttpClient(shared: OkHttpClient): OkHttpClient =
+        shared.newBuilder()
+            .callTimeout(0L, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 30L
     private const val CALL_TIMEOUT_SEC = 45L
@@ -170,3 +189,13 @@ object NetworkModule {
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class WeatherHttpClient
+
+/**
+ * U9 qualifier for the whisper-model download OkHttpClient. File-level
+ * for the same reason as [WeatherHttpClient]: shared between
+ * [NetworkModule.provideModelDownloadHttpClient] and the worker in
+ * `audio/model/` without a circular import.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ModelDownloadHttpClient
