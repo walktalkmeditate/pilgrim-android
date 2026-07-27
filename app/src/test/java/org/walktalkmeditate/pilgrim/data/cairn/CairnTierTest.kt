@@ -54,7 +54,7 @@ class CairnTierTest {
     @Test
     fun `becoming for a new cairn is faint`() {
         // AE3: a first stone begins a faint cairn.
-        assertEquals(CairnTier.Faint, CairnTier.forStoneCount(1))
+        assertEquals(CairnTier.Faint, cairn(0).becomingTier)
     }
 
     @Test

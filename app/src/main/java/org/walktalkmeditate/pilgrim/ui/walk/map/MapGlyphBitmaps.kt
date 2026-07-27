@@ -13,6 +13,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
+import org.walktalkmeditate.pilgrim.ui.walk.glyphRes
 
 /**
  * Rasterizes the U13 vector glyph masters into Mapbox-ready bitmaps —
@@ -22,7 +23,7 @@ import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
  * Android analogue of iOS R11's "display size × screen scale": the
  * annotation plugin registers icon bitmaps at the map's pixel ratio,
  * so a dp×density raster renders at exactly [sizeDp] on-screen) and
- * is cached — the key space is small and fixed: 8 whisper mood tints
+ * is cached — the key space is small and fixed: 9 whisper tints (8 moods + the unresolved-category stone)
  * and 7 cairn tiers.
  *
  * Cache keys carry exactly what the draw reads: mood tint + size +
@@ -59,7 +60,7 @@ object MapGlyphBitmaps {
     fun cairn(context: Context, tier: CairnTier, sizeDp: Float, density: Float): Bitmap? =
         rendered(
             context = context,
-            drawableId = tierDrawable(tier),
+            drawableId = tier.glyphRes,
             tintArgb = null,
             key = "cairn-${tier.ordinal}-$sizeDp-$density",
             sizeDp = sizeDp,
@@ -108,16 +109,6 @@ object MapGlyphBitmaps {
         cache.clear()
     }
 
-    @DrawableRes
-    private fun tierDrawable(tier: CairnTier): Int = when (tier) {
-        CairnTier.Faint -> R.drawable.glyph_cairn_faint
-        CairnTier.Small -> R.drawable.glyph_cairn_small
-        CairnTier.Medium -> R.drawable.glyph_cairn_medium
-        CairnTier.Large -> R.drawable.glyph_cairn_large
-        CairnTier.Great -> R.drawable.glyph_cairn_great
-        CairnTier.Sacred -> R.drawable.glyph_cairn_sacred
-        CairnTier.Eternal -> R.drawable.glyph_cairn_eternal
-    }
 }
 
 /**

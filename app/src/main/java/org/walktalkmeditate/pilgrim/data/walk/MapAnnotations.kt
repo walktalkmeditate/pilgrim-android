@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.data.walk
 
 import androidx.compose.runtime.Immutable
+import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
 import java.time.Instant
 import kotlin.math.abs
 import org.walktalkmeditate.pilgrim.data.cairn.CachedCairn
@@ -83,15 +84,31 @@ sealed class WalkMapAnnotationKind {
 
     /**
      * iOS parity `PilgrimAnnotation.Kind.cairn(stoneCount:tier:)`. Pile of
-     * stones placed during meditation; tier is the visual tier index
-     * (1..3) and stoneCount drives the silhouette layering.
+     * stones placed during meditation; tier is the 1-based visual tier
+     * index (1..7, `CachedCairn.tier.ordinal + 1`) and stoneCount drives
+     * the silhouette layering.
      */
     @Immutable data class Cairn(
         val cairnId: String,
         val stoneCount: Int,
         val tier: Int,
-    ) : WalkMapAnnotationKind()
+    ) : WalkMapAnnotationKind() {
+        /**
+         * Decode the 1-based [tier] back to the enum beside its encode,
+         * clamped so malformed data degrades to an in-range tier
+         * instead of crashing the map.
+         */
+        val resolvedTier: CairnTier
+            get() = CairnTier.entries[(tier - 1).coerceIn(0, CairnTier.entries.lastIndex)]
+    }
 }
+
+/**
+ * ARGB packed for a whisper whose category doesn't resolve; the map's
+ * wisp-tint table must include this exact value or unresolved pins
+ * silently render icon-less.
+ */
+const val UNRESOLVED_WHISPER_ARGB = 0xFF8B7355L
 
 @Immutable
 data class WalkMapAnnotation(
@@ -199,7 +216,7 @@ fun computeWalkMapAnnotations(
             val g = (c.green * 255f).toInt() and 0xFF
             val b = (c.blue * 255f).toInt() and 0xFF
             ((a.toLong() shl 24) or (r.toLong() shl 16) or (g.toLong() shl 8) or b.toLong())
-        } ?: 0xFF8B7355L
+        } ?: UNRESOLVED_WHISPER_ARGB
         out += WalkMapAnnotation(
             kind = WalkMapAnnotationKind.Whisper(
                 whisperId = w.whisperId,

@@ -70,6 +70,7 @@ import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListen
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
+import org.walktalkmeditate.pilgrim.data.walk.UNRESOLVED_WHISPER_ARGB
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
@@ -985,7 +986,7 @@ internal fun PilgrimMap(
                                 // iOS parity @9a418e4: per-tier master at
                                 // its shipped size; `tier` is 1-based
                                 // (CachedCairn.tier.ordinal + 1).
-                                cairnGlyphBitmaps[cairnTierFromSummaryIndex(k.tier)]
+                                cairnGlyphBitmaps[k.resolvedTier]
                         }
                         // All sizing lives in the raster (iOS
                         // `point.iconSize = 1.0` on every branch). A null
@@ -1183,8 +1184,8 @@ internal fun rememberWhisperGlyphBitmaps(): Map<Long, Bitmap> {
 }
 
 // MapAnnotations.kt packs stone when a whisper's category doesn't
-// resolve; a wisp in that tint keeps those pins rendering.
-private val UNRESOLVED_WHISPER_TINT = Color(0xFF8B7355)
+// resolve; the shared constant keeps encode and tint table agreeing.
+private val UNRESOLVED_WHISPER_TINT = Color(UNRESOLVED_WHISPER_ARGB)
 
 /**
  * Pack a Compose [Color] into the same positive ARGB `Long` that
@@ -1217,14 +1218,6 @@ internal fun rememberCairnGlyphBitmaps(): Map<CairnTier, Bitmap> {
         }.toMap()
     }
 }
-
-/**
- * `WalkMapAnnotationKind.Cairn.tier` is 1-based (`CachedCairn.tier
- * .ordinal + 1`, MapAnnotations.kt); clamp defensively so malformed
- * data degrades to an in-range tier instead of crashing the map.
- */
-private fun cairnTierFromSummaryIndex(tier: Int): CairnTier =
-    CairnTier.entries[(tier - 1).coerceIn(0, CairnTier.entries.lastIndex)]
 
 /**
  * iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — the user-location
