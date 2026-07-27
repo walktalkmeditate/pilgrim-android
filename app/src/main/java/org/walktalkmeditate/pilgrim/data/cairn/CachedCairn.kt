@@ -25,4 +25,11 @@ data class CachedCairn(
     @SerialName("created_at") val createdAt: String? = null,
 ) {
     val tier: CairnTier get() = CairnTier.forStoneCount(stoneCount)
+
+    /**
+     * iOS parity `CachedCairn.becomingTier@9a418e4` — the tier this
+     * cairn becomes when a walker adds one stone. The add-a-stone
+     * sheet previews this, not the current tier (AE1-AE3).
+     */
+    val becomingTier: CairnTier get() = CairnTier.forStoneCount(stoneCount + 1)
 }

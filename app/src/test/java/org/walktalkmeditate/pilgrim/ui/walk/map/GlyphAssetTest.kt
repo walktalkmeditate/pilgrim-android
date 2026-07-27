@@ -19,6 +19,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
+import org.walktalkmeditate.pilgrim.ui.walk.glyphRes
 
 /**
  * The glyph masters' name contract and render sanity (iOS parity
@@ -70,6 +71,16 @@ class GlyphAssetTest {
     @Test
     fun `every tier maps to a drawable`() {
         assertEquals(CairnTier.entries.toSet(), tierDrawables.keys)
+    }
+
+    @Test
+    fun `production glyph mapping matches the pinned table`() {
+        // Double-entry with CairnTier.glyphRes (U16) — the production
+        // analogue of iOS CairnTier.glyphAssetName must agree with this
+        // test's independently pinned map.
+        tierDrawables.forEach { (tier, id) ->
+            assertEquals("tier $tier drifted from the pinned drawable", id, tier.glyphRes)
+        }
     }
 
     @Test

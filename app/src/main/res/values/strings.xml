@@ -646,6 +646,20 @@
     <string name="stone_sheet_existing_count">%1$d stones</string>
     <string name="stone_sheet_existing_count_one">1 stone</string>
 
+    <!-- iOS parity StonePlacementSheet.swift + CairnDetailView.swift@9a418e4 —
+         glyph accessibility labels. %1$s is a cairn_tier_article_* string. -->
+    <string name="stone_sheet_becomes_a11y">Becomes %1$s cairn</string>
+    <string name="stone_sheet_begins_a11y">Begins a faint cairn</string>
+    <string name="cairn_detail_hero_a11y">%1$s cairn</string>
+    <!-- iOS CairnTier.displayNameWithArticle — "an eternal", never "a eternal". -->
+    <string name="cairn_tier_article_faint">a faint</string>
+    <string name="cairn_tier_article_small">a small</string>
+    <string name="cairn_tier_article_medium">a medium</string>
+    <string name="cairn_tier_article_large">a large</string>
+    <string name="cairn_tier_article_great">a great</string>
+    <string name="cairn_tier_article_sacred">a sacred</string>
+    <string name="cairn_tier_article_eternal">an eternal</string>
+
     <!-- iOS parity CairnDetailView.swift@db4196e — read-only modal -->
     <plurals name="cairn_detail_stones_plural">
         <item quantity="one">stone</item>
