@@ -17,6 +17,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelVariant
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 
 /**
@@ -39,20 +41,24 @@ class VoiceCardTest {
 
     private fun render(
         state: VoiceCardState = DEFAULT_STATE,
+        modelState: WhisperModelState = WhisperModelState.Ready(WhisperModelVariant.Base),
         onSetVoiceGuideEnabled: (Boolean) -> Unit = {},
         onSetAutoTranscribe: (Boolean) -> Unit = {},
         onOpenVoiceGuides: () -> Unit = {},
         onOpenRecordings: () -> Unit = {},
+        onOpenModelDownload: () -> Unit = {},
     ) {
         composeRule.setContent {
             PilgrimTheme {
                 Box(Modifier.size(400.dp, 1000.dp)) {
                     VoiceCard(
                         state = state,
+                        modelState = modelState,
                         onSetVoiceGuideEnabled = onSetVoiceGuideEnabled,
                         onSetAutoTranscribe = onSetAutoTranscribe,
                         onOpenVoiceGuides = onOpenVoiceGuides,
                         onOpenRecordings = onOpenRecordings,
+                        onOpenModelDownload = onOpenModelDownload,
                     )
                 }
             }
@@ -136,6 +142,63 @@ class VoiceCardTest {
         var opened = false
         render(onOpenRecordings = { opened = true })
         composeRule.onNodeWithText("Recordings").performClick()
+        composeRule.runOnIdle { assertEquals(true, opened) }
+    }
+
+    // --- U11 model download row (spec section 1) ------------------------
+
+    @Test
+    fun `model row hidden when the base model is ready`() {
+        render(modelState = WhisperModelState.Ready(WhisperModelVariant.Base))
+        composeRule.onNodeWithText("Downloading model", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("Waiting to download", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `downloading renders the iOS percent line`() {
+        render(
+            modelState = WhisperModelState.Downloading(
+                bytesDownloaded = 49_317_155L,
+                totalBytes = 147_951_465L,
+            ),
+        )
+        composeRule.onNodeWithText("Downloading model 33%").assertExists()
+    }
+
+    @Test
+    fun `waiting unmetered renders the wifi caption`() {
+        render(modelState = WhisperModelState.WaitingUnmetered)
+        composeRule
+            .onNodeWithText("Waiting for Wi-Fi to download transcription model")
+            .assertExists()
+    }
+
+    @Test
+    fun `legacy tiny renders the waiting caption`() {
+        render(modelState = WhisperModelState.Ready(WhisperModelVariant.LegacyTiny))
+        composeRule
+            .onNodeWithText("Waiting to download transcription model")
+            .assertExists()
+    }
+
+    @Test
+    fun `failed states render their captions`() {
+        render(modelState = WhisperModelState.FailedStorage)
+        composeRule
+            .onNodeWithText("Not enough space for the transcription model")
+            .assertExists()
+    }
+
+    @Test
+    fun `tapping the model row opens the download sheet`() {
+        var opened = false
+        render(
+            modelState = WhisperModelState.WaitingUnmetered,
+            onOpenModelDownload = { opened = true },
+        )
+        composeRule
+            .onNodeWithText("Waiting for Wi-Fi to download transcription model")
+            .performClick()
         composeRule.runOnIdle { assertEquals(true, opened) }
     }
 

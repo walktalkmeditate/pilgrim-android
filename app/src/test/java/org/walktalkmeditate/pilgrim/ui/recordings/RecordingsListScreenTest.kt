@@ -12,9 +12,14 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -31,6 +36,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
+import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
+import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -101,8 +109,11 @@ class RecordingsListScreenTest {
     @After
     fun tearDown() {
         db.close()
+        modelStoreScope.cancel()
         Dispatchers.resetMain()
     }
+
+    private val modelStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private fun newViewModel() = RecordingsListViewModel(
         walkRepository = repository,
@@ -111,6 +122,14 @@ class RecordingsListScreenTest {
         fileSystem = fileSystem,
         waveformCache = waveformCache,
         context = context,
+        whisperModelStore = WhisperModelStore(
+            context = context,
+            workSource = object : ModelDownloadWorkSource {
+                override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
+            },
+            unmeteredProbe = { true },
+            scope = modelStoreScope,
+        ),
     )
 
     private fun seedWalkWithRecording(

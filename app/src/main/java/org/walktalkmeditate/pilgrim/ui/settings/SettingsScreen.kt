@@ -55,6 +55,8 @@ import org.walktalkmeditate.pilgrim.ui.settings.practice.PracticeCard
 import org.walktalkmeditate.pilgrim.ui.settings.voice.VoiceCard
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+import org.walktalkmeditate.pilgrim.ui.walk.ModelDownloadSheet
+import org.walktalkmeditate.pilgrim.ui.walk.ModelDownloadViewModel
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.isPhotosPermissionGranted
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.photoPermissionsToRequest
 
@@ -75,6 +77,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.reliquary.photoPermissionsToRequest
 fun SettingsScreen(
     onAction: (SettingsAction) -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
+    modelDownloadViewModel: ModelDownloadViewModel = hiltViewModel(),
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val routeCatalog by viewModel.routeCatalog.collectAsStateWithLifecycle()
@@ -88,6 +91,12 @@ fun SettingsScreen(
     val walkReliquary by viewModel.walkReliquaryEnabled.collectAsStateWithLifecycle()
     val autoPlayWhisper by viewModel.autoPlayWhisperOnProximity.collectAsStateWithLifecycle()
     val voiceCardState by viewModel.voiceCardState.collectAsStateWithLifecycle()
+    // U11: model delivery state for the VoiceCard row + download sheet
+    // (parity spec docs/parity/2026-07-26-port-download-ux-u11.md,
+    // section 1). Rides the shared ModelDownloadViewModel rather than
+    // SettingsViewModel so the row and the sheet read one source.
+    val whisperModelState by modelDownloadViewModel.modelState.collectAsStateWithLifecycle()
+    var showModelDownloadSheet by rememberSaveable { mutableStateOf(false) }
     val practiceSummary by viewModel.practiceSummary.collectAsStateWithLifecycle()
     val milestone by viewModel.milestone.collectAsStateWithLifecycle()
     // iOS parity: enabling the reliquary requests photo access. The
@@ -194,10 +203,12 @@ fun SettingsScreen(
             item {
                 VoiceCard(
                     state = voiceCardState,
+                    modelState = whisperModelState,
                     onSetVoiceGuideEnabled = viewModel::setVoiceGuideEnabled,
                     onSetAutoTranscribe = viewModel::setAutoTranscribe,
                     onOpenVoiceGuides = { onAction(SettingsAction.OpenVoiceGuides) },
                     onOpenRecordings = { onAction(SettingsAction.OpenRecordings) },
+                    onOpenModelDownload = { showModelDownloadSheet = true },
                 )
             }
             item {
@@ -274,6 +285,13 @@ fun SettingsScreen(
                 textAlign = TextAlign.Center,
             )
         }
+    }
+
+    if (showModelDownloadSheet) {
+        ModelDownloadSheet(
+            onDismiss = { showModelDownloadSheet = false },
+            viewModel = modelDownloadViewModel,
+        )
     }
 }
 

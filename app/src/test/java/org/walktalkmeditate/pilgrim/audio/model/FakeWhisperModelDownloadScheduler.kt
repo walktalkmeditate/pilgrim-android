@@ -2,12 +2,14 @@
 package org.walktalkmeditate.pilgrim.audio.model
 
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Test double for [WhisperModelDownloadScheduler]. Records
- * [ensureEnqueued] calls so runner tests pin the model-absent
- * self-heal (U10) without WorkManager.
+ * [ensureEnqueued]/[retry]/[setCellularOverride] calls so runner tests
+ * pin the model-absent self-heal (U10) and sheet-VM tests pin the
+ * override/retry plumbing (U11) without WorkManager. [work] doubles as
+ * the [ModelDownloadWorkSource] emission channel for store composition.
  */
 class FakeWhisperModelDownloadScheduler : WhisperModelDownloadScheduler {
 
@@ -15,6 +17,10 @@ class FakeWhisperModelDownloadScheduler : WhisperModelDownloadScheduler {
         private set
     var retryCalls = 0
         private set
+    val cellularOverrideCalls = mutableListOf<Boolean>()
+
+    val cellularOverride = MutableStateFlow(false)
+    val work = MutableStateFlow<ModelDownloadWork?>(null)
 
     override suspend fun ensureEnqueued() {
         ensureEnqueuedCalls++
@@ -24,9 +30,12 @@ class FakeWhisperModelDownloadScheduler : WhisperModelDownloadScheduler {
         retryCalls++
     }
 
-    override suspend fun setCellularOverride(enabled: Boolean) = Unit
+    override suspend fun setCellularOverride(enabled: Boolean) {
+        cellularOverrideCalls += enabled
+        cellularOverride.value = enabled
+    }
 
-    override fun observeCellularOverride(): Flow<Boolean> = flowOf(false)
+    override fun observeCellularOverride(): Flow<Boolean> = cellularOverride
 
-    override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
+    override fun observe(): Flow<ModelDownloadWork?> = work
 }

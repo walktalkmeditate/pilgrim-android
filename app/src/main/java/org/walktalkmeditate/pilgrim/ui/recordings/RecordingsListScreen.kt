@@ -449,6 +449,11 @@ private fun SwipeableRecordingRow(
     onRequestDelete: (Long) -> Unit,
 ) {
     val colors = pilgrimColors
+    // U11 gate: retranscribe nulls the transcript before scheduling, so
+    // the StartToEnd swipe is disabled until the whisper model is Ready
+    // (docs/parity/2026-07-26-port-download-ux-u11.md section 5). The
+    // VM's onRetranscribe guard backs this up against stale UI.
+    val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
     val swipeState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
@@ -470,7 +475,7 @@ private fun SwipeableRecordingRow(
 
     SwipeToDismissBox(
         state = swipeState,
-        enableDismissFromStartToEnd = true,
+        enableDismissFromStartToEnd = retranscribeEnabled,
         enableDismissFromEndToStart = true,
         backgroundContent = {
             SwipeBackground(swipeState = swipeState.dismissDirection)

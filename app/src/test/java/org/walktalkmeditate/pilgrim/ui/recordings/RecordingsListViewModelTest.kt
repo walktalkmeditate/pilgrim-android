@@ -6,10 +6,17 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import java.io.File
+import java.io.RandomAccessFile
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -30,6 +37,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.FakeVoicePlaybackController
+import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
+import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -48,12 +59,30 @@ class RecordingsListViewModelTest {
     private lateinit var scheduler: FakeTranscriptionScheduler
     private lateinit var fileSystem: VoiceRecordingFileSystem
     private lateinit var waveformCache: WaveformCache
+    private lateinit var modelStoreScope: CoroutineScope
+    private lateinit var modelStore: WhisperModelStore
     private val dispatcher = UnconfinedTestDispatcher()
+
+    private val modelRoot: File
+        get() = File(context.filesDir, "whisper-model")
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         context = ApplicationProvider.getApplicationContext()
+        // Real store over the Robolectric filesDir (TranscriptionRunnerTest
+        // pattern): tests that need the retranscribe gate open install a
+        // sparse legacy tiny via installLegacyTiny().
+        modelRoot.deleteRecursively()
+        modelStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        modelStore = WhisperModelStore(
+            context = context,
+            workSource = object : ModelDownloadWorkSource {
+                override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
+            },
+            unmeteredProbe = { true },
+            scope = modelStoreScope,
+        )
         // Same dispatcher-piping pattern as WalkSummaryViewModelTest:
         // pipe Room's executors through the test dispatcher so in-flight
         // queries are drained by runTest before db.close() — otherwise a
@@ -83,6 +112,8 @@ class RecordingsListViewModelTest {
 
     @After
     fun tearDown() {
+        modelStoreScope.cancel()
+        modelRoot.deleteRecursively()
         db.close()
         Dispatchers.resetMain()
     }
@@ -93,8 +124,48 @@ class RecordingsListViewModelTest {
         transcriptionScheduler = scheduler,
         fileSystem = fileSystem,
         waveformCache = waveformCache,
+        whisperModelStore = modelStore,
         context = context,
     )
+
+    private fun installLegacyTiny() {
+        val tiny = File(modelRoot, "ggml-tiny.en.bin")
+        tiny.parentFile?.mkdirs()
+        RandomAccessFile(tiny, "rw").use {
+            it.setLength(WhisperModelConfig.LEGACY_TINY_EXPECTED_BYTES)
+        }
+    }
+
+    /**
+     * The gate flows store probe (real IO) -> VM stateIn, so bridge to
+     * wall-clock with the same polling pattern as [awaitFileGone].
+     */
+    private suspend fun awaitRetranscribeEnabled(vm: RecordingsListViewModel) {
+        withContext(Dispatchers.Default) {
+            withTimeout(10_000L) {
+                while (!vm.retranscribeEnabled.value) {
+                    Thread.sleep(25L)
+                }
+            }
+        }
+    }
+
+    /**
+     * The null-write rides viewModelScope through the repository's IO
+     * hop, so the assert must poll wall-clock like the gate helper
+     * above — asserting synchronously reads the pre-write row.
+     */
+    private suspend fun awaitTranscriptionCleared(recordingId: Long): VoiceRecording? =
+        withContext(Dispatchers.Default) {
+            withTimeout(10_000L) {
+                var row = repository.getVoiceRecording(recordingId)
+                while (row?.transcription != null) {
+                    Thread.sleep(25L)
+                    row = repository.getVoiceRecording(recordingId)
+                }
+                row
+            }
+        }
 
     private suspend fun loaded(vm: RecordingsListViewModel): RecordingsListUiState.Loaded {
         var captured: RecordingsListUiState = RecordingsListUiState.Loading
@@ -420,23 +491,58 @@ class RecordingsListViewModelTest {
     }
 
     @Test
-    fun `onRetranscribe clears transcription and reschedules`() = runTest(dispatcher) {
+    fun `onRetranscribe clears transcription and reschedules once the model is ready`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val rec = insertRecording(
+                walkId = walk.id,
+                startAt = 10_000L,
+                transcription = "old transcription",
+                wpm = 120.0,
+            )
+
+            val vm = newViewModel()
+            awaitRetranscribeEnabled(vm)
+            vm.onRetranscribe(rec.id)
+
+            val updated = awaitTranscriptionCleared(rec.id)
+            assertNull(updated?.transcription)
+            assertNull(updated?.wordsPerMinute)
+            assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
+        }
+
+    @Test
+    fun `onRetranscribe is a no-op while the model is absent`() = runTest(dispatcher) {
         val walk = repository.startWalk(startTimestamp = 0L)
         repository.finishWalk(walk, endTimestamp = 60_000L)
         val rec = insertRecording(
             walkId = walk.id,
             startAt = 10_000L,
-            transcription = "old transcription",
+            transcription = "precious transcription",
             wpm = 120.0,
         )
 
         val vm = newViewModel()
+        assertFalse("gate must start closed with no model on disk", vm.retranscribeEnabled.value)
         vm.onRetranscribe(rec.id)
 
+        // The destructive null write must never land pre-Ready (U11
+        // spec section 5 — silent data loss during the window).
         val updated = repository.getVoiceRecording(rec.id)
-        assertNull(updated?.transcription)
-        assertNull(updated?.wordsPerMinute)
-        assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
+        assertEquals("precious transcription", updated?.transcription)
+        assertTrue(scheduler.scheduledWalkIds.isEmpty())
+    }
+
+    @Test
+    fun `retranscribeEnabled opens once the legacy tiny probes ready`() = runTest(dispatcher) {
+        installLegacyTiny()
+
+        val vm = newViewModel()
+
+        awaitRetranscribeEnabled(vm)
+        assertTrue(vm.retranscribeEnabled.value)
     }
 
     @Test

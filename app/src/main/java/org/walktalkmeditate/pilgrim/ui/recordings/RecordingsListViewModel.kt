@@ -16,12 +16,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -117,9 +120,26 @@ class RecordingsListViewModel @Inject constructor(
      */
     private val fileSystem: VoiceRecordingFileSystem,
     private val waveformCache: WaveformCache,
+    whisperModelStore: WhisperModelStore,
     @Suppress("UNUSED_PARAMETER")
     @ApplicationContext context: Context,
 ) : ViewModel() {
+
+    /**
+     * U11 gate (parity spec `docs/parity/2026-07-26-port-download-ux-u11.md`
+     * section 5): the StartToEnd retranscribe swipe destroys the
+     * transcript before scheduling, so it stays disabled until the
+     * model is Ready — Base or LegacyTiny (U10 gating rule). Eagerly so
+     * the `.value` guard in [onRetranscribe] reads live state (Stage
+     * 5-F: `.value` reads don't subscribe a WhileSubscribed upstream).
+     */
+    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.state
+        .map { it is WhisperModelState.Ready }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = whisperModelStore.state.value is WhisperModelState.Ready,
+        )
 
     /** Read-only view of the bound [VoiceRecordingFileSystem]. */
     val recordingFileSystem: VoiceRecordingFileSystem get() = fileSystem
@@ -407,8 +427,13 @@ class RecordingsListViewModel @Inject constructor(
      * the recording's walk. The scheduler iterates pending rows
      * within the walk, so a per-recording API is unnecessary —
      * unaffected siblings are simply re-checked and skipped.
+     *
+     * Fails closed pre-Ready: the swipe is disabled in the UI, and this
+     * guard catches a stale-UI dispatch before the destructive null
+     * write (U11 spec section 5).
      */
     fun onRetranscribe(recordingId: Long) {
+        if (!retranscribeEnabled.value) return
         viewModelScope.launch {
             val recording = walkRepository.getVoiceRecording(recordingId) ?: return@launch
             walkRepository.updateVoiceRecording(

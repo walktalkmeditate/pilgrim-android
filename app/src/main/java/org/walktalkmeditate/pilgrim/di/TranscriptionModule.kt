@@ -26,6 +26,8 @@ import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadSpec
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelScope
 import org.walktalkmeditate.pilgrim.audio.model.WorkManagerWhisperModelDownloadScheduler
+import org.walktalkmeditate.pilgrim.ui.walk.BackgroundDataRestrictionProbe
+import org.walktalkmeditate.pilgrim.ui.walk.ConnectivityBackgroundDataRestrictionProbe
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -73,6 +75,12 @@ abstract class TranscriptionModule {
     abstract fun bindUnmeteredNetworkProbe(
         impl: ConnectivityUnmeteredNetworkProbe,
     ): UnmeteredNetworkProbe
+
+    @Binds
+    @Singleton
+    abstract fun bindBackgroundDataRestrictionProbe(
+        impl: ConnectivityBackgroundDataRestrictionProbe,
+    ): BackgroundDataRestrictionProbe
 
     companion object {
         /**

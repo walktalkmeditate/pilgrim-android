@@ -182,6 +182,15 @@ class WalkSummaryViewModelLightReadingGateTest {
             waveformCache = org.walktalkmeditate.pilgrim.audio.WaveformCache(
                 fileSystem = org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem(context),
             ),
+            whisperModelStore = org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore(
+                context = context,
+                workSource = object : org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource {
+                    override fun observe(): kotlinx.coroutines.flow.Flow<org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork?> =
+                        kotlinx.coroutines.flow.flowOf(null)
+                },
+                unmeteredProbe = { true },
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+            ),
             routeCatalogService = org.walktalkmeditate.pilgrim.data.collective.routes.bootstrapRouteCatalogService(
                 context,
                 CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),

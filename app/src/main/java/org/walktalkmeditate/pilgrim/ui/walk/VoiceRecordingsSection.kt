@@ -23,8 +23,10 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,11 +42,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.alpha
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.TranscriptionRunner
+import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionPlaceholder
 import org.walktalkmeditate.pilgrim.ui.recordings.transcriptionNeedsExpansion
@@ -52,6 +56,67 @@ import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
+
+/**
+ * What a null-transcription row should say about itself — the U11
+ * substate matrix `f(autoTranscribe pref x model state)` from
+ * `docs/parity/2026-07-26-port-download-ux-u11.md` (section 3). The
+ * row's existence IS the pending work (U9 C6 re-kicks every
+ * null-transcription row), so no third axis is needed.
+ */
+@Immutable
+sealed interface PendingTranscriptionSubstate {
+
+    /**
+     * Auto-transcribe is OFF: nothing is running and nothing was
+     * promised, so the row shows a plain "not transcribed" state with
+     * a manual Transcribe affordance — never download language.
+     * [transcribeEnabled] gates the affordance on model readiness
+     * (U10: Ready(Base) OR Ready(LegacyTiny)).
+     */
+    @Immutable
+    data class ManualPending(val transcribeEnabled: Boolean) : PendingTranscriptionSubstate
+
+    /**
+     * Auto-transcribe is ON and the model has not been delivered —
+     * the row explains the delivery phase and taps through to
+     * [ModelDownloadSheet]. [modelState] is one of Absent / Enqueued /
+     * WaitingUnmetered / Downloading / Verifying.
+     */
+    @Immutable
+    data class WaitingOnDownload(val modelState: WhisperModelState) : PendingTranscriptionSubstate
+
+    /** Auto-transcribe ON, model Ready — the worker owns it from here. */
+    data object QueuedForProcessing : PendingTranscriptionSubstate
+
+    /** Terminal download failure — row exposes Retry (U9 C5). */
+    data object DownloadFailedChecksum : PendingTranscriptionSubstate
+
+    /** Terminal storage failure — row carries the free-space copy. */
+    data object DownloadFailedStorage : PendingTranscriptionSubstate
+}
+
+/** Pure mapper for the U11 substate matrix — unit-testable without Compose. */
+fun pendingTranscriptionSubstate(
+    autoTranscribe: Boolean,
+    modelState: WhisperModelState,
+): PendingTranscriptionSubstate = if (!autoTranscribe) {
+    PendingTranscriptionSubstate.ManualPending(
+        transcribeEnabled = modelState is WhisperModelState.Ready,
+    )
+} else {
+    when (modelState) {
+        is WhisperModelState.Ready -> PendingTranscriptionSubstate.QueuedForProcessing
+        WhisperModelState.FailedChecksum -> PendingTranscriptionSubstate.DownloadFailedChecksum
+        WhisperModelState.FailedStorage -> PendingTranscriptionSubstate.DownloadFailedStorage
+        WhisperModelState.Absent,
+        WhisperModelState.Enqueued,
+        WhisperModelState.WaitingUnmetered,
+        is WhisperModelState.Downloading,
+        WhisperModelState.Verifying,
+        -> PendingTranscriptionSubstate.WaitingOnDownload(modelState)
+    }
+}
 
 /**
  * iOS parity `WalkSummaryView.recordingsSection@db4196e` +
@@ -83,6 +148,11 @@ fun VoiceRecordingsSection(
     onSaveTranscription: (recordingId: Long, newText: String) -> Unit,
     onRetranscribe: (recordingId: Long) -> Unit,
     onEnsureWaveform: (recordingId: Long, relativePath: String) -> Unit,
+    pendingSubstate: PendingTranscriptionSubstate,
+    retranscribeEnabled: Boolean,
+    onManualTranscribe: () -> Unit,
+    onOpenModelDownloadSheet: () -> Unit,
+    onRetryModelDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (recordings.isEmpty()) return
@@ -140,6 +210,11 @@ fun VoiceRecordingsSection(
                 onEnsureWaveform = {
                     onEnsureWaveform(recording.id, recording.fileRelativePath)
                 },
+                pendingSubstate = pendingSubstate,
+                retranscribeEnabled = retranscribeEnabled,
+                onManualTranscribe = onManualTranscribe,
+                onOpenModelDownloadSheet = onOpenModelDownloadSheet,
+                onRetryModelDownload = onRetryModelDownload,
             )
         }
     }
@@ -162,6 +237,11 @@ private fun VoiceRecordingRow(
     onSaveTranscription: (String) -> Unit,
     onRetranscribe: () -> Unit,
     onEnsureWaveform: () -> Unit,
+    pendingSubstate: PendingTranscriptionSubstate,
+    retranscribeEnabled: Boolean,
+    onManualTranscribe: () -> Unit,
+    onOpenModelDownloadSheet: () -> Unit,
+    onRetryModelDownload: () -> Unit,
 ) {
     LaunchedEffect(recording.id) { onEnsureWaveform() }
     Column(
@@ -250,8 +330,11 @@ private fun VoiceRecordingRow(
             )
         }
         when (val transcription = recording.transcription) {
-            null -> TranscriptionPlaceholder(
-                text = stringResource(R.string.transcription_pending),
+            null -> PendingTranscriptionRow(
+                substate = pendingSubstate,
+                onManualTranscribe = onManualTranscribe,
+                onOpenModelDownloadSheet = onOpenModelDownloadSheet,
+                onRetryModelDownload = onRetryModelDownload,
             )
             TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
                 text = transcription,
@@ -261,8 +344,130 @@ private fun VoiceRecordingRow(
                 text = transcription,
                 onSave = onSaveTranscription,
                 onRetranscribe = onRetranscribe,
+                retranscribeEnabled = retranscribeEnabled,
             )
         }
+    }
+}
+
+/**
+ * Renders the U11 substate for a null-transcription row. Delivery-phase
+ * rows tap through to [ModelDownloadSheet]; the pref-OFF manual state
+ * never mentions the download (spec section 3).
+ */
+@Composable
+private fun PendingTranscriptionRow(
+    substate: PendingTranscriptionSubstate,
+    onManualTranscribe: () -> Unit,
+    onOpenModelDownloadSheet: () -> Unit,
+    onRetryModelDownload: () -> Unit,
+) {
+    when (substate) {
+        is PendingTranscriptionSubstate.ManualPending -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+        ) {
+            TranscriptionPlaceholder(
+                text = stringResource(R.string.transcription_not_transcribed),
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(pilgrimColors.stone.copy(alpha = 0.12f))
+                    .clickable(
+                        enabled = substate.transcribeEnabled,
+                        onClick = onManualTranscribe,
+                    )
+                    .alpha(if (substate.transcribeEnabled) 1f else 0.38f)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.transcription_action_transcribe),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.stone,
+                )
+            }
+        }
+
+        is PendingTranscriptionSubstate.WaitingOnDownload -> Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .clickable(
+                    onClick = onOpenModelDownloadSheet,
+                    onClickLabel = stringResource(R.string.model_sheet_open_cd),
+                ),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            val downloading = substate.modelState as? WhisperModelState.Downloading
+            TranscriptionPlaceholder(
+                text = when {
+                    substate.modelState == WhisperModelState.WaitingUnmetered ->
+                        stringResource(R.string.transcription_waiting_model_wifi)
+                    downloading != null -> stringResource(
+                        R.string.transcription_waiting_model_downloading,
+                        modelMegabytes(downloading.bytesDownloaded),
+                        modelMegabytes(downloading.totalBytes),
+                    )
+                    substate.modelState == WhisperModelState.Verifying ->
+                        stringResource(R.string.transcription_waiting_model_verifying)
+                    else -> stringResource(R.string.transcription_waiting_model)
+                },
+            )
+            if (downloading != null) {
+                LinearProgressIndicator(
+                    progress = { downloading.fraction },
+                    color = pilgrimColors.stone,
+                    trackColor = pilgrimColors.fog.copy(alpha = 0.25f),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
+        PendingTranscriptionSubstate.QueuedForProcessing -> TranscriptionPlaceholder(
+            text = stringResource(R.string.transcription_queued),
+        )
+
+        PendingTranscriptionSubstate.DownloadFailedChecksum -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+        ) {
+            TranscriptionPlaceholder(
+                text = stringResource(R.string.model_state_failed_checksum),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(
+                        onClick = onOpenModelDownloadSheet,
+                        onClickLabel = stringResource(R.string.model_sheet_open_cd),
+                    ),
+            )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(pilgrimColors.stone.copy(alpha = 0.12f))
+                    .clickable(onClick = onRetryModelDownload)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.model_action_retry),
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.stone,
+                )
+            }
+        }
+
+        PendingTranscriptionSubstate.DownloadFailedStorage -> TranscriptionPlaceholder(
+            text = stringResource(R.string.model_state_failed_storage_hint),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    onClick = onOpenModelDownloadSheet,
+                    onClickLabel = stringResource(R.string.model_sheet_open_cd),
+                ),
+        )
     }
 }
 
@@ -304,6 +509,7 @@ private fun EditableTranscription(
     text: String,
     onSave: (String) -> Unit,
     onRetranscribe: () -> Unit,
+    retranscribeEnabled: Boolean,
 ) {
     val clipboard = LocalClipboardManager.current
     var isEditing by rememberSaveable(recordingId) { mutableStateOf(false) }
@@ -434,6 +640,10 @@ private fun EditableTranscription(
                         .clickable { clipboard.setText(AnnotatedString(text)) }
                         .padding(8.dp),
                 )
+                // Disabled until the model is Ready (U11 spec section 5):
+                // retranscribe nulls the transcript BEFORE scheduling, so
+                // firing it pre-Ready is silent data loss while the work
+                // spins on a missing model.
                 Icon(
                     imageVector = Icons.Outlined.Refresh,
                     contentDescription = stringResource(
@@ -444,7 +654,8 @@ private fun EditableTranscription(
                         .minimumInteractiveComponentSize()
                         .size(32.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .clickable(onClick = onRetranscribe)
+                        .clickable(enabled = retranscribeEnabled, onClick = onRetranscribe)
+                        .alpha(if (retranscribeEnabled) 1f else 0.38f)
                         .padding(8.dp),
                 )
             }
