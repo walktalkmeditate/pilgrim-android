@@ -17,4 +17,9 @@ object GratitudeVoice : WalkPromptVoice {
         } else {
             "Find the gratitude hidden in this silent walk. What is the walker thankful for, even without saying it? The body that carried them, the ground beneath their feet, the places they marked as meaningful, the time they gave themselves. Frame your response as a practice of thanksgiving for the walk itself."
         }
+
+    override fun responseConstraints(hasSpeech: Boolean): List<String> = listOf(
+        "Root every thanksgiving in something specific from this walk — no generic blessings.",
+        "Warm but plain language, in prose; never saccharine.",
+    )
 }

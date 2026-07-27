@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.prompt.voices
 
+import org.walktalkmeditate.pilgrim.core.prompt.StandardPreamble
 import org.walktalkmeditate.pilgrim.core.prompt.WalkPromptVoice
 
 object ContemplativeVoice : WalkPromptVoice {
@@ -8,7 +9,7 @@ object ContemplativeVoice : WalkPromptVoice {
         if (hasSpeech) {
             "During a walking meditation, these words arose naturally from the rhythm of movement and breath. They were not planned or curated — they emerged as the body moved through space."
         } else {
-            "This walk was taken in silence — no words were spoken, only movement. The walker chose presence over expression, letting the body speak through pace, pauses, and the places it was drawn to."
+            StandardPreamble.text(hasSpeech = false)
         }
 
     override fun instruction(hasSpeech: Boolean): String =
@@ -17,4 +18,10 @@ object ContemplativeVoice : WalkPromptVoice {
         } else {
             "Reflect on what this silent walk might reveal. What does its rhythm suggest? Its pauses, its waypoints, its duration? Help the walker see what their body and feet were saying when their voice was still. Respond in a contemplative, unhurried tone."
         }
+
+    override fun responseConstraints(hasSpeech: Boolean): List<String> = listOf(
+        "Write in unhurried prose — no bullet points, no headings.",
+        "Ask at most one question, and let it be one worth carrying.",
+        "Do not summarize the walk back to the walker; they were there.",
+    )
 }

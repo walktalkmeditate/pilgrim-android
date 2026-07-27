@@ -76,6 +76,11 @@ class PromptAssemblerTest {
         distanceMeters: Double = 2_000.0,
         startTimestamp: Long = testStartTimestamp,
         lunarPhase: MoonPhase? = testLunar,
+        mode: PracticeMode = PracticeMode.Wander,
+        seekStory: SeekStoryContext? = null,
+        pauses: List<PauseContext> = emptyList(),
+        ascentMeters: Double? = null,
+        descentMeters: Double? = null,
     ): ActivityContext = ActivityContext(
         recordings = recordings,
         meditations = meditations,
@@ -92,6 +97,11 @@ class PromptAssemblerTest {
         celestial = celestial,
         photoContexts = photoContexts,
         narrativeArc = narrativeArc,
+        mode = mode,
+        seekStory = seekStory,
+        pauses = pauses,
+        ascentMeters = ascentMeters,
+        descentMeters = descentMeters,
     )
 
     private fun assemble(
@@ -136,8 +146,13 @@ class PromptAssemblerTest {
             append("**Context:** Walk duration: 30 minutes | Distance: 2.00 km | ")
             append("Time: morning on May 4, 2026, 9:41 AM | ")
             append("Moon: Waxing Crescent (32% illumination)")
+            append("\n\n**About this practice:** This walk was a wander — no destination, ")
+            append("no goal; the path chose itself.")
             append("\n\n---\n\n")
             append("INSTRUCT_FALSE")
+            append("\n\n**How to respond:**\n")
+            append("- Draw only on what this walk actually holds — never invent details, ")
+            append("events, or memories that are not in the context above.")
         }
         assertEquals(expected, result)
     }
@@ -212,7 +227,12 @@ class PromptAssemblerTest {
         )
         val result = assemble(context)
 
-        assertTrue("preamble: $result", result.startsWith("PREAMBLE_TRUE\n\n---\n\n**Context:**"))
+        assertTrue(
+            "preamble with character note: $result",
+            result.startsWith(
+                "PREAMBLE_TRUE This was a walk, with stillness folded into it.\n\n---\n\n**Context:**",
+            ),
+        )
         assertTrue("weather inline: $result", result.contains(" | Weather: Sunny, 21°C\n\n**Celestial Context"))
         assertTrue("intention prologue: $result", result.contains("**The walker's intention:** \"presence\""))
         assertTrue("location: $result", result.contains("**Location:** Started near Central Park → ended near Bryant Park"))
@@ -223,11 +243,18 @@ class PromptAssemblerTest {
         assertTrue("meditations: $result", result.contains("**Meditation Sessions:**\n\n[10:00 AM – 10:05 AM] Meditated for 5 min 0 sec"))
         assertTrue("recent walks: $result", result.contains("**Recent Walk Context (for continuity):**"))
         assertTrue(
-            "instruction tail: $result",
+            "instruction tail + spoken response contract: $result",
             result.endsWith(
                 "\n\n---\n\nINSTRUCT_TRUE Ground your response in the walker's stated intention: " +
                     "'presence'. Return to it. Help them see how their walk — its pace, its pauses, " +
-                    "its moments — spoke to this purpose.",
+                    "its moments — spoke to this purpose." +
+                    "\n\n**How to respond:**\n" +
+                    "- Respond in the language the walker speaks in the transcription.\n" +
+                    "- If more than one voice appears in the transcription, honor it as a " +
+                    "conversation — attend to what happened between the speakers, and never " +
+                    "guess at names.\n" +
+                    "- Draw only on what this walk actually holds — never invent details, " +
+                    "events, or memories that are not in the context above.",
             ),
         )
     }
@@ -240,7 +267,10 @@ class PromptAssemblerTest {
         val result = assemble(context)
         assertTrue(
             "weather inline append: $result",
-            result.contains("Moon: Waxing Crescent (32% illumination) | Weather: Sunny, 21°C\n\n---"),
+            result.contains(
+                "Moon: Waxing Crescent (32% illumination) | Weather: Sunny, 21°C" +
+                    "\n\n**About this practice:**",
+            ),
         )
     }
 
@@ -589,10 +619,16 @@ class PromptAssemblerTest {
         val context = fixtureContext(
             recordings = listOf(
                 RecordingContext("r1", recordingTime, null, null, null, "first"),
+                RecordingContext("r2", recordingTime + 60_000L, null, null, null, "last"),
             ),
             meditations = listOf(
                 MeditationContext(meditationStart, meditationEnd, 300L),
             ),
+            pauses = listOf(
+                PauseContext(startDate = nyTimestamp(2026, 5, 4, 9, 52), durationSeconds = 120L),
+            ),
+            ascentMeters = 150.0,
+            descentMeters = 40.0,
             waypoints = listOf(
                 WaypointContext("bird", null, waypointTime, LatLng(40.71280, -74.00600)),
             ),
@@ -635,15 +671,20 @@ class PromptAssemblerTest {
             "**Context:**",
             "Weather: Sunny",
             "**Celestial Context",
+            "**About this practice:**",
             "**The walker's intention:**",
             "**Location:**",
             "**Pace:**",
+            "**Pauses:**",
+            "**Elevation:**",
             "**Waypoints marked during walk:**",
             "**Photos pinned along the walk:**",
             "**Walking Transcription:**",
             "**Meditation Sessions:**",
             "**Recent Walk Context (for continuity):**",
+            "**Attend to:**",
             "INSTRUCT_TRUE",
+            "**How to respond:**",
         )
         var lastIndex = -1
         var lastMarker = ""
@@ -678,6 +719,77 @@ class PromptAssemblerTest {
             result.contains(
                 "Ground your response in the walker's stated intention: 'theIntention'.",
             ),
+        )
+    }
+
+    // 21 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble pauses and elevation blocks rendered when present`() {
+        val context = fixtureContext(
+            pauses = listOf(
+                PauseContext(startDate = nyTimestamp(2026, 5, 4, 9, 51), durationSeconds = 180L),
+                PauseContext(startDate = nyTimestamp(2026, 5, 4, 10, 21), durationSeconds = 300L),
+            ),
+            ascentMeters = 150.0,
+            descentMeters = 40.0,
+        )
+        val result = assemble(context)
+        assertTrue(
+            "pauses block: $result",
+            result.contains(
+                "\n\n**Pauses:** Paused 2 times (8 min total); the longest, 5 min, " +
+                    "began at 10:21 AM.",
+            ),
+        )
+        assertTrue(
+            "elevation block: $result",
+            result.contains("\n\n**Elevation:** climbed 150 m, descended 40 m."),
+        )
+    }
+
+    // 22 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble pauses and elevation omitted when absent`() {
+        val result = assemble(fixtureContext())
+        assertFalse("no pauses block: $result", result.contains("**Pauses:**"))
+        assertFalse("no elevation block: $result", result.contains("**Elevation:**"))
+    }
+
+    // 23 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble character note appended to preamble with single space`() {
+        val context = fixtureContext(
+            durationSeconds = 5400L,
+            startTimestamp = nyTimestamp(2026, 5, 4, 21, 30),
+        )
+        val result = assemble(context)
+        assertTrue(
+            "note joins preamble: $result",
+            result.startsWith(
+                "PREAMBLE_FALSE This was a long walk into the night — the kind where thought " +
+                    "thins out and something quieter takes over.\n\n---\n\n**Context:**",
+            ),
+        )
+    }
+
+    // 24 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble pause total restores wall-clock end for light crossing`() {
+        val context = fixtureContext(
+            durationSeconds = 7200L,
+            startTimestamp = nyTimestamp(2026, 5, 4, 17, 30),
+            pauses = listOf(
+                PauseContext(startDate = nyTimestamp(2026, 5, 4, 18, 0), durationSeconds = 3600L),
+            ),
+        )
+        val result = assemble(context)
+        assertTrue(
+            "crossing phrase driven by active + paused time: $result",
+            result.contains("Time: began in the evening, ended in the night, on May 4, 2026, 5:30 PM"),
         )
     }
 }

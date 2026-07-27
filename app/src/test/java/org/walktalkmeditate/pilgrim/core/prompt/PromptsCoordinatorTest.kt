@@ -36,9 +36,11 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
+import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.photo.BitmapLoader
@@ -46,6 +48,7 @@ import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesReposit
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.ActivityType
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -512,6 +515,90 @@ class PromptsCoordinatorTest {
 
         val prompts = coordinator.generateAll(walkId = walk.id, zone = nyZone)
         assertNotNull(prompts.firstOrNull { it.text.contains("min/mi") })
+    }
+
+    @Test
+    fun `buildContext eventless walk is a wander with no pauses`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+        assertEquals(PracticeMode.Wander, ctx.mode)
+        assertNull(ctx.seekStory)
+        assertEquals(emptyList<PauseContext>(), ctx.pauses)
+        assertEquals(0.0, ctx.ascentMeters!!, 1e-9)
+        assertEquals(0.0, ctx.descentMeters!!, 1e-9)
+        assertEquals(1_800L, ctx.durationSeconds)
+    }
+
+    @Test
+    fun `buildContext derives pauses from events and active duration`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp + 600_000L, eventType = WalkEventType.PAUSED),
+        )
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp + 900_000L, eventType = WalkEventType.RESUMED),
+        )
+
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+        assertEquals(
+            listOf(PauseContext(startDate = testStartTimestamp + 600_000L, durationSeconds = 300L)),
+            ctx.pauses,
+        )
+        assertEquals("wall clock minus paused time", 1_500L, ctx.durationSeconds)
+    }
+
+    @Test
+    fun `buildContext closes trailing unpaired pause at walk end`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp + 1_500_000L, eventType = WalkEventType.PAUSED),
+        )
+
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+        assertEquals(
+            listOf(PauseContext(startDate = testStartTimestamp + 1_500_000L, durationSeconds = 300L)),
+            ctx.pauses,
+        )
+        assertEquals(1_500L, ctx.durationSeconds)
+    }
+
+    @Test
+    fun `buildContext seek events produce seek mode with sorted arrivals`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp, eventType = WalkEventType.SEEK_MODE),
+        )
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp + 1_200_000L, eventType = WalkEventType.SEEK_ARRIVAL),
+        )
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp + 600_000L, eventType = WalkEventType.SEEK_ARRIVAL),
+        )
+
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+        assertEquals(PracticeMode.Seek, ctx.mode)
+        assertEquals(
+            listOf(testStartTimestamp + 600_000L, testStartTimestamp + 1_200_000L),
+            ctx.seekStory?.arrivalTimes,
+        )
+    }
+
+    @Test
+    fun `buildContext computes ascent and descent from altitude samples`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        listOf(100.0, 130.0, 110.0).forEachIndexed { i, altitude ->
+            repository.recordAltitude(
+                AltitudeSample(
+                    walkId = walk.id,
+                    timestamp = testStartTimestamp + i * 60_000L,
+                    altitudeMeters = altitude,
+                ),
+            )
+        }
+
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+        assertEquals(30.0, ctx.ascentMeters!!, 1e-9)
+        assertEquals(20.0, ctx.descentMeters!!, 1e-9)
     }
 
     /**
