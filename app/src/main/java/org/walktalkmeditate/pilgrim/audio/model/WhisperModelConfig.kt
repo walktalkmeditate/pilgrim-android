@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio.model
 
+import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -69,6 +71,28 @@ object WhisperModelConfig {
      */
     fun baseEtagPath(filesDir: Path): Path =
         filesDir.resolve(MODEL_ROOT_DIR).resolve(VARIANT).resolve(FILE_NAME + ETAG_SUFFIX)
+
+    /**
+     * The one verified-delivery probe every reader routes through:
+     * model file at its exact expected size plus a sha marker holding
+     * the expected digest (marker-last ordering, U8 L4). The store
+     * passes the pinned constants; the U9 worker passes its injected
+     * spec so tests observe the probe. IO errors read as "not present".
+     */
+    fun verifiedModelPresent(
+        filesDir: Path,
+        expectedBytes: Long,
+        expectedSha256: String,
+    ): Boolean = try {
+        val model = baseModelPath(filesDir)
+        val marker = baseShaMarkerPath(filesDir)
+        Files.exists(model) &&
+            Files.size(model) == expectedBytes &&
+            Files.exists(marker) &&
+            String(Files.readAllBytes(marker), Charsets.UTF_8).trim() == expectedSha256
+    } catch (_: IOException) {
+        false
+    }
 
     /**
      * The flat pre-base path the v1.2.0 asset installer populated —

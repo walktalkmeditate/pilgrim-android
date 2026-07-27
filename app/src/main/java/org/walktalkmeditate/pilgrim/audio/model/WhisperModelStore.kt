@@ -89,6 +89,26 @@ class ConnectivityUnmeteredNetworkProbe @Inject constructor(
 }
 
 /**
+ * Seam over `ConnectivityManager.getRestrictBackgroundStatus` so the
+ * U11 sheet's Data Saver note is testable without a shadowed
+ * ConnectivityManager — same shape as [UnmeteredNetworkProbe] above.
+ */
+fun interface BackgroundDataRestrictionProbe {
+    fun isBackgroundDataRestricted(): Boolean
+}
+
+class ConnectivityBackgroundDataRestrictionProbe @Inject constructor(
+    @ApplicationContext private val context: Context,
+) : BackgroundDataRestrictionProbe {
+    override fun isBackgroundDataRestricted(): Boolean {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? ConnectivityManager ?: return false
+        return manager.restrictBackgroundStatus ==
+            ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
+    }
+}
+
+/**
  * Single probe-based source of truth for "which whisper model is
  * usable, and what is the download doing" — the Android analogue of
  * iOS `TranscriptionService`'s variant-keyed `resolvedModelPath` +
@@ -204,17 +224,11 @@ open class WhisperModelStore @Inject constructor(
         }
     }
 
-    private fun baseVerified(): Boolean = try {
-        val model = WhisperModelConfig.baseModelPath(filesDir)
-        val marker = WhisperModelConfig.baseShaMarkerPath(filesDir)
-        Files.exists(model) &&
-            Files.size(model) == WhisperModelConfig.EXPECTED_BYTES &&
-            Files.exists(marker) &&
-            String(Files.readAllBytes(marker), Charsets.UTF_8).trim() ==
-            WhisperModelConfig.EXPECTED_SHA256
-    } catch (_: IOException) {
-        false
-    }
+    private fun baseVerified(): Boolean = WhisperModelConfig.verifiedModelPresent(
+        filesDir = filesDir,
+        expectedBytes = WhisperModelConfig.EXPECTED_BYTES,
+        expectedSha256 = WhisperModelConfig.EXPECTED_SHA256,
+    )
 
     private fun legacyTinyPresent(): Boolean = try {
         val tiny = WhisperModelConfig.legacyTinyPath(filesDir)
@@ -232,3 +246,22 @@ open class WhisperModelStore @Inject constructor(
         const val TAG = "WhisperModelStore"
     }
 }
+
+/**
+ * Per-ViewModel "model is Ready — Base or the transitional LegacyTiny
+ * (U10 gating rule)" gate. Derived Eagerly so `.value` guards in the
+ * owning VM read a live value (Stage 5-F: `.value` reads don't
+ * subscribe a WhileSubscribed flow; this stateIn keeps the store's
+ * upstream hot for the VM lifetime). Deliberately an extension over a
+ * caller-owned [scope], NOT an always-hot store property — the per-VM
+ * lifecycle keeps the store's WhileSubscribed flow cold when no VM is
+ * alive.
+ */
+fun WhisperModelStore.modelReadyIn(scope: CoroutineScope): StateFlow<Boolean> =
+    state
+        .map { it is WhisperModelState.Ready }
+        .stateIn(
+            scope = scope,
+            started = SharingStarted.Eagerly,
+            initialValue = state.value is WhisperModelState.Ready,
+        )

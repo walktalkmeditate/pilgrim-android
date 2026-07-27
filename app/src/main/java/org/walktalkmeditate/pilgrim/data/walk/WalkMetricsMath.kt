@@ -42,28 +42,52 @@ internal object WalkMetricsMath {
 
     /**
      * Active duration in seconds = wall-clock duration minus the sum of
-     * paused gaps. A paused gap is the elapsed time between a PAUSED
-     * event and its matching RESUMED event; an unpaired trailing PAUSED
-     * is closed at the walk's `endTimestamp`. Returns 0 for in-progress
-     * walks.
+     * paused gaps ([pauseSpans]). Returns 0 for in-progress walks.
      */
     fun computeActiveDurationSeconds(walk: Walk, events: List<WalkEvent>): Long {
         val end = walk.endTimestamp ?: return 0L
         val wallClockMs = (end - walk.startTimestamp).coerceAtLeast(0L)
+        val pausedTotalMs = pauseSpans(walk, events).sumOf { it.durationMillis }
+        return ((wallClockMs - pausedTotalMs).coerceAtLeast(0L)) / 1_000L
+    }
+
+    /** One paused stretch, in epoch millis. Negative spans coerce to 0. */
+    data class PauseSpan(val startMs: Long, val durationMillis: Long)
+
+    /**
+     * The single PAUSED/RESUMED pairing automaton: the first PAUSED
+     * opens a span, its RESUMED closes it, an unmatched RESUMED is
+     * ignored, and an unpaired trailing PAUSED closes at the walk's
+     * `endTimestamp` — dropped entirely while the walk is still open
+     * (closed pairs are still returned for open walks). Shared by
+     * [computeActiveDurationSeconds] and the prompt pipeline's
+     * pause-context builder so the two can never drift.
+     */
+    fun pauseSpans(walk: Walk, events: List<WalkEvent>): List<PauseSpan> {
+        val spans = mutableListOf<PauseSpan>()
         var pausedSinceMs: Long? = null
-        var pausedTotalMs = 0L
         for (event in events.sortedBy { it.timestamp }) {
             when (event.eventType) {
                 WalkEventType.PAUSED -> if (pausedSinceMs == null) pausedSinceMs = event.timestamp
                 WalkEventType.RESUMED -> {
                     val pausedAt = pausedSinceMs ?: continue
-                    pausedTotalMs += (event.timestamp - pausedAt).coerceAtLeast(0L)
+                    spans += PauseSpan(
+                        startMs = pausedAt,
+                        durationMillis = (event.timestamp - pausedAt).coerceAtLeast(0L),
+                    )
                     pausedSinceMs = null
                 }
                 else -> Unit
             }
         }
-        pausedSinceMs?.let { pausedTotalMs += (end - it).coerceAtLeast(0L) }
-        return ((wallClockMs - pausedTotalMs).coerceAtLeast(0L)) / 1_000L
+        val end = walk.endTimestamp
+        val pausedAt = pausedSinceMs
+        if (end != null && pausedAt != null) {
+            spans += PauseSpan(
+                startMs = pausedAt,
+                durationMillis = (end - pausedAt).coerceAtLeast(0L),
+            )
+        }
+        return spans
     }
 }

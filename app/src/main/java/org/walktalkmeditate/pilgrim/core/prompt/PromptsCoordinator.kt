@@ -38,7 +38,6 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.haversineMeters
 
 /**
@@ -394,39 +393,18 @@ open class PromptsCoordinator internal constructor(
     }
 
     /**
-     * Pairs `PAUSED`/`RESUMED` events into [PauseContext]s with the same
-     * semantics as [WalkMetricsMath.computeActiveDurationSeconds]: the
-     * first PAUSED opens a span, RESUMED closes it, an unmatched RESUMED
-     * is ignored, and an unpaired trailing PAUSED closes at the walk's
-     * `endTimestamp` (dropped while the walk is still open).
+     * Maps [WalkMetricsMath.pauseSpans] into [PauseContext]s — the same
+     * PAUSED/RESUMED automaton [WalkMetricsMath.computeActiveDurationSeconds]
+     * subtracts, so the pause story and the active-duration math can
+     * never drift.
      */
-    private fun pauseContexts(walk: Walk, events: List<WalkEvent>): List<PauseContext> {
-        val pauses = mutableListOf<PauseContext>()
-        var pausedSinceMs: Long? = null
-        for (event in events.sortedBy { it.timestamp }) {
-            when (event.eventType) {
-                WalkEventType.PAUSED -> if (pausedSinceMs == null) pausedSinceMs = event.timestamp
-                WalkEventType.RESUMED -> {
-                    val pausedAt = pausedSinceMs ?: continue
-                    pauses += PauseContext(
-                        startDate = pausedAt,
-                        durationSeconds = (event.timestamp - pausedAt).coerceAtLeast(0L) / 1_000L,
-                    )
-                    pausedSinceMs = null
-                }
-                else -> Unit
-            }
-        }
-        val end = walk.endTimestamp
-        val pausedAt = pausedSinceMs
-        if (end != null && pausedAt != null) {
-            pauses += PauseContext(
-                startDate = pausedAt,
-                durationSeconds = (end - pausedAt).coerceAtLeast(0L) / 1_000L,
+    private fun pauseContexts(walk: Walk, events: List<WalkEvent>): List<PauseContext> =
+        WalkMetricsMath.pauseSpans(walk, events).map { span ->
+            PauseContext(
+                startDate = span.startMs,
+                durationSeconds = span.durationMillis / 1_000L,
             )
         }
-        return pauses
-    }
 
     private fun computeRouteSpeeds(samples: List<RouteDataSample>): List<Double> =
         samples.zipWithNext().mapNotNull { (a, b) ->

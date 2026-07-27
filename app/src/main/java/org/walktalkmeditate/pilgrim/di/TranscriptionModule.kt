@@ -14,6 +14,8 @@ import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.WhisperCppEngine
 import org.walktalkmeditate.pilgrim.audio.WhisperEngine
 import org.walktalkmeditate.pilgrim.audio.WorkManagerTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.audio.model.BackgroundDataRestrictionProbe
+import org.walktalkmeditate.pilgrim.audio.model.ConnectivityBackgroundDataRestrictionProbe
 import org.walktalkmeditate.pilgrim.audio.model.ConnectivityUnmeteredNetworkProbe
 import org.walktalkmeditate.pilgrim.audio.model.FreeSpaceProbe
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
@@ -26,8 +28,6 @@ import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadSpec
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelScope
 import org.walktalkmeditate.pilgrim.audio.model.WorkManagerWhisperModelDownloadScheduler
-import org.walktalkmeditate.pilgrim.ui.walk.BackgroundDataRestrictionProbe
-import org.walktalkmeditate.pilgrim.ui.walk.ConnectivityBackgroundDataRestrictionProbe
 
 @Module
 @InstallIn(SingletonComponent::class)

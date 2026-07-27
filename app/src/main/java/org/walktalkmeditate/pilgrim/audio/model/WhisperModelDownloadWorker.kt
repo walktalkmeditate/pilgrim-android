@@ -103,7 +103,8 @@ class WalkRepositoryPendingTranscriptionWalkSource @Inject constructor(
  *    the expected size — Content-Length or cumulative bytes past it
  *    abort before filling storage.
  *  - Deliver: digest match → atomic rename → sha marker LAST (U8 L4)
- *    → success side-effects (U10 hook, store invalidate, transcription
+ *    → success side-effects (U10 hook — self-invalidating, see
+ *    [WhisperModelStore.onBaseVerified] — then the transcription
  *    re-kick gated on the auto-transcribe preference).
  *  - Failures: checksum mismatch retries until [CHECKSUM_ATTEMPT_CAP],
  *    then terminal `checksum`; the StatFs precheck fails terminal
@@ -137,21 +138,16 @@ class WhisperModelDownloadWorker @AssistedInject constructor(
     }
 
     /**
-     * Same probe shape as the store's, but keyed on the injected
-     * [spec] so tests observe it: a stale-record re-enqueue (pruned
-     * WorkManager history, `ensureEnqueued` after prune) becomes a
-     * cheap no-op instead of a re-download.
+     * The store's shared probe, keyed on the injected [spec] so tests
+     * observe it: a stale-record re-enqueue (pruned WorkManager
+     * history, `ensureEnqueued` after prune) becomes a cheap no-op
+     * instead of a re-download.
      */
-    private fun alreadyDelivered(): Boolean = try {
-        val model = WhisperModelConfig.baseModelPath(filesDir)
-        val marker = WhisperModelConfig.baseShaMarkerPath(filesDir)
-        Files.exists(model) &&
-            Files.size(model) == spec.expectedBytes &&
-            Files.exists(marker) &&
-            String(Files.readAllBytes(marker), Charsets.UTF_8).trim() == spec.expectedSha256
-    } catch (_: IOException) {
-        false
-    }
+    private fun alreadyDelivered(): Boolean = WhisperModelConfig.verifiedModelPresent(
+        filesDir = filesDir,
+        expectedBytes = spec.expectedBytes,
+        expectedSha256 = spec.expectedSha256,
+    )
 
     private suspend fun runAttempt(): Result {
         val partial = WhisperModelConfig.basePartialPath(filesDir).toFile()
@@ -309,7 +305,6 @@ class WhisperModelDownloadWorker @AssistedInject constructor(
         etagFile.delete()
 
         store.onBaseVerified()
-        store.invalidate()
         rekickPendingTranscriptions()
         return Result.success()
     }

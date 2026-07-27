@@ -439,7 +439,10 @@ class WhisperModelDownloadWorkerTest {
      * Real store over the real Robolectric filesystem, with the U10
      * hook + invalidate overridden to record the success chain: at
      * hook time the model and marker must already exist and the
-     * partial must be gone (C6 ordering).
+     * partial must be gone (C6 ordering). The overridden hook mirrors
+     * production's self-invalidation (see
+     * [WhisperModelStore.onBaseVerified]), so `invalidateCount == 1`
+     * asserts the worker does NOT invalidate a second time itself.
      */
     private class RecordingStore(
         context: Context,
@@ -466,6 +469,7 @@ class WhisperModelDownloadWorkerTest {
             modelExistedAtHook = modelFile.exists()
             markerExistedAtHook = markerFile.exists()
             partialExistedAtHook = partialFile.exists()
+            invalidate()
         }
 
         override fun invalidate() {

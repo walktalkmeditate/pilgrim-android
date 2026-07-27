@@ -1,18 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk
 
-import android.content.Context
-import android.net.ConnectivityManager
 import android.util.Log
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
@@ -22,9 +16,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -32,7 +26,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,6 +34,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.audio.model.BackgroundDataRestrictionProbe
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
@@ -50,26 +44,6 @@ import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
-
-/**
- * Seam over `ConnectivityManager.getRestrictBackgroundStatus` so the
- * sheet's Data Saver note is testable without a shadowed
- * ConnectivityManager — same shape as U8's `UnmeteredNetworkProbe`.
- */
-fun interface BackgroundDataRestrictionProbe {
-    fun isBackgroundDataRestricted(): Boolean
-}
-
-class ConnectivityBackgroundDataRestrictionProbe @Inject constructor(
-    @ApplicationContext private val context: Context,
-) : BackgroundDataRestrictionProbe {
-    override fun isBackgroundDataRestricted(): Boolean {
-        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-            as? ConnectivityManager ?: return false
-        return manager.restrictBackgroundStatus ==
-            ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
-    }
-}
 
 /** User-facing MB (10^6 bytes, matching recordings-size captions), ASCII digits. */
 internal fun modelMegabytes(bytes: Long): String =
@@ -115,7 +89,7 @@ class ModelDownloadViewModel @Inject constructor(
         .observeCellularOverride()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), false)
 
-    /** Fresh probe read per composition — Data Saver can flip while the app runs. */
+    /** Live probe read per access; the sheet captures one value per composition. */
     val dataSaverRestricted: Boolean
         get() = backgroundDataProbe.isBackgroundDataRestricted()
 
@@ -154,6 +128,11 @@ fun ModelDownloadSheet(
 ) {
     val modelState by viewModel.modelState.collectAsStateWithLifecycle()
     val cellularOverride by viewModel.cellularOverride.collectAsStateWithLifecycle()
+    // Probed once per sheet composition (the getter is a Binder IPC —
+    // per-recomposition reads would fire on every 4 MB progress tick);
+    // a mid-sheet Data Saver flip is acceptable staleness for a
+    // transient sheet.
+    val dataSaverRestricted = remember { viewModel.dataSaverRestricted }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -164,7 +143,7 @@ fun ModelDownloadSheet(
         ModelDownloadSheetContent(
             modelState = modelState,
             cellularOverride = cellularOverride,
-            dataSaverRestricted = viewModel.dataSaverRestricted,
+            dataSaverRestricted = dataSaverRestricted,
             onToggleCellularOverride = viewModel::setCellularOverride,
             onRetry = viewModel::retryDownload,
         )
@@ -330,18 +309,10 @@ private fun FailureBlock(
             style = pilgrimType.caption,
             color = pilgrimColors.fog,
         )
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(pilgrimColors.stone.copy(alpha = 0.12f))
-                .clickable(onClick = onRetry)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.model_action_retry_download),
-                style = pilgrimType.caption,
-                color = pilgrimColors.stone,
-            )
-        }
+        StoneChip(
+            text = stringResource(R.string.model_action_retry_download),
+            onClick = onRetry,
+            verticalPadding = 6.dp,
+        )
     }
 }

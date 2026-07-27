@@ -16,15 +16,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
-import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+import org.walktalkmeditate.pilgrim.audio.model.modelReadyIn
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -129,17 +128,10 @@ class RecordingsListViewModel @Inject constructor(
      * U11 gate (parity spec `docs/parity/2026-07-26-port-download-ux-u11.md`
      * section 5): the StartToEnd retranscribe swipe destroys the
      * transcript before scheduling, so it stays disabled until the
-     * model is Ready — Base or LegacyTiny (U10 gating rule). Eagerly so
-     * the `.value` guard in [onRetranscribe] reads live state (Stage
-     * 5-F: `.value` reads don't subscribe a WhileSubscribed upstream).
+     * model is Ready. Derivation + Eagerly rationale live on
+     * [modelReadyIn].
      */
-    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.state
-        .map { it is WhisperModelState.Ready }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = whisperModelStore.state.value is WhisperModelState.Ready,
-        )
+    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.modelReadyIn(viewModelScope)
 
     /** Read-only view of the bound [VoiceRecordingFileSystem]. */
     val recordingFileSystem: VoiceRecordingFileSystem get() = fileSystem

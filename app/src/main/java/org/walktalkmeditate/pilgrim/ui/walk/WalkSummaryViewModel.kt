@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import androidx.core.net.toUri
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
+import org.walktalkmeditate.pilgrim.audio.model.modelReadyIn
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner.DiscoveredPhoto
@@ -980,20 +981,10 @@ class WalkSummaryViewModel @Inject constructor(
     /**
      * U11 gate (parity spec `docs/parity/2026-07-26-port-download-ux-u11.md`
      * section 5): retranscribe destroys the transcript BEFORE scheduling,
-     * so it stays disabled until the model is Ready — Base or the
-     * transitional LegacyTiny (U10 gating rule). Derived Eagerly so the
-     * `.value` guard inside [retranscribeRecording] reads a live value
-     * (Stage 5-F: `.value` reads don't subscribe a WhileSubscribed flow;
-     * this stateIn keeps the store's upstream hot for the VM lifetime).
+     * so it stays disabled until the model is Ready. Derivation + Eagerly
+     * rationale live on [modelReadyIn].
      */
-    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.state
-        .map { it is org.walktalkmeditate.pilgrim.audio.model.WhisperModelState.Ready }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = whisperModelStore.state.value
-                is org.walktalkmeditate.pilgrim.audio.model.WhisperModelState.Ready,
-        )
+    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.modelReadyIn(viewModelScope)
 
     /**
      * Walk Summary retranscribe-single action. Clears the existing

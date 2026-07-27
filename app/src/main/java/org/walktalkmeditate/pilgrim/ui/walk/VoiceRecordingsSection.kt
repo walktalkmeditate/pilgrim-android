@@ -210,7 +210,10 @@ fun VoiceRecordingsSection(
                 onEnsureWaveform = {
                     onEnsureWaveform(recording.id, recording.fileRelativePath)
                 },
-                pendingSubstate = pendingSubstate,
+                // Only null-transcription rows render the substate;
+                // passing null keeps transcribed rows' params stable
+                // across download-progress emissions.
+                pendingSubstate = if (recording.transcription == null) pendingSubstate else null,
                 retranscribeEnabled = retranscribeEnabled,
                 onManualTranscribe = onManualTranscribe,
                 onOpenModelDownloadSheet = onOpenModelDownloadSheet,
@@ -237,7 +240,7 @@ private fun VoiceRecordingRow(
     onSaveTranscription: (String) -> Unit,
     onRetranscribe: () -> Unit,
     onEnsureWaveform: () -> Unit,
-    pendingSubstate: PendingTranscriptionSubstate,
+    pendingSubstate: PendingTranscriptionSubstate?,
     retranscribeEnabled: Boolean,
     onManualTranscribe: () -> Unit,
     onOpenModelDownloadSheet: () -> Unit,
@@ -330,12 +333,14 @@ private fun VoiceRecordingRow(
             )
         }
         when (val transcription = recording.transcription) {
-            null -> PendingTranscriptionRow(
-                substate = pendingSubstate,
-                onManualTranscribe = onManualTranscribe,
-                onOpenModelDownloadSheet = onOpenModelDownloadSheet,
-                onRetryModelDownload = onRetryModelDownload,
-            )
+            null -> pendingSubstate?.let { substate ->
+                PendingTranscriptionRow(
+                    substate = substate,
+                    onManualTranscribe = onManualTranscribe,
+                    onOpenModelDownloadSheet = onOpenModelDownloadSheet,
+                    onRetryModelDownload = onRetryModelDownload,
+                )
+            }
             TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
                 text = transcription,
             )
@@ -372,23 +377,11 @@ private fun PendingTranscriptionRow(
                 text = stringResource(R.string.transcription_not_transcribed),
                 modifier = Modifier.weight(1f),
             )
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(pilgrimColors.stone.copy(alpha = 0.12f))
-                    .clickable(
-                        enabled = substate.transcribeEnabled,
-                        onClick = onManualTranscribe,
-                    )
-                    .alpha(if (substate.transcribeEnabled) 1f else 0.38f)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.transcription_action_transcribe),
-                    style = pilgrimType.caption,
-                    color = pilgrimColors.stone,
-                )
-            }
+            StoneChip(
+                text = stringResource(R.string.transcription_action_transcribe),
+                onClick = onManualTranscribe,
+                enabled = substate.transcribeEnabled,
+            )
         }
 
         is PendingTranscriptionSubstate.WaitingOnDownload -> Column(
@@ -444,19 +437,10 @@ private fun PendingTranscriptionRow(
                         onClickLabel = stringResource(R.string.model_sheet_open_cd),
                     ),
             )
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(pilgrimColors.stone.copy(alpha = 0.12f))
-                    .clickable(onClick = onRetryModelDownload)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.model_action_retry),
-                    style = pilgrimType.caption,
-                    color = pilgrimColors.stone,
-                )
-            }
+            StoneChip(
+                text = stringResource(R.string.model_action_retry),
+                onClick = onRetryModelDownload,
+            )
         }
 
         PendingTranscriptionSubstate.DownloadFailedStorage -> TranscriptionPlaceholder(

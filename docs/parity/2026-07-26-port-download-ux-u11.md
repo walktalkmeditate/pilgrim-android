@@ -13,7 +13,8 @@
 > U9 `docs/parity/2026-07-26-port-model-download-u9.md` (C2 override, C5 failure taxonomy),
 > U10 `docs/parity/2026-07-26-port-engine-switch-u10.md` (Ready gating, L2 forced-English copy rule).
 > **Android files:** `ui/walk/VoiceRecordingsSection.kt` (substate mapper + rendering),
-> `ui/walk/ModelDownloadSheet.kt` (sheet + `ModelDownloadViewModel` + Data Saver probe seam),
+> `ui/walk/ModelDownloadSheet.kt` (sheet + `ModelDownloadViewModel`),
+> `audio/model/WhisperModelStore.kt` (Data Saver probe seam, beside the U8 unmetered probe),
 > `ui/walk/WalkSummaryViewModel.kt` + `ui/recordings/RecordingsListViewModel.kt` (gates),
 > `ui/recordings/RecordingsListScreen.kt` (swipe gate), `ui/settings/voice/VoiceCard.kt` +
 > `ui/settings/SettingsScreen.kt` (Settings row + sheet entry), `di/TranscriptionModule.kt` (probe binding).

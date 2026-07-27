@@ -327,6 +327,13 @@ private fun RecordingsList(
     onRequestDeleteAll: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // U11 gate: retranscribe nulls the transcript before scheduling, so
+    // the StartToEnd swipe is disabled until the whisper model is Ready
+    // (docs/parity/2026-07-26-port-download-ux-u11.md section 5). The
+    // VM's onRetranscribe guard backs this up against stale UI.
+    // Collected ONCE at the list level — one subscription instead of
+    // one per row.
+    val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
@@ -347,6 +354,7 @@ private fun RecordingsList(
                         indexInSection = index + 1,
                         state = state,
                         viewModel = viewModel,
+                        retranscribeEnabled = retranscribeEnabled,
                         onRequestDelete = onRequestDelete,
                     )
                 }
@@ -446,14 +454,10 @@ private fun SwipeableRecordingRow(
     indexInSection: Int,
     state: RecordingsListUiState.Loaded,
     viewModel: RecordingsListViewModel,
+    retranscribeEnabled: Boolean,
     onRequestDelete: (Long) -> Unit,
 ) {
     val colors = pilgrimColors
-    // U11 gate: retranscribe nulls the transcript before scheduling, so
-    // the StartToEnd swipe is disabled until the whisper model is Ready
-    // (docs/parity/2026-07-26-port-download-ux-u11.md section 5). The
-    // VM's onRetranscribe guard backs this up against stale UI.
-    val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
     val swipeState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {

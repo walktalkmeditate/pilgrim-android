@@ -171,11 +171,10 @@ object ContextFormatter {
         val up = ascent ?: 0.0
         val down = descent ?: 0.0
         if (up <= 10.0 && down <= 10.0) return null
-        fun formatted(meters: Double): String =
-            if (imperial) "${(meters * 3.28084).roundToInt()} ft" else "${meters.roundToInt()} m"
+        val units = if (imperial) UnitSystem.Imperial else UnitSystem.Metric
         val parts = mutableListOf<String>()
-        if (up > 10.0) parts.add("climbed ${formatted(up)}")
-        if (down > 10.0) parts.add("descended ${formatted(down)}")
+        if (up > 10.0) parts.add("climbed ${WalkFormat.altitude(up, units)}")
+        if (down > 10.0) parts.add("descended ${WalkFormat.altitude(down, units)}")
         return "**Elevation:** ${parts.joinToString(separator = ", ")}."
     }
 
