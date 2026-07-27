@@ -25,16 +25,15 @@ import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Air
-import androidx.compose.material.icons.outlined.Terrain
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
+import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory
 import org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
@@ -78,10 +77,13 @@ import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
 import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
+import org.walktalkmeditate.pilgrim.ui.walk.map.MapGlyphBitmaps
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekCrescentStyle
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekFogStyle
 import org.walktalkmeditate.pilgrim.ui.walk.map.SeekCrescentRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.SeekFogRenderer
+import org.walktalkmeditate.pilgrim.ui.walk.map.WHISPER_GLYPH_SIZE_DP
+import org.walktalkmeditate.pilgrim.ui.walk.map.cairnGlyphSizeDp
 import org.walktalkmeditate.pilgrim.ui.walk.map.hexToColorArgb
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
@@ -223,11 +225,12 @@ internal fun PilgrimMap(
     val waypointBitmaps = rememberWaypointBitmaps(
         org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.stone,
     )
-    // iOS parity: whisper/cairn map markers are bare glyphs (wind /
-    // mountain.2), not solid circles. One whisper bitmap per category
-    // color; one moss cairn bitmap scaled per tier via iconSize.
+    // iOS parity `MapGlyphImageBuilder@9a418e4` — whisper/cairn map
+    // markers are the U13 vector masters: one wisp bitmap per mood
+    // tint, one bitmap per cairn tier at its shipped size, rasterized
+    // at dp × density (port spec 2026-07-27-port-map-glyphs-u14-u15.md).
     val whisperGlyphBitmaps = rememberWhisperGlyphBitmaps()
-    val cairnGlyphBitmap = rememberCairnGlyphBitmap(darkMode)
+    val cairnGlyphBitmaps = rememberCairnGlyphBitmaps()
     // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — custom 2D
     // puck: stone-filled outer disc + white@0.9 inner dot. Keyed on
     // `stoneArgb` only (the single value the draw reads) so a theme /
@@ -267,12 +270,16 @@ internal fun PilgrimMap(
     var renderedWalkAnnotations by remember {
         mutableStateOf<List<PointAnnotation>>(emptyList())
     }
+    // Key components are exactly what the annotation draw reads (Stage
+    // 13-D rule) — including the glyph bitmap maps, so a density-driven
+    // re-rasterization re-fires the rebuild even when the annotation
+    // list itself is unchanged.
     var renderedWalkAnnotationsKey by remember {
-        mutableStateOf<Triple<List<WalkMapAnnotation>, WalkAnnotationColors?, Map<Long, Bitmap>>?>(null)
+        mutableStateOf<List<Any?>?>(null)
     }
     var proximityManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
-    var renderedProximityPins by remember {
-        mutableStateOf<List<ProximityPinFilter.Pin>>(emptyList())
+    var renderedProximityKey by remember {
+        mutableStateOf<List<Any?>?>(null)
     }
     // Bitmap pin id → (Pin) for the click listener — Mapbox annotation
     // click callback delivers the PointAnnotation; we look up the
@@ -513,7 +520,7 @@ internal fun PilgrimMap(
         renderedMeditationCircles = emptyList()
         proximityManager?.let { view.annotations.removeAnnotationManager(it) }
         proximityManager = null
-        renderedProximityPins = emptyList()
+        renderedProximityKey = null
         proximityPinIndex = emptyMap()
         view.mapboxMap.loadStyle(styleUri) {
             // Show the "you are here" puck on the Active Walk map only.
@@ -855,11 +862,20 @@ internal fun PilgrimMap(
             val bitmaps = annotationBitmaps
             if (annoMgr != null && walkAnnotations.isNotEmpty() && bitmaps != null) {
                 // Snapshot the photo cache into an immutable Map so the
-                // Triple equality check actually sees content changes —
+                // key equality check actually sees content changes —
                 // a SnapshotStateMap reference is stable, so without the
                 // toMap() copy the key would always compare equal and
-                // the placeholder bitmaps would never get replaced.
-                val key = Triple(walkAnnotations, walkAnnotationColors, photoPinBitmaps.toMap())
+                // the placeholder bitmaps would never get replaced. The
+                // glyph maps join the key because the pins draw them: a
+                // density-driven re-rasterization must re-fire this
+                // rebuild even with an unchanged annotation list.
+                val key = listOf(
+                    walkAnnotations,
+                    walkAnnotationColors,
+                    photoPinBitmaps.toMap(),
+                    whisperGlyphBitmaps,
+                    cairnGlyphBitmaps,
+                )
                 if (renderedWalkAnnotationsKey != key) {
                     if (renderedWalkAnnotations.isNotEmpty()) {
                         renderedWalkAnnotations.forEach { annoMgr.delete(it) }
@@ -939,7 +955,7 @@ internal fun PilgrimMap(
                                 it.kind !is WalkMapAnnotationKind.SeekArrival
                         }
                         .map { ann ->
-                        val bitmap = when (val k = ann.kind) {
+                        val bitmap: Bitmap? = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
                                 bitmaps.getValue("startEnd")
@@ -962,26 +978,26 @@ internal fun PilgrimMap(
                                 waypointBitmaps[k.iconKey]
                                     ?: waypointBitmaps.getValue("mappin")
                             is WalkMapAnnotationKind.Whisper ->
-                                // iOS parity: bare `wind` (Air) glyph tinted
-                                // the category color — not a plain circle.
-                                whisperGlyphBitmaps[k.categoryColor] ?: cairnGlyphBitmap
+                                // iOS parity @9a418e4: the wisp master
+                                // tinted the mood color at raster time.
+                                whisperGlyphBitmaps[k.categoryColor]
                             is WalkMapAnnotationKind.Cairn ->
-                                // iOS parity: bare `mountain.2` (Terrain)
-                                // glyph; tier scales via iconSize below.
-                                cairnGlyphBitmap
+                                // iOS parity @9a418e4: per-tier master at
+                                // its shipped size; `tier` is 1-based
+                                // (CachedCairn.tier.ordinal + 1).
+                                cairnGlyphBitmaps[cairnTierFromSummaryIndex(k.tier)]
                         }
-                        val iconScale = when (val k2 = ann.kind) {
-                            is WalkMapAnnotationKind.Whisper -> WHISPER_GLYPH_ICON_SIZE
-                            is WalkMapAnnotationKind.Cairn ->
-                                cairnGlyphIconSize((k2.tier - 1).coerceAtLeast(0))
-                            else -> 1.0
+                        // All sizing lives in the raster (iOS
+                        // `point.iconSize = 1.0` on every branch). A null
+                        // glyph bitmap leaves the pin icon-less, mirroring
+                        // iOS's `if let image` degrade path.
+                        val options = PointAnnotationOptions()
+                            .withPoint(Point.fromLngLat(ann.longitude, ann.latitude))
+                            .withIconSize(1.0)
+                        if (bitmap != null) {
+                            options.withIconImage(bitmap)
                         }
-                        annoMgr.create(
-                            PointAnnotationOptions()
-                                .withPoint(Point.fromLngLat(ann.longitude, ann.latitude))
-                                .withIconImage(bitmap)
-                                .withIconSize(iconScale),
-                        )
+                        annoMgr.create(options)
                     }
                     renderedWalkAnnotationsKey = key
                 }
@@ -991,42 +1007,40 @@ internal fun PilgrimMap(
             // the pin list reference so style-load / zoom re-fires
             // don't churn the manager.
             val proxMgr = proximityManager
-            if (proxMgr != null && renderedProximityPins != proximityPins) {
+            val proximityKey = listOf(proximityPins, whisperGlyphBitmaps, cairnGlyphBitmaps)
+            if (proxMgr != null && renderedProximityKey != proximityKey) {
                 proxMgr.deleteAll()
                 val newIndex = mutableMapOf<String, ProximityPinFilter.Pin>()
                 proximityPins.forEach { pin ->
-                    // iOS parity `PilgrimMapView.swift:485-503` — bare SF
-                    // symbol glyphs (whisper = `wind`/Air tinted category;
-                    // cairn = `mountain.2`/Terrain tinted moss), not circles.
-                    val bitmap: Bitmap
-                    val iconScale: Double
-                    when (pin) {
-                        is ProximityPinFilter.Pin.Whisper -> {
-                            bitmap = whisperGlyphBitmaps[packArgbLong(pin.category.borderColor)]
-                                ?: cairnGlyphBitmap
-                            iconScale = WHISPER_GLYPH_ICON_SIZE
-                        }
-                        is ProximityPinFilter.Pin.Cairn -> {
-                            bitmap = cairnGlyphBitmap
-                            iconScale = cairnGlyphIconSize(pin.tier.ordinal)
-                        }
+                    // iOS parity `PilgrimMapView.buildPoints@9a418e4` —
+                    // the U13 vector masters: mood-tinted wisp, per-tier
+                    // cairn art at its shipped size. Sizing lives in the
+                    // raster; iconSize stays 1.0 (a null bitmap leaves
+                    // the pin icon-less but still tappable, matching
+                    // iOS's `if let image` degrade path).
+                    val bitmap: Bitmap? = when (pin) {
+                        is ProximityPinFilter.Pin.Whisper ->
+                            whisperGlyphBitmaps[packArgbLong(pin.category.borderColor)]
+                        is ProximityPinFilter.Pin.Cairn ->
+                            cairnGlyphBitmaps[pin.tier]
                     }
                     val key = pin.id
                     newIndex[key] = pin
-                    proxMgr.create(
-                        PointAnnotationOptions()
-                            .withPoint(Point.fromLngLat(pin.longitude, pin.latitude))
-                            .withIconImage(bitmap)
-                            .withIconSize(iconScale)
-                            .withTextField(key)
-                            // Text is the routing key only — render
-                            // invisible (size 0 + transparent).
-                            .withTextOpacity(0.0)
-                            .withTextSize(0.0),
-                    )
+                    val options = PointAnnotationOptions()
+                        .withPoint(Point.fromLngLat(pin.longitude, pin.latitude))
+                        .withIconSize(1.0)
+                        .withTextField(key)
+                        // Text is the routing key only — render
+                        // invisible (size 0 + transparent).
+                        .withTextOpacity(0.0)
+                        .withTextSize(0.0)
+                    if (bitmap != null) {
+                        options.withIconImage(bitmap)
+                    }
+                    proxMgr.create(options)
                 }
                 proximityPinIndex = newIndex
-                renderedProximityPins = proximityPins
+                renderedProximityKey = proximityKey
             }
             // Seek fog + pulse ring + crescent (iOS parity: applySeekFog at
             // the end of updateUIView, PilgrimMapView.swift:208@c1745e8).
@@ -1073,7 +1087,7 @@ internal fun PilgrimMap(
                 meditationCircleManager = null
                 renderedMeditationCircles = emptyList()
                 proximityManager = null
-                renderedProximityPins = emptyList()
+                renderedProximityKey = null
                 proximityPinIndex = emptyMap()
             }
         },
@@ -1143,21 +1157,34 @@ private fun renderWaypointGlyphBitmap(painter: Painter, tint: Color): Bitmap {
 private const val WAYPOINT_GLYPH_SIZE_PX = 72
 
 /**
- * iOS parity `PilgrimMapView.swift:485-495@v1.6.0` — whisper map markers
- * are the bare `wind` SF symbol tinted the category color (Android: the
- * `Icons.Outlined.Air` substitution from `CustomPromptIcons`), NOT a
- * filled circle. One tinted bitmap per category, keyed by the color's
- * argb so both the live-walk and post-walk summary maps can look it up.
+ * iOS parity `MapGlyphImageBuilder.image(for: .whisper(tint:), size: 28)`
+ * @9a418e4 — one wisp bitmap per mood, tinted from the fixed
+ * `WhisperCategory` literals at raster time, keyed by the packed ARGB
+ * long that `WalkMapAnnotationKind.Whisper.categoryColor` carries so
+ * both the live-walk and post-walk summary maps look it up identically.
+ * Also carries the stone tint `MapAnnotations.kt` packs for an
+ * unresolved category, so that lookup cannot miss.
+ *
+ * `remember(density)` — density is the only input the draw reads that
+ * can change while this composition lives (tints are fixed literals,
+ * the master's art is baked, the size is a constant).
  */
 @Composable
 internal fun rememberWhisperGlyphBitmaps(): Map<Long, Bitmap> {
-    val air = rememberVectorPainter(Icons.Outlined.Air)
-    return remember(air) {
-        WhisperCategory.entries.associate { category ->
-            packArgbLong(category.borderColor) to renderWaypointGlyphBitmap(air, category.borderColor)
-        }
+    val context = LocalContext.current
+    val density = LocalDensity.current.density
+    return remember(density) {
+        val tints = WhisperCategory.entries.map { it.borderColor } + UNRESOLVED_WHISPER_TINT
+        tints.mapNotNull { tint ->
+            MapGlyphBitmaps.wisp(context, tint.toArgb(), WHISPER_GLYPH_SIZE_DP, density)
+                ?.let { packArgbLong(tint) to it }
+        }.toMap()
     }
 }
+
+// MapAnnotations.kt packs stone when a whisper's category doesn't
+// resolve; a wisp in that tint keeps those pins rendering.
+private val UNRESOLVED_WHISPER_TINT = Color(0xFF8B7355)
 
 /**
  * Pack a Compose [Color] into the same positive ARGB `Long` that
@@ -1173,24 +1200,31 @@ private fun packArgbLong(c: Color): Long {
 }
 
 /**
- * iOS parity `PilgrimMapView.swift:496-503@v1.6.0` — cairn map markers
- * are the bare `mountain.2` SF symbol (Android: `Icons.Outlined.Terrain`)
- * tinted moss; per-tier size is applied at annotation time via
- * [cairnGlyphIconSize], not by re-rendering the bitmap per tier.
+ * iOS parity `MapGlyphImageBuilder.image(for: .cairn(tier:), size:)`
+ * @9a418e4 — one bitmap per tier, rendered as-authored (baked fixed-hex
+ * art, never tinted, so the map is theme-insensitive here) at the
+ * shipped `24 + rawValue * 2` size via [cairnGlyphSizeDp]. Tier
+ * progression lives in the raster; annotation `iconSize` stays 1.0.
  */
 @Composable
-internal fun rememberCairnGlyphBitmap(darkMode: Boolean): Bitmap {
-    val terrain = rememberVectorPainter(Icons.Outlined.Terrain)
-    val moss = if (darkMode) Color(0xFF95A888) else Color(0xFF7A8B6F)
-    return remember(terrain, moss) { renderWaypointGlyphBitmap(terrain, moss) }
+internal fun rememberCairnGlyphBitmaps(): Map<CairnTier, Bitmap> {
+    val context = LocalContext.current
+    val density = LocalDensity.current.density
+    return remember(density) {
+        CairnTier.entries.mapNotNull { tier ->
+            MapGlyphBitmaps.cairn(context, tier, cairnGlyphSizeDp(tier), density)
+                ?.let { tier to it }
+        }.toMap()
+    }
 }
 
-/** Mapbox iconSize multiplier for a cairn glyph by tier ordinal (0..6). */
-private fun cairnGlyphIconSize(tierOrdinal: Int): Double =
-    (CAIRN_PIN_BASE_DP + tierOrdinal) / 18.0
-
-/** Whisper glyph iconSize (~14dp against the ~18dp glyph baseline). */
-private const val WHISPER_GLYPH_ICON_SIZE = 14.0 / 18.0
+/**
+ * `WalkMapAnnotationKind.Cairn.tier` is 1-based (`CachedCairn.tier
+ * .ordinal + 1`, MapAnnotations.kt); clamp defensively so malformed
+ * data degrades to an in-range tier instead of crashing the map.
+ */
+private fun cairnTierFromSummaryIndex(tier: Int): CairnTier =
+    CairnTier.entries[(tier - 1).coerceIn(0, CairnTier.entries.lastIndex)]
 
 /**
  * iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — the user-location
@@ -1258,7 +1292,6 @@ internal fun allowIconOverlap(manager: PointAnnotationManager) {
 }
 
 private const val PUCK_SIZE_DP = 22
-private const val CAIRN_PIN_BASE_DP = 12
 
 private fun createCircleBitmap(color: Color, darkMode: Boolean): Bitmap {
     val size = WAYPOINT_BITMAP_SIZE_PX
