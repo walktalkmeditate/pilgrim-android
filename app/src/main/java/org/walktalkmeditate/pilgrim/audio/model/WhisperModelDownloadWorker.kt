@@ -108,8 +108,8 @@ class WalkRepositoryPendingTranscriptionWalkSource @Inject constructor(
  *    re-kick gated on the auto-transcribe preference).
  *  - Failures: checksum mismatch retries until [CHECKSUM_ATTEMPT_CAP],
  *    then terminal `checksum`; the StatFs precheck fails terminal
- *    `storage` before any network I/O; IO/network errors always
- *    `retry` and never surface as a state.
+ *    `storage` before any filesystem write or network I/O; IO/network
+ *    errors always `retry` and never surface as a state.
  */
 @HiltWorker
 class WhisperModelDownloadWorker @AssistedInject constructor(
@@ -130,6 +130,14 @@ class WhisperModelDownloadWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         files.writerMutex.withLock {
             if (alreadyDelivered()) {
+                // Process death (or a REPLACE-cancel) between the marker
+                // write and these hooks would otherwise strand the legacy
+                // tiny and drop the re-kick forever. Both are idempotent —
+                // the hook re-probes before deleting, the re-kick only
+                // touches null-transcription walks — so re-running them on
+                // every already-delivered pass heals that crash window.
+                store.onBaseVerified()
+                rekickPendingTranscriptions()
                 Result.success()
             } else {
                 runAttempt()
@@ -152,46 +160,54 @@ class WhisperModelDownloadWorker @AssistedInject constructor(
     private suspend fun runAttempt(): Result {
         val partial = WhisperModelConfig.basePartialPath(filesDir).toFile()
         val etagFile = WhisperModelConfig.baseEtagPath(filesDir).toFile()
-        Files.createDirectories(WhisperModelConfig.baseModelPath(filesDir).parent)
 
         // Length re-probed under the writer mutex: a REPLACE-cancelled
         // writer has fully unwound by now, so this is the real length.
-        var partialLength = if (partial.exists()) partial.length() else 0L
-        if (partialLength > spec.expectedBytes) {
-            discardPartial(partial, etagFile)
-            partialLength = 0L
-        }
+        // An oversize partial is garbage about to be discarded, so it
+        // credits nothing against the headroom requirement.
+        val probedLength = if (partial.exists()) partial.length() else 0L
+        val creditedLength = if (probedLength > spec.expectedBytes) 0L else probedLength
 
+        // Precheck before ANY filesystem write (directory creation
+        // included): a full disk must surface as the actionable
+        // FailedStorage terminal, never as collateral IO failures.
         val available = freeSpaceProbe.availableBytes(applicationContext.filesDir)
-        if (available < STORAGE_HEADROOM_BYTES - partialLength) {
+        if (available < STORAGE_HEADROOM_BYTES - creditedLength) {
             return Result.failure(workDataOf(KEY_FAILURE_REASON to REASON_STORAGE))
         }
 
-        if (partialLength == spec.expectedBytes) {
-            val digest = MessageDigest.getInstance(SHA_256)
-            hashPrefix(digest, partial)
-            return verifyAndDeliver(digest, partial, etagFile)
-        }
-
-        val storedEtag = if (partialLength > 0L && etagFile.exists()) {
-            etagFile.readText().trim().takeIf { it.isNotEmpty() }
-        } else {
-            null
-        }
-        if (storedEtag == null && partialLength > 0L) {
-            discardPartial(partial, etagFile)
-            partialLength = 0L
-        }
-
-        reportProgress(partialLength)
-        val request = Request.Builder().url(spec.url).apply {
-            if (storedEtag != null) {
-                header("Range", "bytes=$partialLength-")
-                header("If-Range", storedEtag)
-            }
-        }.build()
-
         return try {
+            Files.createDirectories(WhisperModelConfig.baseModelPath(filesDir).parent)
+            var partialLength = probedLength
+            if (partialLength > spec.expectedBytes) {
+                discardPartial(partial, etagFile)
+                partialLength = 0L
+            }
+
+            if (partialLength == spec.expectedBytes) {
+                val digest = MessageDigest.getInstance(SHA_256)
+                hashPrefix(digest, partial)
+                return verifyAndDeliver(digest, partial, etagFile)
+            }
+
+            val storedEtag = if (partialLength > 0L && etagFile.exists()) {
+                etagFile.readText().trim().takeIf { it.isNotEmpty() }
+            } else {
+                null
+            }
+            if (storedEtag == null && partialLength > 0L) {
+                discardPartial(partial, etagFile)
+                partialLength = 0L
+            }
+
+            reportProgress(partialLength)
+            val request = Request.Builder().url(spec.url).apply {
+                if (storedEtag != null) {
+                    header("Range", "bytes=$partialLength-")
+                    header("If-Range", storedEtag)
+                }
+            }.build()
+
             httpClient.newCall(request).execute().use { response ->
                 when {
                     response.code == HTTP_PARTIAL && storedEtag != null ->
@@ -212,7 +228,7 @@ class WhisperModelDownloadWorker @AssistedInject constructor(
             // attempt resumes from them (spec C3).
             throw ce
         } catch (io: IOException) {
-            Log.w(TAG, "transfer failed; will retry from ${partial.length()} bytes", io)
+            Log.w(TAG, "attempt failed; will retry from ${partial.length()} bytes", io)
             Result.retry()
         }
     }
@@ -381,9 +397,12 @@ class WhisperModelDownloadWorker @AssistedInject constructor(
         const val REASON_STORAGE = "storage"
 
         /**
-         * `runAttemptCount` threshold for terminal FailedChecksum —
-         * bounds bandwidth burned against a mispublished object while
-         * still absorbing rare transit corruption.
+         * `runAttemptCount` threshold for terminal FailedChecksum.
+         * WorkManager increments the count on EVERY retry — transient
+         * network/IO retries included — so this bounds the total run
+         * attempts of one enqueue, not just consecutive checksum
+         * mismatches: bandwidth burned against a mispublished object
+         * stays capped while rare transit corruption is still absorbed.
          */
         const val CHECKSUM_ATTEMPT_CAP = 3
 

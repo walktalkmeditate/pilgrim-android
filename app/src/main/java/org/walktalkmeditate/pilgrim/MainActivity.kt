@@ -160,21 +160,14 @@ class MainActivity : ComponentActivity() {
      * U9 model-download trigger: first *foreground Activity* resume —
      * deliberately not `Application.onCreate`, so widget/broadcast/
      * service process starts never schedule the 148 MB transfer. The
-     * process-level flag keeps this to one WorkManager round-trip per
-     * process; `ensureEnqueued` itself is KEEP-idempotent, so a rare
-     * double-fire (resume racing a slow first call) is harmless.
+     * process-level flag keeps this to one *successful* WorkManager
+     * round-trip per process — see [ensureModelDownloadOnce] for the
+     * latch-on-success semantics.
      */
     override fun onResume() {
         super.onResume()
-        if (!modelDownloadEnsureRequested.compareAndSet(false, true)) return
         lifecycleScope.launch {
-            try {
-                modelDownloadScheduler.ensureEnqueued()
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                Log.w(TAG, "model download ensure failed", t)
-            }
+            ensureModelDownloadOnce(modelDownloadScheduler, modelDownloadEnsureRequested)
         }
     }
 
@@ -225,5 +218,28 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val TAG = "MainActivity"
         val modelDownloadEnsureRequested = AtomicBoolean(false)
+    }
+}
+
+/**
+ * U9 trigger body, extracted for direct testing. The CAS keeps
+ * concurrent resumes to one WorkManager round-trip, but [requested]
+ * latches only when `ensureEnqueued` returns normally — cancellation
+ * or failure resets it so the next resume re-fires (`ensureEnqueued`
+ * is KEEP-idempotent, so an extra fire is harmless).
+ */
+internal suspend fun ensureModelDownloadOnce(
+    scheduler: WhisperModelDownloadScheduler,
+    requested: AtomicBoolean,
+) {
+    if (!requested.compareAndSet(false, true)) return
+    try {
+        scheduler.ensureEnqueued()
+    } catch (ce: CancellationException) {
+        requested.set(false)
+        throw ce
+    } catch (t: Throwable) {
+        requested.set(false)
+        Log.w("MainActivity", "model download ensure failed", t)
     }
 }

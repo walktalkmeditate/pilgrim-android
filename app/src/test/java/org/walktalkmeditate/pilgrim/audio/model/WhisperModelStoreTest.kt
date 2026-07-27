@@ -96,6 +96,12 @@ class WhisperModelStoreTest {
         withTimeout(AWAIT_TIMEOUT_MS) { store.state.first(predicate) }
     }
 
+    private suspend fun awaitUsable(store: WhisperModelStore, expected: Boolean) {
+        withContext(TestRealTimeDispatcher.instance) {
+            withTimeout(AWAIT_TIMEOUT_MS) { store.modelUsable.first { it == expected } }
+        }
+    }
+
     // Spelled out rather than read off constants computed elsewhere:
     // if the shipped variant, the published upstream digest, or the CDN
     // literal drifts, this should fail rather than follow it. Mirrors
@@ -108,6 +114,9 @@ class WhisperModelStoreTest {
             WhisperModelConfig.EXPECTED_SHA256,
         )
         assertEquals("https://cdn.pilgrimapp.org/models/ggml-base.bin", WhisperModelConfig.CDN_URL)
+        // Security regression pin: model bytes must never travel
+        // plaintext, whatever the URL literal above becomes.
+        assertTrue(WhisperModelConfig.CDN_URL.startsWith("https://"))
         assertEquals(77_704_715L, WhisperModelConfig.LEGACY_TINY_EXPECTED_BYTES)
     }
 
@@ -186,6 +195,17 @@ class WhisperModelStoreTest {
 
     @Test fun `enqueued work with unmetered network is Enqueued`() = runTest {
         unmetered.available = true
+        val store = buildStore()
+        workSource.emit(ModelDownloadWork.Enqueued)
+        awaitState(store) { it == WhisperModelState.Enqueued }
+    }
+
+    // With the override ON any connection satisfies the constraint, so
+    // there is no unmetered wait to explain — WaitingUnmetered only
+    // when the override is OFF and no unmetered network is up.
+    @Test fun `enqueued work with the cellular override on reads Enqueued even on metered network`() = runTest {
+        unmetered.available = false
+        workSource.cellularOverride.value = true
         val store = buildStore()
         workSource.emit(ModelDownloadWork.Enqueued)
         awaitState(store) { it == WhisperModelState.Enqueued }
@@ -324,6 +344,33 @@ class WhisperModelStoreTest {
         )
     }
 
+    // Usability is split from delivery display: the transitional tiny
+    // keeps transcribe/retranscribe gates open through the whole base
+    // download window, even while state shows the delivery phase.
+    @Test fun `modelUsable stays true for the tiny while download work is in flight`() = runTest {
+        installLegacyTiny()
+        val store = buildStore()
+        workSource.emit(ModelDownloadWork.Downloading(5L, 10L))
+        awaitState(store) { it is WhisperModelState.Downloading }
+        awaitUsable(store, expected = true)
+    }
+
+    @Test fun `modelUsable is true with the verified base`() = runTest {
+        installVerifiedBase()
+        val store = buildStore()
+        awaitUsable(store, expected = true)
+    }
+
+    @Test fun `modelUsable follows the probe - true with the tiny, false after deletion`() = runTest {
+        installLegacyTiny()
+        val store = buildStore()
+        awaitUsable(store, expected = true)
+
+        legacyTinyFile().delete()
+        store.invalidate()
+        awaitUsable(store, expected = false)
+    }
+
     @Test fun `connectivity probe with no active network reads false`() {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         shadowOf(cm).setActiveNetworkInfo(null)
@@ -350,7 +397,9 @@ class WhisperModelStoreTest {
 
     private class FakeModelDownloadWorkSource : ModelDownloadWorkSource {
         private val flow = MutableStateFlow<ModelDownloadWork?>(null)
+        val cellularOverride = MutableStateFlow(false)
         override fun observe(): Flow<ModelDownloadWork?> = flow
+        override fun observeCellularOverride(): Flow<Boolean> = cellularOverride
         fun emit(work: ModelDownloadWork?) {
             flow.value = work
         }

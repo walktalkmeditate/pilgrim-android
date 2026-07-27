@@ -69,19 +69,21 @@ class ModelDownloadViewModel @Inject constructor(
     /**
      * Substate for null-transcription rows on the recordings surfaces —
      * the [pendingTranscriptionSubstate] matrix over (auto-transcribe
-     * pref x model state).
+     * pref x model state x model usability).
      */
     val pendingSubstate: StateFlow<PendingTranscriptionSubstate> = combine(
         voicePreferences.autoTranscribe,
         modelStore.state,
-    ) { autoTranscribe, state ->
-        pendingTranscriptionSubstate(autoTranscribe, state)
+        modelStore.modelUsable,
+    ) { autoTranscribe, state, usable ->
+        pendingTranscriptionSubstate(autoTranscribe, state, usable)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
         initialValue = pendingTranscriptionSubstate(
             voicePreferences.autoTranscribe.value,
             modelStore.state.value,
+            modelStore.modelUsable.value,
         ),
     )
 

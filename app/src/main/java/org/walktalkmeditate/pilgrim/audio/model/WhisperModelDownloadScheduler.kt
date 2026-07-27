@@ -14,6 +14,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.nio.file.Files
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -35,9 +36,11 @@ interface WhisperModelDownloadScheduler : ModelDownloadWorkSource {
     /**
      * KEEP enqueue, gated: a FAILED record awaits an explicit [retry]
      * (auto-re-enqueue would burn the checksum cap's bandwidth budget
-     * on every app open), and a SUCCEEDED record means delivery already
-     * happened. Everything else — no record, pending work (KEEP
-     * dedupes), CANCELLED (resume from the partial) — enqueues.
+     * on every app open), and a SUCCEEDED record no-ops only while its
+     * delivery survives on disk (verified base, or a partial resuming
+     * toward one) — a stale record whose bytes were cleared re-enqueues.
+     * Everything else — no record, pending work (KEEP dedupes),
+     * CANCELLED (resume from the partial) — enqueues.
      */
     suspend fun ensureEnqueued()
 
@@ -52,7 +55,7 @@ interface WhisperModelDownloadScheduler : ModelDownloadWorkSource {
     suspend fun setCellularOverride(enabled: Boolean)
 
     /** Sheet-facing read of the sticky override (U11). */
-    fun observeCellularOverride(): Flow<Boolean>
+    override fun observeCellularOverride(): Flow<Boolean>
 }
 
 @Singleton
@@ -62,9 +65,28 @@ class WorkManagerWhisperModelDownloadScheduler @Inject constructor(
 ) : WhisperModelDownloadScheduler {
 
     override suspend fun ensureEnqueued() {
-        val latest = latestWorkInfo()?.state
-        if (latest == WorkInfo.State.FAILED || latest == WorkInfo.State.SUCCEEDED) return
+        when (latestWorkInfo()?.state) {
+            WorkInfo.State.FAILED -> return
+            WorkInfo.State.SUCCEEDED -> if (deliveredOrInFlight()) return
+            else -> Unit
+        }
         enqueue(ExistingWorkPolicy.KEEP)
+    }
+
+    /**
+     * A SUCCEEDED record is only as good as the bytes it delivered:
+     * "clear app storage", manual deletion, or a partial restore
+     * leaves the record pointing at nothing. No verified base and no
+     * partial resuming toward one → the record is stale and
+     * [ensureEnqueued] re-enqueues.
+     */
+    private suspend fun deliveredOrInFlight(): Boolean = withContext(Dispatchers.IO) {
+        val filesDir = context.filesDir.toPath()
+        WhisperModelConfig.verifiedModelPresent(
+            filesDir = filesDir,
+            expectedBytes = WhisperModelConfig.EXPECTED_BYTES,
+            expectedSha256 = WhisperModelConfig.EXPECTED_SHA256,
+        ) || Files.exists(WhisperModelConfig.basePartialPath(filesDir))
     }
 
     override suspend fun retry() {

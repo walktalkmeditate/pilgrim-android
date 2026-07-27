@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -173,13 +174,15 @@ class WalkSummaryViewModelTest {
         }
     }
 
-    /** Bridge the store's real-IO probe to virtual-time runTest by polling. */
+    /**
+     * Bridge the store's real-IO probe to virtual-time runTest on the
+     * dedicated real-clock dispatcher (house pattern — never
+     * Thread.sleep on the shared Default pool).
+     */
     private suspend fun awaitRetranscribeEnabled(vm: WalkSummaryViewModel) {
-        withContext(Dispatchers.Default) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
-                while (!vm.retranscribeEnabled.value) {
-                    Thread.sleep(25L)
-                }
+                vm.retranscribeEnabled.first { it }
             }
         }
     }
@@ -1810,11 +1813,11 @@ class WalkSummaryViewModelTest {
             awaitRetranscribeEnabled(vm)
             vm.retranscribeRecording(recId)
 
-            val cleared = withContext(Dispatchers.Default) {
+            val cleared = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) {
                     var row = repository.getVoiceRecording(recId)
                     while (row?.transcription != null) {
-                        Thread.sleep(25L)
+                        delay(25L)
                         row = repository.getVoiceRecording(recId)
                     }
                     row

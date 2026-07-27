@@ -11,6 +11,7 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.Executor
@@ -112,6 +113,7 @@ class WhisperModelDownloadWorkerTest {
     private fun buildWorker(
         runAttemptCount: Int = 0,
         progressUpdates: MutableList<Data>? = null,
+        storeOverride: WhisperModelStore = store,
     ): WhisperModelDownloadWorker {
         val factory = object : WorkerFactory() {
             override fun createWorker(
@@ -125,7 +127,7 @@ class WhisperModelDownloadWorkerTest {
                 spec = spec,
                 files = files,
                 freeSpaceProbe = { availableBytes },
-                store = store,
+                store = storeOverride,
                 voicePreferences = voicePreferences,
                 pendingWalks = { pendingWalkIds },
                 transcriptionScheduler = transcriptionScheduler,
@@ -188,16 +190,61 @@ class WhisperModelDownloadWorkerTest {
         )
     }
 
-    @Test fun `already delivered returns success without network traffic or a re-fired hook`() {
+    // The success hooks re-run on the already-delivered path: a crash
+    // (or REPLACE-cancel) between the marker write and the hooks must
+    // not strand the tiny or drop the re-kick forever. Two runs pin
+    // idempotence — each pass fires the hooks again, harmlessly.
+    @Test fun `already delivered returns success without network traffic and re-runs the idempotent hooks`() {
         modelFile.parentFile?.mkdirs()
         modelFile.writeBytes(payload)
         markerFile.writeText(payloadSha)
+        pendingWalkIds = listOf(5L)
 
-        val result = runBlocking { buildWorker().doWork() }
+        val first = runBlocking { buildWorker().doWork() }
+        val second = runBlocking { buildWorker().doWork() }
+
+        assertEquals(ListenableWorker.Result.success(), first)
+        assertEquals(ListenableWorker.Result.success(), second)
+        assertEquals(0, server.requestCount)
+        assertEquals(2, store.hookCount)
+        assertEquals(listOf(5L, 5L), transcriptionScheduler.rescheduledWalkIds)
+    }
+
+    // The crash window itself: model + marker landed, then the process
+    // died before the hooks — tiny survived, pending walk un-kicked.
+    // The next KEEP attempt short-circuits on alreadyDelivered() and
+    // must still heal both. Real store + the pinned production spec
+    // (sparse model file) because the real onBaseVerified probes the
+    // pinned constants before deleting.
+    @Test fun `already delivered with a surviving tiny reclaims it and re-kicks pending walks`() {
+        spec = WhisperModelDownloadSpec(
+            url = spec.url,
+            expectedBytes = WhisperModelConfig.EXPECTED_BYTES,
+            expectedSha256 = WhisperModelConfig.EXPECTED_SHA256,
+        )
+        modelFile.parentFile?.mkdirs()
+        RandomAccessFile(modelFile, "rw").use { it.setLength(WhisperModelConfig.EXPECTED_BYTES) }
+        markerFile.writeText(WhisperModelConfig.EXPECTED_SHA256)
+        val tinyFile = File(modelRoot, "ggml-tiny.en.bin")
+        RandomAccessFile(tinyFile, "rw").use {
+            it.setLength(WhisperModelConfig.LEGACY_TINY_EXPECTED_BYTES)
+        }
+        pendingWalkIds = listOf(3L)
+        val realStore = WhisperModelStore(
+            context = context,
+            workSource = object : ModelDownloadWorkSource {
+                override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
+            },
+            unmeteredProbe = { true },
+            scope = storeScope,
+        )
+
+        val result = runBlocking { buildWorker(storeOverride = realStore).doWork() }
 
         assertEquals(ListenableWorker.Result.success(), result)
         assertEquals(0, server.requestCount)
-        assertEquals(0, store.hookCount)
+        assertFalse("tiny must be reclaimed on the already-delivered path", tinyFile.exists())
+        assertEquals(listOf(3L), transcriptionScheduler.rescheduledWalkIds)
     }
 
     // C3 resume: Range from the partial's length, If-Range with the
@@ -351,6 +398,34 @@ class WhisperModelDownloadWorkerTest {
         assertEquals(0, server.requestCount)
         assertEquals(100L, partialFile.length())
         assertTrue(etagFile.exists())
+    }
+
+    // The precheck runs before ANY filesystem write: a full disk must
+    // surface as the actionable FailedStorage terminal, never as
+    // collateral IO failures from directory creation.
+    @Test fun `storage precheck failure on a fresh install writes nothing to the filesystem`() {
+        availableBytes = 1_000L
+
+        val result = runBlocking { buildWorker().doWork() }
+
+        val failure = result as ListenableWorker.Result.Failure
+        assertEquals(
+            WhisperModelDownloadWorker.REASON_STORAGE,
+            failure.outputData.getString(WhisperModelDownloadWorker.KEY_FAILURE_REASON),
+        )
+        assertEquals(0, server.requestCount)
+        assertFalse("no directory may be created before the precheck", modelRoot.exists())
+    }
+
+    @Test fun `pre-network filesystem failure retries instead of failing terminally`() {
+        // A regular file squatting on the model root makes
+        // Files.createDirectories throw IOException.
+        modelRoot.writeText("squatter")
+
+        val result = runBlocking { buildWorker().doWork() }
+
+        assertEquals(ListenableWorker.Result.retry(), result)
+        assertEquals(0, server.requestCount)
     }
 
     @Test fun `416 discards the incoherent partial and retries`() {

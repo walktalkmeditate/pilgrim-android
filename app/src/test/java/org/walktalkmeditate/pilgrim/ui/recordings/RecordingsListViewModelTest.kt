@@ -15,8 +15,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -42,6 +44,7 @@ import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -61,6 +64,7 @@ class RecordingsListViewModelTest {
     private lateinit var waveformCache: WaveformCache
     private lateinit var modelStoreScope: CoroutineScope
     private lateinit var modelStore: WhisperModelStore
+    private val downloadWork = MutableStateFlow<ModelDownloadWork?>(null)
     private val dispatcher = UnconfinedTestDispatcher()
 
     private val modelRoot: File
@@ -78,7 +82,7 @@ class RecordingsListViewModelTest {
         modelStore = WhisperModelStore(
             context = context,
             workSource = object : ModelDownloadWorkSource {
-                override fun observe(): Flow<ModelDownloadWork?> = flowOf(null)
+                override fun observe(): Flow<ModelDownloadWork?> = downloadWork
             },
             unmeteredProbe = { true },
             scope = modelStoreScope,
@@ -138,14 +142,13 @@ class RecordingsListViewModelTest {
 
     /**
      * The gate flows store probe (real IO) -> VM stateIn, so bridge to
-     * wall-clock with the same polling pattern as [awaitFileGone].
+     * wall-clock on the dedicated real-clock dispatcher (house pattern
+     * — never Thread.sleep on the shared Default pool).
      */
     private suspend fun awaitRetranscribeEnabled(vm: RecordingsListViewModel) {
-        withContext(Dispatchers.Default) {
+        withContext(TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
-                while (!vm.retranscribeEnabled.value) {
-                    Thread.sleep(25L)
-                }
+                vm.retranscribeEnabled.first { it }
             }
         }
     }
@@ -156,11 +159,11 @@ class RecordingsListViewModelTest {
      * above — asserting synchronously reads the pre-write row.
      */
     private suspend fun awaitTranscriptionCleared(recordingId: Long): VoiceRecording? =
-        withContext(Dispatchers.Default) {
+        withContext(TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 var row = repository.getVoiceRecording(recordingId)
                 while (row?.transcription != null) {
-                    Thread.sleep(25L)
+                    delay(25L)
                     row = repository.getVoiceRecording(recordingId)
                 }
                 row
@@ -464,12 +467,12 @@ class RecordingsListViewModelTest {
             // Poll briefly because the state propagation from the
             // version bump runs through the test dispatcher but the
             // file delete itself ran on real Dispatchers.IO.
-            withContext(Dispatchers.Default) {
+            withContext(TestRealTimeDispatcher.instance) {
                 withTimeout(10_000L) {
                     while ((vm.state.value as? RecordingsListUiState.Loaded)
                             ?.fileExistenceById?.get(rec.id) != false
                     ) {
-                        Thread.sleep(25L)
+                        delay(25L)
                     }
                 }
             }
@@ -478,13 +481,13 @@ class RecordingsListViewModelTest {
         }
 
     private suspend fun awaitFileGone(relativePath: String) {
-        // Bridge real-time IO to virtual-time runTest by polling on a
-        // real dispatcher. `Default` rather than `IO` because we're
-        // not blocking — Thread.sleep'ing 25ms a few times is cheap.
-        withContext(Dispatchers.Default) {
+        // Bridge real-time IO to virtual-time runTest by polling on
+        // the dedicated real-clock dispatcher (house pattern — never
+        // Thread.sleep on the shared Default pool).
+        withContext(TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 while (fileSystem.fileExists(relativePath)) {
-                    Thread.sleep(25L)
+                    delay(25L)
                 }
             }
         }
@@ -511,6 +514,24 @@ class RecordingsListViewModelTest {
             assertNull(updated?.transcription)
             assertNull(updated?.wordsPerMinute)
             assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
+        }
+
+    // U10 gating through the U11 window: the transitional tiny keeps
+    // the gate open while base delivery work is in flight — usability
+    // is split from the delivery display, so Downloading never closes
+    // an upgrader's retranscribe for the whole download window.
+    @Test
+    fun `retranscribe gate stays enabled during the base download while the tiny serves`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            downloadWork.value = ModelDownloadWork.Downloading(
+                bytesDownloaded = 5L,
+                totalBytes = WhisperModelConfig.EXPECTED_BYTES,
+            )
+
+            val vm = newViewModel()
+
+            awaitRetranscribeEnabled(vm)
         }
 
     @Test
@@ -568,13 +589,14 @@ class RecordingsListViewModelTest {
 
     private suspend fun awaitEditingId(vm: RecordingsListViewModel, expected: Long?) {
         // Bridge the real-time IO hop in fileSnapshotFlow to virtual-time
-        // runTest by polling vm.state.value on a real dispatcher.
-        withContext(Dispatchers.Default) {
+        // runTest by polling vm.state.value on the dedicated real-clock
+        // dispatcher.
+        withContext(TestRealTimeDispatcher.instance) {
             withTimeout(10_000L) {
                 while ((vm.state.value as? RecordingsListUiState.Loaded)
                         ?.editingRecordingId != expected
                 ) {
-                    Thread.sleep(25L)
+                    delay(25L)
                 }
             }
         }

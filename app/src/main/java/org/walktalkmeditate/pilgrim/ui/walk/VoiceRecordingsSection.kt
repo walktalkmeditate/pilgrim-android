@@ -71,8 +71,9 @@ sealed interface PendingTranscriptionSubstate {
      * Auto-transcribe is OFF: nothing is running and nothing was
      * promised, so the row shows a plain "not transcribed" state with
      * a manual Transcribe affordance — never download language.
-     * [transcribeEnabled] gates the affordance on model readiness
-     * (U10: Ready(Base) OR Ready(LegacyTiny)).
+     * [transcribeEnabled] gates the affordance on a usable model on
+     * disk (U10 gating: verified base OR the transitional exact-size
+     * tiny — open even while base delivery work is pending).
      */
     @Immutable
     data class ManualPending(val transcribeEnabled: Boolean) : PendingTranscriptionSubstate
@@ -96,14 +97,18 @@ sealed interface PendingTranscriptionSubstate {
     data object DownloadFailedStorage : PendingTranscriptionSubstate
 }
 
-/** Pure mapper for the U11 substate matrix — unit-testable without Compose. */
+/**
+ * Pure mapper for the U11 substate matrix — unit-testable without
+ * Compose. [modelUsable] is [WhisperModelStore][org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore]'s
+ * usability probe: it gates the pref-OFF manual affordance, while
+ * [modelState] stays the display surface.
+ */
 fun pendingTranscriptionSubstate(
     autoTranscribe: Boolean,
     modelState: WhisperModelState,
+    modelUsable: Boolean,
 ): PendingTranscriptionSubstate = if (!autoTranscribe) {
-    PendingTranscriptionSubstate.ManualPending(
-        transcribeEnabled = modelState is WhisperModelState.Ready,
-    )
+    PendingTranscriptionSubstate.ManualPending(transcribeEnabled = modelUsable)
 } else {
     when (modelState) {
         is WhisperModelState.Ready -> PendingTranscriptionSubstate.QueuedForProcessing

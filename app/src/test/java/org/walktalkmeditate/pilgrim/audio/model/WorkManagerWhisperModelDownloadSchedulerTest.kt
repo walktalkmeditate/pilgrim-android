@@ -16,6 +16,8 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import androidx.work.workDataOf
+import java.io.File
+import java.io.RandomAccessFile
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -36,8 +38,9 @@ import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
  * exercise per the house platform-object rule (precedent:
  * `WorkManagerTranscriptionSchedulerTest`, which caught the
  * Expedited + BatteryNotLow crash that six review cycles missed).
- * Also pins the U9 C1 gate (KEEP dedupe, terminal-FAILED /
- * SUCCEEDED no-op, retry REPLACE), the C2 constraint policy
+ * Also pins the U9 C1 gate (KEEP dedupe, terminal-FAILED no-op,
+ * SUCCEEDED no-op only while its delivery survives on disk, retry
+ * REPLACE), the C2 constraint policy
  * (UNMETERED default, sticky cellular override → CONNECTED, REPLACE
  * on flip), and the U8 WorkInfo → [ModelDownloadWork] mapping.
  */
@@ -52,6 +55,7 @@ class WorkManagerWhisperModelDownloadSchedulerTest {
 
     @Before fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        File(context.filesDir, "whisper-model").deleteRecursively()
         stubFactory = StubWorkerFactory()
         val config = Configuration.Builder()
             .setMinimumLoggingLevel(android.util.Log.INFO)
@@ -72,6 +76,15 @@ class WorkManagerWhisperModelDownloadSchedulerTest {
         stubFactory.nextResult = result
         val id = workInfos().single().id
         WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(id)
+    }
+
+    private fun installVerifiedBase() {
+        val filesDir = context.filesDir.toPath()
+        val model = WhisperModelConfig.baseModelPath(filesDir).toFile()
+        model.parentFile?.mkdirs()
+        RandomAccessFile(model, "rw").use { it.setLength(WhisperModelConfig.EXPECTED_BYTES) }
+        WhisperModelConfig.baseShaMarkerPath(filesDir).toFile()
+            .writeText(WhisperModelConfig.EXPECTED_SHA256)
     }
 
     @Test fun `ensureEnqueued builds and registers unique work with the UNMETERED default`() {
@@ -125,7 +138,8 @@ class WorkManagerWhisperModelDownloadSchedulerTest {
         assertTrue(latest.any { it.id != firstId && it.state == WorkInfo.State.ENQUEUED })
     }
 
-    @Test fun `ensureEnqueued after success does not re-enqueue`() {
+    @Test fun `ensureEnqueued after success with the delivered model on disk does not re-enqueue`() {
+        installVerifiedBase()
         runBlocking { scheduler.ensureEnqueued() }
         val firstId = workInfos().single().id
         runStubToTerminal(ListenableWorker.Result.success())
@@ -134,6 +148,32 @@ class WorkManagerWhisperModelDownloadSchedulerTest {
         runBlocking { scheduler.ensureEnqueued() }
 
         assertEquals(firstId, workInfos().single().id)
+        assertEquals(WorkInfo.State.SUCCEEDED, workInfos().single().state)
+    }
+
+    // Stale-SUCCEEDED heal: the record outlived its bytes ("clear app
+    // storage", manual deletion, partial restore) — with no verified
+    // base and no partial in flight, ensureEnqueued re-enqueues.
+    @Test fun `ensureEnqueued after success with an empty filesystem re-enqueues`() {
+        runBlocking { scheduler.ensureEnqueued() }
+        val firstId = workInfos().single().id
+        runStubToTerminal(ListenableWorker.Result.success())
+        assertEquals(WorkInfo.State.SUCCEEDED, workInfos().single().state)
+
+        runBlocking { scheduler.ensureEnqueued() }
+
+        assertTrue(workInfos().any { it.id != firstId && it.state == WorkInfo.State.ENQUEUED })
+    }
+
+    @Test fun `ensureEnqueued after success with a partial in flight does not re-enqueue`() {
+        val partial = WhisperModelConfig.basePartialPath(context.filesDir.toPath()).toFile()
+        partial.parentFile?.mkdirs()
+        partial.writeBytes(ByteArray(100))
+        runBlocking { scheduler.ensureEnqueued() }
+        runStubToTerminal(ListenableWorker.Result.success())
+
+        runBlocking { scheduler.ensureEnqueued() }
+
         assertEquals(WorkInfo.State.SUCCEEDED, workInfos().single().state)
     }
 

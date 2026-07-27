@@ -39,7 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import androidx.core.net.toUri
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
-import org.walktalkmeditate.pilgrim.audio.model.modelReadyIn
+import org.walktalkmeditate.pilgrim.audio.model.modelUsableIn
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.data.photo.PhotoLibraryScanner.DiscoveredPhoto
@@ -981,10 +981,11 @@ class WalkSummaryViewModel @Inject constructor(
     /**
      * U11 gate (parity spec `docs/parity/2026-07-26-port-download-ux-u11.md`
      * section 5): retranscribe destroys the transcript BEFORE scheduling,
-     * so it stays disabled until the model is Ready. Derivation + Eagerly
-     * rationale live on [modelReadyIn].
+     * so it stays disabled until a usable model is on disk — verified
+     * base OR the transitional tiny, open through the base download
+     * window. Derivation + Eagerly rationale live on [modelUsableIn].
      */
-    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.modelReadyIn(viewModelScope)
+    val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.modelUsableIn(viewModelScope)
 
     /**
      * Walk Summary retranscribe-single action. Clears the existing

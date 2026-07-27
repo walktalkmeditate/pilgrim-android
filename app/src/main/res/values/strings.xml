@@ -226,7 +226,6 @@
 
     <!-- Stage 13-G details -->
     <string name="summary_details_paused">Paused</string>
-    <string name="transcription_pending">Transcribing\u2026</string>
 
     <!-- U11 pending-transcription substates (parity spec
          docs/parity/2026-07-26-port-download-ux-u11.md section 3).

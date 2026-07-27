@@ -12,7 +12,9 @@ import org.walktalkmeditate.pilgrim.audio.model.WhisperModelVariant
  * Exhaustive cell-by-cell pin of the U11 substate matrix
  * (`docs/parity/2026-07-26-port-download-ux-u11.md` section 3): every
  * pref x model-state combination, so a new [WhisperModelState] case or
- * a mapper edit cannot silently reroute a cell.
+ * a mapper edit cannot silently reroute a cell. The pref-OFF cells key
+ * `transcribeEnabled` on the store's usability probe (verified base OR
+ * transitional tiny on disk), not the Ready display state.
  */
 @RunWith(JUnit4::class)
 class PendingTranscriptionSubstateTest {
@@ -36,23 +38,53 @@ class PendingTranscriptionSubstateTest {
     fun `pref off with model ready is manual pending with affordance enabled`() {
         assertEquals(
             PendingTranscriptionSubstate.ManualPending(transcribeEnabled = true),
-            pendingTranscriptionSubstate(autoTranscribe = false, modelState = readyBase),
+            pendingTranscriptionSubstate(
+                autoTranscribe = false,
+                modelState = readyBase,
+                modelUsable = true,
+            ),
         )
         assertEquals(
             PendingTranscriptionSubstate.ManualPending(transcribeEnabled = true),
-            pendingTranscriptionSubstate(autoTranscribe = false, modelState = readyTiny),
+            pendingTranscriptionSubstate(
+                autoTranscribe = false,
+                modelState = readyTiny,
+                modelUsable = true,
+            ),
         )
     }
 
     @Test
-    fun `pref off with any non-ready state is manual pending with affordance disabled`() {
+    fun `pref off with no usable model is manual pending with affordance disabled`() {
         val nonReady = deliveryPhases +
             listOf(WhisperModelState.FailedChecksum, WhisperModelState.FailedStorage)
         for (state in nonReady) {
             assertEquals(
                 "state=$state",
                 PendingTranscriptionSubstate.ManualPending(transcribeEnabled = false),
-                pendingTranscriptionSubstate(autoTranscribe = false, modelState = state),
+                pendingTranscriptionSubstate(
+                    autoTranscribe = false,
+                    modelState = state,
+                    modelUsable = false,
+                ),
+            )
+        }
+    }
+
+    // The transitional tiny keeps the manual affordance enabled through
+    // the whole base download window — usability gates the OFF cells,
+    // not the delivery display.
+    @Test
+    fun `pref off with the tiny usable during delivery phases keeps the affordance enabled`() {
+        for (state in deliveryPhases) {
+            assertEquals(
+                "state=$state",
+                PendingTranscriptionSubstate.ManualPending(transcribeEnabled = true),
+                pendingTranscriptionSubstate(
+                    autoTranscribe = false,
+                    modelState = state,
+                    modelUsable = true,
+                ),
             )
         }
     }
@@ -63,7 +95,28 @@ class PendingTranscriptionSubstateTest {
             assertEquals(
                 "state=$state",
                 PendingTranscriptionSubstate.WaitingOnDownload(state),
-                pendingTranscriptionSubstate(autoTranscribe = true, modelState = state),
+                pendingTranscriptionSubstate(
+                    autoTranscribe = true,
+                    modelState = state,
+                    modelUsable = false,
+                ),
+            )
+        }
+    }
+
+    // Usability never rewrites the pref-ON display cells: the tiny may
+    // be serving the engine, but the row still explains the delivery.
+    @Test
+    fun `pref on with the tiny usable still shows the delivery phases`() {
+        for (state in deliveryPhases) {
+            assertEquals(
+                "state=$state",
+                PendingTranscriptionSubstate.WaitingOnDownload(state),
+                pendingTranscriptionSubstate(
+                    autoTranscribe = true,
+                    modelState = state,
+                    modelUsable = true,
+                ),
             )
         }
     }
@@ -72,11 +125,19 @@ class PendingTranscriptionSubstateTest {
     fun `pref on with model ready is queued for processing for both variants`() {
         assertEquals(
             PendingTranscriptionSubstate.QueuedForProcessing,
-            pendingTranscriptionSubstate(autoTranscribe = true, modelState = readyBase),
+            pendingTranscriptionSubstate(
+                autoTranscribe = true,
+                modelState = readyBase,
+                modelUsable = true,
+            ),
         )
         assertEquals(
             PendingTranscriptionSubstate.QueuedForProcessing,
-            pendingTranscriptionSubstate(autoTranscribe = true, modelState = readyTiny),
+            pendingTranscriptionSubstate(
+                autoTranscribe = true,
+                modelState = readyTiny,
+                modelUsable = true,
+            ),
         )
     }
 
@@ -87,6 +148,7 @@ class PendingTranscriptionSubstateTest {
             pendingTranscriptionSubstate(
                 autoTranscribe = true,
                 modelState = WhisperModelState.FailedChecksum,
+                modelUsable = false,
             ),
         )
         assertEquals(
@@ -94,6 +156,7 @@ class PendingTranscriptionSubstateTest {
             pendingTranscriptionSubstate(
                 autoTranscribe = true,
                 modelState = WhisperModelState.FailedStorage,
+                modelUsable = false,
             ),
         )
     }

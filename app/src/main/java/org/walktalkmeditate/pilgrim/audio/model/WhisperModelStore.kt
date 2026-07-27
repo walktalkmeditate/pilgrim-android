@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -65,6 +66,16 @@ sealed interface ModelDownloadWork {
 interface ModelDownloadWorkSource {
     /** Emits null while no download work is tracked. */
     fun observe(): Flow<ModelDownloadWork?>
+
+    /**
+     * The sticky cellular override behind the download constraint
+     * (U11). The store folds it into the waiting-state mapping: with
+     * the override ON any connection satisfies the constraint, so
+     * ENQUEUED reads as [WhisperModelState.Enqueued] — never the
+     * misleading [WhisperModelState.WaitingUnmetered]. Defaults to
+     * constant-false for sources without a constraint (test fakes).
+     */
+    fun observeCellularOverride(): Flow<Boolean> = flowOf(false)
 }
 
 /**
@@ -133,14 +144,33 @@ open class WhisperModelStore @Inject constructor(
     private val invalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     private val tinyCleanupMutex = Mutex()
 
-    val state: StateFlow<WhisperModelState> =
+    private val snapshots: Flow<Snapshot> =
         combine(
             workSource.observe().onStart { emit(null) },
+            workSource.observeCellularOverride(),
             invalidations.onStart { emit(Unit) },
-        ) { work, _ -> work }
-            .map { work -> composeState(work) }
+        ) { work, cellularOverride, _ -> composeSnapshot(work, cellularOverride) }
+
+    val state: StateFlow<WhisperModelState> =
+        snapshots
+            .map { it.state }
             .distinctUntilChanged()
             .stateIn(scope, SharingStarted.WhileSubscribed(5_000L), WhisperModelState.Absent)
+
+    /**
+     * Usability gate beside the display [state]: true whenever
+     * [readyModelPath] would resolve a model (verified base OR the
+     * exact-size transitional tiny), re-probed on the same emissions
+     * as [state]. Split from [state] because delivery display and
+     * usability genuinely diverge for upgraders — while base work is
+     * pending, [state] shows the delivery phase but the tiny keeps
+     * transcribe/retranscribe usable (U10 gating rule).
+     */
+    val modelUsable: StateFlow<Boolean> =
+        snapshots
+            .map { it.usable }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000L), false)
 
     /**
      * Re-probe after a filesystem change with no accompanying work
@@ -196,14 +226,28 @@ open class WhisperModelStore @Inject constructor(
         }
     }
 
-    private suspend fun composeState(work: ModelDownloadWork?): WhisperModelState {
+    private suspend fun composeSnapshot(
+        work: ModelDownloadWork?,
+        cellularOverride: Boolean,
+    ): Snapshot {
         val probe = withContext(Dispatchers.IO) {
             FilesystemProbe(baseVerified = baseVerified(), tinyPresent = legacyTinyPresent())
         }
+        return Snapshot(
+            state = composeState(work, cellularOverride, probe),
+            usable = probe.baseVerified || probe.tinyPresent,
+        )
+    }
+
+    private fun composeState(
+        work: ModelDownloadWork?,
+        cellularOverride: Boolean,
+        probe: FilesystemProbe,
+    ): WhisperModelState {
         if (probe.baseVerified) return WhisperModelState.Ready(WhisperModelVariant.Base)
         return when (work) {
             ModelDownloadWork.Enqueued ->
-                if (unmeteredProbe.isUnmeteredAvailable()) {
+                if (cellularOverride || unmeteredProbe.isUnmeteredAvailable()) {
                     WhisperModelState.Enqueued
                 } else {
                     WhisperModelState.WaitingUnmetered
@@ -242,26 +286,31 @@ open class WhisperModelStore @Inject constructor(
         val tinyPresent: Boolean,
     )
 
+    private data class Snapshot(
+        val state: WhisperModelState,
+        val usable: Boolean,
+    )
+
     private companion object {
         const val TAG = "WhisperModelStore"
     }
 }
 
 /**
- * Per-ViewModel "model is Ready — Base or the transitional LegacyTiny
- * (U10 gating rule)" gate. Derived Eagerly so `.value` guards in the
- * owning VM read a live value (Stage 5-F: `.value` reads don't
- * subscribe a WhileSubscribed flow; this stateIn keeps the store's
- * upstream hot for the VM lifetime). Deliberately an extension over a
- * caller-owned [scope], NOT an always-hot store property — the per-VM
- * lifecycle keeps the store's WhileSubscribed flow cold when no VM is
- * alive.
+ * Per-ViewModel gate over [WhisperModelStore.modelUsable] (U10 gating
+ * rule: verified base OR the transitional exact-size tiny — the same
+ * probe [WhisperModelStore.readyModelPath] serves, so the gate stays
+ * open through the base download window instead of tracking the
+ * delivery display). Derived Eagerly so `.value` guards in the owning
+ * VM read a live value (Stage 5-F: `.value` reads don't subscribe a
+ * WhileSubscribed flow; this stateIn keeps the store's upstream hot
+ * for the VM lifetime). Deliberately an extension over a caller-owned
+ * [scope], NOT an always-hot store property — the per-VM lifecycle
+ * keeps the store's WhileSubscribed flow cold when no VM is alive.
  */
-fun WhisperModelStore.modelReadyIn(scope: CoroutineScope): StateFlow<Boolean> =
-    state
-        .map { it is WhisperModelState.Ready }
-        .stateIn(
-            scope = scope,
-            started = SharingStarted.Eagerly,
-            initialValue = state.value is WhisperModelState.Ready,
-        )
+fun WhisperModelStore.modelUsableIn(scope: CoroutineScope): StateFlow<Boolean> =
+    modelUsable.stateIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        initialValue = modelUsable.value,
+    )

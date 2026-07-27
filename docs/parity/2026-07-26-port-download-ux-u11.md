@@ -125,6 +125,10 @@ Compose.
 - `Ready(LegacyTiny)` maps identically to `Ready(Base)` everywhere in this unit (U10 gating:
   "Ready for gating = Ready(Base) OR Ready(LegacyTiny)") — upgraders' pending rows are genuinely
   queued against the still-serving tiny (U8 D3).
+- **Amendment (review fix):** the OFF rows key `transcribeEnabled` on model *usability*
+  (`WhisperModelStore.modelUsable`: verified base OR exact-size transitional tiny on disk), not on
+  the `Ready` display state — an upgrader's tiny keeps the manual affordance enabled while base
+  delivery work is pending, so the matrix is `f(pref × model state × usability)` for those cells.
 
 ## 4. Model download sheet — Android-original
 
@@ -157,9 +161,10 @@ null the transcript BEFORE scheduling (`transcription = null` → `scheduleForWa
 is silent data loss: the scheduled work would `Result.retry` against a missing model (U10 L1) while
 the user's text is already gone (review class A2).
 
-- Both VMs expose `retranscribeEnabled: StateFlow<Boolean>` = `modelState is Ready` (Base OR
-  LegacyTiny, U10 gating) and **guard the action itself** — a stale-UI tap fails closed as a no-op
-  before the destructive write.
+- Both VMs expose `retranscribeEnabled: StateFlow<Boolean>` = `WhisperModelStore.modelUsable`
+  (verified base OR exact-size transitional tiny on disk — the same probe `readyModelPath()`
+  serves, so the gate stays open through the base download window; U10 gating) and **guard the
+  action itself** — a stale-UI tap fails closed as a no-op before the destructive write.
 - UI disables the affordances: the retranscribe icon on transcribed rows
   (`VoiceRecordingsSection`), and the StartToEnd retranscribe swipe on the recordings list.
 - The manual pref-OFF Transcribe affordance (§3) is gated the same way for consistency, though it
