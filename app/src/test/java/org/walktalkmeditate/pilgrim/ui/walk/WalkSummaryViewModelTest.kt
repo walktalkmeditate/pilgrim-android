@@ -19,6 +19,7 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -90,6 +91,27 @@ class WalkSummaryViewModelTest {
     private lateinit var modelStoreScope: CoroutineScope
     private lateinit var modelStore: org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
     private val dispatcher = UnconfinedTestDispatcher()
+
+    /**
+     * Stage 7-A leak pattern (the sibling WalkSummaryViewModel*Test
+     * classes already carry it — this file was the one member missing
+     * it): every VM constructed in a test parks here so tearDown can
+     * cancel AND JOIN its `viewModelScope` before `Dispatchers.resetMain()`.
+     * The VM's Eagerly `state` sharing coroutine runs on
+     * Dispatchers.Main.immediate and hops through
+     * `withContext(Dispatchers.Default)` mid-`buildState`; if it
+     * outlives the test, its resume back into Dispatchers.Main races
+     * the @After resetMain / next-@Before setMain delegate swap on
+     * TestMainDispatcher — isDispatchNeeded can read the real main
+     * (true) and dispatch can land on the next test's
+     * UnconfinedTestDispatcher, whose dispatch() throws
+     * UnsupportedOperationException (TestCoroutineDispatchers.kt:106)
+     * into whichever runTest is active. Join (not just cancel) is what
+     * closes the window: dispatch happens even for cancelled
+     * coroutines, so only full completion guarantees no further Main
+     * dispatches.
+     */
+    private val createdViewModels = mutableListOf<WalkSummaryViewModel>()
 
     private val modelRoot: java.io.File
         get() = java.io.File(context.filesDir, "whisper-model")
@@ -224,7 +246,7 @@ class WalkSummaryViewModelTest {
             ),
             json = json,
         )
-        return WalkSummaryViewModel(
+        val vm = WalkSummaryViewModel(
             context = context,
             repository = repositoryOverride,
             playback = playback,
@@ -273,6 +295,8 @@ class WalkSummaryViewModelTest {
             persistenceScope = persistenceScope,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
+        createdViewModels += vm
+        return vm
     }
 
     /**
@@ -339,6 +363,14 @@ class WalkSummaryViewModelTest {
 
     @After
     fun tearDown() {
+        // Join BEFORE db.close() (Room observers on a closed db) and
+        // before resetMain (the TestMainDispatcher swap race above).
+        kotlinx.coroutines.runBlocking {
+            for (vm in createdViewModels) {
+                vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            }
+        }
+        createdViewModels.clear()
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         persistenceScope.coroutineContext[Job]?.cancel()
