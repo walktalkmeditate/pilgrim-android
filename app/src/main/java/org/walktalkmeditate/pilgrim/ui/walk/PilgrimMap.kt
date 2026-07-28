@@ -77,16 +77,20 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
 import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapGlyphBitmaps
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekCrescentStyle
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekFogStyle
+import org.walktalkmeditate.pilgrim.ui.walk.map.SEEK_CLEARING_GLYPH_SIZE_DP
+import org.walktalkmeditate.pilgrim.ui.walk.map.SEEK_CLEARING_LIVE_GLYPH_SIZE_DP
 import org.walktalkmeditate.pilgrim.ui.walk.map.SeekCrescentRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.SeekFogRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.WHISPER_GLYPH_SIZE_DP
 import org.walktalkmeditate.pilgrim.ui.walk.map.cairnGlyphSizeDp
 import org.walktalkmeditate.pilgrim.ui.walk.map.hexToColorArgb
+import org.walktalkmeditate.pilgrim.ui.walk.map.seekClearingLightHexes
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_ZOOM_PLANT_MS
@@ -233,19 +237,28 @@ internal fun PilgrimMap(
     // at dp × density (port spec 2026-07-27-port-map-glyphs-u14-u15.md).
     val whisperGlyphBitmaps = rememberWhisperGlyphBitmaps()
     val cairnGlyphBitmaps = rememberCairnGlyphBitmaps()
+    // iOS parity `MapGlyph.seekClearing@b4decad` (port spec
+    // 2026-07-28-port-seek-clearing-glyph.md) — the clearing's tree:
+    // hour-lit for the summary record, stone-lit for the live walk.
+    val seekClearingGlyphBitmaps = rememberSeekClearingGlyphBitmaps()
+    val seekClearingLiveBitmap = rememberSeekClearingLiveBitmap(stoneArgb)
     // iOS parity `PilgrimMapView.swift:231-251@v1.6.0` — custom 2D
     // puck: stone-filled outer disc + white@0.9 inner dot. Keyed on
     // `stoneArgb` only (the single value the draw reads) so a theme /
     // appearance / seasonal flip rebuilds it but unrelated
     // recompositions reuse the cached bitmap.
     val puckBitmap = remember(stoneArgb) { createPuckBitmap(stoneArgb) }
-    // Snapshot of the waypoint list that produced the current pin set, so
-    // recomposition triggers that don't change waypoints (e.g. Stage 13-D's
-    // segment-tap zoom changes `zoomTargetBounds` → re-fires the update
-    // lambda) skip the wholesale delete-and-recreate. Same gate pattern as
+    // Snapshot of the (waypoints, bitmaps) inputs that produced the current
+    // pin set, so recomposition triggers that change neither (e.g. Stage
+    // 13-D's segment-tap zoom changes `zoomTargetBounds` → re-fires the
+    // update lambda) skip the wholesale delete-and-recreate. Key components
+    // are exactly what the pin draw reads (Stage 13-D rule) — the bitmap
+    // inputs joined when the arrival pin gained the stone-tinted clearing
+    // glyph, so a constellation/seasonal stone flip that changes no
+    // waypoint still re-fires the rebuild. Same gate pattern as
     // `renderedSegments` / `renderedWalkAnnotationsKey` below.
-    var renderedWaypoints by remember {
-        mutableStateOf<List<org.walktalkmeditate.pilgrim.data.entity.Waypoint>?>(null)
+    var renderedWaypointsKey by remember {
+        mutableStateOf<List<Any?>?>(null)
     }
     // Stage 13-D annotation pins (start/end + meditation + voice). Same
     // snapshot-rebuild pattern as `renderedSegments` above: the update
@@ -257,8 +270,9 @@ internal fun PilgrimMap(
     // iOS parity `PilgrimMapView.buildCircles@v1.6.0` — meditation is a
     // duration-scaled dawn CircleAnnotation, not a fixed pin dot. Same
     // for the post-walk summary map (was rendering a tiny static pin).
-    // U11: seek-arrival halos (glow + core circle pair) share this
-    // manager — same delete/rebuild bookkeeping, summary-map-only.
+    // U11: seek-arrival halos share this manager — glow only since the
+    // clearing grew its tree (@b4decad; the old bright core became a
+    // point pin) — same delete/rebuild bookkeeping, summary-map-only.
     var meditationCircleManager by remember {
         mutableStateOf<com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager?>(
             null,
@@ -512,7 +526,7 @@ internal fun PilgrimMap(
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
-        renderedWaypoints = null
+        renderedWaypointsKey = null
         annotationManager?.let { view.annotations.removeAnnotationManager(it) }
         annotationManager = null
         renderedWalkAnnotations = emptyList()
@@ -838,21 +852,32 @@ internal fun PilgrimMap(
             // <30 per walk) so wholesale replace remains cheaper than
             // diffing on actual change.
             val pointMgr = waypointManager
-            if (pointMgr != null && renderedWaypoints != waypoints) {
+            val waypointsKey = listOf(waypoints, waypointBitmaps, seekClearingLiveBitmap)
+            if (pointMgr != null && renderedWaypointsKey != waypointsKey) {
                 if (waypointAnnotations.isNotEmpty()) {
                     waypointAnnotations.forEach { pointMgr.delete(it) }
                 }
                 waypointAnnotations = waypoints.map { wp ->
-                    pointMgr.create(
-                        PointAnnotationOptions()
-                            .withPoint(Point.fromLngLat(wp.longitude, wp.latitude))
-                            .withIconImage(
-                                waypointBitmaps[wp.icon]
-                                    ?: waypointBitmaps.getValue("mappin"),
-                            ),
-                    )
+                    // iOS parity `PilgrimMapView.buildPoints@b4decad` — a
+                    // clearing reached mid-walk wears the same tree as the
+                    // summary map, in the stone every live waypoint wears
+                    // (the hour's light belongs to the record). A null
+                    // clearing bitmap leaves the pin icon-less, mirroring
+                    // iOS's `if let image` — the reserved icon must never
+                    // degrade to a user pin mark.
+                    val bitmap = if (SeekPersistence.isArrivalWaypoint(wp.icon)) {
+                        seekClearingLiveBitmap
+                    } else {
+                        waypointBitmaps[wp.icon] ?: waypointBitmaps.getValue("mappin")
+                    }
+                    val options = PointAnnotationOptions()
+                        .withPoint(Point.fromLngLat(wp.longitude, wp.latitude))
+                    if (bitmap != null) {
+                        options.withIconImage(bitmap)
+                    }
+                    pointMgr.create(options)
                 }
-                renderedWaypoints = waypoints
+                renderedWaypointsKey = waypointsKey
             }
             // Stage 13-D walk-summary annotations (start/end + meditation
             // + voice). Snapshot-rebuild gate keyed on the (annotations,
@@ -877,6 +902,7 @@ internal fun PilgrimMap(
                     photoPinBitmaps.toMap(),
                     whisperGlyphBitmaps,
                     cairnGlyphBitmaps,
+                    seekClearingGlyphBitmaps,
                 )
                 if (renderedWalkAnnotationsKey != key) {
                     if (renderedWalkAnnotations.isNotEmpty()) {
@@ -917,32 +943,26 @@ internal fun PilgrimMap(
                                             ),
                                         )
                                     }
-                                    // Seek arrivals: two-part hour-lit halo,
-                                    // not a pin — 26px glow at 0.28 under a
-                                    // 4px bright core at 0.9, both in the
-                                    // fixed light hex (iOS PilgrimMapView
-                                    // .swift:394-400,426-432@c1745e8). Glow
-                                    // created first so the core draws on top.
+                                    // Seek arrivals: the hour-lit glow only.
+                                    // The bright core became the clearing's
+                                    // tree — a point pin in the pass below —
+                                    // and the halo tightened from 26 to 20
+                                    // so it reads as light *around* the
+                                    // 30dp tree, not the mark itself (iOS
+                                    // PilgrimMapView.swift glowCircle +
+                                    // buildCircles@b4decad).
                                     is WalkMapAnnotationKind.SeekArrival -> {
                                         val lightArgb = hexToColorArgb(kind.lightHex)
-                                        val point = Point.fromLngLat(ann.longitude, ann.latitude)
                                         listOf(
                                             medMgr.create(
                                                 com.mapbox.maps.plugin.annotation.generated
                                                     .CircleAnnotationOptions()
-                                                    .withPoint(point)
-                                                    .withCircleRadius(26.0)
+                                                    .withPoint(
+                                                        Point.fromLngLat(ann.longitude, ann.latitude),
+                                                    )
+                                                    .withCircleRadius(20.0)
                                                     .withCircleColor(lightArgb)
                                                     .withCircleOpacity(0.28)
-                                                    .withCircleStrokeWidth(0.0),
-                                            ),
-                                            medMgr.create(
-                                                com.mapbox.maps.plugin.annotation.generated
-                                                    .CircleAnnotationOptions()
-                                                    .withPoint(point)
-                                                    .withCircleRadius(4.0)
-                                                    .withCircleColor(lightArgb)
-                                                    .withCircleOpacity(0.9)
                                                     .withCircleStrokeWidth(0.0),
                                             ),
                                         )
@@ -952,21 +972,24 @@ internal fun PilgrimMap(
                             }
                     }
                     renderedWalkAnnotations = walkAnnotations
-                        .filter {
-                            it.kind !is WalkMapAnnotationKind.Meditation &&
-                                it.kind !is WalkMapAnnotationKind.SeekArrival
-                        }
+                        .filter { it.kind !is WalkMapAnnotationKind.Meditation }
                         .map { ann ->
                         val bitmap: Bitmap? = when (val k = ann.kind) {
                             WalkMapAnnotationKind.StartPoint,
                             WalkMapAnnotationKind.EndPoint ->
                                 bitmaps.getValue("startEnd")
-                            // Meditation + SeekArrival are filtered out
-                            // above (they render as CircleAnnotations, not
-                            // point pins); branches kept for exhaustiveness.
-                            is WalkMapAnnotationKind.Meditation,
-                            is WalkMapAnnotationKind.SeekArrival ->
+                            // Meditation is filtered out above (it renders
+                            // as a CircleAnnotation, not a point pin);
+                            // branch kept for exhaustiveness.
+                            is WalkMapAnnotationKind.Meditation ->
                                 bitmaps.getValue("meditation")
+                            is WalkMapAnnotationKind.SeekArrival ->
+                                // iOS parity @b4decad: the tree standing in
+                                // the clearing, tinted with the sky it was
+                                // found under, drawn over the glow circle
+                                // built above (point managers stack above
+                                // the circle manager, like iOS).
+                                seekClearingGlyphBitmaps[k.lightHex]
                             is WalkMapAnnotationKind.VoiceRecording ->
                                 bitmaps.getValue("voice")
                             is WalkMapAnnotationKind.Photo ->
@@ -1084,7 +1107,7 @@ internal fun PilgrimMap(
                 lastFollowCameraKey = null
                 waypointManager = null
                 waypointAnnotations = emptyList()
-                renderedWaypoints = null
+                renderedWaypointsKey = null
                 annotationManager = null
                 renderedWalkAnnotations = emptyList()
                 renderedWalkAnnotationsKey = null
@@ -1220,6 +1243,53 @@ internal fun rememberCairnGlyphBitmaps(): Map<CairnTier, Bitmap> {
             MapGlyphBitmaps.cairn(context, tier, cairnGlyphSizeDp(tier), density)
                 ?.let { tier to it }
         }.toMap()
+    }
+}
+
+/**
+ * iOS parity `MapGlyphImageBuilder.image(for: .seekClearing(tint:), size: 30)`
+ * @b4decad — the summary map's tree, one bitmap per hex the record's
+ * `SeekArrival.lightHex` can carry, keyed by that exact string so the
+ * annotation lookup cannot miss. Spans all six SeekSkyLight hexes even
+ * though the annotation site pins the dawn family (spec D3).
+ *
+ * `remember(density)` like the wisp map — tints are fixed literals,
+ * the summary size is a constant, density is the only live input.
+ */
+@Composable
+internal fun rememberSeekClearingGlyphBitmaps(): Map<String, Bitmap> {
+    val context = LocalContext.current
+    val density = LocalDensity.current.density
+    return remember(density) {
+        seekClearingLightHexes().mapNotNull { hex ->
+            MapGlyphBitmaps.seekClearing(
+                context,
+                hexToColorArgb(hex),
+                SEEK_CLEARING_GLYPH_SIZE_DP,
+                density,
+            )?.let { hex to it }
+        }.toMap()
+    }
+}
+
+/**
+ * iOS parity `MapGlyph.seekClearing(tint: .stone)` at size 22
+ * (`PilgrimMapView.buildPoints@b4decad`) — the live walk's arrival
+ * mark. Keyed on [stoneArgb] as well as density: stone is the
+ * theme/seasonal-resolved accent, so an appearance flip re-rasterizes
+ * (the RGB-keyed cache holds each stone value separately).
+ */
+@Composable
+internal fun rememberSeekClearingLiveBitmap(stoneArgb: Int): Bitmap? {
+    val context = LocalContext.current
+    val density = LocalDensity.current.density
+    return remember(stoneArgb, density) {
+        MapGlyphBitmaps.seekClearing(
+            context,
+            stoneArgb,
+            SEEK_CLEARING_LIVE_GLYPH_SIZE_DP,
+            density,
+        )
     }
 }
 

@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.WbTwilight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import java.time.Instant
@@ -42,7 +41,9 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  * provenance keepsake line. Stateless; the caller guards on a non-null
  * [SeekSummaryData] (wander walks and zero-arrival seeks have none).
  * Port spec `docs/parity/2026-07-14-port-seek-summary-u11.md`
- * (iOS `SeekSummarySection`, `SeekSummarySection.swift:246-373@c1745e8`).
+ * (iOS `SeekSummarySection`, `SeekSummarySection.swift:246-373@c1745e8`;
+ * header glyph per `docs/parity/2026-07-28-port-seek-clearing-glyph.md`
+ * @b4decad).
  */
 @Composable
 fun SeekSummarySection(
@@ -62,13 +63,15 @@ fun SeekSummarySection(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
         ) {
-            // iOS renders the reserved arrival icon ("sun.haze"); Material's
-            // WbTwilight is the closest low-sun-with-haze glyph (spec D4).
+            // iOS parity @b4decad: the clearing's tree master, stone-
+            // tinted at 22×22 (was the WbTwilight stand-in — U11's D4
+            // dissolves now the real asset exists on Android).
+            // contentDescription null = iOS `accessibilityHidden(true)`.
             Icon(
-                imageVector = Icons.Outlined.WbTwilight,
+                painter = painterResource(R.drawable.glyph_seek_clearing),
                 contentDescription = null,
                 tint = pilgrimColors.stone,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(22.dp),
             )
             Text(
                 text = resources.getString(R.string.seek_summary_header),

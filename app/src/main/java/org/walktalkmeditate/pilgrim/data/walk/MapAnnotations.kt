@@ -173,10 +173,12 @@ fun computeWalkMapAnnotations(
 
     // iOS v1.5 parity — user-dropped waypoints live at their own
     // captured lat/lon (no GPS-sample alignment needed). Seek arrivals
-    // (reserved-icon waypoints) render as two-part hour-lit halos instead
-    // of pins (iOS `WalkSummaryView.computeAnnotations`,
-    // `WalkSummaryView.swift:693-710@c1745e8`); the hex is the dawn
-    // family regardless of appearance — the record keeps the sky palette.
+    // (reserved-icon waypoints) render as an hour-lit halo beneath the
+    // clearing's tree glyph, not as pins (iOS
+    // `WalkSummaryView.computeAnnotations`,
+    // `WalkSummaryView.swift:693-710@c1745e8`; glyph @b4decad); the hex
+    // is the dawn family regardless of appearance — the record keeps
+    // the sky palette.
     for (w in waypoints) {
         if (SeekPersistence.isArrivalWaypoint(w.icon)) {
             val daypart = SeekSkyLight.daypartAt(
