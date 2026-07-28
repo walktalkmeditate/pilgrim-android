@@ -23,10 +23,11 @@ import org.walktalkmeditate.pilgrim.ui.walk.glyphRes
 
 /**
  * The glyph masters' name contract and render sanity (iOS parity
- * `GlyphAssetTests.swift@9a418e4`): every whisper/cairn surface loads
- * these drawables by id, so a missing or renamed asset must fail here
- * rather than silently rendering nothing on the map. Pixel-level
- * legibility on the dark basemap stays a device check (port spec U13).
+ * `GlyphAssetTests.swift@9a418e4` + the clearing assertions @b4decad):
+ * every whisper/cairn/clearing surface loads these drawables by id, so
+ * a missing or renamed asset must fail here rather than silently
+ * rendering nothing on the map. Pixel-level legibility on the dark
+ * basemap stays a device check (port spec U13).
  *
  * [GraphicsMode.Mode.NATIVE] is required: this project's Robolectric
  * default is LEGACY shadows, whose Canvas draws nothing — every pixel
@@ -49,8 +50,15 @@ class GlyphAssetTest {
         CairnTier.Eternal to R.drawable.glyph_cairn_eternal,
     )
 
-    private val allGlyphDrawables =
-        listOf(R.drawable.glyph_whisper_wisp) + tierDrawables.values
+    /**
+     * Glyphs that take their colour from a tint at render time (iOS
+     * `tintedGlyphNames@b4decad`) — white-fill template drawables whose
+     * baked root tint a caller's `setTint` replaces.
+     */
+    private val tintedGlyphDrawables =
+        listOf(R.drawable.glyph_whisper_wisp, R.drawable.glyph_seek_clearing)
+
+    private val allGlyphDrawables = tintedGlyphDrawables + tierDrawables.values
 
     private fun load(id: Int): Drawable =
         requireNotNull(context.getDrawable(id)) { "drawable $id failed to inflate" }
@@ -84,26 +92,83 @@ class GlyphAssetTest {
     }
 
     @Test
-    fun `all eight glyph drawables inflate`() {
+    fun `all nine glyph drawables inflate`() {
         allGlyphDrawables.forEach { id ->
             assertNotNull("missing glyph drawable $id", context.getDrawable(id))
         }
     }
 
     @Test
-    fun `wisp renders differently under two tints`() {
-        fun tinted(color: Int): Bitmap {
-            val wisp = load(R.drawable.glyph_whisper_wisp).mutate()
-            wisp.setTint(color)
-            return rasterize(wisp, 48)
+    fun `tinted glyphs render differently under two tints`() {
+        // iOS `testTintedGlyphsAreTemplateAssets` — Android has no
+        // renderingMode to inspect, so tint RESPONSE is the template
+        // contract: a baked (non-template) drawable renders identically
+        // under any setTint and fails here.
+        tintedGlyphDrawables.forEach { id ->
+            fun tinted(color: Int): Bitmap {
+                val glyph = load(id).mutate()
+                glyph.setTint(color)
+                return rasterize(glyph, 48)
+            }
+            val red = pixels(tinted(Color.RED))
+            val blue = pixels(tinted(Color.BLUE))
+            assertTrue("tinted glyph $id must be non-blank", red.any { Color.alpha(it) != 0 })
+            assertFalse(
+                "glyph $id must respond to tint (template behavior)",
+                red.contentEquals(blue),
+            )
         }
-        val red = pixels(tinted(Color.RED))
-        val blue = pixels(tinted(Color.BLUE))
-        assertTrue("tinted wisp must be non-blank", red.any { Color.alpha(it) != 0 })
-        assertFalse(
-            "wisp must respond to tint (template behavior)",
-            red.contentEquals(blue),
-        )
+    }
+
+    /**
+     * The clearing's drawable wraps its path in a `<group>` scale +
+     * translate. A mistranslated matrix (SVG translate-then-scale vs
+     * VectorDrawable's pivot composition) would rasterise the tree
+     * off-canvas or microscopic while every inflate-and-tint assertion
+     * above still passed — so measure the pixels (iOS
+     * `testClearingGlyphGeometrySurvivesTheAssetPipeline@b4decad`).
+     *
+     * Reference geometry from the iOS test (rsvg over the same master):
+     * ink spans 75.7% of the box in width, 57.9% in height, centred;
+     * shipped accuracy 0.04.
+     */
+    @Test
+    fun `clearing ink geometry survives the translation`() {
+        val side = 150
+        val bitmap = rasterize(load(R.drawable.glyph_seek_clearing), side)
+        val ink = requireNotNull(inkBounds(bitmap)) { "clearing rendered fully transparent" }
+        val width = (ink.right - ink.left + 1) / side.toFloat()
+        val height = (ink.bottom - ink.top + 1) / side.toFloat()
+        val midX = (ink.left + ink.right + 1) / 2f / side
+        val midY = (ink.top + ink.bottom + 1) / 2f / side
+        assertEquals("clearing ink width drifted", 0.757f, width, 0.04f)
+        assertEquals("clearing ink height drifted", 0.579f, height, 0.04f)
+        assertEquals("clearing is not horizontally centred", 0.5f, midX, 0.04f)
+        assertEquals("clearing is not vertically centred", 0.5f, midY, 0.04f)
+    }
+
+    /** Bounding box of everything more than faintly opaque (alpha > 8). */
+    private fun inkBounds(bitmap: Bitmap): android.graphics.Rect? {
+        val px = pixels(bitmap)
+        var minX = bitmap.width
+        var minY = bitmap.height
+        var maxX = -1
+        var maxY = -1
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until bitmap.width) {
+                if (Color.alpha(px[y * bitmap.width + x]) > 8) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+        return if (maxX >= minX && maxY >= minY) {
+            android.graphics.Rect(minX, minY, maxX, maxY)
+        } else {
+            null
+        }
     }
 
     @Test

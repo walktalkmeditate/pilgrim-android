@@ -23,13 +23,16 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.data.cairn.CairnTier
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory
+import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
 
 /**
  * The rasterizer's pixel and cache contracts (iOS parity
- * `MapGlyphImageBuilderTests.swift@9a418e4`, port spec
- * docs/parity/2026-07-27-port-map-glyphs-u14-u15.md L7). A silent
- * regression here blurs or mistints every whisper/cairn pin, so
- * dimensions, tint response, cache identity, and the shipped size
+ * `MapGlyphImageBuilderTests.swift@9a418e4` + the clearing key/size
+ * assertions from `GlyphAssetTests.swift@b4decad`, port specs
+ * docs/parity/2026-07-27-port-map-glyphs-u14-u15.md L7 and
+ * docs/parity/2026-07-28-port-seek-clearing-glyph.md L6). A silent
+ * regression here blurs or mistints every whisper/cairn/clearing pin,
+ * so dimensions, tint response, cache identity, and the shipped size
  * table are pinned directly.
  *
  * [GraphicsMode.Mode.NATIVE] is required: the project's Robolectric
@@ -177,10 +180,88 @@ class MapGlyphBitmapsTest {
     }
 
     @Test
+    fun `translucent clearing tint is rejected`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            MapGlyphBitmaps.seekClearing(context, 0x80FF0000.toInt(), 30f, 2f)
+        }
+    }
+
+    @Test
+    fun `clearing output is dp times density`() {
+        val summary = requireNotNull(
+            MapGlyphBitmaps.seekClearing(
+                context, TINT_RED, SEEK_CLEARING_GLYPH_SIZE_DP, density = 2f,
+            ),
+        )
+        assertEquals(60, summary.width)
+        assertEquals(60, summary.height)
+        val live = requireNotNull(
+            MapGlyphBitmaps.seekClearing(
+                context, TINT_RED, SEEK_CLEARING_LIVE_GLYPH_SIZE_DP, density = 3f,
+            ),
+        )
+        assertEquals(66, live.width)
+        assertEquals(66, live.height)
+    }
+
+    /**
+     * iOS `testEveryDaypartProducesADistinctClearingKey@b4decad` — a
+     * collision would serve a dusk-amber tree for a clearing found
+     * after dark. Six hexes must occupy six cache slots.
+     */
+    @Test
+    fun `every daypart and starlight pairing caches a distinct clearing`() {
+        val hexes = seekClearingLightHexes()
+        assertEquals(6, hexes.toSet().size)
+        hexes.forEach { hex ->
+            assertNotNull(
+                "no clearing rendered for $hex",
+                MapGlyphBitmaps.seekClearing(context, hexToColorArgb(hex), 30f, 2f),
+            )
+        }
+        assertEquals(6, MapGlyphBitmaps.cacheSize())
+    }
+
+    /**
+     * The prebuilt summary map is keyed by [seekClearingLightHexes];
+     * `MapAnnotations` emits `SeekSkyLight.hex(daypart, starlight =
+     * false)` — every such hex must be covered or arrival trees vanish
+     * silently from the summary map.
+     */
+    @Test
+    fun `clearing hex table covers every hex the annotations emit`() {
+        val hexes = seekClearingLightHexes()
+        SeekSkyLight.Daypart.entries.forEach { daypart ->
+            assertTrue(
+                "annotation hex for $daypart missing from the clearing table",
+                SeekSkyLight.hex(daypart, starlight = false) in hexes,
+            )
+        }
+    }
+
+    /**
+     * iOS `testTintedGlyphCacheKeysDoNotCollide@b4decad` — different
+     * art on the same map must cache separately even when handed the
+     * same colour.
+     */
+    @Test
+    fun `clearing and wisp cache separately under the same tint`() {
+        val wisp = MapGlyphBitmaps.wisp(context, TINT_RED, 28f, 2f)
+        val clearing = MapGlyphBitmaps.seekClearing(context, TINT_RED, 28f, 2f)
+        assertNotNull(wisp)
+        assertNotNull(clearing)
+        assertNotSame(wisp, clearing)
+        assertEquals(2, MapGlyphBitmaps.cacheSize())
+    }
+
+    @Test
     fun `every glyph fills a conservative fraction of its canvas`() {
         val fractions = buildMap {
             val wisp = requireNotNull(MapGlyphBitmaps.wisp(context, TINT_RED, 48f, 1f))
             put("wisp", coverageFraction(wisp))
+            val clearing =
+                requireNotNull(MapGlyphBitmaps.seekClearing(context, TINT_RED, 48f, 1f))
+            put("clearing", coverageFraction(clearing))
             CairnTier.entries.forEach { tier ->
                 val cairn = requireNotNull(MapGlyphBitmaps.cairn(context, tier, 48f, 1f))
                 put("cairn-$tier", coverageFraction(cairn))
@@ -236,6 +317,8 @@ class MapGlyphBitmapsTest {
         assertEquals(32f, cairnGlyphSizeDp(CairnTier.Great), 0f)
         assertEquals(34f, cairnGlyphSizeDp(CairnTier.Sacred), 0f)
         assertEquals(36f, cairnGlyphSizeDp(CairnTier.Eternal), 0f)
+        assertEquals(30f, SEEK_CLEARING_GLYPH_SIZE_DP, 0f)
+        assertEquals(22f, SEEK_CLEARING_LIVE_GLYPH_SIZE_DP, 0f)
     }
 
     private companion object {
