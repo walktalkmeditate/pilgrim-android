@@ -101,6 +101,7 @@ class RecordingRowTest {
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
                     isEditing = false,
+                    isManualTranscribing = false,
                     onPlay = {},
                     onPause = {},
                     onSeek = { _, _ -> },
@@ -136,6 +137,7 @@ class RecordingRowTest {
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
                     isEditing = false,
+                    isManualTranscribing = false,
                     onPlay = {},
                     onPause = {},
                     onSeek = { _, _ -> },
@@ -168,6 +170,7 @@ class RecordingRowTest {
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.5f,
                     isEditing = false,
+                    isManualTranscribing = false,
                     onPlay = {},
                     onPause = {},
                     onSeek = { _, _ -> },
@@ -198,6 +201,7 @@ class RecordingRowTest {
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
                     isEditing = false,
+                    isManualTranscribing = false,
                     onPlay = {},
                     onPause = {},
                     onSeek = { _, _ -> },
@@ -232,6 +236,7 @@ class RecordingRowTest {
                     playbackPositionFraction = 0f,
                     playbackSpeed = 1.0f,
                     isEditing = true,
+                    isManualTranscribing = false,
                     onPlay = {},
                     onPause = {},
                     onSeek = { _, _ -> },
@@ -257,5 +262,38 @@ class RecordingRowTest {
             assertNotNull(committedText)
             assertEquals("new text", committedText)
         }
+    }
+
+    // Post-swipe optimistic feedback (v1.3.0 QA finding): a null-
+    // transcription row the VM marked as manually transcribing shows
+    // the in-progress placeholder where the transcript will appear.
+    @Test
+    fun `manual-transcribing row with null transcription shows Transcribing placeholder`() {
+        val rec = makeRecording(transcription = null)
+        composeRule.setContent {
+            PilgrimTheme {
+                RecordingRow(
+                    recording = rec,
+                    indexInSection = 1,
+                    fileSystem = fileSystem,
+                    waveformCache = waveformCache,
+                    fileAvailable = true,
+                    sizeBytes = 300_000L,
+                    isPlayingThisRow = false,
+                    playbackPositionFraction = 0f,
+                    playbackSpeed = 1.0f,
+                    isEditing = false,
+                    isManualTranscribing = true,
+                    onPlay = {},
+                    onPause = {},
+                    onSeek = { _, _ -> },
+                    onSpeedCycle = {},
+                    onStartEditing = {},
+                    onStopEditing = {},
+                    onTranscriptionEdit = { _, _ -> },
+                )
+            }
+        }
+        composeRule.onNodeWithText("Transcribing…").assertIsDisplayed()
     }
 }

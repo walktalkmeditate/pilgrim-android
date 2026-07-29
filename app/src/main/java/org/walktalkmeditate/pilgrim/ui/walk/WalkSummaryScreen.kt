@@ -143,6 +143,7 @@ fun WalkSummaryScreen(
     // docs/parity/2026-07-26-port-download-ux-u11.md, sections 3-5).
     val pendingSubstate by modelDownloadViewModel.pendingSubstate.collectAsStateWithLifecycle()
     val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
+    val manualTranscribingIds by viewModel.manualTranscribing.collectAsStateWithLifecycle()
     var showModelDownloadSheet by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
@@ -684,6 +685,7 @@ fun WalkSummaryScreen(
                                 onEnsureWaveform = viewModel::ensureWaveform,
                                 pendingSubstate = pendingSubstate,
                                 retranscribeEnabled = retranscribeEnabled,
+                                manualTranscribingIds = manualTranscribingIds,
                                 onManualTranscribe = viewModel::transcribePendingRecordings,
                                 onOpenModelDownloadSheet = {
                                     showModelDownloadSheet = true

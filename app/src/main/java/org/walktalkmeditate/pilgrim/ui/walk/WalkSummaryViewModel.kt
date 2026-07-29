@@ -988,6 +988,39 @@ class WalkSummaryViewModel @Inject constructor(
     val retranscribeEnabled: StateFlow<Boolean> = whisperModelStore.modelUsableIn(viewModelScope)
 
     /**
+     * Optimistic post-press feedback for the pref-OFF manual path
+     * (v1.3.0 device-QA finding: pressing Transcribe gave zero feedback
+     * until the transcript popped in). Ids land here at the
+     * [transcribePendingRecordings] / [retranscribeRecording] press;
+     * [VoiceRecordingsSection] renders "Transcribing…" for rows in the
+     * set whose transcription is still null. VM-local only — no
+     * WorkManager plumbing; [manualTranscribingClearer] removes ids as
+     * their transcripts land.
+     */
+    private val _manualTranscribing = MutableStateFlow<Set<Long>>(emptySet())
+    val manualTranscribing: StateFlow<Set<Long>> = _manualTranscribing.asStateFlow()
+
+    @Suppress("unused")
+    private val manualTranscribingClearer: Job = viewModelScope.launch {
+        try {
+            repository.observeVoiceRecordings(walkId).collect { recs ->
+                val landed = recs.filter { it.transcription != null }.map { it.id }
+                if (landed.isNotEmpty()) {
+                    _manualTranscribing.update { it - landed.toSet() }
+                }
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // Same defensive shape as [promptsCacheInvalidator]: a Room
+            // observer throw would otherwise kill the clearer for the
+            // VM's lifetime, freezing rows on "Transcribing…" after
+            // their transcripts land.
+            android.util.Log.e(TAG, "manualTranscribingClearer collect failed", t)
+        }
+    }
+
+    /**
      * Walk Summary retranscribe-single action. Clears the existing
      * transcription so the row reverts to the pending placeholder, then
      * schedules the per-walk transcription worker which will pick up
@@ -1005,6 +1038,9 @@ class WalkSummaryViewModel @Inject constructor(
         // back-nav-mid-write rationale.
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
+            // Marked AFTER the null write so the clearer can't drop the
+            // id against a stale still-transcribed emission.
+            _manualTranscribing.update { it + recordingId }
             transcriptionScheduler.scheduleForWalk(walkId)
         }
     }
@@ -1019,6 +1055,24 @@ class WalkSummaryViewModel @Inject constructor(
     fun transcribePendingRecordings() {
         if (!retranscribeEnabled.value) return
         transcriptionScheduler.scheduleForWalk(walkId)
+        viewModelScope.launch {
+            val pendingIds = try {
+                repository.voiceRecordingsFor(walkId)
+                    .filter { it.transcription == null }
+                    .map { it.id }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                // Feedback-only read: the schedule above already
+                // landed, so degrade to no optimistic marker rather
+                // than surfacing an error.
+                android.util.Log.w(TAG, "transcribe feedback read failed for walk $walkId", t)
+                emptyList()
+            }
+            if (pendingIds.isNotEmpty()) {
+                _manualTranscribing.update { it + pendingIds }
+            }
+        }
     }
 
     fun seekPlayback(fraction: Float) = playback.seek(fraction)

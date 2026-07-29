@@ -115,14 +115,15 @@ class ModelDownloadViewModelTest {
     }
 
     @Test
-    fun `pendingSubstate is manual pending while the pref is off`() = runTest(dispatcher) {
-        val vm = newViewModel(autoTranscribe = false)
+    fun `pendingSubstate is manual preparing while the pref is off with no usable model`() =
+        runTest(dispatcher) {
+            val vm = newViewModel(autoTranscribe = false)
 
-        assertEquals(
-            PendingTranscriptionSubstate.ManualPending(transcribeEnabled = false),
-            vm.pendingSubstate.value,
-        )
-    }
+            assertEquals(
+                PendingTranscriptionSubstate.ManualPreparing(WhisperModelState.Absent),
+                vm.pendingSubstate.value,
+            )
+        }
 
     @Test
     fun `pendingSubstate follows the store through a download`() = runTest(dispatcher) {

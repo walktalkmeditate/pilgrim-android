@@ -68,15 +68,29 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 sealed interface PendingTranscriptionSubstate {
 
     /**
-     * Auto-transcribe is OFF: nothing is running and nothing was
-     * promised, so the row shows a plain "not transcribed" state with
-     * a manual Transcribe affordance — never download language.
-     * [transcribeEnabled] gates the affordance on a usable model on
-     * disk (U10 gating: verified base OR the transitional exact-size
-     * tiny — open even while base delivery work is pending).
+     * Auto-transcribe is OFF and a usable model is on disk (U10
+     * gating: verified base OR the transitional exact-size tiny):
+     * nothing is running and nothing was promised, so the row shows a
+     * plain "not transcribed" state with a manual Transcribe
+     * affordance — never download language. [transcribeEnabled] is
+     * always true from the mapper (the no-usable-model cell routes to
+     * [ManualPreparing] instead); it stays a field so the rendering
+     * keeps a defensive disabled path.
      */
     @Immutable
     data class ManualPending(val transcribeEnabled: Boolean) : PendingTranscriptionSubstate
+
+    /**
+     * Auto-transcribe is OFF and no usable model is on disk yet — the
+     * manual affordance would be a mute disabled chip (the v1.3.0 QA
+     * finding), so the row states the true fact ("Preparing
+     * transcription model…") and taps through to [ModelDownloadSheet]
+     * for the delivery detail. Honesty rule stands: never the word
+     * "waiting" under pref OFF — nothing was promised. [modelState]
+     * carries the delivery phase for the display surface.
+     */
+    @Immutable
+    data class ManualPreparing(val modelState: WhisperModelState) : PendingTranscriptionSubstate
 
     /**
      * Auto-transcribe is ON and the model has not been delivered —
@@ -108,7 +122,11 @@ fun pendingTranscriptionSubstate(
     modelState: WhisperModelState,
     modelUsable: Boolean,
 ): PendingTranscriptionSubstate = if (!autoTranscribe) {
-    PendingTranscriptionSubstate.ManualPending(transcribeEnabled = modelUsable)
+    if (modelUsable) {
+        PendingTranscriptionSubstate.ManualPending(transcribeEnabled = true)
+    } else {
+        PendingTranscriptionSubstate.ManualPreparing(modelState)
+    }
 } else {
     when (modelState) {
         is WhisperModelState.Ready -> PendingTranscriptionSubstate.QueuedForProcessing
@@ -155,6 +173,11 @@ fun VoiceRecordingsSection(
     onEnsureWaveform: (recordingId: Long, relativePath: String) -> Unit,
     pendingSubstate: PendingTranscriptionSubstate,
     retranscribeEnabled: Boolean,
+    // Optimistic post-press feedback (v1.3.0 QA finding): ids the VM
+    // recorded at the Transcribe / retranscribe press. Rows in the set
+    // whose transcription is still null render "Transcribing…" instead
+    // of the pending substate; they drop out when the transcript lands.
+    manualTranscribingIds: Set<Long>,
     onManualTranscribe: () -> Unit,
     onOpenModelDownloadSheet: () -> Unit,
     onRetryModelDownload: () -> Unit,
@@ -219,6 +242,8 @@ fun VoiceRecordingsSection(
                 // passing null keeps transcribed rows' params stable
                 // across download-progress emissions.
                 pendingSubstate = if (recording.transcription == null) pendingSubstate else null,
+                isManualTranscribing = recording.transcription == null &&
+                    recording.id in manualTranscribingIds,
                 retranscribeEnabled = retranscribeEnabled,
                 onManualTranscribe = onManualTranscribe,
                 onOpenModelDownloadSheet = onOpenModelDownloadSheet,
@@ -246,6 +271,7 @@ private fun VoiceRecordingRow(
     onRetranscribe: () -> Unit,
     onEnsureWaveform: () -> Unit,
     pendingSubstate: PendingTranscriptionSubstate?,
+    isManualTranscribing: Boolean,
     retranscribeEnabled: Boolean,
     onManualTranscribe: () -> Unit,
     onOpenModelDownloadSheet: () -> Unit,
@@ -338,13 +364,19 @@ private fun VoiceRecordingRow(
             )
         }
         when (val transcription = recording.transcription) {
-            null -> pendingSubstate?.let { substate ->
-                PendingTranscriptionRow(
-                    substate = substate,
-                    onManualTranscribe = onManualTranscribe,
-                    onOpenModelDownloadSheet = onOpenModelDownloadSheet,
-                    onRetryModelDownload = onRetryModelDownload,
+            null -> if (isManualTranscribing) {
+                TranscriptionPlaceholder(
+                    text = stringResource(R.string.transcription_in_progress),
                 )
+            } else {
+                pendingSubstate?.let { substate ->
+                    PendingTranscriptionRow(
+                        substate = substate,
+                        onManualTranscribe = onManualTranscribe,
+                        onOpenModelDownloadSheet = onOpenModelDownloadSheet,
+                        onRetryModelDownload = onRetryModelDownload,
+                    )
+                }
             }
             TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
                 text = transcription,
@@ -362,8 +394,10 @@ private fun VoiceRecordingRow(
 
 /**
  * Renders the U11 substate for a null-transcription row. Delivery-phase
- * rows tap through to [ModelDownloadSheet]; the pref-OFF manual state
- * never mentions the download (spec section 3).
+ * rows tap through to [ModelDownloadSheet]; the pref-OFF states never
+ * use waiting/download-promise language (spec section 3) — the
+ * no-usable-model cell says "Preparing transcription model…" and taps
+ * through to the same sheet for the delivery detail.
  */
 @Composable
 private fun PendingTranscriptionRow(
@@ -388,6 +422,16 @@ private fun PendingTranscriptionRow(
                 enabled = substate.transcribeEnabled,
             )
         }
+
+        is PendingTranscriptionSubstate.ManualPreparing -> TranscriptionPlaceholder(
+            text = stringResource(R.string.transcription_preparing_model),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    onClick = onOpenModelDownloadSheet,
+                    onClickLabel = stringResource(R.string.model_sheet_open_cd),
+                ),
+        )
 
         is PendingTranscriptionSubstate.WaitingOnDownload -> Column(
             modifier = Modifier

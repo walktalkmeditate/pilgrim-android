@@ -10,13 +10,16 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
@@ -156,6 +159,37 @@ class RecordingsListViewModel @Inject constructor(
 
     private val recordingsFlow = walkRepository.observeAllVoiceRecordings()
     private val walksFlow = walkRepository.observeAllWalks()
+
+    /**
+     * Optimistic post-press feedback for the retranscribe swipe
+     * (v1.3.0 device-QA finding: nothing on screen changed between the
+     * swipe and the transcript popping back in). Ids land in
+     * [onRetranscribe] after the null write; [RecordingRow] renders
+     * "Transcribing…" for rows in the set whose transcription is still
+     * null. VM-local only — no WorkManager plumbing; the clearer below
+     * removes ids as their transcripts land.
+     */
+    private val _manualTranscribing = MutableStateFlow<Set<Long>>(emptySet())
+    val manualTranscribing: StateFlow<Set<Long>> = _manualTranscribing.asStateFlow()
+
+    @Suppress("unused")
+    private val manualTranscribingClearer: Job = viewModelScope.launch {
+        try {
+            recordingsFlow.collect { recs ->
+                val landed = recs.filter { it.transcription != null }.map { it.id }
+                if (landed.isNotEmpty()) {
+                    _manualTranscribing.update { it - landed.toSet() }
+                }
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // A Room observer throw would otherwise kill the clearer
+            // for the VM's lifetime, freezing rows on "Transcribing…"
+            // after their transcripts land.
+            android.util.Log.e(TAG, "manualTranscribingClearer collect failed", t)
+        }
+    }
 
     /**
      * Slow-moving per-recording snapshot — file existence + file size on
@@ -432,6 +466,9 @@ class RecordingsListViewModel @Inject constructor(
             walkRepository.updateVoiceRecording(
                 recording.copy(transcription = null, wordsPerMinute = null),
             )
+            // Marked AFTER the null write so the clearer can't drop the
+            // id against a stale still-transcribed emission.
+            _manualTranscribing.update { it + recordingId }
             transcriptionScheduler.scheduleForWalk(recording.walkId)
         }
     }
