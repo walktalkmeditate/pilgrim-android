@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 
 @HiltViewModel
 class PermissionsViewModel @Inject constructor(
@@ -21,6 +22,7 @@ class PermissionsViewModel @Inject constructor(
     // tests can fake the once-per-grant persistence (see PermissionsViewModelTest).
     private val ritualStore: PermissionRitualStore,
     private val bell: BellPlaying,
+    private val soundsPreferences: SoundsPreferencesRepository,
 ) : ViewModel() {
 
     val onboardingComplete: StateFlow<Boolean> = repository.onboardingComplete.stateIn(
@@ -75,7 +77,17 @@ class PermissionsViewModel @Inject constructor(
         viewModelScope.launch {
             val shouldBell = ritualStore.consumeBellGrant(permission, soundsEnabled)
             if (shouldBell) {
-                bell.play(scale = GRANT_BELL_SCALE, withHaptic = false)
+                // iOS plays the user's meditation-END bell here
+                // (PermissionsViewModel.swift playGrantBell — yoga-chime by
+                // default), not a dedicated grant sound. Passing the id keeps
+                // parity once the pack downloads; Android's bundled fallback
+                // still rings before that (deliberate divergence — iOS's
+                // isAvailable guard goes silent instead).
+                bell.play(
+                    bellId = soundsPreferences.meditationEndBellId.value,
+                    scale = GRANT_BELL_SCALE,
+                    withHaptic = false,
+                )
                 onGrantHaptic()
             }
             if (!reduceMotion) pulse(permission)

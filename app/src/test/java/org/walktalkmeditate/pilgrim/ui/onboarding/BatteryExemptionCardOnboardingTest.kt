@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.onboarding
 
 import android.app.Application
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
@@ -73,7 +74,7 @@ class BatteryExemptionCardOnboardingTest {
             produceFile = { tempFile },
         )
         viewModel = PermissionsRepository(dataStore).let {
-            PermissionsViewModel(it, it, NoopBellPlayer)
+            PermissionsViewModel(it, it, NoopBellPlayer, FakeSoundsPreferencesRepository())
         }
     }
 
@@ -143,7 +144,7 @@ class BatteryExemptionCardOnboardingTest {
     fun `card self-hides once the prompt has been answered`() {
         runBlocking { PermissionsRepository(dataStore).markBatteryExemptionAsked() }
         viewModel = PermissionsRepository(dataStore).let {
-            PermissionsViewModel(it, it, NoopBellPlayer)
+            PermissionsViewModel(it, it, NoopBellPlayer, FakeSoundsPreferencesRepository())
         }
 
         composeRule.setContent {
