@@ -334,6 +334,10 @@ private fun RecordingsList(
     // Collected ONCE at the list level — one subscription instead of
     // one per row.
     val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
+    // Post-swipe optimistic feedback set — collected once at the list
+    // level (one subscription instead of one per row), same as the
+    // retranscribe gate above.
+    val manualTranscribingIds by viewModel.manualTranscribing.collectAsStateWithLifecycle()
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
@@ -355,6 +359,7 @@ private fun RecordingsList(
                         state = state,
                         viewModel = viewModel,
                         retranscribeEnabled = retranscribeEnabled,
+                        isManualTranscribing = recording.id in manualTranscribingIds,
                         onRequestDelete = onRequestDelete,
                     )
                 }
@@ -455,6 +460,7 @@ private fun SwipeableRecordingRow(
     state: RecordingsListUiState.Loaded,
     viewModel: RecordingsListViewModel,
     retranscribeEnabled: Boolean,
+    isManualTranscribing: Boolean,
     onRequestDelete: (Long) -> Unit,
 ) {
     val colors = pilgrimColors
@@ -502,6 +508,7 @@ private fun SwipeableRecordingRow(
                 playbackPositionFraction = state.playbackPositionFraction,
                 playbackSpeed = state.playbackSpeed,
                 isEditing = state.editingRecordingId == recording.id,
+                isManualTranscribing = isManualTranscribing,
                 onPlay = viewModel::onPlay,
                 onPause = viewModel::onPause,
                 onSeek = viewModel::onSeek,

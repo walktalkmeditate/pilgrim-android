@@ -108,8 +108,8 @@ Compose.
 
 | pref | model state | substate | row rendering |
 |---|---|---|---|
-| OFF | `Ready(Base)` / `Ready(LegacyTiny)` | `ManualPending(transcribeEnabled=true)` | "Not yet transcribed" + Transcribe affordance |
-| OFF | any other state | `ManualPending(transcribeEnabled=false)` | same, affordance disabled — **never download language** (nothing was promised; "waiting on download" would be a lie) |
+| OFF | model usable (verified base OR transitional tiny on disk) | `ManualPending(transcribeEnabled=true)` | "Not yet transcribed" + Transcribe affordance |
+| OFF | model not usable, any state | `ManualPreparing(state)` | "Preparing transcription model…", row → sheet — **never the word "waiting"** (nothing was promised; the caption states a true fact and the sheet carries the byte-progress / Wi-Fi / failure detail) |
 | ON | `Absent` | `WaitingOnDownload(Absent)` | "Waiting to download transcription model" → sheet |
 | ON | `Enqueued` | `WaitingOnDownload(Enqueued)` | same copy → sheet |
 | ON | `WaitingUnmetered` | `WaitingOnDownload(WaitingUnmetered)` | "Waiting for Wi-Fi to download transcription model" → sheet |
@@ -125,10 +125,25 @@ Compose.
 - `Ready(LegacyTiny)` maps identically to `Ready(Base)` everywhere in this unit (U10 gating:
   "Ready for gating = Ready(Base) OR Ready(LegacyTiny)") — upgraders' pending rows are genuinely
   queued against the still-serving tiny (U8 D3).
-- **Amendment (review fix):** the OFF rows key `transcribeEnabled` on model *usability*
+- **Amendment (review fix):** the OFF rows key on model *usability*
   (`WhisperModelStore.modelUsable`: verified base OR exact-size transitional tiny on disk), not on
   the `Ready` display state — an upgrader's tiny keeps the manual affordance enabled while base
   delivery work is pending, so the matrix is `f(pref × model state × usability)` for those cells.
+- **Amendment (v1.3.0 device-QA fix):** the OFF × not-usable cell was originally
+  `ManualPending(transcribeEnabled=false)` — a mute disabled chip with no explanation while the
+  model downloads (pref OFF is the fresh-install default, so this was the first-run experience).
+  It is now `ManualPreparing(modelState)`: the caption "Preparing transcription model…" states a
+  true fact without promising anything, and the row taps through to the §4 sheet, which already
+  carries byte progress, waiting-for-Wi-Fi, and the cellular override. The honesty rule stands —
+  no pref-OFF copy uses the word "waiting". `ManualPending` is now only ever constructed with
+  `transcribeEnabled=true` (the field stays as a defensive rendering path).
+- **Amendment (v1.3.0 device-QA fix, post-press feedback):** pressing Transcribe (or swiping /
+  tapping retranscribe) previously changed nothing on screen until the transcript popped in. Both
+  VMs (`WalkSummaryViewModel`, `RecordingsListViewModel`) now expose
+  `manualTranscribing: StateFlow<Set<Long>>` — VM-local optimistic state recorded at the press
+  (no WorkManager plumbing). Rows whose id is in the set AND whose `transcription == null` render
+  "Transcribing…" (`transcription_in_progress`) in place of the pending substate; ids clear as
+  transcripts land (each VM observes its recordings flow) and rows drop out naturally.
 
 ## 4. Model download sheet — Android-original
 
@@ -180,7 +195,9 @@ MB = 10^6 bytes, matching the existing recordings-size captions.
 | Contract point | Test |
 |---|---|
 | §3 full matrix, every pref × state cell | `PendingTranscriptionSubstateTest` |
-| §3 row rendering (manual affordance, byte progress, queued, failures, sheet tap) | `VoiceRecordingsSectionTranscriptionTest` |
+| §3 row rendering (manual affordance, preparing caption + sheet tap, byte progress, queued, failures, sheet tap) | `VoiceRecordingsSectionTranscriptionTest` |
+| §3 post-press "Transcribing…" set lifecycle (press adds, transcript arrival clears, no dup) | `WalkSummaryViewModelTest`, `RecordingsListViewModelTest` |
+| §3 post-press "Transcribing…" row rendering (both surfaces) | `VoiceRecordingsSectionTranscriptionTest`, `RecordingRowTest` |
 | §1 Settings row shape (percent line, hidden at Ready(Base), tap opens sheet) | `VoiceCardTest` |
 | §4 sheet content (size, Wi-Fi explanation, override toggle, retry, free-space, Data Saver note) | `ModelDownloadSheetContentTest` |
 | §4 VM plumbing (override → scheduler recorded, retry → scheduler recorded, substate composition) | `ModelDownloadViewModelTest` |

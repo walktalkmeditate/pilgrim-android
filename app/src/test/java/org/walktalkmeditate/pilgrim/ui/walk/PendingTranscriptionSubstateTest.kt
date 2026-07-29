@@ -13,8 +13,10 @@ import org.walktalkmeditate.pilgrim.audio.model.WhisperModelVariant
  * (`docs/parity/2026-07-26-port-download-ux-u11.md` section 3): every
  * pref x model-state combination, so a new [WhisperModelState] case or
  * a mapper edit cannot silently reroute a cell. The pref-OFF cells key
- * `transcribeEnabled` on the store's usability probe (verified base OR
- * transitional tiny on disk), not the Ready display state.
+ * on the store's usability probe (verified base OR transitional tiny
+ * on disk), not the Ready display state: usable → ManualPending with
+ * the affordance enabled, not usable → ManualPreparing carrying the
+ * delivery state (v1.3.0 QA fix — no mute disabled chip).
  */
 @RunWith(JUnit4::class)
 class PendingTranscriptionSubstateTest {
@@ -55,13 +57,13 @@ class PendingTranscriptionSubstateTest {
     }
 
     @Test
-    fun `pref off with no usable model is manual pending with affordance disabled`() {
+    fun `pref off with no usable model is manual preparing carrying the delivery state`() {
         val nonReady = deliveryPhases +
             listOf(WhisperModelState.FailedChecksum, WhisperModelState.FailedStorage)
         for (state in nonReady) {
             assertEquals(
                 "state=$state",
-                PendingTranscriptionSubstate.ManualPending(transcribeEnabled = false),
+                PendingTranscriptionSubstate.ManualPreparing(state),
                 pendingTranscriptionSubstate(
                     autoTranscribe = false,
                     modelState = state,

@@ -566,6 +566,80 @@ class RecordingsListViewModelTest {
         assertTrue(vm.retranscribeEnabled.value)
     }
 
+    // --- Post-swipe "Transcribing…" feedback (v1.3.0 QA finding) --------
+
+    @Test
+    fun `onRetranscribe marks the row transcribing until the new transcript lands`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val rec = insertRecording(
+                walkId = walk.id,
+                startAt = 10_000L,
+                transcription = "old transcription",
+            )
+
+            val vm = newViewModel()
+            awaitRetranscribeEnabled(vm)
+            vm.onRetranscribe(rec.id)
+
+            awaitTranscriptionCleared(rec.id)
+            awaitManualTranscribing(vm, setOf(rec.id))
+
+            // A second swipe while in-flight re-schedules but the
+            // marker never duplicates. Await its (idempotent) null
+            // write fully before committing the fresh transcript —
+            // the schedule call is the press coroutine's last step.
+            vm.onRetranscribe(rec.id)
+            awaitScheduledCount(2)
+            assertEquals(setOf(rec.id), vm.manualTranscribing.value)
+            assertEquals(listOf(walk.id, walk.id), scheduler.scheduledWalkIds)
+
+            // Simulate the worker committing the fresh transcript.
+            val row = repository.getVoiceRecording(rec.id)!!
+            repository.updateVoiceRecording(row.copy(transcription = "fresh transcript"))
+            awaitManualTranscribing(vm, emptySet())
+        }
+
+    @Test
+    fun `onRetranscribe pre-Ready leaves the transcribing set empty`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val rec = insertRecording(
+            walkId = walk.id,
+            startAt = 10_000L,
+            transcription = "precious transcription",
+        )
+
+        val vm = newViewModel()
+        assertFalse("gate must start closed with no model on disk", vm.retranscribeEnabled.value)
+        vm.onRetranscribe(rec.id)
+
+        assertTrue(vm.manualTranscribing.value.isEmpty())
+    }
+
+    /** Same real-clock polling bridge as [awaitRetranscribeEnabled]. */
+    private suspend fun awaitManualTranscribing(vm: RecordingsListViewModel, expected: Set<Long>) {
+        withContext(TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (vm.manualTranscribing.value != expected) {
+                    delay(25L)
+                }
+            }
+        }
+    }
+
+    private suspend fun awaitScheduledCount(expected: Int) {
+        withContext(TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (scheduler.scheduledWalkIds.size < expected) {
+                    delay(25L)
+                }
+            }
+        }
+    }
+
     @Test
     fun `onStartEditing and onStopEditing toggle editingRecordingId`() = runTest(dispatcher) {
         val walk = repository.startWalk(startTimestamp = 0L)

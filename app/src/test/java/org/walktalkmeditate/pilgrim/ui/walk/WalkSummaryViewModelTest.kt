@@ -1881,6 +1881,81 @@ class WalkSummaryViewModelTest {
             assertNull(repository.getVoiceRecording(recId)?.transcription)
         }
 
+    // --- Post-press "Transcribing…" feedback (v1.3.0 QA finding) --------
+
+    @Test
+    fun `manual transcribe marks pending rows and clears when the transcript lands`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val pendingId =
+                insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            val transcribedId =
+                insertVoiceRecording(walk.id, startOffset = 10_000L, durationMillis = 5_000L)
+            repository.updateVoiceRecordingTranscription(transcribedId, "already done")
+
+            val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+            awaitRetranscribeEnabled(vm)
+
+            vm.transcribePendingRecordings()
+            awaitManualTranscribing(vm, setOf(pendingId))
+
+            // A second press while in-flight re-schedules but never
+            // grows the optimistic set beyond the pending row.
+            vm.transcribePendingRecordings()
+            assertEquals(2, scheduler.scheduledWalkIds.size)
+            advanceUntilIdle()
+            assertEquals(setOf(pendingId), vm.manualTranscribing.value)
+
+            repository.updateVoiceRecordingTranscription(pendingId, "fresh transcript")
+            awaitManualTranscribing(vm, emptySet())
+        }
+
+    @Test
+    fun `manual transcribe pre-Ready leaves the transcribing set empty`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+
+        val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+        vm.transcribePendingRecordings()
+        advanceUntilIdle()
+
+        assertTrue(vm.manualTranscribing.value.isEmpty())
+    }
+
+    @Test
+    fun `retranscribeRecording marks the row transcribing after the null write`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            repository.updateVoiceRecordingTranscription(recId, "old transcription")
+
+            val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+            awaitRetranscribeEnabled(vm)
+            vm.retranscribeRecording(recId)
+
+            awaitManualTranscribing(vm, setOf(recId))
+            assertNull(repository.getVoiceRecording(recId)?.transcription)
+
+            repository.updateVoiceRecordingTranscription(recId, "fresh transcript")
+            awaitManualTranscribing(vm, emptySet())
+        }
+
+    /** Same real-clock polling bridge as [awaitRetranscribeEnabled]. */
+    private suspend fun awaitManualTranscribing(vm: WalkSummaryViewModel, expected: Set<Long>) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (vm.manualTranscribing.value != expected) {
+                    delay(25L)
+                }
+            }
+        }
+    }
+
     private suspend fun insertVoiceRecording(
         walkId: Long,
         startOffset: Long,

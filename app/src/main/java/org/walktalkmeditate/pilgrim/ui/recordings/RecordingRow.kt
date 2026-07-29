@@ -95,6 +95,11 @@ fun RecordingRow(
     playbackPositionFraction: Float,
     playbackSpeed: Float,
     isEditing: Boolean,
+    // Optimistic post-swipe feedback: true while the VM holds this
+    // recording in its manual-transcribing set and the transcript has
+    // not landed yet — renders a "Transcribing…" placeholder where the
+    // transcription block will appear.
+    isManualTranscribing: Boolean,
     onPlay: (Long) -> Unit,
     onPause: () -> Unit,
     onSeek: (Long, Float) -> Unit,
@@ -157,6 +162,10 @@ fun RecordingRow(
                     showCopyAffordance = true,
                 )
             }
+        } else if (isManualTranscribing) {
+            TranscriptionPlaceholder(
+                text = stringResource(R.string.transcription_in_progress),
+            )
         }
     }
 }

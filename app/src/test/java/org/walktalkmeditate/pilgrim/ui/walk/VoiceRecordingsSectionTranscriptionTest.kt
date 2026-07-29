@@ -49,6 +49,7 @@ class VoiceRecordingsSectionTranscriptionTest {
         pendingSubstate: PendingTranscriptionSubstate =
             PendingTranscriptionSubstate.QueuedForProcessing,
         retranscribeEnabled: Boolean = true,
+        manualTranscribingIds: Set<Long> = emptySet(),
         onManualTranscribe: () -> Unit = {},
         onOpenModelDownloadSheet: () -> Unit = {},
         onRetryModelDownload: () -> Unit = {},
@@ -76,6 +77,7 @@ class VoiceRecordingsSectionTranscriptionTest {
                     onEnsureWaveform = { _, _ -> },
                     pendingSubstate = pendingSubstate,
                     retranscribeEnabled = retranscribeEnabled,
+                    manualTranscribingIds = manualTranscribingIds,
                     onManualTranscribe = onManualTranscribe,
                     onOpenModelDownloadSheet = onOpenModelDownloadSheet,
                     onRetryModelDownload = onRetryModelDownload,
@@ -141,6 +143,9 @@ class VoiceRecordingsSectionTranscriptionTest {
         )
     }
 
+    // Defensive rendering only — the mapper routes the no-usable-model
+    // cell to ManualPreparing, so production never shows this chip
+    // disabled (the v1.3.0 QA finding).
     @Test
     fun manualPending_preReady_disablesTranscribeAffordance() {
         var transcribes = 0
@@ -153,6 +158,70 @@ class VoiceRecordingsSectionTranscriptionTest {
         )
         composeRule.onNodeWithText("Transcribe").assertIsNotEnabled()
         composeRule.runOnIdle { assertEquals(0, transcribes) }
+    }
+
+    @Test
+    fun manualPreparing_showsPreparingCaption_andOpensSheet_neverWaitingLanguage() {
+        var sheetOpens = 0
+        render(
+            recording = baseRecording.copy(transcription = null),
+            pendingSubstate = PendingTranscriptionSubstate.ManualPreparing(
+                WhisperModelState.Downloading(
+                    bytesDownloaded = 42_000_000L,
+                    totalBytes = 148_000_000L,
+                ),
+            ),
+            onOpenModelDownloadSheet = { sheetOpens++ },
+        )
+        composeRule.onNodeWithText("Preparing transcription model…")
+            .assertExists()
+            .performClick()
+        composeRule.runOnIdle { assertEquals(1, sheetOpens) }
+        // Pref-off rows must never speak waiting language (the honesty
+        // rule: nothing was promised) — the sheet carries the detail.
+        assertTrue(
+            composeRule.onAllNodesWithText("Waiting", substring = true)
+                .fetchSemanticsNodes().isEmpty(),
+        )
+        assertTrue(
+            composeRule.onAllNodesWithText("waiting", substring = true)
+                .fetchSemanticsNodes().isEmpty(),
+        )
+    }
+
+    // --- Post-press "Transcribing…" feedback (v1.3.0 QA finding) -------
+
+    @Test
+    fun manualTranscribingRow_showsTranscribing_insteadOfPendingSubstate() {
+        render(
+            recording = baseRecording.copy(transcription = null),
+            pendingSubstate = PendingTranscriptionSubstate.ManualPending(
+                transcribeEnabled = true,
+            ),
+            manualTranscribingIds = setOf(baseRecording.id),
+        )
+        composeRule.onNodeWithText("Transcribing…").assertExists()
+        assertTrue(
+            composeRule.onAllNodesWithText("Transcribe")
+                .fetchSemanticsNodes().isEmpty(),
+        )
+        assertTrue(
+            composeRule.onAllNodesWithText("Not yet transcribed")
+                .fetchSemanticsNodes().isEmpty(),
+        )
+    }
+
+    @Test
+    fun manualTranscribingSet_ignoredOnceTheTranscriptLands() {
+        render(
+            recording = baseRecording,
+            manualTranscribingIds = setOf(baseRecording.id),
+        )
+        composeRule.onNodeWithText("short transcription").assertExists()
+        assertTrue(
+            composeRule.onAllNodesWithText("Transcribing…")
+                .fetchSemanticsNodes().isEmpty(),
+        )
     }
 
     @Test
