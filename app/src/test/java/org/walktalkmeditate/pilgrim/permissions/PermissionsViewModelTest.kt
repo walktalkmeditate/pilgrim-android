@@ -21,6 +21,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 
 /**
  * Orchestration tests for the #43 grant ritual, mirroring iOS
@@ -39,6 +40,7 @@ class PermissionsViewModelTest {
     private lateinit var dataStore: DataStore<Preferences>
     private lateinit var ritualStore: FakeRitualStore
     private lateinit var bell: RecordingBell
+    private val soundsPreferences = FakeSoundsPreferencesRepository()
     private lateinit var viewModel: PermissionsViewModel
 
     @Before
@@ -57,7 +59,7 @@ class PermissionsViewModelTest {
         bell = RecordingBell()
         // celebrateGrant never touches the PermissionsRepository, but the ctor
         // requires one; the ritual flows through the faked PermissionRitualStore.
-        viewModel = PermissionsViewModel(PermissionsRepository(dataStore), ritualStore, bell)
+        viewModel = PermissionsViewModel(PermissionsRepository(dataStore), ritualStore, bell, soundsPreferences)
     }
 
     @After
@@ -151,10 +153,33 @@ class PermissionsViewModelTest {
             permission in played
     }
 
+    @Test
+    fun `grant bell passes the meditation-end bell id (iOS playGrantBell parity)`() {
+        kotlinx.coroutines.runBlocking { soundsPreferences.setMeditationEndBellId("yoga-chime") }
+        viewModel.celebrateGrant(
+            permission = PermissionRitual.Permission.Location,
+            soundsEnabled = true,
+            reduceMotion = true,
+        )
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf<String?>("yoga-chime"), bell.bellIds)
+        assertEquals(listOf(PermissionsViewModel.GRANT_BELL_SCALE), bell.scales)
+        assertEquals(listOf(false), bell.haptics)
+    }
+
     private class RecordingBell : BellPlaying {
         var playCount = 0
         val scales = mutableListOf<Float>()
         val haptics = mutableListOf<Boolean>()
+        val bellIds = mutableListOf<String?>()
+
+        override fun play(bellId: String?, scale: Float, withHaptic: Boolean) {
+            playCount++
+            bellIds += bellId
+            scales += scale
+            haptics += withHaptic
+        }
 
         override fun play() {
             playCount++
