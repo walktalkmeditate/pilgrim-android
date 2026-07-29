@@ -75,3 +75,6 @@ docs/parity/capture-recipe.md
 docs/parity/review-protocol.md
 docs/parity/README-parity-ledger.md
 *.hprof
+
+# wrangler local state (CDN publishes run from this checkout)
+.wrangler/
