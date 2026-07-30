@@ -1,6 +1,6 @@
-• The collective walks a different pilgrimage every day — the same route as every pilgrim, everywhere
-• A contributed walk ends among the people who really walk that path
-• Voice notes hear more clearly: a stronger transcription model, downloaded once — the app itself shrinks
-• Map whispers and cairns carry hand-drawn art; cairns age visibly from faint to eternal
-• The add-a-stone sheet shows what your stone makes
+• Seek Mode: set an intention, choose your time, and follow a quiet sonar through fog toward unknown clearings
+• The fog dissolves where you arrive; sonar and haptics tighten as a clearing nears
+• Sonar controls in Settings → Sounds
+• Journal scenery: torii gates at real thresholds, cairns for found places, true-phase moons, the season's drift
+• Walk dots render true to their season in dark mode
 • Walk well.
