@@ -1,7 +1,7 @@
 ---
 title: "feat: iOS v1.9.0 parity port — route rotation, whisper base, map glyphs"
 type: feat
-status: active
+status: completed
 date: 2026-07-23
 origin: docs/brainstorms/2026-07-22-ios-v190-parity-retarget-requirements.md
 ---
