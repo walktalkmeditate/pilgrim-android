@@ -3,6 +3,40 @@
 All notable changes to Pilgrim are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [1.3.0] — 2026-07-27
+
+iOS v1.9.0 parity (anchor `9a418e4`): route rotation, whisper base, map glyphs.
+
+### Collective route rotation
+- The collective line in Settings now walks a different pilgrimage every day —
+  the same route the web and iOS pilgrims see, chosen by shared daily math and
+  a curated open-pilgrimages catalog (bundled for offline, refreshed from the
+  CDN when a path is available).
+- A contributed walk's summary places your distance on the day's route, among
+  the people who really walk it. The route dataset is credited in About
+  (ODbL, open-pilgrimages).
+
+### Voice notes hear more clearly
+- Transcription steps up from the tiny model to multilingual base — the same
+  tier iOS runs. The model now downloads once (~148 MB, Wi-Fi by default with
+  a mobile-data option) instead of shipping inside the app, so the install
+  shrinks by ~78 MB.
+- Upgraders keep transcribing throughout: the old model serves until the new
+  one is verified, then hands over atomically. Recording rows explain
+  download states, and Settings shows progress.
+- Generated prompts carry the walk's character — pauses, climbs, light
+  crossings, and the wander/seek vocabulary — closing with a steadier
+  response contract.
+
+### The presences deserve presence
+- Map whispers and cairns render hand-drawn vector art: one wisp in your
+  mood's color, seven cairn tiers that age visibly from faint to eternal.
+- The add-a-stone sheet shows what your stone makes; the cairn detail carries
+  the art at full scale; whisper mood rows glow in their guide colors.
+- Seek clearings grow a tree: arrivals on the summary map stand in the hour's
+  light atop a gentler halo, and a live arrival leaves a quiet stone tree
+  where the fog parted.
+
 ## [1.2.0] — 2026-07-16
 
 Seek Mode and journal scenery — parity with iOS v1.8.0/1.8.1 (anchor `c1745e8`).
