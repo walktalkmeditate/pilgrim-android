@@ -96,6 +96,7 @@ class CollectiveRepository @Inject constructor(
             }
             try {
                 val fresh = service.fetch()
+                Log.i(TAG, "fetch ok: server totalWalks=${fresh.totalWalks}")
                 cacheStore.writeStats(fresh, nowMs)
                 // Stage 11-B: probe for sacred-number crossings AFTER the
                 // write so the detector reads the freshly-persisted total
@@ -143,7 +144,17 @@ class CollectiveRepository @Inject constructor(
             // sits outside the mutex; an opt-in flip racing the read
             // is a no-op or a one-walk-late contribution, both
             // acceptable for a user-driven setting that changes rarely.
-            if (!cacheStore.optInFlow.first()) return@launch
+            if (!cacheStore.optInFlow.first()) {
+                Log.i(TAG, "recordWalk: opt-in OFF — walk not contributed")
+                return@launch
+            }
+            Log.i(
+                TAG,
+                "recordWalk: opt-in ON — queuing " +
+                    "distanceKm=${snapshot.distanceKm} " +
+                    "meditationMin=${snapshot.meditationMin} " +
+                    "talkMin=${snapshot.talkMin}",
+            )
             recordContribution(snapshot.walkUuid)
             val postOk = recordMutex.withLock {
                 val newDelta = CollectiveCounterDelta(
@@ -170,6 +181,7 @@ class CollectiveRepository @Inject constructor(
                 // pending >10 walks accumulates (e.g., extended
                 // offline period followed by reconnect).
                 val payload = merged.clampToBackendCaps()
+                Log.i(TAG, "POST walks=${payload.walks} distanceKm=${payload.distanceKm}")
                 val result = try {
                     service.post(payload)
                 } catch (ce: CancellationException) {
@@ -179,6 +191,7 @@ class CollectiveRepository @Inject constructor(
                 }
                 when (result) {
                     PostResult.Success -> {
+                        Log.i(TAG, "POST accepted; draining pending")
                         // iOS clamps walks <= 0 → clear (parity with
                         // CollectiveCounterService.swift:114). The
                         // Mutex makes the iOS race (concurrent
