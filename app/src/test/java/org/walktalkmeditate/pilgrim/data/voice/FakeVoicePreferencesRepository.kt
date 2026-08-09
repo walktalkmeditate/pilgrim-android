@@ -14,6 +14,13 @@ import kotlinx.coroutines.flow.asStateFlow
 class FakeVoicePreferencesRepository(
     initialVoiceGuideEnabled: Boolean = false,
     initialAutoTranscribe: Boolean = false,
+    /**
+     * When set, [awaitAutoTranscribe] throws it instead of returning.
+     * Models the production failure the real repository can raise —
+     * `DataStore.data.first()` on an unreadable preferences file — which
+     * consumers must survive without losing unrelated side-effects.
+     */
+    private val awaitAutoTranscribeError: Throwable? = null,
 ) : VoicePreferencesRepository {
     private val _voiceGuideEnabled = MutableStateFlow(initialVoiceGuideEnabled)
     private val _autoTranscribe = MutableStateFlow(initialAutoTranscribe)
@@ -29,5 +36,8 @@ class FakeVoicePreferencesRepository(
         _autoTranscribe.value = enabled
     }
 
-    override suspend fun awaitAutoTranscribe(): Boolean = _autoTranscribe.value
+    override suspend fun awaitAutoTranscribe(): Boolean {
+        awaitAutoTranscribeError?.let { throw it }
+        return _autoTranscribe.value
+    }
 }

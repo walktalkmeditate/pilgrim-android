@@ -3,8 +3,10 @@ package org.walktalkmeditate.pilgrim.data.share
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -59,4 +61,15 @@ class DeviceTokenStore @Inject constructor(
 
 private val Context.deviceTokenDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "share_device_token",
+    // Without this, a preferences_pb truncated mid-write (OS kill, disk
+    // full) makes every read throw CorruptionException forever — and
+    // this token gates the `X-Device-Token` header on the collective
+    // counter, share, feedback, cairn, whisper and geocache calls. Each
+    // of those would fail silently and permanently, with no path back
+    // short of a reinstall. Resetting costs the device its identity with
+    // the rate limiter (it gets a fresh UUID on the next read), which is
+    // the cheap half of the trade: the token is not a secret and carries
+    // no history. Same policy as the collective + ledger stores in
+    // `CollectiveModule`.
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )

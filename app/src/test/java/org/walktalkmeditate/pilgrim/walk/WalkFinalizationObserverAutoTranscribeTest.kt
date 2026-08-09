@@ -219,6 +219,31 @@ class WalkFinalizationObserverAutoTranscribeTest {
         assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
     }
 
+    /**
+     * The autoTranscribe read is one link in a side-effect chain that also
+     * carries the collective contribution. An unreadable preferences file
+     * must cost the user their transcription, not their walk's place in
+     * the collective — and must not escape to the scope's uncaught handler.
+     */
+    @Test
+    fun `autoTranscribe read failure still contributes to the collective`() = runBlocking {
+        collectiveCacheStore.setOptIn(true)
+        val voicePrefs = FakeVoicePreferencesRepository(
+            awaitAutoTranscribeError = IllegalStateException("preferences unreadable"),
+        )
+        buildObserver(voicePrefs)
+        val walkId = 55L
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 2_000.0),
+            endedAt = 1_000L,
+        )
+        Thread.sleep(WAIT_FOR_GRACE_MS)
+        assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
+        assertEquals(1, fakeCollectiveService.recordedPosts.size)
+        assertEquals(1, fakeCollectiveService.recordedPosts.first().walks)
+    }
+
     @Test
     fun `autoTranscribe flip mid-finalize uses value at scheduling time`() = runBlocking {
         val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = false)

@@ -124,7 +124,23 @@ class WalkFinalizationObserver @Inject constructor(
         // process-restart-mid-walk + immediate Finish-from-notification
         // could read the default `false` before DataStore loaded the
         // user's actual preference.
-        if (voicePreferences.awaitAutoTranscribe()) {
+        //
+        // Guarded like every other step in this bundle: the read is a
+        // DataStore `.first()` with no upstream `.catch`, so an
+        // unreadable preferences file threw straight through the rest
+        // of the chain — costing the walk its collective contribution,
+        // its widget refresh AND its metrics cache, then escaping to
+        // the scope's uncaught handler. Degrade to "don't transcribe"
+        // and let the remaining side-effects run.
+        val autoTranscribe = try {
+            voicePreferences.awaitAutoTranscribe()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "autoTranscribe preference read failed; skipping transcription", t)
+            false
+        }
+        if (autoTranscribe) {
             try {
                 transcriptionScheduler.scheduleForWalk(walkId)
             } catch (cancel: CancellationException) {
