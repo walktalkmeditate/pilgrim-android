@@ -2,6 +2,8 @@
 package org.walktalkmeditate.pilgrim.audio
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Collections
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -14,9 +16,19 @@ import kotlinx.coroutines.delay
  * Honors the real interface contract: [delay] is a genuine suspend
  * call, so a caller that cancels this coroutine unwinds through here
  * normally (no swallowing), and both the cancellation and the
- * configured-failure paths delete any partial [File] before
- * completing — matching [MediaCodecShareAudioTranscoder]'s documented
- * "no partial artifact left behind" contract.
+ * configured-failure paths delete any partial file before completing —
+ * matching [MediaCodecShareAudioTranscoder]'s documented "no partial
+ * artifact left behind" contract.
+ *
+ * Timing honesty: mirrors [MediaCodecShareAudioTranscoder]'s
+ * write-to-`.part` + rename-on-success shape. The `.part` twin (via
+ * [ShareAudioTranscoder.partFileFor]) is written BEFORE the configured
+ * delay, and [outFile] itself only appears at the very end — so a test
+ * can genuinely observe "encode started, artifact not yet ready" (the
+ * exact window [org.walktalkmeditate.pilgrim.data.share.SharePrepStore]'s
+ * single-flight join must cover) instead of the old fake's shortcut of
+ * writing [outFile] directly after the delay, which could never
+ * exercise that window.
  */
 class FakeShareAudioTranscoder(
     var defaultOutputBytes: Int = 1_024,
@@ -29,18 +41,20 @@ class FakeShareAudioTranscoder(
 
     override suspend fun transcode(wavFile: File, outFile: File): Result<Long> {
         calls.add(wavFile)
+        val partFile = ShareAudioTranscoder.partFileFor(outFile)
         try {
+            val size = outputBytesFor[wavFile] ?: defaultOutputBytes
+            partFile.parentFile?.mkdirs()
+            partFile.writeBytes(ByteArray(size))
             delaysMs[wavFile]?.let { delay(it) }
             failures[wavFile]?.let { throw it }
-            val size = outputBytesFor[wavFile] ?: defaultOutputBytes
-            outFile.parentFile?.mkdirs()
-            outFile.writeBytes(ByteArray(size))
+            Files.move(partFile.toPath(), outFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
             return Result.success(outFile.length())
         } catch (ce: CancellationException) {
-            outFile.delete()
+            partFile.delete()
             throw ce
         } catch (t: Throwable) {
-            outFile.delete()
+            partFile.delete()
             return Result.failure(t)
         }
     }

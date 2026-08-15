@@ -12,16 +12,19 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.stream.Collectors
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.ShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -53,6 +56,27 @@ sealed interface PrepState {
  * [cancelAndCleanupWalk], and [sweepOrphans] — a later unit wires the
  * actual triggers (Interactive toggle-off, exclusion, screen exit).
  *
+ * Concurrency (U4 review fix): [prepareOne] is single-flight per
+ * `(walkUuid, recordingUuid)` key. A concurrent [prepare] and/or
+ * [ensureArtifact] call for the same key joins the SAME in-flight
+ * [Deferred] rather than starting a duplicate encode or racing the
+ * `exists()` check — the encode is only ever driven by whichever
+ * caller's [ConcurrentHashMap.computeIfAbsent] wins the atomic insert.
+ * This is safe only because [ShareAudioTranscoder] writes to a `.part`
+ * sibling and renames into place atomically, so [File.exists] on the
+ * final artifact path is true if and only if a complete encode
+ * produced it — joiners that arrive after completion take the fast
+ * `exists()` path instead of touching the map at all.
+ *
+ * [inFlight] encodes run on [scope], a store-owned
+ * `SupervisorJob + Dispatchers.IO` scope (same shape as
+ * [org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer]'s and
+ * [org.walktalkmeditate.pilgrim.data.proximity.ProximityDetectionService]'s
+ * self-owned scopes) rather than a scope structurally tied to whichever
+ * caller's coroutine happened to start the encode — a `prepare()`
+ * caller's own cancellation (e.g. navigating away) must not tear down
+ * an encode a DIFFERENT concurrent caller is still joining.
+ *
  * All I/O is dispatched to [Dispatchers.IO]; callers may be on Main.
  */
 @Singleton
@@ -71,7 +95,10 @@ class SharePrepStore @Inject constructor(
     private val _state = MutableStateFlow<Map<String, Map<String, PrepState>>>(emptyMap())
     val state: StateFlow<Map<String, Map<String, PrepState>>> = _state.asStateFlow()
 
-    private val activeJobs = ConcurrentHashMap<Pair<String, String>, Job>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** In-flight encodes, keyed by `(walkUuid, recordingUuid)`. See class doc for the single-flight-join contract. */
+    private val inFlight = ConcurrentHashMap<Pair<String, String>, Deferred<PrepState>>()
 
     /** `cacheDir/share-prep/<walkUuid>/<recordingUuid>.m4a` — the ONE function for writes, reads, and deletes. */
     fun artifactFile(walkUuid: String, recordingUuid: String): File =
@@ -84,11 +111,16 @@ class SharePrepStore @Inject constructor(
         }
     }
 
-    /** Reuse-or-re-encode: returns the artifact file, encoding it first if it's missing or was evicted. */
+    /**
+     * Reuse-or-re-encode: returns the artifact file, encoding it first
+     * if it's missing or was evicted. Joins an in-flight encode if one
+     * is already running for this key and only returns non-null once
+     * that encode reaches a terminal [PrepState.Ready] — never a file
+     * whose encode is still in progress.
+     */
     suspend fun ensureArtifact(walkUuid: String, recording: VoiceRecording): File? {
-        prepareOne(walkUuid, recording)
-        val artifact = artifactFile(walkUuid, recording.uuid)
-        return if (withContext(Dispatchers.IO) { artifact.exists() }) artifact else null
+        val result = prepareOne(walkUuid, recording)
+        return if (result is PrepState.Ready) artifactFile(walkUuid, recording.uuid) else null
     }
 
     /**
@@ -98,18 +130,18 @@ class SharePrepStore @Inject constructor(
      * Ready artifact.
      */
     suspend fun cancelRecording(walkUuid: String, recordingUuid: String) = withContext(Dispatchers.IO) {
-        activeJobs.remove(walkUuid to recordingUuid)?.cancelAndJoin()
+        inFlight.remove(walkUuid to recordingUuid)?.cancelAndJoin()
         clearState(walkUuid, recordingUuid)
         val root = sharePrepRootPath()
         safeDeleteArtifact(artifactFile(walkUuid, recordingUuid).toPath(), root)
         Unit
     }
 
-    /** Cancels every in-flight job for [walkUuid], clears its state entries, and removes its whole prep dir. */
+    /** Cancels every in-flight encode for [walkUuid], clears its state entries, and removes its whole prep dir. */
     suspend fun cancelAndCleanupWalk(walkUuid: String) = withContext(Dispatchers.IO) {
         val recordingUuids = _state.value[walkUuid]?.keys?.toList().orEmpty()
         for (recordingUuid in recordingUuids) {
-            activeJobs.remove(walkUuid to recordingUuid)?.cancelAndJoin()
+            inFlight.remove(walkUuid to recordingUuid)?.cancelAndJoin()
         }
         _state.update { it - walkUuid }
         deleteWalkPrepDirIfSafe(walkPrepDir(walkUuid).toPath(), sharePrepRootPath())
@@ -121,7 +153,9 @@ class SharePrepStore @Inject constructor(
      * [keepWalkUuids]. Mirrors [org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper]'s
      * guard discipline: canonical-path containment, a UUID-shaped
      * directory name, and (per file, inside [deleteWalkPrepDirIfSafe])
-     * an extension + regular-file check before any delete.
+     * an extension + regular-file check before any delete. Also sweeps
+     * stray `.part` temp files (an encode that never finished renaming
+     * — e.g. process death mid-encode) via the same guard.
      */
     suspend fun sweepOrphans(keepWalkUuids: Set<String>): Int = withContext(Dispatchers.IO) {
         val root = sharePrepRoot()
@@ -152,34 +186,57 @@ class SharePrepStore @Inject constructor(
         removed
     }
 
-    private suspend fun prepareOne(walkUuid: String, recording: VoiceRecording) {
+    /**
+     * Single-flight per `(walkUuid, recording.uuid)`: the fast path
+     * reuses an existing complete artifact; otherwise every caller for
+     * the same key — whether the one that starts the encode or a
+     * concurrent joiner — atomically shares ONE [Deferred] via
+     * [ConcurrentHashMap.computeIfAbsent] and suspends on it until the
+     * encode reaches a terminal [PrepState]. `exists()` is safe to
+     * trust as the fast-path gate only because [ShareAudioTranscoder]
+     * guarantees the final artifact path never exists mid-encode.
+     *
+     * A [CancellationException] surfacing from [Deferred.await] does
+     * NOT necessarily mean THIS caller was cancelled — [cancelRecording]
+     * cancels the shared deferred directly, which every joiner
+     * (including an unrelated [prepare] loop over other recordings)
+     * observes. [coroutineContext.ensureActive] re-throws only when
+     * this specific caller's own coroutine was cancelled; otherwise the
+     * cancellation is this recording's terminal outcome and callers
+     * such as [prepare]'s loop continue to the next recording — mirrors
+     * the pre-fix behavior where cancelling a tracked child [Job] never
+     * propagated to `prepare()`'s parent scope.
+     */
+    private suspend fun prepareOne(walkUuid: String, recording: VoiceRecording): PrepState {
         val key = walkUuid to recording.uuid
         val artifact = artifactFile(walkUuid, recording.uuid)
         if (withContext(Dispatchers.IO) { artifact.exists() }) {
-            setState(walkUuid, recording.uuid, PrepState.Ready(artifact.length()))
-            return
+            val ready = PrepState.Ready(artifact.length())
+            setState(walkUuid, recording.uuid, ready)
+            return ready
         }
-        if (activeJobs.containsKey(key)) return // already in flight (e.g. a concurrent ensureArtifact call)
 
-        setState(walkUuid, recording.uuid, PrepState.Preparing)
-        coroutineScope {
-            val job = launch(Dispatchers.IO) { runEncode(walkUuid, recording, artifact) }
-            activeJobs[key] = job
-            try {
-                job.join()
-            } finally {
-                activeJobs.remove(key)
-            }
+        val deferred = inFlight.computeIfAbsent(key) {
+            setState(walkUuid, recording.uuid, PrepState.Preparing)
+            scope.async { runEncode(walkUuid, recording, artifact) }
+        }
+        return try {
+            deferred.await()
+        } catch (ce: CancellationException) {
+            coroutineContext.ensureActive()
+            PrepState.Failed
+        } finally {
+            inFlight.remove(key, deferred)
         }
     }
 
-    private suspend fun runEncode(walkUuid: String, recording: VoiceRecording, artifact: File) {
-        try {
+    private suspend fun runEncode(walkUuid: String, recording: VoiceRecording, artifact: File): PrepState {
+        return try {
             val wavFile = fileSystem.absolutePath(recording.fileRelativePath)
             val result = transcoder.transcode(wavFile, artifact)
             result.fold(
-                onSuccess = { bytes -> setState(walkUuid, recording.uuid, PrepState.Ready(bytes)) },
-                onFailure = { setState(walkUuid, recording.uuid, PrepState.Failed) },
+                onSuccess = { bytes -> PrepState.Ready(bytes).also { setState(walkUuid, recording.uuid, it) } },
+                onFailure = { PrepState.Failed.also { setState(walkUuid, recording.uuid, it) } },
             )
         } catch (ce: CancellationException) {
             clearState(walkUuid, recording.uuid)
@@ -207,7 +264,7 @@ class SharePrepStore @Inject constructor(
 
     private fun walkPrepDir(walkUuid: String): File = File(sharePrepRoot(), walkUuid)
 
-    /** Deletes every `.m4a` file inside [dir] via [safeDeleteArtifact], then the (hopefully empty) directory. */
+    /** Deletes every `.m4a`/`.m4a.part` file inside [dir] via [safeDeleteArtifact], then the (hopefully empty) directory. */
     private fun deleteWalkPrepDirIfSafe(dir: Path, root: Path): Boolean {
         return try {
             val canonical = dir.toAbsolutePath().normalize()
@@ -237,8 +294,8 @@ class SharePrepStore @Inject constructor(
                 return false
             }
             val ext = candidate.fileName.toString().substringAfterLast('.').lowercase()
-            if (ext != "m4a") {
-                Log.w(TAG, "refusing to delete non-m4a file: $candidate")
+            if (ext !in ARTIFACT_EXTENSIONS) {
+                Log.w(TAG, "refusing to delete non-artifact file: $candidate")
                 return false
             }
             if (!Files.isRegularFile(candidate)) {
@@ -258,5 +315,13 @@ class SharePrepStore @Inject constructor(
         const val SHARE_PREP_DIR = "share-prep"
         val WALK_UUID_REGEX =
             Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+        /**
+         * `m4a` for a finished artifact, `part` for
+         * [ShareAudioTranscoder.partFileFor]'s in-progress temp sibling
+         * (`<uuid>.m4a.part` — the trailing extension is `part`). Both
+         * are safe for the orphan sweep / walk-dir cleanup to remove.
+         */
+        val ARTIFACT_EXTENSIONS = setOf("m4a", "part")
     }
 }

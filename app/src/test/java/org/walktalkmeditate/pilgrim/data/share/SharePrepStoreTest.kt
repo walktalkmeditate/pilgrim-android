@@ -21,6 +21,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
+import org.walktalkmeditate.pilgrim.audio.ShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 
@@ -133,6 +134,21 @@ class SharePrepStoreTest {
     }
 
     @Test
+    fun `a transcode failure for one recording marks it Failed and prepare continues to the next`() = runBlocking {
+        val walkUuid = "walk-fail-continue"
+        val recA = recording(walkUuid)
+        val recB = recording(walkUuid)
+        fakeTranscoder.failures[wavFileFor(recA)] = RuntimeException("encoder blew up")
+
+        store.prepare(walkUuid, listOf(recA, recB))
+
+        assertTrue("recA must be marked Failed", store.state.value[walkUuid]?.get(recA.uuid) is PrepState.Failed)
+        assertFalse(store.artifactFile(walkUuid, recA.uuid).exists())
+        val recBState = store.state.value[walkUuid]?.get(recB.uuid)
+        assertTrue("recB must still have been prepared to Ready despite recA's failure", recBState is PrepState.Ready)
+    }
+
+    @Test
     fun `re-prepare reuses an existing Ready artifact without invoking the transcoder again`() = runBlocking {
         val walkUuid = "walk-reuse"
         val rec = recording(walkUuid)
@@ -147,6 +163,42 @@ class SharePrepStoreTest {
     }
 
     @Test
+    fun `concurrent second prepare for the same recording joins the in-flight encode instead of returning early`() =
+        runBlocking {
+            val walkUuid = "walk-join"
+            val rec = recording(walkUuid)
+            fakeTranscoder.delaysMs[wavFileFor(rec)] = 300L
+            fakeTranscoder.outputBytesFor[wavFileFor(rec)] = 4_096
+
+            val jobA = launch { store.prepare(walkUuid, listOf(rec)) }
+            awaitFakeCalled(rec)
+            val jobB = launch { store.prepare(walkUuid, listOf(rec)) }
+            jobB.join()
+
+            // A properly-joining second caller cannot return before the
+            // single shared encode reaches its terminal state — this is a
+            // correctness property of Deferred.await(), not a timing
+            // coincidence, so the assertion below is deterministic, not
+            // flaky: under the pre-fix "already in flight -> return"
+            // short-circuit, jobB returns almost immediately and this
+            // reads Preparing (or nothing), not Ready.
+            val stateRightAfterB = store.state.value[walkUuid]?.get(rec.uuid)
+            assertTrue(
+                "second caller must not return before the shared encode completes",
+                stateRightAfterB is PrepState.Ready,
+            )
+            assertEquals(4_096L, (stateRightAfterB as PrepState.Ready).sizeBytes)
+            assertEquals(4_096L, store.artifactFile(walkUuid, rec.uuid).length())
+
+            jobA.join()
+            assertEquals(
+                "second prepare() must join, not start a duplicate transcoder invocation",
+                1,
+                fakeTranscoder.calls.size,
+            )
+        }
+
+    @Test
     fun `ensureArtifact returns the existing file without re-encoding when present`() = runBlocking {
         val walkUuid = "walk-ensure-hit"
         val rec = recording(walkUuid)
@@ -158,6 +210,25 @@ class SharePrepStoreTest {
         assertEquals(store.artifactFile(walkUuid, rec.uuid), artifact)
         assertEquals(1, fakeTranscoder.calls.size)
     }
+
+    @Test
+    fun `ensureArtifact called during an in-flight encode returns only after completion with the full size`() =
+        runBlocking {
+            val walkUuid = "walk-ensure-join"
+            val rec = recording(walkUuid)
+            fakeTranscoder.delaysMs[wavFileFor(rec)] = 300L
+            fakeTranscoder.outputBytesFor[wavFileFor(rec)] = 8_192
+
+            val prepJob = launch { store.prepare(walkUuid, listOf(rec)) }
+            awaitFakeCalled(rec)
+
+            val artifact = store.ensureArtifact(walkUuid, rec)
+
+            prepJob.join()
+            assertTrue("ensureArtifact must return a file once the shared encode is complete", artifact != null)
+            assertEquals(8_192L, artifact!!.length())
+            assertEquals(1, fakeTranscoder.calls.size)
+        }
 
     @Test
     fun `ensureArtifact re-encodes when the artifact file was deleted out from under the store`() = runBlocking {
@@ -254,6 +325,19 @@ class SharePrepStoreTest {
         val removed = store.sweepOrphans(emptySet())
 
         assertEquals(0, removed)
+    }
+
+    @Test
+    fun `sweepOrphans also removes a stray part file left by an interrupted encode`() = runBlocking {
+        val orphan = UUID.randomUUID().toString()
+        val partFile = ShareAudioTranscoder.partFileFor(store.artifactFile(orphan, "a"))
+        partFile.parentFile?.mkdirs()
+        partFile.writeBytes(ByteArray(8))
+
+        val removed = store.sweepOrphans(emptySet())
+
+        assertEquals(1, removed)
+        assertFalse("stray .part file must be swept along with its orphan walk dir", partFile.exists())
     }
 
     private fun wavFileFor(recording: VoiceRecording): File = fileSystem.absolutePath(recording.fileRelativePath)
