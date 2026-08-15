@@ -71,6 +71,33 @@ class MediaCodecShareAudioTranscoderTest {
         assertEquals(22_050, format.getInteger(MediaFormat.KEY_SAMPLE_RATE))
     }
 
+    // ---- alignDownToFrame (U4 review fix #6: frame-aligned chunk sizes) ----
+
+    @Test
+    fun `alignDownToFrame clamps down to the nearest whole frame`() {
+        assertEquals(8, MediaCodecShareAudioTranscoder.alignDownToFrame(chunkSize = 9, bytesPerFrame = 4))
+        assertEquals(0, MediaCodecShareAudioTranscoder.alignDownToFrame(chunkSize = 3, bytesPerFrame = 4))
+        assertEquals(12, MediaCodecShareAudioTranscoder.alignDownToFrame(chunkSize = 12, bytesPerFrame = 4))
+    }
+
+    @Test
+    fun `alignDownToFrame does not divide by zero when bytesPerFrame is non-positive`() {
+        assertEquals(9, MediaCodecShareAudioTranscoder.alignDownToFrame(chunkSize = 9, bytesPerFrame = 0))
+        assertEquals(9, MediaCodecShareAudioTranscoder.alignDownToFrame(chunkSize = 9, bytesPerFrame = -1))
+    }
+
+    // ---- partFileFor (U4 review fix #1: write-to-temp, atomic-rename) ----
+
+    @Test
+    fun `partFileFor appends a part suffix to the same directory`() {
+        val outFile = tempDir.resolve("share-prep").resolve("abc-123.m4a").toFile()
+
+        val partFile = ShareAudioTranscoder.partFileFor(outFile)
+
+        assertEquals(outFile.parentFile, partFile.parentFile)
+        assertEquals("abc-123.m4a.part", partFile.name)
+    }
+
     // ---- MediaMuxer construction (real builder, house rule) ----
 
     @Test
@@ -173,6 +200,27 @@ class MediaCodecShareAudioTranscoderTest {
 
         assertTrue(result.isFailure)
         assertFalse(outFile.exists())
+    }
+
+    // ---- transcode(): a zero-data WAV never reaches the codec either (U4 review fix #5) ----
+
+    @Test
+    fun `transcode on a zero-data WAV returns failure and leaves no output file`() = runBlocking {
+        val path = tempDir.resolve("zero-data.wav")
+        val writer = WavWriter(path, sampleRateHz = 16_000)
+        writer.openForWriting()
+        writer.closeAndPatchHeader()
+        val outFile = tempDir.resolve("share-prep").resolve("out.m4a").toFile()
+        val transcoder = MediaCodecShareAudioTranscoder()
+
+        val result = transcoder.transcode(path.toFile(), outFile)
+
+        assertTrue(result.isFailure)
+        assertFalse(outFile.exists())
+        assertFalse(
+            "the .part temp file must not be left behind either",
+            ShareAudioTranscoder.partFileFor(outFile).exists(),
+        )
     }
 
     private fun assertThrowsInvalidFormat(block: () -> Unit) {

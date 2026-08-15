@@ -7,6 +7,9 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +26,12 @@ import kotlinx.coroutines.yield
  * Implementations must be cancellation-cooperative between encode
  * buffers and must never leave a partial [File] behind: on failure or
  * cancellation, [outFile] does not exist when [transcode] returns or
- * throws.
+ * throws. The stronger invariant callers (notably
+ * [org.walktalkmeditate.pilgrim.data.share.SharePrepStore]) rely on:
+ * **[outFile] exists if and only if a complete encode produced it.**
+ * Implementations satisfy this by writing to [partFileFor]'s sibling
+ * temp path and renaming into place only after a fully-successful
+ * encode — never writing [outFile] directly.
  */
 interface ShareAudioTranscoder {
     /**
@@ -32,6 +40,16 @@ interface ShareAudioTranscoder {
      * [outFile] exists and the result carries its size in bytes.
      */
     suspend fun transcode(wavFile: File, outFile: File): Result<Long>
+
+    companion object {
+        /**
+         * Sibling temp path used while an encode targeting [outFile] is
+         * in progress. The ONE function every writer (real + fake) and
+         * reader (the orphan sweep's stray-file guard) uses to agree on
+         * where an in-progress artifact lives.
+         */
+        fun partFileFor(outFile: File): File = File(outFile.parentFile, "${outFile.name}.part")
+    }
 }
 
 /**
@@ -45,25 +63,45 @@ class MediaCodecShareAudioTranscoder @Inject constructor() : ShareAudioTranscode
 
     override suspend fun transcode(wavFile: File, outFile: File): Result<Long> =
         withContext(Dispatchers.IO) {
+            val partFile = ShareAudioTranscoder.partFileFor(outFile)
             try {
                 val wav = WavPcmHeaderParser.parse(wavFile)
+                if (wav.dataSize <= 0L) {
+                    throw InvalidWavFormatException("WAV has no PCM data: ${wavFile.name}")
+                }
                 outFile.parentFile?.mkdirs()
-                outFile.delete()
-                encode(wav, wavFile, outFile)
-                Result.success(outFile.length())
+                partFile.delete()
+                encode(wav, wavFile, partFile)
+                val bytes = partFile.length()
+                renameIntoPlace(partFile, outFile)
+                Result.success(bytes)
             } catch (ce: CancellationException) {
-                outFile.delete()
+                partFile.delete()
                 throw ce
             } catch (t: Throwable) {
-                outFile.delete()
+                partFile.delete()
                 Result.failure(t)
             }
         }
 
-    private suspend fun encode(wav: WavPcmInfo, wavFile: File, outFile: File) {
+    /**
+     * Same-directory rename, atomic on the common case (POSIX
+     * filesystems, which is what Android's cache dir sits on).
+     * Mirrors [org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadWorker]'s
+     * atomic-move-with-fallback idiom.
+     */
+    private fun renameIntoPlace(source: File, target: File) {
+        try {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private suspend fun encode(wav: WavPcmInfo, wavFile: File, targetFile: File) {
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
         try {
-            val muxer = createMuxer(outFile)
+            val muxer = createMuxer(targetFile)
             try {
                 codec.configure(
                     buildAacFormat(wav.sampleRateHz, wav.channelCount),
@@ -114,7 +152,10 @@ class MediaCodecShareAudioTranscoder @Inject constructor() : ShareAudioTranscode
                 if (inputBufferId >= 0) {
                     val buffer = codec.getInputBuffer(inputBufferId)!!
                     buffer.clear()
-                    val chunkSize = minOf(buffer.remaining().toLong(), bytesRemaining).toInt()
+                    val chunkSize = alignDownToFrame(
+                        minOf(buffer.remaining().toLong(), bytesRemaining).toInt(),
+                        bytesPerFrame,
+                    )
                     if (chunkSize <= 0) {
                         codec.queueInputBuffer(
                             inputBufferId, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
@@ -204,6 +245,18 @@ class MediaCodecShareAudioTranscoder @Inject constructor() : ShareAudioTranscode
 
         internal fun createMuxer(outFile: File): MediaMuxer =
             MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+        /**
+         * Clamps [chunkSize] down to a whole number of PCM frames so a
+         * feed never splits a frame across two input buffers. Returns
+         * [chunkSize] unchanged when [bytesPerFrame] is non-positive
+         * (guards the modulo below — a degenerate header value should
+         * never crash the encode loop with an arithmetic exception).
+         */
+        internal fun alignDownToFrame(chunkSize: Int, bytesPerFrame: Int): Int {
+            if (bytesPerFrame <= 0) return chunkSize
+            return chunkSize - (chunkSize % bytesPerFrame)
+        }
     }
 }
 
