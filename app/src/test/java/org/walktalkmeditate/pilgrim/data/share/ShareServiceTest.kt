@@ -32,6 +32,7 @@ class ShareServiceTest {
     private val context = ApplicationProvider.getApplicationContext<Application>()
     private val deviceTokenStore = DeviceTokenStore(context)
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    private val repairStore = ShareRepairStore(context, json)
 
     @Before
     fun setUp() {
@@ -44,6 +45,7 @@ class ShareServiceTest {
             json = json,
             deviceTokenStore = deviceTokenStore,
             baseUrl = server.url("").toString().trimEnd('/'),
+            repairStore = repairStore,
         )
     }
 
@@ -51,6 +53,7 @@ class ShareServiceTest {
     fun tearDown() {
         server.shutdown()
         File(context.filesDir, "datastore/share_device_token.preferences_pb").delete()
+        File(context.filesDir, "datastore/share_repair.preferences_pb").delete()
     }
 
     private fun samplePayload() = SharePayload(

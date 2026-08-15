@@ -37,6 +37,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
+import org.walktalkmeditate.pilgrim.data.share.ShareRepairStore
 import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 
@@ -81,6 +82,7 @@ class WalkShareViewModelTest {
             json = json,
             deviceTokenStore = DeviceTokenStore(context),
             baseUrl = server.url("").toString().trimEnd('/'),
+            repairStore = ShareRepairStore(context, json),
         )
         cachedStore = CachedShareStore(context, json)
     }
@@ -92,6 +94,7 @@ class WalkShareViewModelTest {
         Dispatchers.resetMain()
         File(context.filesDir, "datastore/share_device_token.preferences_pb").delete()
         File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
+        File(context.filesDir, "datastore/share_repair.preferences_pb").delete()
     }
 
     private val fakePhotoEncoder = object : SharePhotoEncoder {
