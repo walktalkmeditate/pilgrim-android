@@ -14,7 +14,9 @@ import androidx.test.core.app.ApplicationProvider
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -34,15 +36,14 @@ import org.robolectric.annotation.GraphicsMode
 import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
-import org.walktalkmeditate.pilgrim.domain.Clock
 
 /**
  * iOS parity `UnitTests/TourPhotoExporterTests.swift@3f9f9e8` (the
  * ladder-envelope tests) plus the Android-original scenarios the U5
  * plan/spec call for: EXIF-orientation-into-pixels, the 20-photo
- * `prefix` cap, unresolvable-URI short counting, the wall-clock
- * deadline, downscale-only math, cancellation, and U4/U5 cleanup
- * coverage of the `photos/` subdirectory.
+ * `prefix` cap, unresolvable-URI short counting, the per-candidate
+ * deadline, sampled-decode + downscale math, cancellation, and U4/U5
+ * cleanup coverage of the `photos/` subdirectory.
  *
  * [GraphicsMode.Mode.NATIVE] is required (same reasoning as
  * `GlyphAssetTest`/`MapGlyphBitmapsTest`): this project's Robolectric
@@ -57,7 +58,6 @@ class TourPhotoExporterTest {
 
     private lateinit var context: Context
     private lateinit var sharePrepStore: SharePrepStore
-    private lateinit var clock: FakeClock
     private lateinit var exporter: TourPhotoExporter
     private lateinit var fixtureDir: File
 
@@ -67,8 +67,7 @@ class TourPhotoExporterTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         sharePrepStore = SharePrepStore(context, FakeShareAudioTranscoder(), VoiceRecordingFileSystem(context))
-        clock = FakeClock(initial = 1_700_000_000_000L)
-        exporter = TourPhotoExporter(context, sharePrepStore, clock)
+        exporter = TourPhotoExporter(context, sharePrepStore)
         fixtureDir = File(context.cacheDir, "tpe-fixtures-${UUID.randomUUID()}").apply { mkdirs() }
     }
 
@@ -156,6 +155,65 @@ class TourPhotoExporterTest {
         )
     }
 
+    // --- EXIF orientation: pixel-level coverage for the remaining branches (U5 review Minor 4) ---
+    // 2x2 four-quadrant fixture (not the 2x1 two-tone fixture the finding floated) because a
+    // height-1 bitmap makes ROTATE_180 and FLIP_HORIZONTAL produce IDENTICAL pixel output
+    // (rotating 180 degrees with no vertical extent degenerates to a pure horizontal mirror) —
+    // verified empirically before writing these assertions. 2x2 keeps every branch distinguishable
+    // while staying cheap. All 8 `applyExifOrientation` branches remain implemented; these three
+    // (plus the existing ROTATE_90 dimension-swap test above) are the ones the review flagged.
+
+    @Test
+    fun `applyExifOrientation ROTATE_180 rotates both axes`() {
+        val bitmap = fourQuadrantBitmap()
+        val result = TourPhotoExporter.applyExifOrientation(bitmap, ExifInterface.ORIENTATION_ROTATE_180)
+        try {
+            assertEquals(2, result.width)
+            assertEquals(2, result.height)
+            assertEquals(Color.YELLOW, result.getPixel(0, 0))
+            assertEquals(Color.GREEN, result.getPixel(1, 0))
+            assertEquals(Color.BLUE, result.getPixel(0, 1))
+            assertEquals(Color.RED, result.getPixel(1, 1))
+        } finally {
+            if (result !== bitmap) result.recycle()
+            bitmap.recycle()
+        }
+    }
+
+    @Test
+    fun `applyExifOrientation ROTATE_270 swaps and rotates`() {
+        val bitmap = fourQuadrantBitmap()
+        val result = TourPhotoExporter.applyExifOrientation(bitmap, ExifInterface.ORIENTATION_ROTATE_270)
+        try {
+            assertEquals(2, result.width)
+            assertEquals(2, result.height)
+            assertEquals(Color.BLUE, result.getPixel(0, 0))
+            assertEquals(Color.YELLOW, result.getPixel(1, 0))
+            assertEquals(Color.RED, result.getPixel(0, 1))
+            assertEquals(Color.GREEN, result.getPixel(1, 1))
+        } finally {
+            if (result !== bitmap) result.recycle()
+            bitmap.recycle()
+        }
+    }
+
+    @Test
+    fun `applyExifOrientation FLIP_HORIZONTAL mirrors left-right only`() {
+        val bitmap = fourQuadrantBitmap()
+        val result = TourPhotoExporter.applyExifOrientation(bitmap, ExifInterface.ORIENTATION_FLIP_HORIZONTAL)
+        try {
+            assertEquals(2, result.width)
+            assertEquals(2, result.height)
+            assertEquals(Color.BLUE, result.getPixel(0, 0))
+            assertEquals(Color.RED, result.getPixel(1, 0))
+            assertEquals(Color.YELLOW, result.getPixel(0, 1))
+            assertEquals(Color.GREEN, result.getPixel(1, 1))
+        } finally {
+            if (result !== bitmap) result.recycle()
+            bitmap.recycle()
+        }
+    }
+
     // --- unresolvable URI ---
 
     @Test
@@ -172,6 +230,23 @@ class TourPhotoExporterTest {
         assertEquals(setOf(good1.photoUri, good2.photoUri), result.photos.map { it.sourceUri }.toSet())
     }
 
+    // --- filename numbering: dense over successes, not positional (U5 review Minor 3) ---
+
+    @Test
+    fun `exported filenames are dense over successes, not positional in the original candidate list`() = runBlocking {
+        val good1 = walkPhoto(registerJpeg("fn-good1", 20, 20))
+        val bad = walkPhoto(Uri.parse("content://test/fn-does-not-exist"))
+        val good2 = walkPhoto(registerJpeg("fn-good2", 20, 20))
+
+        val result = exporter.export(walkUuid, listOf(good1, bad, good2))
+
+        assertEquals(2, result.exported)
+        assertEquals(listOf("1.jpg", "2.jpg"), result.photos.map { it.file.name })
+        assertTrue(sharePrepStore.photoFile(walkUuid, 1).exists())
+        assertTrue(sharePrepStore.photoFile(walkUuid, 2).exists())
+        assertFalse("no gap file for the failed candidate", sharePrepStore.photoFile(walkUuid, 3).exists())
+    }
+
     // --- prefix(20) cap ---
 
     @Test
@@ -186,25 +261,32 @@ class TourPhotoExporterTest {
         assertFalse("photo 21 must never have been attempted", sharePrepStore.photoFile(walkUuid, 21).exists())
     }
 
-    // --- wall-clock deadline (Clock-driven, not System.currentTimeMillis) ---
+    // --- per-candidate deadline (U5 review Important-1: bound the CANDIDATE, not the batch) ---
 
     @Test
-    fun `a per-photo wall-clock overrun stops the batch and the rest count short`() = runBlocking {
-        val candidates = (1..5).map { walkPhoto(registerJpeg("d$it", 20, 20)) }
+    fun `a per-candidate timeout fails only that candidate and the batch continues`() = runBlocking {
+        val slowUri = registerSlowJpeg("slow", 20, 20, sleepMs = 300L)
+        val candidates = listOf(
+            walkPhoto(slowUri),
+            walkPhoto(registerJpeg("healthyB", 20, 20)),
+            walkPhoto(registerJpeg("healthyC", 20, 20)),
+        )
 
-        val result = exporter.export(walkUuid, candidates) { completed, _ ->
-            if (completed == 2) {
-                clock.advanceBy(TourPhotoExporter.PER_PHOTO_TIMEOUT_MS + TourPhotoExporter.BACKSTOP_GRACE_MS)
-            }
-        }
+        val result = exporter.exportBounded(walkUuid, candidates, perCandidateBudgetMs = 50L)
 
-        assertEquals(5, result.requested)
+        assertEquals(3, result.requested)
         assertEquals(2, result.exported)
         assertTrue(result.isShort)
+        assertEquals("short by exactly the one slow candidate", 1, result.requested - result.exported)
+        assertEquals(
+            "the two healthy candidates must still be exported despite the slow first one",
+            setOf(candidates[1].photoUri, candidates[2].photoUri),
+            result.photos.map { it.sourceUri }.toSet(),
+        )
     }
 
     @Test
-    fun `no wall-clock overrun exports the full requested set`() = runBlocking {
+    fun `no per-candidate timeout exports the full requested set`() = runBlocking {
         val candidates = (1..4).map { walkPhoto(registerJpeg("nd$it", 20, 20)) }
 
         val result = exporter.export(walkUuid, candidates)
@@ -213,6 +295,28 @@ class TourPhotoExporterTest {
         assertEquals(4, result.exported)
         assertFalse(result.isShort)
     }
+
+    // --- sampled decode (U5 review Important-2: kill the OOM path) ---
+
+    @Test
+    fun `computeInSampleSize picks the largest power of two keeping the long edge at or above target`() {
+        assertEquals(4, TourPhotoExporter.computeInSampleSize(6400, 3200, 1600))
+        assertEquals(1, TourPhotoExporter.computeInSampleSize(1200, 900, 1600))
+    }
+
+    @Test
+    fun `a very large source is sampled before decode and still lands on the exact target after scaling`() =
+        runBlocking {
+            val uri = registerJpeg("huge", width = 6400, height = 3200)
+
+            val result = exporter.export(walkUuid, listOf(walkPhoto(uri)))
+
+            assertEquals(1, result.exported)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(result.photos.single().file.absolutePath, bounds)
+            assertEquals(1600, bounds.outWidth)
+            assertEquals(800, bounds.outHeight)
+        }
 
     // --- downscale math ---
 
@@ -277,6 +381,34 @@ class TourPhotoExporterTest {
         assertFalse(sharePrepStore.photoFile(walkUuid, 2).exists())
     }
 
+    @Test
+    fun `outer cancellation mid-batch propagates as CancellationException instead of a partial result`() =
+        runBlocking {
+            val candidates = (1..5).map { walkPhoto(registerJpeg("oc$it", 20, 20)) }
+            var job: Job? = null
+            var completedTicks = 0
+            var caught: Throwable? = null
+            job = launch {
+                try {
+                    exporter.export(walkUuid, candidates) { completed, _ ->
+                        completedTicks = completed
+                        if (completed == 1) job?.cancel()
+                    }
+                } catch (t: Throwable) {
+                    caught = t
+                    throw t
+                }
+            }
+            job.join()
+
+            assertTrue(
+                "a real outer cancellation must re-throw as CancellationException, not be swallowed",
+                caught is CancellationException,
+            )
+            assertEquals(1, completedTicks)
+            assertFalse(sharePrepStore.photoFile(walkUuid, 2).exists())
+        }
+
     // --- cleanup coverage (U4's cancelAndCleanupWalk must sweep U5's photos/ subdir) ---
 
     @Test
@@ -332,6 +464,32 @@ class TourPhotoExporterTest {
     }
 
     /**
+     * Same JPEG fixture as [registerJpeg], but the registered
+     * `InputStream` sleeps (real wall-clock, once, on its first read)
+     * before yielding any bytes — simulates a slow/wedged content
+     * provider for the per-candidate deadline test above, independent
+     * of [TourPhotoExporter]'s production 22s budget (the test calls
+     * [TourPhotoExporter.exportBounded] with a short budget instead).
+     */
+    private fun registerSlowJpeg(name: String, width: Int, height: Int, sleepMs: Long): Uri {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawColor(Color.rgb(120, 140, 160))
+        val baos = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+        bitmap.recycle()
+        val uri = Uri.parse("content://test/$name-${UUID.randomUUID()}")
+        shadowOf(context.contentResolver).registerInputStream(uri, SlowInputStream(baos.toByteArray(), sleepMs))
+        return uri
+    }
+
+    private fun fourQuadrantBitmap(): Bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).apply {
+        setPixel(0, 0, Color.RED)
+        setPixel(1, 0, Color.BLUE)
+        setPixel(0, 1, Color.GREEN)
+        setPixel(1, 1, Color.YELLOW)
+    }
+
+    /**
      * Mirrors iOS `TourPhotoExporterTests.noisyImage` (same
      * `(x*31 + y*17) % 100` block-hue formula, 8px blocks): fully
      * uncorrelated blocks defeat JPEG's neighbor prediction. Android's
@@ -361,10 +519,28 @@ class TourPhotoExporterTest {
     }
 }
 
-private class FakeClock(initial: Long) : Clock {
-    private var current: Long = initial
-    override fun now(): Long = current
-    fun advanceBy(deltaMs: Long) {
-        current += deltaMs
+/**
+ * Sleeps once (on the first read) before delegating to a real
+ * in-memory stream — see [TourPhotoExporterTest.registerSlowJpeg].
+ */
+private class SlowInputStream(bytes: ByteArray, private val sleepMs: Long) : InputStream() {
+    private val delegate = ByteArrayInputStream(bytes)
+    private var slept = false
+
+    private fun maybeSleep() {
+        if (!slept) {
+            slept = true
+            Thread.sleep(sleepMs)
+        }
+    }
+
+    override fun read(): Int {
+        maybeSleep()
+        return delegate.read()
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        maybeSleep()
+        return delegate.read(b, off, len)
     }
 }

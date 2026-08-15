@@ -19,8 +19,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
-import org.walktalkmeditate.pilgrim.domain.Clock
 
 /**
  * One successfully exported hi-res tour photo. [file] holds the
@@ -71,58 +71,69 @@ data class TourPhotoExportResult(
  *
  * Reads the SAME MediaStore `content://` URI source the classic embedder
  * ([org.walktalkmeditate.pilgrim.data.pilgrim.builder.AndroidPilgrimPhotoEmbedder])
- * reads, but at full resolution rather than a pre-sampled decode: EXIF
- * orientation is applied to pixels, the long edge is scaled down to
- * [TARGET_LONG_EDGE_PX] (never up), then [jpegDataUnder] walks the
- * quality ladder until the encoded bytes fit [MAX_BYTES]. [Bitmap.compress]
- * carries forward none of the INPUT file's EXIF metadata (verified: a
- * source-orientation tag never survives into the output). The output
- * JPEG is not literally EXIF-segment-free on every platform/encoder —
- * verified empirically that [androidx.exifinterface.media.ExifInterface]
- * reads a plain `Bitmap.compress` output's `TAG_ORIENTATION` as `"0"`
+ * reads. Bounds are probed first ([BitmapFactory.Options.inJustDecodeBounds])
+ * and the decode is sampled toward [TARGET_LONG_EDGE_PX] via
+ * [computeInSampleSize] before a full pixel buffer is ever allocated —
+ * mirrors [org.walktalkmeditate.pilgrim.data.pilgrim.builder.AndroidPilgrimPhotoEmbedder]'s
+ * own bounds-probe-then-sample pattern rather than this class's original
+ * full-resolution decode (U5 review: a rotated 50MP source could peak
+ * near 380MB across the decode+EXIF-transform pair). EXIF orientation is
+ * then applied to pixels, the long edge is scaled down EXACTLY (never
+ * up) to [TARGET_LONG_EDGE_PX] — sampling never undershoots the target,
+ * so this final scale always has real pixels to work with — then
+ * [jpegDataUnder] walks the quality ladder until the encoded bytes fit
+ * [MAX_BYTES]. [Bitmap.compress] carries forward none of the INPUT
+ * file's EXIF metadata (verified: a source-orientation tag never
+ * survives into the output). The output JPEG is not literally
+ * EXIF-segment-free on every platform/encoder — verified empirically
+ * that [androidx.exifinterface.media.ExifInterface] reads a plain
+ * [Bitmap.compress] output's `TAG_ORIENTATION` as `"0"`
  * ([ExifInterface.ORIENTATION_UNDEFINED]) rather than a null/absent
  * attribute — but UNDEFINED and NORMAL both mean "apply no rotation" to
  * any EXIF-aware consumer, which is the property that actually matters:
  * the baked-into-pixels orientation from the source is never carried
  * into the output header.
  *
- * ### Deadline/backstop: a deliberate mechanism adaptation
+ * ### Per-candidate deadline
  *
  * iOS bounds each `PHImageManager` request with two independent
  * `DispatchWorkItem` deadlines — a [PER_PHOTO_TIMEOUT_MS] "cancel nudge"
  * and a [BACKSTOP_GRACE_MS] hard backstop beyond it — because a PhotoKit
  * request is a genuinely async, iCloud-fetching operation that can wedge
- * indefinitely, and PhotoKit's own cancellation callback is not
- * guaranteed to land promptly (`TourPhotoExporter.swift:18-21,55-133@3f9f9e8`).
+ * indefinitely (`TourPhotoExporter.swift:18-21,55-133@3f9f9e8`).
  * Android's read path ([android.content.ContentResolver.openInputStream]
  * + [BitmapFactory]) is a synchronous, blocking call with no request
- * object to independently "nudge" — there is no async operation for a
- * separate cancel-then-backstop pair to race against, and MediaStore/
- * Photo-Picker sources are on-device bytes rather than iCloud's
- * optional-download model.
+ * object to independently cancel, so this class ports the SAME two
+ * named constants (for citability) but enforces their SUM as a single
+ * budget PER CANDIDATE via [kotlinx.coroutines.withTimeoutOrNull], reset
+ * fresh for every candidate in [exportBounded]'s loop — one slow
+ * candidate never eats into another's budget, and a candidate that times
+ * out or fails is simply skipped (counted in
+ * [TourPhotoExportResult.requested], never [TourPhotoExportResult.exported])
+ * while the batch continues to the next candidate (U5 review fix: the
+ * original cumulative-elapsed-time check aborted the WHOLE remaining
+ * batch after any single slow photo).
  *
- * This class ports the SAME two named constants (for citability, and in
- * case the mechanism needs to diverge further later) but enforces them
- * as a single wall-clock budget, reset before each candidate and checked
- * once per photo at the SAME outer-loop checkpoint iOS uses for
- * cancellation (`export`'s `for (i, candidate) in candidates.enumerated()`,
- * `TourPhotoExporter.swift:43-51@3f9f9e8`): if a photo's own processing
- * consumes more than [PER_PHOTO_TIMEOUT_MS] + [BACKSTOP_GRACE_MS] of
- * [Clock] wall-time, the export stops attempting further candidates
- * (that photo's own result, if it succeeded, is kept — nothing is
- * discarded retroactively). This is intentionally NOT a preemptive,
- * mid-decode timeout: Android has no primitive to interrupt a blocking
+ * `withTimeoutOrNull` only preempts at a cooperative checkpoint — a
+ * fully synchronous block that never suspends and never calls
+ * [kotlinx.coroutines.ensureActive] is never preempted, deadline or not
+ * (verified empirically against this project's kotlinx.coroutines
+ * version before writing this mechanism). [loadOne] therefore calls
+ * `coroutineContext.ensureActive()` between each blocking stage (read,
+ * bounds probe, sampled decode) so a fired deadline is noticed as soon
+ * as the CURRENT blocking call returns, not only at the next candidate.
+ * A single blocking call that never returns at all (a pathological
+ * SAF/cloud-backed provider) still cannot be preempted mid-call —
+ * Android has no primitive to interrupt a blocking
  * `ContentResolver`/`BitmapFactory` call short of a dedicated
- * interruptible thread, which is out of scope here. A truly wedged
- * content-provider call is therefore not preemptible by this class —
- * only "don't start another one after it" — an accepted, documented gap
- * (see the U5 report's "concerns" section) rather than a silent one.
+ * interruptible thread, out of scope here — but every call that DOES
+ * eventually return, however late, is now bounded to the ONE candidate
+ * it belongs to rather than stalling the rest of the batch.
  */
 @Singleton
 class TourPhotoExporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val sharePrepStore: SharePrepStore,
-    private val clock: Clock,
 ) {
 
     /**
@@ -136,11 +147,38 @@ class TourPhotoExporter @Inject constructor(
      * out of this function rather than being swallowed into a partial
      * result (Kotlin structured-concurrency convention — unlike iOS's
      * `Task.isCancelled { break }`, which returns whatever was gathered
-     * so far instead of throwing).
+     * so far instead of throwing). Delegates to [exportBounded] with the
+     * pinned [PER_PHOTO_TIMEOUT_MS] + [BACKSTOP_GRACE_MS] per-candidate
+     * budget.
      */
     suspend fun export(
         walkUuid: String,
         candidates: List<WalkPhoto>,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+    ): TourPhotoExportResult =
+        exportBounded(walkUuid, candidates, PER_PHOTO_TIMEOUT_MS + BACKSTOP_GRACE_MS, onProgress)
+
+    /**
+     * [export]'s implementation, with the per-candidate deadline exposed
+     * as [perCandidateBudgetMs] rather than hardcoded — the same "expose
+     * the real parameter, default it at the public entry point" shape as
+     * [jpegDataUnder]'s `capBytes`, so tests can exercise the real
+     * [kotlinx.coroutines.withTimeoutOrNull] mechanism against a short,
+     * real budget instead of waiting out the full 22s production
+     * deadline. A timed-out or failed candidate is skipped — never
+     * retried, never counted in [TourPhotoExportResult.exported] — and
+     * the loop always proceeds to the next candidate; only a REAL
+     * caller-scope cancellation exits early. The two
+     * `coroutineContext.ensureActive()` calls disambiguate "this
+     * candidate's own timeout fired" (swallowed as a null/skip) from
+     * "the caller cancelled us" (re-thrown), mirroring
+     * [SharePrepStore.prepareOne]'s
+     * `catch (CancellationException) { ensureActive(); ... }` precedent.
+     */
+    internal suspend fun exportBounded(
+        walkUuid: String,
+        candidates: List<WalkPhoto>,
+        perCandidateBudgetMs: Long,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
     ): TourPhotoExportResult = withContext(Dispatchers.IO) {
         val capped = candidates.take(MAX_PHOTOS)
@@ -148,38 +186,53 @@ class TourPhotoExporter @Inject constructor(
         val exported = mutableListOf<TourPhoto>()
         for ((index, candidate) in capped.withIndex()) {
             coroutineContext.ensureActive()
-            val startedAtMs = clock.now()
-            val photo = loadOne(walkUuid, candidate, n = exported.size + 1)
+            val photo = withTimeoutOrNull(perCandidateBudgetMs) {
+                loadOne(walkUuid, candidate, n = exported.size + 1)
+            }
+            coroutineContext.ensureActive()
             if (photo != null) exported += photo
             onProgress(index + 1, requested)
-            if (clock.now() - startedAtMs >= PER_PHOTO_TIMEOUT_MS + BACKSTOP_GRACE_MS) break
         }
         TourPhotoExportResult(photos = exported, requested = requested)
     }
 
     /**
-     * Full-resolution decode -> EXIF orientation applied to pixels ->
-     * downscale to [TARGET_LONG_EDGE_PX] -> quality-ladder JPEG encode ->
-     * write to [SharePrepStore.photoFile]. Returns null on ANY failure
-     * (unresolvable URI, decode failure, no ladder rung fit the cap) —
-     * the caller counts that as a shortfall and moves on to the next
-     * candidate, matching iOS's
+     * Bounds probe -> sampled decode (long edge kept >= [TARGET_LONG_EDGE_PX],
+     * see [computeInSampleSize]) -> EXIF orientation applied to pixels ->
+     * exact downscale to [TARGET_LONG_EDGE_PX] -> quality-ladder JPEG
+     * encode -> write to [SharePrepStore.photoFile]. Returns null on ANY
+     * failure (unresolvable URI, invalid bounds, decode failure, no
+     * ladder rung fit the cap) or once this candidate's own deadline has
+     * fired (see the class doc) — the caller counts that as a shortfall
+     * and moves on to the next candidate, matching iOS's
      * `guard let image, let data = jpegDataUnder(...) else { resume(nil) }`.
      */
-    private fun loadOne(walkUuid: String, candidate: WalkPhoto, n: Int): TourPhoto? = try {
+    private suspend fun loadOne(walkUuid: String, candidate: WalkPhoto, n: Int): TourPhoto? = try {
         val uri = Uri.parse(candidate.photoUri)
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         if (bytes == null) {
             Log.w(TAG, "openInputStream returned null for ${candidate.photoUri}")
             null
         } else {
+            coroutineContext.ensureActive()
             val orientation = readOrientation(bytes)
-            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            if (decoded == null) {
-                Log.w(TAG, "decode failed for ${candidate.photoUri}")
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                Log.w(TAG, "invalid bounds for ${candidate.photoUri}")
                 null
             } else {
-                encodeAndWrite(walkUuid, candidate, n, decoded, orientation)
+                coroutineContext.ensureActive()
+                val sampleSize = computeInSampleSize(bounds.outWidth, bounds.outHeight, TARGET_LONG_EDGE_PX)
+                val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+                if (decoded == null) {
+                    Log.w(TAG, "decode failed for ${candidate.photoUri}")
+                    null
+                } else {
+                    coroutineContext.ensureActive()
+                    encodeAndWrite(walkUuid, candidate, n, decoded, orientation)
+                }
             }
         }
     } catch (ce: CancellationException) {
@@ -306,6 +359,26 @@ class TourPhotoExporter @Inject constructor(
             val newWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
             val newHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
             return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        }
+
+        /**
+         * Largest power-of-two `inSampleSize` whose decoded long edge
+         * stays >= [targetLongEdgePx] — sampling never undershoots the
+         * target, so the later exact [scaleToLongEdge] pass always has
+         * real pixels to downscale rather than upscaling a too-small
+         * sampled decode. Mirrors
+         * [org.walktalkmeditate.pilgrim.data.pilgrim.builder.AndroidPilgrimPhotoEmbedder]'s
+         * bounds-probe-then-sample pattern (U5 review: full-resolution
+         * decode before this fix could peak near 380MB for a rotated
+         * 50MP source).
+         */
+        internal fun computeInSampleSize(width: Int, height: Int, targetLongEdgePx: Int): Int {
+            val longEdge = maxOf(width, height)
+            var sample = 1
+            while (longEdge / (sample * 2) >= targetLongEdgePx) {
+                sample *= 2
+            }
+            return sample
         }
 
         /**
