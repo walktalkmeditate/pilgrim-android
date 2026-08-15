@@ -71,9 +71,28 @@ internal object TourBuilder {
      * still speech.
      */
     fun classify(transcription: String?): TourRecordingKind {
-        val text = transcription?.trim() ?: return TourRecordingKind.SPOKEN
-        val wordCount = text.split(Regex("\\s+")).count { it.isNotEmpty() }
-        return if (wordCount < 8) TourRecordingKind.AMBIENT else TourRecordingKind.SPOKEN
+        val text = transcription ?: return TourRecordingKind.SPOKEN
+        return if (whitespaceSeparatedWordCount(text) < 8) TourRecordingKind.AMBIENT else TourRecordingKind.SPOKEN
+    }
+
+    /**
+     * Counts runs of non-whitespace characters, mirroring Swift's
+     * `text.split(whereSeparator: \.isWhitespace).count` exactly —
+     * including its Unicode-aware notion of whitespace (`Char
+     * .isWhitespace()`, not the ASCII-only `\s` regex class).
+     */
+    private fun whitespaceSeparatedWordCount(text: String): Int {
+        var count = 0
+        var inWord = false
+        for (c in text) {
+            if (c.isWhitespace()) {
+                inWord = false
+            } else if (!inWord) {
+                inWord = true
+                count++
+            }
+        }
+        return count
     }
 
     /**
