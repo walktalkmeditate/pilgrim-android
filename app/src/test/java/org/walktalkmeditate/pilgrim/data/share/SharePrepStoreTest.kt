@@ -285,6 +285,24 @@ class SharePrepStoreTest {
     }
 
     @Test
+    fun `cancelAndCleanupWalk also removes the U5 photos subdirectory`() = runBlocking {
+        val walkUuid = "walk-with-photos"
+        val rec = recording(walkUuid)
+        store.prepare(walkUuid, listOf(rec))
+        val photo = store.photoFile(walkUuid, 1).apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(32))
+        }
+        assertTrue(photo.exists())
+
+        store.cancelAndCleanupWalk(walkUuid)
+
+        assertFalse(photo.exists())
+        assertFalse("photos subdir must not survive walk cleanup", photo.parentFile!!.exists())
+        assertFalse(store.artifactFile(walkUuid, rec.uuid).parentFile!!.exists())
+    }
+
+    @Test
     fun `cancelAndCleanupWalk refuses to delete a directory outside the share-prep root`() = runBlocking {
         val walkUuid = "walk-untouched"
         val rec = recording(walkUuid)
@@ -318,6 +336,21 @@ class SharePrepStoreTest {
         assertEquals(1, removed)
         assertTrue(store.artifactFile(kept, "a").parentFile!!.exists())
         assertFalse(store.artifactFile(orphan, "b").parentFile!!.exists())
+    }
+
+    @Test
+    fun `sweepOrphans removes an orphaned walk's U5 photos subdirectory too`() = runBlocking {
+        val orphan = UUID.randomUUID().toString()
+        val photo = store.photoFile(orphan, 1).apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(16))
+        }
+
+        val removed = store.sweepOrphans(emptySet())
+
+        assertEquals(1, removed)
+        assertFalse(photo.exists())
+        assertFalse(photo.parentFile!!.exists())
     }
 
     @Test
