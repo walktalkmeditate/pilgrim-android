@@ -53,7 +53,7 @@ Comparing to a future iOS HEAD past `3f9f9e8` is fine for context, but parity wo
 ## Backend URLs (reuse iOS endpoints, no changes)
 
 - Collective counter: `https://walk.pilgrimapp.org/api/counter`
-- Share worker: `https://walk.pilgrimapp.org/share/*`
+- Share worker: `https://walk.pilgrimapp.org` — `POST /api/share`, `PUT /api/share/{id}/{photos|audio}/{n}`, pages served at `/{id}`
 - Voice guide / sound manifests: `https://pilgrimapp.org/*`
 
 ## Conventions
