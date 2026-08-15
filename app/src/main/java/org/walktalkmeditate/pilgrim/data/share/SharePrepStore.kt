@@ -104,6 +104,18 @@ class SharePrepStore @Inject constructor(
     fun artifactFile(walkUuid: String, recordingUuid: String): File =
         File(walkPrepDir(walkUuid), "$recordingUuid.m4a")
 
+    /**
+     * `cacheDir/share-prep/<walkUuid>/photos/<n>.jpg` — U5's hi-res tour
+     * photo export path function, extending the artifact-path family
+     * [artifactFile] established so [TourPhotoExporter] composes paths
+     * through this store rather than independently. [n] is the 1-based
+     * position [TourPhotoExporter] assigned the photo (see [TourPhoto.n]).
+     * The caller is responsible for `mkdirs()` on the parent before
+     * writing — same division of labor as [artifactFile]/[ShareAudioTranscoder].
+     */
+    fun photoFile(walkUuid: String, n: Int): File =
+        File(walkPhotosDir(walkUuid), "$n.jpg")
+
     /** Sequential over [recordings]; each item reuses an existing Ready artifact or encodes a fresh one. */
     suspend fun prepare(walkUuid: String, recordings: List<VoiceRecording>) {
         for (recording in recordings) {
@@ -264,7 +276,14 @@ class SharePrepStore @Inject constructor(
 
     private fun walkPrepDir(walkUuid: String): File = File(sharePrepRoot(), walkUuid)
 
-    /** Deletes every `.m4a`/`.m4a.part` file inside [dir] via [safeDeleteArtifact], then the (hopefully empty) directory. */
+    private fun walkPhotosDir(walkUuid: String): File = File(walkPrepDir(walkUuid), PHOTOS_DIR_NAME)
+
+    /**
+     * Deletes every `.m4a`/`.m4a.part` file inside [dir] via
+     * [safeDeleteArtifact], recurses once into the U5 `photos/`
+     * subdirectory (if present) via [deleteKnownSubdirIfSafe], then the
+     * (hopefully now-empty) directory itself.
+     */
     private fun deleteWalkPrepDirIfSafe(dir: Path, root: Path): Boolean {
         return try {
             val canonical = dir.toAbsolutePath().normalize()
@@ -274,14 +293,46 @@ class SharePrepStore @Inject constructor(
             }
             if (!Files.isDirectory(canonical)) return true // nothing to clean up — already the desired end state
             Files.list(canonical).use { stream -> stream.collect(Collectors.toList()) }
-                .forEach { file -> if (Files.isRegularFile(file)) safeDeleteArtifact(file, root) }
+                .forEach { entry ->
+                    when {
+                        Files.isRegularFile(entry) -> safeDeleteArtifact(entry, root)
+                        Files.isDirectory(entry) && entry.fileName.toString() == PHOTOS_DIR_NAME ->
+                            deleteKnownSubdirIfSafe(entry, root)
+                    }
+                }
             // Files.delete throws if the dir is non-empty (unexpected content survived
-            // the per-file guard above) — caught below and left for investigation,
+            // the per-entry guard above) — caught below and left for investigation,
             // mirroring OrphanRecordingSweeper's deleteOrphanWalkDir.
             Files.delete(canonical)
             true
         } catch (t: Throwable) {
             Log.w(TAG, "walk prep dir delete failed: $dir", t)
+            false
+        }
+    }
+
+    /**
+     * Deletes every regular file directly inside a known, named
+     * walk-prep subdirectory (currently only [PHOTOS_DIR_NAME]), then
+     * the subdirectory itself. Named-subdir only — [deleteWalkPrepDirIfSafe]
+     * calls this exclusively for [PHOTOS_DIR_NAME], never as a general
+     * recursive delete, so an unrelated/unexpected subdirectory still
+     * surfaces via the outer `Files.delete` non-empty-directory failure
+     * instead of being silently swept.
+     */
+    private fun deleteKnownSubdirIfSafe(dir: Path, root: Path): Boolean {
+        return try {
+            val canonical = dir.toAbsolutePath().normalize()
+            if (!canonical.startsWith(root)) {
+                Log.w(TAG, "refusing to delete subdir outside share-prep root: $canonical")
+                return false
+            }
+            Files.list(canonical).use { stream -> stream.collect(Collectors.toList()) }
+                .forEach { file -> if (Files.isRegularFile(file)) safeDeleteArtifact(file, root) }
+            Files.delete(canonical)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "subdir delete failed: $dir", t)
             false
         }
     }
@@ -313,15 +364,19 @@ class SharePrepStore @Inject constructor(
     private companion object {
         const val TAG = "SharePrepStore"
         const val SHARE_PREP_DIR = "share-prep"
+
+        /** U5: hi-res tour photo export subdirectory name, under a walk's prep dir. */
+        const val PHOTOS_DIR_NAME = "photos"
         val WALK_UUID_REGEX =
             Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
         /**
          * `m4a` for a finished artifact, `part` for
          * [ShareAudioTranscoder.partFileFor]'s in-progress temp sibling
-         * (`<uuid>.m4a.part` — the trailing extension is `part`). Both
-         * are safe for the orphan sweep / walk-dir cleanup to remove.
+         * (`<uuid>.m4a.part` — the trailing extension is `part`), `jpg`
+         * for a U5 [photoFile] artifact. All are safe for the orphan
+         * sweep / walk-dir cleanup to remove.
          */
-        val ARTIFACT_EXTENSIONS = setOf("m4a", "part")
+        val ARTIFACT_EXTENSIONS = setOf("m4a", "part", "jpg")
     }
 }
