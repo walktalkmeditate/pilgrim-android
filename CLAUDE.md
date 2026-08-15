@@ -12,14 +12,14 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 
 ## Parity scope (frozen)
 
-**Parity target: pilgrim-ios main @ `b4decad`** (2026-07-28; v1.9.0 + the seek-clearing-glyph fold-in `3186a39`, absorbed per R2 with user triage). Anything iOS shipped AT OR BEFORE that commit is in-scope for Android port. Anything iOS ships AFTER `b4decad` is OUT OF SCOPE — with one bounded exception: deltas landing before Android v1.3.0 ships are re-diffed and triaged per the fold-in rule (R2 in `docs/brainstorms/2026-07-22-ios-v190-parity-retarget-requirements.md`): chores, hotfixes, and incremental refinements to route rotation / whisper base / map glyphs fold into the owning phase; new headline features, reverts of ported work, or redesigns require explicit user re-triage.
+**Parity target: pilgrim-ios main @ `38ef6b2`** (2026-08-13; v1.10.0 candidate, untagged — awaiting App Store approval). Anything iOS shipped AT OR BEFORE that commit is in-scope for Android port. Anything iOS ships AFTER `38ef6b2` is OUT OF SCOPE — with one bounded exception: deltas landing before Android v1.4.0 ships are re-diffed and triaged per the fold-in rule (R2 in `docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md`): chores, hotfixes, and incremental refinements to the share surface fold into Phase 19 (the walk-with-me interactive share port); new headline features, reverts of ported work, or redesigns require explicit user re-triage.
 
 To diff iOS for in-scope work that hasn't landed on Android yet:
 ```bash
-cd ../pilgrim-ios && git log --oneline b4decad
+cd ../pilgrim-ios && git log --oneline 38ef6b2
 ```
 
-Comparing to a future iOS HEAD past `b4decad` is fine for context, but parity work targets `b4decad` only.
+Comparing to a future iOS HEAD past `38ef6b2` is fine for context, but parity work targets `38ef6b2` only.
 
 ## Architecture
 
