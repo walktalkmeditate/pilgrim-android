@@ -39,6 +39,26 @@ data class ShareInputs(
     val steps: Int?,
     /** Pinned reliquary photos for this walk (every `walk_photos` row IS a pin). */
     val pinnedPhotos: List<WalkPhoto> = emptyList(),
+    /**
+     * Phase 19: the walk's paused stretches, for the interactive-share
+     * `pauses` field. Source of truth is
+     * [org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath.pauseSpans]
+     * — the same PAUSED/RESUMED automaton `core.prompt.PauseContext`
+     * maps from. Declared locally (rather than importing that
+     * `internal` type across packages) so this pure payload layer has
+     * no dependency on the walk-metrics package; a caller maps
+     * `WalkMetricsMath.PauseSpan` → [PauseSpan] at the same seam
+     * `PromptsCoordinator` already uses for `PauseContext`.
+     */
+    val pauseSpans: List<PauseSpan> = emptyList(),
+    /**
+     * Phase 19: per-recording artifact info for [TourBuilder], keyed
+     * by [VoiceRecording.uuid]. A recording with no entry reads as
+     * unavailable ("audio removed") — see [RecordingArtifact]. Empty
+     * until a later unit's transcode/artifact store supplies real
+     * values.
+     */
+    val recordingArtifacts: Map<String, RecordingArtifact> = emptyMap(),
 )
 
 /** User-selected share options surfaced by the modal. */
@@ -52,7 +72,18 @@ data class WalkShareOptions(
     val includeSteps: Boolean,
     val includeWaypoints: Boolean,
     val includePhotos: Boolean = false,
+    /** Phase 19: "Walk with Me" interactive share — attaches `tour` + `pauses`, gates route trim. */
+    val interactive: Boolean = false,
+    /** Phase 19: only takes effect when [interactive] is also true (iOS `WalkShareViewModel.swift:471`). */
+    val trimEnabled: Boolean = false,
+    /** Phase 19: recordings the walker excluded from the tour — a user choice, not an unavailability. */
+    val excludedRecordingUuids: Set<String> = emptySet(),
 )
+
+/**
+ * One paused stretch of the walk, in epoch millis. See [ShareInputs.pauseSpans].
+ */
+data class PauseSpan(val startMs: Long, val durationMillis: Long)
 
 internal object SharePayloadBuilder {
 
@@ -82,6 +113,25 @@ internal object SharePayloadBuilder {
             )
         }
         val downsampled = RouteDownsampler.downsample(projected)
+
+        // Phase 19: trim runs on the downsampled route (matches iOS
+        // `computeInteractiveRoute()` — downsample happens first, trim
+        // second) so map/og/tour all inherit the same trimmed points;
+        // there is no separate "trimmed for the tour" copy. Report the
+        // outcome, never the intent: RouteTrimmer silently no-ops on a
+        // route too short to trim, so trimM must reflect what actually
+        // happened, never claim a trim that never ran.
+        val trimApplies = options.interactive && options.trimEnabled
+        val finalRoute = if (trimApplies) {
+            RouteTrimmer.trim(downsampled, ShareConfig.INTERACTIVE_TRIM_METERS.toDouble())
+        } else {
+            downsampled
+        }
+        val trimM = if (trimApplies && finalRoute.size < downsampled.size) {
+            ShareConfig.INTERACTIVE_TRIM_METERS
+        } else {
+            0
+        }
 
         val intervals = buildList {
             inputs.activityIntervals
@@ -162,9 +212,28 @@ internal object SharePayloadBuilder {
             }
         } else null
 
+        // Phase 19: tour + pauses attach only on an interactive share.
+        // A zero-candidate / zero-pause interactive walk still gets a
+        // (empty) Tour and an empty pauses list, never null — matching
+        // iOS's `applyInteractiveTourAndPauses`, which runs
+        // unconditionally once `interactive` is true.
+        val tour = if (options.interactive) {
+            TourBuilder.tourItems(
+                candidates = TourBuilder.candidates(
+                    recordings = inputs.voiceRecordings,
+                    artifacts = inputs.recordingArtifacts,
+                    excludedUuids = options.excludedRecordingUuids,
+                ),
+                trimM = trimM,
+            ).tour
+        } else {
+            null
+        }
+        val pauses = if (options.interactive) buildPauses(inputs.pauseSpans) else null
+
         return SharePayload(
             stats = stats,
-            route = downsampled,
+            route = finalRoute,
             activityIntervals = intervals,
             journal = options.journal.takeIf { it.isNotBlank() },
             expiryDays = options.expiry.days,
@@ -192,6 +261,8 @@ internal object SharePayloadBuilder {
                         .let { if (southern) it?.forSouthernHemisphere() else it },
                 )
             },
+            tour = tour,
+            pauses = pauses,
         )
     }
 
@@ -212,3 +283,29 @@ internal fun turningDayCode(marker: SeasonalMarker?): String? = when (marker) {
     SeasonalMarker.WinterSolstice -> "winter-solstice"
     else -> null
 }
+
+/**
+ * Port of iOS `applyInteractiveTourAndPauses`'s pause assembly
+ * (`WalkShareViewModel.swift:442-452`): truncates each span to
+ * epoch-second start/end (matching the worker's truncated-integer
+ * validation), drops any span whose truncated end doesn't exceed its
+ * truncated start, and caps at [PAUSE_CAP] — applied AFTER truncation
+ * and AFTER the drop-filter, so a truncated-to-zero-length pause can
+ * never crowd out a legitimate 201st pause.
+ *
+ * Pure and independently testable; [SharePayloadBuilder.build] calls
+ * this only when `options.interactive` is true.
+ */
+internal fun buildPauses(spans: List<PauseSpan>): List<SharePayload.Pause> =
+    spans
+        .map { span ->
+            // Epoch-MILLIS -> epoch-SECONDS, same truncation as SharePayloadBuilder's own route/interval timestamps.
+            val startTs = span.startMs / 1_000L
+            val endTs = (span.startMs + span.durationMillis) / 1_000L
+            startTs to endTs
+        }
+        .filter { (start, end) -> end > start }
+        .take(PAUSE_CAP)
+        .map { (start, end) -> SharePayload.Pause(startTs = start, endTs = end) }
+
+private const val PAUSE_CAP = 200

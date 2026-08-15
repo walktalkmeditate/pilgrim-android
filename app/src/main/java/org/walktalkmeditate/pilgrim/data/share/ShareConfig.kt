@@ -20,4 +20,13 @@ internal object ShareConfig {
     const val JOURNAL_MAX_LEN = 140
     const val ROUTE_MIN_POINTS = 2
     const val DOWNSAMPLE_TARGET_POINTS = 200
+
+    /**
+     * Interactive-share route trim distance, metres shaved off each
+     * end when `interactive` + `trimEnabled` are both on (iOS
+     * `WalkShareViewModel.trimMeters`, `WalkShareViewModel.swift:36`).
+     * Single source for [RouteTrimmer] calls; a future consent-UI unit
+     * reads the same constant for its "too short to trim" copy.
+     */
+    const val INTERACTIVE_TRIM_METERS = 150
 }
