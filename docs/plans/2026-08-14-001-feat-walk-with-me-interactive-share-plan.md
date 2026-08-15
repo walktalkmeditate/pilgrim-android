@@ -10,7 +10,7 @@ origin: docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md
 
 > **For agentic workers:** execute unit-by-unit per the house autopilot pattern (one unit ≈ one PR, closing adversarial reviews per stage) or via superpowers:subagent-driven-development. U2's parity spec gates every implementation unit — **the spec's Swift quotes override any behavioral claim in this plan** wherever they disagree. Checkboxes track units, not micro-steps.
 
-**Goal:** Android v1.4.0 ships the "Walk with Me" interactive share at parity with iOS main @ `38ef6b2`: an opt-in Interactive toggle that uploads a walk's voices and hi-res photos so the share page becomes a scrollable story, with consent, caps, trim, transcode, sequential PUTs, and kill-safe repair.
+**Goal:** Android v1.4.0 ships the "Walk with Me" interactive share at parity with iOS main @ `3f9f9e8`: an opt-in Interactive toggle that uploads a walk's voices and hi-res photos so the share page becomes a scrollable story, with consent, caps, trim, transcode, sequential PUTs, and kill-safe repair.
 
 **Architecture:** Everything lands on the existing share stack (`data/share` + `ui/walk/share`). Two Android-original subsystems have no iOS reference: a WAV→AAC transcode prep pipeline (MediaCodec/MediaMuxer) that runs when Interactive toggles on, and a repair-record store whose semantics (resumable, never mis-slotted, honestly reported) replace iOS's background-assertion mechanics. The story page itself is `pilgrim-worker`'s, already live.
 
@@ -18,9 +18,9 @@ origin: docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md
 
 ## Global Constraints
 
-- Parity pin: `pilgrim-ios` @ `38ef6b2`. Shipped Swift wins over the iOS spec/plan docs (known superseded spec sections listed in origin R3).
+- Parity pin: `pilgrim-ios` @ `3f9f9e8` (re-pinned 2026-08-15: iOS PR #60 — 108-minute tours, `maxTotalSeconds` 2700→6480 — folded into Phase 19 per R2). Shipped Swift wins over the iOS spec/plan docs (known superseded spec sections listed in origin R3).
 - SPDX header only on new files: `// SPDX-License-Identifier: GPL-3.0-or-later`. No OutRun references anywhere.
-- Backend contract unchanged: `POST https://walk.pilgrimapp.org/api/share`, `PUT /api/share/{id}/photos/{n}`, `PUT /api/share/{id}/audio/{n}`, header `X-Device-Token`. Client mirrors server caps only for friendly early failure: 12 recordings / 60 MB / 45 min aggregates; 15 MB per audio file; 20 photos; 2 MB per photo; 2 MB JSON payload.
+- Backend contract unchanged: `POST https://walk.pilgrimapp.org/api/share`, `PUT /api/share/{id}/photos/{n}`, `PUT /api/share/{id}/audio/{n}`, header `X-Device-Token`. Client mirrors server caps only for friendly early failure: 12 recordings / 60 MB / 108 min (6480 s) aggregates; 15 MB per audio file; 20 photos; 2 MB per photo; 2 MB JSON payload.
 - Platform-object builder rule: any `Request`, `MediaFormat`, `MediaMuxer`, `NotificationChannel`, or `WorkRequest` construction gets at least one Robolectric test calling the real builder on the production class.
 - `String.format(Locale.US, ...)` for numeric display; `Locale.ROOT` for wire formats.
 - Interactive off = today's share exactly; transcripts never leave the device (payload `transcription` always null, iOS test-pins this in `728c9e1`).
@@ -36,7 +36,7 @@ Port iOS v1.10.0's single headline feature as Phase 19 in nine dependency-ordere
 
 ## Problem Frame
 
-Android v1.3.0 sits at exact parity with iOS `b4decad` (= v1.9.1). iOS main has moved 42 commits to `38ef6b2` (v1.10.0 candidate, in App Review): one feature — the interactive share — plus chores triaged out. Full delta table, triage, and the resolved reshare decision live in the origin document.
+Android v1.3.0 sits at exact parity with iOS `b4decad` (= v1.9.1). iOS main has moved 42 commits to `3f9f9e8` (v1.10.0 candidate, in App Review): one feature — the interactive share — plus chores triaged out. Full delta table, triage, and the resolved reshare decision live in the origin document.
 
 ---
 
@@ -44,7 +44,7 @@ Android v1.3.0 sits at exact parity with iOS `b4decad` (= v1.9.1). iOS main has 
 
 Carried from origin (docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md):
 
-- R1. Re-pin the frozen parity anchor to `38ef6b2`; update `CLAUDE.md`, the `ios-parity` skill anchor + script defaults, stale references.
+- R1. Re-pin the frozen parity anchor to `3f9f9e8`; update `CLAUDE.md`, the `ios-parity` skill anchor + script defaults, stale references.
 - R2. Fold-in rule carries forward; pre-release iOS deltas re-diff and triage into Phase 19; headline features/reverts/redesigns go to user re-triage.
 - R3. End-state port of the shipped Swift onto the existing share stack; shipped code wins over the (partly superseded) iOS spec docs.
 - R4. Consent UI parity: Interactive toggle (default off), recordings disclosure with per-recording exclusion and two unavailable row states ("audio removed", "too large to carry"), photos auto-enable, voices warning, aggregate-caps share gating. First-share-only accepted: a non-expired cached share still short-circuits past the form.
@@ -54,7 +54,7 @@ Carried from origin (docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requi
 - R8. Upload orchestration parity: photos first then audio, one auto-retry per item, partial state reveals link + "Carry the missing files" identity-verified batch repair, "Carrying your walk… N/M" copy; invariants: form freeze, completeShare lock, consent-decline cancels, excluded-leave-no-trace, talkDuration clamp, kill-safe repair record, stale records cleared.
 - R9 (Android-original). WAV→AAC transcode during share preparation — cancellable, progress-surfaced; `size_bytes` and caps judge transcoded artifacts; failure degrades like upload failure; artifacts cached with the repair record.
 - R10 (Android-original). Upload lifecycle: repair semantics are the parity bar, mechanism Android-chosen.
-- R11. Every implementation unit is preceded by the U2 `/ios-parity port` spec pinned at `38ef6b2`.
+- R11. Every implementation unit is preceded by the U2 `/ios-parity port` spec pinned at `3f9f9e8`.
 - R12. Unit tests per house rules incl. the platform-object builder Robolectric rule; MediaCodec hardware path device-verified.
 - R13. One consolidated device QA pass (OnePlus 13) incl. the production-worker contract test, kill/background/airplane interruption paths, Interactive-off regression, already-shared-walk short-circuit.
 - R14. Single release: v1.4.0.
@@ -63,7 +63,7 @@ Carried from origin (docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requi
 
 ## Scope Boundaries
 
-From origin, unchanged: no worker-side work; no whispers bundled bootstrap; no iOS release tooling / screenshot seeder; no spec Phase 2/3 surfaces (auto-advance, transcript sync, leave-a-stone client UI); no recording-pipeline changes (capture stays 16 kHz mono WAV for whisper.cpp); no reshare affordance (first-share-only accepted); nothing iOS ships after `38ef6b2` except R2 fold-ins.
+From origin, unchanged: no worker-side work; no whispers bundled bootstrap; no iOS release tooling / screenshot seeder; no spec Phase 2/3 surfaces (auto-advance, transcript sync, leave-a-stone client UI); no recording-pipeline changes (capture stays 16 kHz mono WAV for whisper.cpp); no reshare affordance (first-share-only accepted); nothing iOS ships after `3f9f9e8` except R2 fold-ins.
 
 ---
 
@@ -101,7 +101,7 @@ From origin, unchanged: no worker-side work; no whispers bundled bootstrap; no i
 
 ## Key Technical Decisions
 
-1. **Transcode target: AAC-LC mono, 64 kbps, source sample rate (16 kHz), M4A container.** Speech-appropriate; 45 min ≈ 21.6 MB (under the 60 MB aggregate), one file hits 15 MB at ≈ 31 min. 16 kHz AAC-LC is a standard sample-rate index; the U1 probe proves worker + browser playback before any code exists. If the probe fails on 16 kHz, the pre-agreed contingency is resampling to 32 kHz during encode (MediaCodec consumes the same PCM; only `KEY_SAMPLE_RATE` and an interpolation pass change).
+1. **Transcode target: AAC-LC mono, 64 kbps, source sample rate (16 kHz), M4A container.** Speech-appropriate; 108 min at 64 kbps ≈ 51.8 MB (still under the 60 MB aggregate — barely; the bytes cap binds first on long tours), one file hits 15 MB at ≈ 31 min. 16 kHz AAC-LC is a standard sample-rate index; the U1 probe proves worker + browser playback before any code exists. If the probe fails on 16 kHz, the pre-agreed contingency is resampling to 32 kHz during encode (MediaCodec consumes the same PCM; only `KEY_SAMPLE_RATE` and an interpolation pass change).
 2. **Prep timing: transcode starts when Interactive toggles on** — sequential over included recordings, per-row "preparing…" until its real size lands, Share button gated until every included artifact is ready (satisfies AE4 with no estimated-sizes state), cancelled by toggle-off; excluding a recording cancels/deletes its artifact.
 3. **Artifact hygiene (closes the review's FYI gaps):** artifacts live in `cacheDir/share-prep/<walkUuid>/<recordingUuid>.m4a`, written and deleted through the same path function. Deleted on: toggle-off, exclusion, share-screen exit without an active repair record, and repair-record clearing. A startup sweep (OrphanRecordingSweeper pattern) removes artifact dirs with no matching active repair record. A repair retry that finds a missing artifact re-encodes from the WAV rather than failing.
 4. **Upload lifecycle: VM-scoped coroutine + persisted repair record; no WorkManager in v1.4.0.** Matches the pin's foreground semantics (uploads run while the share screen lives; re-entry offers repair for the share's life). Honest paused reporting: process death or scope cancellation leaves the repair record authoritative; the pin's pre-fail-doomed-PUTs gate translates to marking the untried tail as pending-in-record before cancellation completes. iOS has a background-URLSession rework flagged as a fast-follow — R2 handles it if it lands pre-release; do not pre-build for it.
@@ -141,15 +141,15 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 - [ ] **Status: Not Started**
 
-**Goal:** The repo, skill tooling, and docs all name `38ef6b2`; the worker contract and CDN assumptions are proven before implementation starts.
+**Goal:** The repo, skill tooling, and docs all name `3f9f9e8`; the worker contract and CDN assumptions are proven before implementation starts.
 
 **Requirements:** R1, R2, plus origin Dependencies (worker probe, wonder-4 CDN check).
 
 **Dependencies:** none.
 
 **Files:**
-- Modify: `CLAUDE.md` (parity-scope section: `b4decad` → `38ef6b2`, dated 2026-08-13, v1.10.0 candidate; fold-in rule references Phase 19 / v1.4.0)
-- Modify (out-of-repo, operational): `~/.claude/skills/ios-parity/SKILL.md` (both `9a418e4` citations) and `~/.claude/skills/ios-parity/scripts/lib.sh` + `ios-pin.sh` header (default `c1745e8` → `38ef6b2`)
+- Modify: `CLAUDE.md` (parity-scope section: `b4decad` → `3f9f9e8`, dated 2026-08-13, v1.10.0 candidate; fold-in rule references Phase 19 / v1.4.0)
+- Modify (out-of-repo, operational): `~/.claude/skills/ios-parity/SKILL.md` (both `9a418e4` citations) and `~/.claude/skills/ios-parity/scripts/lib.sh` + `ios-pin.sh` header (default `c1745e8` → `3f9f9e8`)
 - Modify: memory index entry for the parity target (pilgrim_android_project.md pointer)
 
 **Approach:**
@@ -169,7 +169,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 **Requirements:** R11, R3.
 
-**Dependencies:** U1 (pin updated so citations render `@38ef6b2`).
+**Dependencies:** U1 (pin updated so citations render `@3f9f9e8`).
 
 **Files:**
 - Create: `docs/parity/2026-08-XX-walk-share-interactive-port.md` (skill output)
@@ -179,7 +179,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 - Direct the lens readers at the share review-round commits (`7ed84dc`, `055305a`, `abdacc8`, `ed66aca`, `62b2b5f`) — the doc-review proved the iOS *spec docs* are stale in five places; only shipped Swift counts.
 - The spec must pin, at minimum: TourBuilder classification rules + constants and `unavailableReason` strings; validation aggregates; RouteTrimmer math + `canTrim`; payload field-by-field encoding incl. `size_bytes` and `trim_m`; photo export ladder + deadline + backstop + `.photosDropped`; uploadAllMedia order/retry/partial contract; repair-record schema + identity verification + stale clearing; every user-facing copy string; talkDuration clamp; the cachedShare short-circuit behavior.
 
-**Verification:** spec exists with `@38ef6b2` citations on every claim; the five previously-stale details (transcription-null, photos-first, auto-retry/partial UX, ladder 0.8→0.2, "Trim start & end") appear with direct quotes.
+**Verification:** spec exists with `@3f9f9e8` citations on every claim; the five previously-stale details (transcription-null, photos-first, auto-retry/partial UX, ladder 0.8→0.2, "Trim start & end") appear with direct quotes.
 
 ---
 
@@ -208,7 +208,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 **Test scenarios:**
 - Classification: blank-transcription → ambient; 7-word → ambient; 8-word slow speech → spoken (the PR #59 regression); untranscribed → spoken; every payload entry has null transcription (the privacy invariant, mirrored from iOS's pin test).
-- Caps: 13 included → validationError; one 16 MB artifact → that row unavailable, no validationError, share still valid; 61 MB / 46 min totals → validationError; renumbering skips excluded and unavailable rows.
+- Caps: 13 included → validationError; one 16 MB artifact → that row unavailable, no validationError, share still valid; 61 MB totals or >6480 s totals → validationError; renumbering skips excluded and unavailable rows.
 - Trim: point-count and endpoint assertions on a synthetic route; `trim_m` present only when trimming ran; degenerate 200 m walk → `canTrim` false, route untouched.
 - Pauses: non-interactive build → null; zero-length span dropped; 201 spans → 200.
 - Payload: interactive build omits `Photo.data`; classic build byte-identical to pre-Phase-19 output (regression fixture).
@@ -375,7 +375,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 - Interactive-off regression share → classic page unchanged (AE1).
 - Already-shared walk re-entry → Shared state short-circuit (first-share-only).
 - TalkBack pass over the new section + status card.
-- Pre-tag: re-diff `38ef6b2..ios-main`, triage per R2 (fold-in or user re-triage), re-pin if folded.
+- Pre-tag: re-diff `3f9f9e8..ios-main`, triage per R2 (fold-in or user re-triage), re-pin if folded.
 - Release per house infra: one production.yml dispatch; staged rollout; memory/docs updated.
 
 **Verification:** every checklist line has a written result in the QA notes; release live.
@@ -412,4 +412,4 @@ Single phase (19), single release (v1.4.0). Order: U1 → U2 → {U3, U4, U5 in 
 - Origin requirements (incl. full delta triage + resolved decisions): `docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md`
 - ce-doc-review round 1 findings (11 applied): commits `995dd063`, `c8a731e8`
 - Prior retarget plan (structure precedent): `docs/plans/2026-07-23-001-feat-ios-v190-parity-port-plan.md`
-- iOS pin: `pilgrim-ios` @ `38ef6b2` (2026-08-13)
+- iOS pin: `pilgrim-ios` @ `3f9f9e8` (2026-08-13)
