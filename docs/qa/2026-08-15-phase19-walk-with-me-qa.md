@@ -17,6 +17,8 @@ Device: OnePlus 13 · production worker (`walk.pilgrimapp.org`) · every line ge
 11. **Partial stays put:** force a failed audio PUT → card shows "Carry the missing files", browser does NOT auto-open.
 12. **Repair after cache eviction:** clear app cache (keep data) while a partial share exists → repair re-encodes via ensureArtifact and completes.
 
+14. **Soundscape on the page (fold-in #61/#62):** share with a selected soundscape → story page plays it; share with silence chosen → page has no soundscape. Verify the URL in tour.json is base/type/{id}.aac (not a doubled audio/ path).
+
 ## Accessibility
 
 13. TalkBack pass over the Interactive section + status card. Known gap: Interactive/Trim toggle rows read as 3 stops (no mergeDescendants) — decide ship-or-fix.

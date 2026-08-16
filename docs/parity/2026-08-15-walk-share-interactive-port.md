@@ -7,6 +7,7 @@
 | **Generated** | 2026-08-15 |
 | **Type** | port |
 | **Generator** | ios-parity skill |
+| **Fold-in** | body cites `3f9f9e8` (verified there; permanent ancestor); pin now `2ee1185` — delta covered in §9 |
 
 **Finding provenance.** 437 lens findings across four lenses — behavior (101), ui-visual (80), data (74), edge-cases (182). Every row below is tagged `BEH-n` / `UI-n` / `DAT-n` / `EDG-n`. Rows tagged **[consensus: …]** were independently produced by more than one lens against the same citation or near-identical claim.
 
@@ -4314,3 +4315,15 @@ Ambiguities that need human review before this spec becomes a plan.
 21. **Error copy is not portable.** UI-40 — `.error(message:)` renders `error.localizedDescription`, a system string. Android will produce different text for the same failure class; only the rust/centred/caption styling ports. `ShareError.rateLimited`'s copy (DAT-40) *is* app-authored and must match exactly.
 
 > Spec written. Run `superpowers:writing-plans <path>` to break into tasks, or `jutsu swarm doc-review <path>` for a remote QA gate first.
+
+## 9. Fold-in addendum @2ee1185 (2026-08-16 — iOS PRs #61, #62, #63)
+
+Body sections 1-8 were lens-verified at `3f9f9e8` and their citations remain pinned there. This addendum covers the `3f9f9e8..2ee1185` delta (the only app-code changes: SharePayload.swift, TourBuilder.swift, InteractiveShareSection.swift, WalkShareViewModel.swift + their tests; later-line citations in those four files drift by +4/+15/+3/+7 respectively at the new pin). It SUPERSEDES: the §4 Tour entity field table, any §2/§5 row quoting the `tourItems(candidates:trimM:)` signature, the §3 trim-toggle binding row, and the §2 `applyInteractiveTourAndPauses` quote.
+
+- **FOLD-1 (entity).** `Pilgrim/Models/Share/SharePayload.swift:89-100@2ee1185` — `Tour` gains `let soundscapeUrl: String?` with `case soundscapeUrl = "soundscape_url"`; doc comment: "The walker's own meditation soundscape (cdn URL). nil when the walker sits in silence — the page then stays silent too." Optional ⇒ encodeIfPresent ⇒ key ABSENT when nil (worker nulls rule).
+- **FOLD-2 (resolver).** `Pilgrim/Models/Share/TourBuilder.swift:96-110@2ee1185` — `static func soundscapeUrl(selectedId: String?, manifest: AudioManifest?) -> String?` resolves `Config.Audio.r2BaseURL/{asset.type.rawValue}/{asset.id}.aac`. Comment pins the trap: "the same base/type/{id}.aac formula AudioDownloadManager fetches with — NOT r2Key, whose bucket-relative path already contains the audio/ prefix and would double it. nil in = silence chosen = nil out; a retired id also resolves to nil, never a dead link." (PR #62 fixed a live 404 from the r2Key form.)
+- **FOLD-3 (signature).** `TourBuilder.swift:112@2ee1185` — `tourItems(candidates:trimM:soundscapeUrl: String? = nil)` threads the url into `SharePayload.Tour`.
+- **FOLD-4 (VM seam).** `Pilgrim/Scenes/WalkShare/WalkShareViewModel.swift:442-450@2ee1185` — `applyInteractiveTourAndPauses` passes `TourBuilder.soundscapeUrl(selectedId: UserPreferences.selectedSoundscapeId.value, manifest: AudioManifestService.shared.manifest)`. Interactive-only by construction (rides inside `tour`).
+- **FOLD-5 (UI).** `Pilgrim/Scenes/WalkShare/InteractiveShareSection.swift:56-59@2ee1185` — trim toggle binding becomes outcome-not-intent: `get: { viewModel.trimEnabled && viewModel.canTrimRoute }, set: { viewModel.trimEnabled = $0 }` — a too-short walk displays OFF while the stored intent survives.
+- **FOLD-6 (test-pinned).** `UnitTests/TourBuilderTests.swift:62-86@2ee1185` — `testSoundscapeUrl_resolvesThroughManifest` (formula, nil-for-silence, nil-for-retired-id, nil-for-no-manifest) and `testTourItems_carriesSoundscapeUrl` (carried when given, nil default). `UnitTests/SharePayloadTourTests.swift:34-46@2ee1185` — wire assertion `tourJSON["soundscape_url"]`.
+
