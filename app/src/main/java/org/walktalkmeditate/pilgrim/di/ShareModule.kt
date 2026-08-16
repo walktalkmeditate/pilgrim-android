@@ -8,6 +8,8 @@ import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import okhttp3.OkHttpClient
+import org.walktalkmeditate.pilgrim.audio.MediaCodecShareAudioTranscoder
+import org.walktalkmeditate.pilgrim.audio.ShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.share.AndroidSharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.ShareBaseUrl
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
@@ -48,6 +50,19 @@ object ShareModule {
     @Provides
     @Singleton
     fun provideSharePhotoEncoder(impl: AndroidSharePhotoEncoder): SharePhotoEncoder = impl
+
+    /**
+     * Phase 19 U8: the only interface in the interactive-share stack, so
+     * the only one needing a binding here. `SharePrepStore`,
+     * `TourPhotoExporter` and `ShareRepairStore` are all
+     * `@Singleton class X @Inject constructor(...)` concrete types —
+     * Hilt constructs them from their own constructors and a
+     * `@Provides` here would be a second, drift-prone declaration of the
+     * same graph edge (same reason `ShareService` has no entry either).
+     */
+    @Provides
+    @Singleton
+    fun provideShareAudioTranscoder(impl: MediaCodecShareAudioTranscoder): ShareAudioTranscoder = impl
 
     private const val SHARE_CALL_TIMEOUT_SEC = 90L
 }

@@ -136,6 +136,25 @@ class ShareRepairStore(
         dataStore.data.map { prefs -> prefs[keyFor(walkUuid)]?.let(::decode) }.first()
 
     /**
+     * Every walk that currently holds a repair record — the keep set for
+     * [SharePrepStore.sweepOrphans], since a walk with un-landed slots
+     * is exactly the walk whose transcode artifacts a repair pass may
+     * still need. Key-scan shape mirrors [CachedShareStore.observeAll]'s
+     * (same dash-stripped key format, same reconstruction), as a
+     * one-shot rather than a Flow because its only consumer is a daily
+     * [org.walktalkmeditate.pilgrim.audio.OrphanSweeperWorker] pass.
+     */
+    suspend fun walkUuidsWithRecords(): Set<String> =
+        dataStore.data.map { prefs ->
+            prefs.asMap().keys
+                .asSequence()
+                .map { it.name }
+                .filter { it.startsWith(KEY_PREFIX) }
+                .mapNotNull { reconstructUuid(it.removePrefix(KEY_PREFIX)) }
+                .toSet()
+        }.first()
+
+    /**
      * Establishes [slots] (all forced to [SlotStatus.PENDING] unless
      * already-recorded-and-matching, see below) as the record
      * [ShareService.uploadMedia] is about to work through, and returns
@@ -249,7 +268,19 @@ class ShareRepairStore(
     }
 
     private fun keyFor(walkUuid: String) =
-        stringPreferencesKey("share_repair_" + walkUuid.replace("-", ""))
+        stringPreferencesKey(KEY_PREFIX + walkUuid.replace("-", ""))
+
+    /** Inverse of [keyFor]'s dash-stripping; null for anything that isn't a 32-hex-char UUID body. */
+    private fun reconstructUuid(stripped: String): String? {
+        if (stripped.length != UUID_HEX_LENGTH) return null
+        return buildString {
+            append(stripped, 0, 8).append('-')
+            append(stripped, 8, 12).append('-')
+            append(stripped, 12, 16).append('-')
+            append(stripped, 16, 20).append('-')
+            append(stripped, 20, 32)
+        }
+    }
 
     /**
      * JSON-persisted shape. A flat, all-nullable identity payload rather
@@ -285,6 +316,11 @@ class ShareRepairStore(
             }
             return RepairSlot(kindEnum, n, identity, if (uploaded) SlotStatus.UPLOADED else SlotStatus.PENDING)
         }
+    }
+
+    private companion object {
+        const val KEY_PREFIX = "share_repair_"
+        const val UUID_HEX_LENGTH = 32
     }
 
     private fun RepairRecord.toPrefs() = RepairRecordPrefs(shareId = shareId, slots = slots.map { it.toPrefs() })

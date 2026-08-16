@@ -77,6 +77,15 @@ internal object TourBuilder {
     // 108 minutes — iOS PR #60 raised this from 45 min; the pin (3f9f9e8) carries 6480.
     const val MAX_TOTAL_SECONDS = 6480.0
 
+    /**
+     * The two `unavailableReason` values (`TourBuilder.swift:56-63@3f9f9e8`),
+     * named so the UI layer can map them to its closed
+     * `RecordingAvailability` type by identity rather than by
+     * re-typing the literals a second time.
+     */
+    const val REASON_AUDIO_REMOVED = "audio removed"
+    const val REASON_TOO_LARGE = "too large to carry"
+
     private const val MILLIS_PER_SECOND = 1_000L
 
     /**
@@ -152,8 +161,8 @@ internal object TourBuilder {
             val sizeBytes = artifact?.sizeBytes
             val fileExists = artifact?.fileExists == true
             val unavailableReason = when {
-                !fileExists || sizeBytes == null || sizeBytes <= 0L -> "audio removed"
-                sizeBytes > MAX_FILE_BYTES -> "too large to carry"
+                !fileExists || sizeBytes == null || sizeBytes <= 0L -> REASON_AUDIO_REMOVED
+                sizeBytes > MAX_FILE_BYTES -> REASON_TOO_LARGE
                 else -> null
             }
 

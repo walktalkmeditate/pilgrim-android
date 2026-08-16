@@ -486,6 +486,15 @@
     <string name="share_interactive_reason_too_large">too large to carry</string>
     <!-- Android-original: no iOS reference row-state (see RecordingAvailability.Preparing KDoc). -->
     <string name="share_interactive_row_preparing">Preparing…</string>
+    <string name="share_interactive_totals_empty">no recordings included</string>
+    <plurals name="share_interactive_totals_recordings">
+        <item quantity="one">%1$d recording · %2$s MB · %3$d min</item>
+        <item quantity="other">%1$d recordings · %2$s MB · %3$d min</item>
+    </plurals>
+    <plurals name="share_interactive_totals_photos">
+        <item quantity="one">%1$d hi-res photo</item>
+        <item quantity="other">%1$d hi-res photos</item>
+    </plurals>
     <string name="share_interactive_include_a11y_label">Include recording %1$d</string>
     <string name="share_interactive_include_a11y_value_included">included</string>
     <string name="share_interactive_include_a11y_value_excluded">excluded</string>
