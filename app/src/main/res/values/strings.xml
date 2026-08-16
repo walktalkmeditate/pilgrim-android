@@ -469,6 +469,49 @@
     <string name="share_modal_not_found">This walk couldn\'t be loaded.</string>
     <string name="share_modal_chooser_title">Share walk</string>
 
+    <!-- Phase 19 U7: Interactive share section + status card
+         (docs/parity/2026-08-15-walk-share-interactive-port.md §3). -->
+    <string name="share_interactive_section_label">Walk with me</string>
+    <string name="share_interactive_toggle_title">Interactive</string>
+    <string name="share_interactive_toggle_subtitle">Viewers walk your route on a living map — your recordings play where you made them, photos appear where you took them. Recordings and full-size photos upload over your connection.</string>
+    <string name="share_interactive_no_recordings">No recordings on this walk — the page will carry your route, photos, and moments.</string>
+    <string name="share_interactive_voices_warning">Voices will be audible to anyone with the link.</string>
+    <string name="share_interactive_trim_title">Trim start &amp; end</string>
+    <string name="share_interactive_trim_subtitle_can_trim">Keeps the first and last %1$d m off the shared map — including photos and waymarkers there.</string>
+    <string name="share_interactive_trim_subtitle_too_short">This walk is too short to trim.</string>
+    <string name="share_interactive_row_title">Recording %1$d · %2$s · %3$s</string>
+    <string name="share_interactive_kind_voice">voice</string>
+    <string name="share_interactive_kind_ambience">ambience</string>
+    <string name="share_interactive_reason_audio_removed">audio removed</string>
+    <string name="share_interactive_reason_too_large">too large to carry</string>
+    <!-- Android-original: no iOS reference row-state (see RecordingAvailability.Preparing KDoc). -->
+    <string name="share_interactive_row_preparing">Preparing…</string>
+    <string name="share_interactive_include_a11y_label">Include recording %1$d</string>
+    <string name="share_interactive_include_a11y_value_included">included</string>
+    <string name="share_interactive_include_a11y_value_excluded">excluded</string>
+    <string name="share_interactive_include_a11y_hint">Double tap to toggle</string>
+    <string name="share_interactive_kind_a11y_label">Recording %1$d kind, %2$s</string>
+    <string name="share_interactive_kind_a11y_hint">Double tap to switch</string>
+
+    <string name="share_status_preparing_photos">Preparing photos… %1$d/%2$d</string>
+    <string name="share_status_uploading_media">Carrying your walk… %1$d/%2$d</string>
+    <string name="share_status_uploading_media_subtitle">keep Pilgrim open while your walk uploads</string>
+    <plurals name="share_status_partial_failed_count">
+        <item quantity="one">%1$d file didn\'t make it — they\'ll show as unavailable on the page.</item>
+        <item quantity="other">%1$d files didn\'t make it — they\'ll show as unavailable on the page.</item>
+    </plurals>
+    <string name="share_status_repair_unavailable">These files can no longer be carried — the walk\'s recordings have changed.</string>
+    <string name="share_status_retry_button">Carry the missing files</string>
+    <string name="share_status_try_again">Try Again</string>
+    <plurals name="share_status_photos_dropped">
+        <item quantity="one">%1$d of %2$d photo couldn\'t be prepared — they may still be waiting in iCloud.</item>
+        <item quantity="other">%1$d of %2$d photos couldn\'t be prepared — they may still be waiting in iCloud.</item>
+    </plurals>
+    <string name="share_status_share_without_them">Share without them</string>
+    <string name="share_status_dont_share_yet">Don\'t share yet</string>
+    <string name="share_status_view_page_a11y_label">View shared walk page</string>
+    <string name="share_status_view_page_a11y_hint">Opens the scroll of your shared walk</string>
+
     <!-- Stage 3.2 (walk-summary bundle): WalkSharingButtons card -->
     <string name="share_button_goshuin">Goshuin</string>
     <string name="share_button_goshuin_subtitle">Share as image</string>
