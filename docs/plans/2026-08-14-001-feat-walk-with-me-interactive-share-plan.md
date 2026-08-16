@@ -325,7 +325,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U8. Orchestration: WalkShareViewModel interactive flow
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** The full state machine — prep, consent, POST, uploads, partial, repair — with every R8 invariant, wired end-to-end behind the Interactive toggle.
 
