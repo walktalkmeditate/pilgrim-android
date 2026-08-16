@@ -270,6 +270,18 @@ internal fun isDismissLocked(state: ShareCardState): Boolean =
 internal fun isSharedState(state: ShareCardState): Boolean =
     state is ShareCardState.Success || state is ShareCardState.Partial
 
+/**
+ * Fold-in (FOLD-5): the trim toggle's DISPLAYED checked-state —
+ * outcome, not intent. [WalkShareViewModel.toggleTrim] still writes
+ * the walker's raw [trimEnabled] intent unconditionally; this is only
+ * what the toggle SHOWS, so a too-short walk displays OFF even while
+ * the stored intent stays on — and the toggle reappears checked, with
+ * no user action, the moment [canTrim] turns true, because the stored
+ * intent was never touched. iOS `InteractiveShareSection.swift:56-59@2ee1185`:
+ * `get: { viewModel.trimEnabled && viewModel.canTrimRoute }, set: { viewModel.trimEnabled = $0 }`.
+ */
+internal fun displayedTrimEnabled(trimEnabled: Boolean, canTrim: Boolean): Boolean = trimEnabled && canTrim
+
 /** The repair slots a pass should still attempt. */
 internal fun pendingSlots(slots: List<RepairSlot>): List<RepairSlot> =
     slots.filter { it.status == org.walktalkmeditate.pilgrim.data.share.SlotStatus.PENDING }

@@ -288,6 +288,43 @@ class WalkShareOrchestrationTest {
         assertFalse(isSharedState(ShareCardState.Error("e")))
     }
 
+    // ---- displayedTrimEnabled (fold-in FOLD-5: outcome, not intent) ------
+
+    @Test
+    fun `displayed trim state is on only when both the intent and canTrim are true`() {
+        assertTrue(displayedTrimEnabled(trimEnabled = true, canTrim = true))
+        assertFalse(displayedTrimEnabled(trimEnabled = true, canTrim = false))
+        assertFalse(displayedTrimEnabled(trimEnabled = false, canTrim = true))
+        assertFalse(displayedTrimEnabled(trimEnabled = false, canTrim = false))
+    }
+
+    @Test
+    fun `a too-short walk displays the toggle off even though the stored intent is on`() {
+        assertFalse(
+            "a too-short walk must display OFF even when the walker's stored intent is on",
+            displayedTrimEnabled(trimEnabled = true, canTrim = false),
+        )
+    }
+
+    @Test
+    fun `the untouched stored intent reappears displayed-on once the walk is trimmable, with no user action`() {
+        // The SAME intent value (true), never re-toggled by the walker,
+        // used for both calls below — only canTrim differs. This is the
+        // exact fold-in guarantee: the toggle reappears checked on its
+        // own once the walk becomes trimmable, because the write path
+        // (WalkShareViewModel.toggleTrim) never touched the stored
+        // intent while it was displaying off.
+        val survivingIntent = true
+        assertFalse(
+            "too short: displays off",
+            displayedTrimEnabled(trimEnabled = survivingIntent, canTrim = false),
+        )
+        assertTrue(
+            "now trimmable: the untouched intent displays on again without the walker re-toggling anything",
+            displayedTrimEnabled(trimEnabled = survivingIntent, canTrim = true),
+        )
+    }
+
     @Test
     fun `a repair record is current only when it names the cached share`() {
         assertTrue(isRepairRecordCurrent("abc", "abc"))

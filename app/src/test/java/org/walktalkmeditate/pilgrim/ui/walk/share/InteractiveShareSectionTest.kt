@@ -324,9 +324,19 @@ class InteractiveShareSectionTest {
 
     @Test
     fun `trim toggle shows the too-short subtitle and is disabled when canTrim is false`() {
-        setSection(InteractiveShareSectionState(interactiveEnabled = true, trimEnabled = true, canTrim = false))
+        // Fold-in (FOLD-5): the renderer stays a dumb display of
+        // whatever `trimEnabled` it is handed — the caller (the VM's
+        // interactiveSection combine, see displayedTrimEnabled) is what
+        // now pre-derives that value as outcome (intent && canTrim)
+        // rather than raw intent, so a real too-short walk is handed
+        // `trimEnabled = false` here, not `true`. This test's job is
+        // only to prove the too-short subtitle + disabled state; the
+        // outcome-vs-intent contract itself is covered by
+        // WalkShareOrchestrationTest's displayedTrimEnabled tests and
+        // WalkShareInteractiveTest's VM-level trim-outcome test.
+        setSection(InteractiveShareSectionState(interactiveEnabled = true, trimEnabled = false, canTrim = false))
         composeRule.onNodeWithText("This walk is too short to trim.").assertIsDisplayed()
-        composeRule.onNodeWithTag("trim-toggle").assertIsOn() // UI-17: trimEnabled stays true even while disabled
+        composeRule.onNodeWithTag("trim-toggle").assertIsOff()
         composeRule.onNodeWithTag("trim-toggle").assertIsNotEnabled()
     }
 

@@ -681,6 +681,33 @@ class WalkShareInteractiveTest {
         assertTrue(vm.interactiveSection.value.canTrim)
     }
 
+    // ---- fold-in: trim toggle outcome (iOS PR #63) ------------------------
+
+    @Test
+    fun `a too-short walk displays the trim toggle off while the stored intent survives`() = runTest(dispatcher) {
+        // Fold-in (FOLD-5, iOS `InteractiveShareSection.swift:56-59@2ee1185`):
+        // the default seedWalk() route (2 points, ~111m) sits well under
+        // RouteTrimmer's 4x150m=600m floor, so canTrim is false for this
+        // VM's whole life (computed once at load, per "the route work
+        // hoisted out" test above).
+        val seed = seedWalk()
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.setInteractiveEnabled(true)
+        vm.awaitReadyToShare()
+
+        awaitReal { vm.interactiveSection.first { !it.canTrim } }
+        assertFalse(
+            "a too-short walk must display the toggle OFF even though the default stored intent is on",
+            vm.interactiveSection.value.trimEnabled,
+        )
+        assertTrue(
+            "the walker never touched Trim — the stored intent must survive the false display, " +
+                "so the toggle can reappear checked on its own once the walk is trimmable",
+            vm.trimEnabled.value,
+        )
+    }
+
     // ---- fold-in: soundscape URL (iOS PR #61/#62) ------------------------
 
     @Test
