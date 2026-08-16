@@ -328,6 +328,35 @@ class SharePayloadTourTest {
         LocationPoint(timestamp = 1_700_000_000_000L + i * 30_000L, latitude = 35.0 + i * 0.001, longitude = -105.0)
     }
 
+    // MARK: - prepareRoute (the once-per-load half of the route work)
+
+    @Test
+    fun `prepareRoute reports trim eligibility the same way canTrim does`() {
+        // iOS `testCanTrimRouteReflectsRouteLength`
+        // (`WalkShareInteractiveTests.swift:176-182@3f9f9e8`), read off
+        // the downsampled points the trim would actually see.
+        assertTrue(prepareRoute(baseInputs(routePoints = longRoute(points = 20))).canTrim)
+        assertFalse(prepareRoute(baseInputs(routePoints = longRoute(points = 4))).canTrim)
+    }
+
+    @Test
+    fun `a precomputed route yields exactly the route computing from inputs does`() {
+        // The safety net for hoisting the downsample out of the
+        // ViewModel's per-emission path: the two entry points must be
+        // incapable of disagreeing about route, trim_m, or kept window.
+        val inputs = baseInputs(routePoints = longRoute(points = 20))
+        for (options in listOf(
+            allOn().copy(interactive = true, trimEnabled = true),
+            allOn().copy(interactive = true, trimEnabled = false),
+            allOn().copy(interactive = false, trimEnabled = true),
+        )) {
+            assertEquals(
+                computeInteractiveRoute(inputs, options),
+                computeInteractiveRoute(prepareRoute(inputs).downsampled, options),
+            )
+        }
+    }
+
     @Test
     fun `interactive plus trimEnabled trims the route and records trim_m on the tour`() {
         val route = longRoute()
