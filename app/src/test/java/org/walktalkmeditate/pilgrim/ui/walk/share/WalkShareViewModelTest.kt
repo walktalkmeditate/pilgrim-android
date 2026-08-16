@@ -10,8 +10,12 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -34,6 +38,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
@@ -56,9 +61,20 @@ class WalkShareViewModelTest {
     private lateinit var service: ShareService
     private lateinit var cachedStore: CachedShareStore
     private lateinit var prepStore: SharePrepStore
+    private lateinit var manifestScope: CoroutineScope
+    private lateinit var manifestService: AudioManifestService
     private val dispatcher = UnconfinedTestDispatcher()
     private val nextTs = AtomicLong(1_700_000_000_000L)
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+
+    /**
+     * Fold-in dependency (FOLD-4): this file's scenarios are all
+     * classic (Interactive never toggled on, matching the file's own
+     * pre-existing convention documented on [vm]), so no test ever
+     * reads through this — it stays at the walker's default "no
+     * soundscape selected".
+     */
+    private val selectedSoundscapeId = MutableStateFlow<String?>(null)
 
     @Before
     fun setUp() {
@@ -91,10 +107,21 @@ class WalkShareViewModelTest {
         )
         cachedStore = CachedShareStore(context, json)
         prepStore = SharePrepStore(context, FakeShareAudioTranscoder(), VoiceRecordingFileSystem(context))
+        // Unseeded (no local manifest cache file) — assets stay empty,
+        // which is exactly this file's "no soundscape resolvable" needs.
+        manifestScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        manifestService = AudioManifestService(
+            context = context,
+            httpClient = client,
+            json = json,
+            scope = manifestScope,
+            manifestUrl = server.url("/manifest.json").toString(),
+        )
     }
 
     @After
     fun tearDown() {
+        manifestScope.cancel()
         server.shutdown()
         db.close()
         Dispatchers.resetMain()
@@ -123,6 +150,8 @@ class WalkShareViewModelTest {
         sharePrepStore = prepStore,
         tourPhotoExporter = TourPhotoExporter(context, prepStore),
         shareRepairStore = ShareRepairStore(context, json),
+        selectedSoundscapeId = selectedSoundscapeId,
+        audioManifestService = manifestService,
         unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     )

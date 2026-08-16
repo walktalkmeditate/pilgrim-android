@@ -101,6 +101,17 @@ data class SharePayload(
     data class Tour(
         val recordings: List<TourRecording>,
         @SerialName("trim_m") val trimM: Int,
+        /**
+         * Fold-in (iOS PR #61/#62): the walker's own meditation
+         * soundscape, resolved to its public CDN URL. Null when the
+         * walker sits in silence, when the selected asset is retired
+         * from the manifest, or when the manifest hasn't loaded — the
+         * shared page then stays silent too. Omitted from the wire
+         * JSON (not sent as a literal null) via the app's
+         * `explicitNulls = false` [kotlinx.serialization.json.Json].
+         * iOS `SharePayload.swift:89-100@2ee1185`.
+         */
+        @SerialName("soundscape_url") val soundscapeUrl: String? = null,
     )
 
     /**

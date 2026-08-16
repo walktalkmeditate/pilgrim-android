@@ -7,6 +7,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
+import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
 /**
@@ -135,6 +137,20 @@ class TourBuilderTest {
     }
 
     @Test
+    fun `tourItems carries a given soundscapeUrl and defaults to null`() {
+        // Mirrors iOS testTourItems_carriesSoundscapeUrl (TourBuilderTests.swift:80-86@2ee1185).
+        val withUrl = TourBuilder.tourItems(
+            listOf(candidate(id = 0)),
+            trimM = 0,
+            soundscapeUrl = "https://cdn.pilgrimapp.org/audio/soundscape/stream.aac",
+        )
+        assertEquals("https://cdn.pilgrimapp.org/audio/soundscape/stream.aac", withUrl.tour.soundscapeUrl)
+
+        val bare = TourBuilder.tourItems(listOf(candidate(id = 0)), trimM = 0)
+        assertNull(bare.tour.soundscapeUrl)
+    }
+
+    @Test
     fun `unavailable candidates never enter the tour`() {
         val removed = TourRecordingCandidate(
             id = 1, recordingUuid = "rec-1", startTs = 1100L, endTs = 1150L, duration = 50.0, sizeBytes = 0L,
@@ -144,6 +160,66 @@ class TourBuilderTest {
         val result = TourBuilder.tourItems(listOf(candidate(id = 0), removed), trimM = 0)
         assertEquals(1, result.tour.recordings.size)
         assertEquals(1, result.files.size)
+    }
+
+    // MARK: - soundscapeUrl() (fold-in, iOS PR #61/#62)
+
+    private fun soundscapeAsset(
+        id: String = "stream-1",
+        type: String = AudioAssetType.SOUNDSCAPE,
+    ): AudioAsset = AudioAsset(
+        id = id,
+        type = type,
+        name = id,
+        displayName = id,
+        durationSec = 300.0,
+        r2Key = "soundscape/$id.m4a",
+        fileSizeBytes = 1_000_000L,
+    )
+
+    @Test
+    fun `soundscapeUrl resolves through the manifest using the base-type-id formula, not r2Key`() {
+        // Mirrors iOS testSoundscapeUrl_resolvesThroughManifest
+        // (TourBuilderTests.swift:62-78@2ee1185) — the formula match is
+        // asserted against the literal URL, exactly as iOS's own test
+        // does, so a future accidental switch to r2Key (PR #62's bug)
+        // fails here too.
+        val assets = listOf(soundscapeAsset(id = "stream-1"))
+        assertEquals(
+            "https://cdn.pilgrimapp.org/audio/soundscape/stream-1.aac",
+            TourBuilder.soundscapeUrl(selectedId = "stream-1", assets = assets),
+        )
+    }
+
+    @Test
+    fun `soundscapeUrl is null when the walker sits in silence`() {
+        val assets = listOf(soundscapeAsset(id = "stream-1"))
+        assertNull(TourBuilder.soundscapeUrl(selectedId = null, assets = assets))
+    }
+
+    @Test
+    fun `soundscapeUrl is null for a retired id absent from the manifest`() {
+        val assets = listOf(soundscapeAsset(id = "stream-1"))
+        assertNull(
+            "a retired id must not become a dead link",
+            TourBuilder.soundscapeUrl(selectedId = "retired-id", assets = assets),
+        )
+    }
+
+    @Test
+    fun `soundscapeUrl is null when the manifest is unavailable`() {
+        // Android's manifest surface is a flat (possibly empty) asset
+        // list rather than iOS's nullable AudioManifest? — an empty
+        // list is the "no manifest yet" case.
+        assertNull(TourBuilder.soundscapeUrl(selectedId = "stream-1", assets = emptyList()))
+    }
+
+    @Test
+    fun `soundscapeUrl ignores a same-id asset of a different type`() {
+        // iOS filters through manifest.soundscapes before matching id —
+        // an id collision with a bell must not resolve.
+        val assets = listOf(soundscapeAsset(id = "shared-id", type = AudioAssetType.BELL))
+        assertNull(TourBuilder.soundscapeUrl(selectedId = "shared-id", assets = assets))
     }
 
     // MARK: - totals() / validationError()

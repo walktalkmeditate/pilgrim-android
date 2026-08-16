@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.share
 
+import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
+import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
+import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
 /** Port of iOS `TourRecordingKind` (`TourBuilder.swift:3`). Wire value is the lowercase name. */
@@ -226,14 +229,41 @@ internal object TourBuilder {
         candidates.filter { it.includeInShare && it.unavailableReason == null && it.fileRelativePath != null }
 
     /**
+     * Fold-in (iOS PR #61/#62): resolves the walker's selected
+     * soundscape to the public CDN URL the app's own
+     * [org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeDownloadWorker]
+     * downloads it with — `<base>/<type>/<id>.aac` — NOT
+     * [AudioAsset.r2Key], whose bucket-relative path already contains
+     * the `audio/` prefix and would double it (iOS PR #62 fixed a live
+     * 404 from that exact mistake). A null [selectedId] means silence
+     * and resolves to null; an id absent from [assets] — a retired
+     * asset, or [assets] simply empty because the manifest hasn't
+     * loaded yet (Android's flat asset list stands in for iOS's
+     * nullable `AudioManifest?` "no manifest" case) — also resolves to
+     * null, never a dead link.
+     *
+     * iOS `TourBuilder.soundscapeUrl(selectedId:manifest:)`
+     * (`TourBuilder.swift:96-110@2ee1185`).
+     */
+    fun soundscapeUrl(selectedId: String?, assets: List<AudioAsset>): String? {
+        if (selectedId == null) return null
+        val asset = assets.firstOrNull { it.id == selectedId && it.type == AudioAssetType.SOUNDSCAPE } ?: return null
+        return AudioConfig.BASE_URL.trimEnd('/') + "/${asset.type}/${asset.id}.aac"
+    }
+
+    /**
      * Collapses the included, available candidates into the wire
      * [SharePayload.Tour] plus a parallel file list for the (later
      * unit's) upload step. `n` is a fresh 1-based renumbering over only
      * the included set — structurally decoupled from `candidate.id`.
      * `transcription` is deliberately never wired through: transcripts
-     * never leave the device.
+     * never leave the device. [soundscapeUrl] defaults to null (a
+     * classic-shaped call site never sends one); the interactive
+     * builder passes the already-resolved [soundscapeUrl] result
+     * through — iOS `tourItems(candidates:trimM:soundscapeUrl:)`
+     * (`TourBuilder.swift:112@2ee1185`).
      */
-    fun tourItems(candidates: List<TourRecordingCandidate>, trimM: Int): TourItemsResult {
+    fun tourItems(candidates: List<TourRecordingCandidate>, trimM: Int, soundscapeUrl: String? = null): TourItemsResult {
         val included = includedCandidates(candidates)
         val recordings = included.mapIndexed { index, c ->
             SharePayload.TourRecording(
@@ -248,6 +278,9 @@ internal object TourBuilder {
             )
         }
         val files = included.mapNotNull { it.fileRelativePath }
-        return TourItemsResult(SharePayload.Tour(recordings = recordings, trimM = trimM), files)
+        return TourItemsResult(
+            SharePayload.Tour(recordings = recordings, trimM = trimM, soundscapeUrl = soundscapeUrl),
+            files,
+        )
     }
 }
