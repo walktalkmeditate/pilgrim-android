@@ -351,7 +351,11 @@ class WalkShareViewModel @Inject constructor(
             } else {
                 null
             },
-            trimEnabled = sources.trimEnabled,
+            // Fold-in (FOLD-5, `InteractiveShareSection.swift:56-59@2ee1185`):
+            // the DISPLAYED checked-state is outcome, not intent — see
+            // displayedTrimEnabled's doc. The raw intent (sources.trimEnabled)
+            // still ships unchanged in shareOptions() below.
+            trimEnabled = displayedTrimEnabled(sources.trimEnabled, preparedRoute?.canTrim == true),
             canTrim = preparedRoute?.canTrim == true,
             inputLocked = isShareInFlight(card),
         )
