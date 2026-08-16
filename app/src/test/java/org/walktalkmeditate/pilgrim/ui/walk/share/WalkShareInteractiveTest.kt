@@ -15,20 +15,25 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.double
@@ -55,6 +60,10 @@ import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
+import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifest
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
@@ -105,10 +114,21 @@ class WalkShareInteractiveTest {
     private lateinit var repairStore: ShareRepairStore
     private lateinit var prepStore: SharePrepStore
     private lateinit var exporter: TourPhotoExporter
+    private lateinit var manifestScope: CoroutineScope
+    private lateinit var manifestService: AudioManifestService
     private val transcoder = FakeShareAudioTranscoder()
     private val dispatcher = UnconfinedTestDispatcher()
     private val nextTs = AtomicLong(1_700_000_000_000L)
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+
+    /**
+     * Fold-in dependency (FOLD-4): the walker's selected soundscape id.
+     * Defaults to silence (matches [org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeSelectionRepository]'s
+     * un-selected default); the soundscape-seam tests set and reset it.
+     */
+    private val selectedSoundscapeId = MutableStateFlow<String?>(null)
+
+    private val manifestCacheFile: File get() = File(context.filesDir, "audio_manifest.json")
 
     @Before
     fun setUp() {
@@ -143,6 +163,25 @@ class WalkShareInteractiveTest {
         cachedStore = CachedShareStore(context, json)
         prepStore = SharePrepStore(context, transcoder, VoiceRecordingFileSystem(context))
         exporter = TourPhotoExporter(context, prepStore)
+        selectedSoundscapeId.value = null
+        manifestScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        manifestCacheFile.delete()
+        manifestCacheFile.writeText(
+            json.encodeToString(AudioManifest(version = "v1", assets = listOf(seededSoundscapeAsset()))),
+        )
+        manifestService = AudioManifestService(
+            context = context,
+            httpClient = client,
+            json = json,
+            scope = manifestScope,
+            manifestUrl = server.url("/manifest.json").toString(),
+        )
+        // The local-cache load is dispatched onto the real Dispatchers.IO
+        // regardless of manifestScope's own dispatcher (SoundSettingsViewModelTest/
+        // SoundscapeOrchestratorTest precedent) — block the real test
+        // thread until it lands so every test starts with the seeded
+        // asset already resolvable.
+        runBlocking { manifestService.initialLoad.await() }
     }
 
     @After
@@ -153,6 +192,8 @@ class WalkShareInteractiveTest {
         // test dispatcher this method is about to reset, which turns
         // into cross-test interference (the ci-vm-scope-leak family).
         vmStore.clear()
+        manifestScope.cancel()
+        manifestCacheFile.delete()
         server.shutdown()
         db.close()
         Dispatchers.resetMain()
@@ -166,6 +207,16 @@ class WalkShareInteractiveTest {
         // uuid, so no two tests ever share a record.
         File(context.cacheDir, "share-prep").deleteRecursively()
     }
+
+    private fun seededSoundscapeAsset(id: String = SEEDED_SOUNDSCAPE_ID) = AudioAsset(
+        id = id,
+        type = AudioAssetType.SOUNDSCAPE,
+        name = id,
+        displayName = id,
+        durationSec = 300.0,
+        r2Key = "soundscape/$id.m4a",
+        fileSizeBytes = 1_000_000L,
+    )
 
     /**
      * Swappable so a test can install an encoder that throws (the
@@ -195,6 +246,8 @@ class WalkShareInteractiveTest {
         sharePrepStore = prepStore,
         tourPhotoExporter = exporter,
         shareRepairStore = repairStoreOverride,
+        selectedSoundscapeId = selectedSoundscapeId,
+        audioManifestService = manifestService,
         unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     ).also { vmStore.put("walk-share-${vmCount++}", it) }
@@ -626,6 +679,52 @@ class WalkShareInteractiveTest {
         }
         assertSame("the route work happens once per load, not once per emission", prepared, vm.preparedRoute)
         assertTrue(vm.interactiveSection.value.canTrim)
+    }
+
+    // ---- fold-in: soundscape URL (iOS PR #61/#62) ------------------------
+
+    @Test
+    fun `an interactive share with a selected soundscape carries its resolved URL on the tour`() =
+        runTest(dispatcher) {
+            val seed = seedWalk()
+            selectedSoundscapeId.value = SEEDED_SOUNDSCAPE_ID
+            val vm = vm(seed.walkId)
+            vm.awaitLoaded()
+            vm.setInteractiveEnabled(true)
+            vm.awaitReadyToShare()
+
+            enqueueShareCreated()
+            vm.share()
+            vm.awaitCard { it is ShareCardState.Success }
+
+            val body = drainRequests().single().body.readUtf8().asJsonObject()
+            assertEquals(
+                "https://cdn.pilgrimapp.org/audio/soundscape/$SEEDED_SOUNDSCAPE_ID.aac",
+                body["tour"]!!.jsonObject["soundscape_url"]!!.jsonPrimitive.content,
+            )
+        }
+
+    @Test
+    fun `an interactive share with silence carries no soundscape_url`() = runTest(dispatcher) {
+        val seed = seedWalk()
+        // selectedSoundscapeId already defaults to null; set explicitly
+        // so the test reads as a deliberate silence choice, not an
+        // unset fixture.
+        selectedSoundscapeId.value = null
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.setInteractiveEnabled(true)
+        vm.awaitReadyToShare()
+
+        enqueueShareCreated()
+        vm.share()
+        vm.awaitCard { it is ShareCardState.Success }
+
+        val body = drainRequests().single().body.readUtf8().asJsonObject()
+        assertFalse(
+            "silence must never resolve to a link — the key stays entirely absent",
+            body["tour"]!!.jsonObject.containsKey("soundscape_url"),
+        )
     }
 
     // ---- consent: the pre-POST dropped-photo pause ----------------------
@@ -1280,5 +1379,8 @@ class WalkShareInteractiveTest {
     private companion object {
         /** The device-QA toggle-race protocol's double-tap count (`docs/qa/2026-08-15-phase19-walk-with-me-qa.md`). */
         const val TOGGLE_DOUBLE_TAPS = 10
+
+        /** Fold-in (FOLD-4): the one soundscape asset seeded into every test's manifest cache. */
+        const val SEEDED_SOUNDSCAPE_ID = "walk-with-me-test-scape"
     }
 }

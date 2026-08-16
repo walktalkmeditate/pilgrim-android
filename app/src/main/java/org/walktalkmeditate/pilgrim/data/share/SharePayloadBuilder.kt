@@ -85,6 +85,16 @@ data class WalkShareOptions(
      * See [TourBuilder.candidates]' `kindOverrides` parameter.
      */
     val kindOverrides: Map<String, TourRecordingKind> = emptyMap(),
+    /**
+     * Fold-in (iOS PR #61/#62, `TourBuilder.swift:96-110@2ee1185`): the
+     * walker's selected soundscape, already resolved to its public CDN
+     * URL by [TourBuilder.soundscapeUrl]. Resolution needs the
+     * soundscape preference + manifest, neither of which this pure
+     * builder depends on — the ViewModel resolves it and threads the
+     * result through here like every other interactive-only value.
+     * Rides inside [SharePayload.Tour]; a classic share never reads it.
+     */
+    val soundscapeUrl: String? = null,
 )
 
 /**
@@ -342,7 +352,7 @@ internal object SharePayloadBuilder {
         // iOS's `applyInteractiveTourAndPauses`, which runs
         // unconditionally once `interactive` is true.
         val tour = if (options.interactive) {
-            TourBuilder.tourItems(candidates = candidates, trimM = trimM).tour
+            TourBuilder.tourItems(candidates = candidates, trimM = trimM, soundscapeUrl = options.soundscapeUrl).tour
         } else {
             null
         }

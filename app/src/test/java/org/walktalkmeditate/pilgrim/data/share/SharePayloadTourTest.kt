@@ -106,6 +106,34 @@ class SharePayloadTourTest {
         assertFalse("wpm key must be omitted (not null) for a recording with no wpm", recs[1].jsonObject.containsKey("wpm"))
     }
 
+    // MARK: - soundscape_url wire encoding (fold-in, iOS PR #61/#62)
+
+    @Test
+    fun `tour encodes soundscape_url when present`() {
+        // Mirrors iOS's wire assertion tourJSON["soundscape_url"]
+        // (SharePayloadTourTests.swift:34-46@2ee1185).
+        val tour = SharePayload.Tour(
+            recordings = emptyList(),
+            trimM = 0,
+            soundscapeUrl = "https://cdn.pilgrimapp.org/audio/soundscape/stream.aac",
+        )
+        val tourJson = encode(minimalPayload(tour = tour)).parsedObject()["tour"]!!.jsonObject
+        assertEquals(
+            "https://cdn.pilgrimapp.org/audio/soundscape/stream.aac",
+            tourJson["soundscape_url"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `tour omits the soundscape_url key when null`() {
+        val tour = SharePayload.Tour(recordings = emptyList(), trimM = 0)
+        val tourJson = encode(minimalPayload(tour = tour)).parsedObject()["tour"]!!.jsonObject
+        assertFalse(
+            "key must be ABSENT, not a literal null, on the wire (worker nulls rule)",
+            tourJson.containsKey("soundscape_url"),
+        )
+    }
+
     @Test
     fun `pauses encode snake_case`() {
         val json = encode(minimalPayload(tour = null, pauses = listOf(SharePayload.Pause(startTs = 1150L, endTs = 1450L))))
@@ -320,6 +348,33 @@ class SharePayloadTourTest {
             allOn().copy(interactive = true, excludedRecordingUuids = setOf(excluded.uuid)),
         )
         assertEquals(1, payload.tour?.recordings?.size)
+    }
+
+    // MARK: - soundscapeUrl (SharePayloadBuilder.build integration, fold-in)
+
+    @Test
+    fun `interactive build threads options soundscapeUrl onto the tour, present on the wire`() {
+        val payload = SharePayloadBuilder.build(
+            baseInputs(),
+            allOn().copy(interactive = true, soundscapeUrl = "https://cdn.pilgrimapp.org/audio/soundscape/x.aac"),
+        )
+        assertEquals("https://cdn.pilgrimapp.org/audio/soundscape/x.aac", payload.tour?.soundscapeUrl)
+        val tourJson = encode(payload).parsedObject()["tour"]!!.jsonObject
+        assertEquals(
+            "https://cdn.pilgrimapp.org/audio/soundscape/x.aac",
+            tourJson["soundscape_url"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `interactive build with no soundscape selected carries no soundscape_url`() {
+        // The default WalkShareOptions.soundscapeUrl is null — the
+        // VM-seam resolution (silence, retired id, no manifest) all
+        // collapse to this same "don't set it" case at the builder.
+        val payload = SharePayloadBuilder.build(baseInputs(), allOn().copy(interactive = true))
+        assertNull(payload.tour?.soundscapeUrl)
+        val tourJson = encode(payload).parsedObject()["tour"]!!.jsonObject
+        assertFalse(tourJson.containsKey("soundscape_url"))
     }
 
     // MARK: - trim integration (SharePayloadBuilder.build)

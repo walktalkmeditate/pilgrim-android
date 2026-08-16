@@ -33,7 +33,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeSelectedAssetId
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
@@ -125,6 +127,16 @@ class WalkShareViewModel @Inject constructor(
     private val sharePrepStore: SharePrepStore,
     private val tourPhotoExporter: TourPhotoExporter,
     private val shareRepairStore: ShareRepairStore,
+    /**
+     * Fold-in (iOS PR #61/#62): the walker's selected soundscape id,
+     * narrowed to its read-only [StateFlow] the same way
+     * [org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator]
+     * depends on it — already provided by `SoundscapeModule`, so this
+     * needed no new DI wiring.
+     */
+    @SoundscapeSelectedAssetId private val selectedSoundscapeId: StateFlow<@JvmSuppressWildcards String?>,
+    /** Fold-in: the audio manifest [TourBuilder.soundscapeUrl] resolves the selection against. */
+    private val audioManifestService: AudioManifestService,
     unitsPreferences: UnitsPreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -1143,6 +1155,12 @@ class WalkShareViewModel @Inject constructor(
         trimEnabled = _trimEnabled.value,
         excludedRecordingUuids = excluded,
         kindOverrides = _kindOverrides.value,
+        // Fold-in (FOLD-4, `WalkShareViewModel.swift:442-450@2ee1185`):
+        // resolved here rather than inside SharePayloadBuilder (which
+        // stays pure) — interactive-only by construction, since the
+        // result only ever rides inside `tour`, itself built only when
+        // options.interactive is true.
+        soundscapeUrl = TourBuilder.soundscapeUrl(selectedSoundscapeId.value, audioManifestService.assets.value),
     )
 
     /**
