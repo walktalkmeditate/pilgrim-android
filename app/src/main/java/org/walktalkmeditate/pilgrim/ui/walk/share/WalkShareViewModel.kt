@@ -218,6 +218,7 @@ class WalkShareViewModel @Inject constructor(
     @Volatile
     private var pendingTourPhotos: List<TourPhoto> = emptyList()
 
+    @Volatile
     private var shareJob: Job? = null
 
     /**

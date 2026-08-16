@@ -238,6 +238,8 @@ class ShareRepairStore(
         }
         val bySlot = LinkedHashMap<Pair<SlotKind, Int>, RepairSlot>()
         for (slot in current.slots) bySlot[slot.kind to slot.n] = slot
+        // A duplicate `(kind, n)` WITHIN one [proposed] list is a caller
+        // bug, not a case to resolve: first wins, deterministically.
         for (slot in proposed) {
             val key = slot.kind to slot.n
             if (bySlot[key] == null) {
