@@ -101,6 +101,9 @@ fun WalkShareScreen(
     val canShare by viewModel.canShare.collectAsStateWithLifecycle()
     val cached by viewModel.cachedShare.collectAsStateWithLifecycle()
     val units by viewModel.distanceUnits.collectAsStateWithLifecycle()
+    val cardState by viewModel.shareCardState.collectAsStateWithLifecycle()
+    val interactiveState by viewModel.interactiveSection.collectAsStateWithLifecycle()
+    val repairUnavailable by viewModel.repairUnavailable.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -146,16 +149,19 @@ fun WalkShareScreen(
     // fresh DataStore emission and transition non-null → null between
     // the `isShared` check and the unwrap, producing an NPE.
     val activeShare = cached?.takeIf { !it.isExpiredAt() }
-    val isShared = activeShare != null
+    // iOS `WalkShareView.isShared` mirrors the VM's own `isShared`
+    // (`WalkShareView.swift:24@3f9f9e8`) — `.partial` counts as shared,
+    // the page is live. The cache check stays in the OR so an
+    // already-shared walk shows its card before the restore observer has
+    // had a chance to run (the first-share-only short-circuit, R4/AE1).
+    val isShared = isSharedState(cardState) || activeShare != null
 
-    // iOS `isDismissLocked` (`WalkShareView.swift:44-49@3f9f9e8`) — narrower
-    // than isShareInFlight: only states with something already server-side
-    // (POST landed, PUTs streaming) lock dismissal; a local, cancellable
-    // photo export does not. Today's VM only ever reaches Idle/Uploading
-    // (see the `ShareCardState` derivation below) — isSharing is a faithful
-    // proxy for "uploading is in flight" until U8 adds the remaining
-    // ShareCardState cases and their own dismiss-lock membership.
-    val isDismissLocked = isSharing
+    // iOS `isDismissLocked` (`WalkShareView.swift:38-48@3f9f9e8`) — a
+    // deliberate 2-case SUBSET of isShareInFlight: only states with
+    // something already server-side (POST landed, PUTs streaming) lock
+    // dismissal; a local, cancellable photo export and the pre-POST
+    // consent pause do not.
+    val isDismissLocked = isDismissLocked(cardState)
     BackHandler(enabled = isDismissLocked) {
         // Absorb the back gesture — iOS parity `.interactiveDismissDisabled(isDismissLocked)`.
     }
@@ -193,32 +199,18 @@ fun WalkShareScreen(
                     color = pilgrimColors.fog,
                 )
                 is WalkShareUiState.Loaded -> {
-                    // U7 local-only scaffolding: no candidate rows / prep
-                    // pipeline are wired yet, so this section always renders
-                    // its "no recordings" branch even on a walk that has
-                    // some — U8 replaces these two `remember`s with real VM
-                    // StateFlows once WAV->AAC prep lands (see U8's plan
-                    // entry and this section's own KDoc).
-                    var interactiveEnabled by remember { mutableStateOf(false) }
-                    var trimEnabled by remember { mutableStateOf(true) }
-
-                    // Today's VM only ever reaches Idle/Uploading/Success —
-                    // U8 wires the remaining ShareCardState cases
-                    // (PreparingPhotos/PhotosDropped/UploadingMedia/Partial/
-                    // Error) once WAV->AAC prep + media PUTs land.
-                    val cardState = when {
-                        activeShare != null -> ShareCardState.Success(activeShare.url)
-                        isSharing -> ShareCardState.Uploading
-                        else -> ShareCardState.Idle
-                    }
-                    // UI-56 parity: at the pin, .disabled(isShareInFlight) wraps the WHOLE form
-                    // (StatToggles/Journal/Expiry too), not just the Interactive section. U8 must
-                    // extend this gate to those composables when it wires the real ViewModel state.
-                    val isShareInFlight = cardState is ShareCardState.Uploading
+                    // UI-56 parity: at the pin, `.disabled(isShareInFlight)`
+                    // wraps the WHOLE form (StatToggles/Journal/Expiry too),
+                    // not just the Interactive section — "editing toggles,
+                    // the journal, or expiry now would desync the payload
+                    // already sent from what these controls show"
+                    // (`WalkShareView.swift:63-77@3f9f9e8`). Compose has no
+                    // container-level `.disabled`, so the one boolean is
+                    // threaded to each of the four sections instead.
+                    val formFrozen = isShareInFlight(cardState)
                     // Safe fallback: `expiryText` only ever RENDERS inside
                     // ShareStatusSection's Success/Partial branches, which
-                    // (today) only reach that state when `activeShare` is
-                    // already non-null.
+                    // are only reachable once a share exists.
                     val expiryText = activeShare?.let { formatExpiryDateLong(it.expiryEpochMs) }.orEmpty()
                     val onOpenPreview: (String) -> Unit = { url ->
                         // Manual tap always opens; mark the latch so a
@@ -227,24 +219,25 @@ fun WalkShareScreen(
                         CustomTabs.launch(context, url.toUri())
                     }
 
-                    if (activeShare != null) {
+                    if (isShared) {
                         ShareStatusSection(
                             state = cardState,
                             canShare = canShare,
-                            repairUnavailable = false,
+                            repairUnavailable = repairUnavailable,
                             expiryText = expiryText,
                             routePoints = s.inputs.routePoints,
                             onShare = viewModel::share,
                             onOpenPreview = onOpenPreview,
-                            onRetryMissingFiles = {},
-                            onShareWithoutDroppedPhotos = {},
-                            onCancelDroppedPhotoShare = {},
+                            onRetryMissingFiles = viewModel::retryFailedMedia,
+                            onShareWithoutDroppedPhotos = viewModel::continueShareWithoutDroppedPhotos,
+                            onCancelDroppedPhotoShare = viewModel::cancelDroppedPhotoShare,
                         )
                     } else {
                         ShareRouteThumbnail(points = s.inputs.routePoints)
                         StatToggles(
                             inputs = s.inputs,
                             units = units,
+                            enabled = !formFrozen,
                             distance = includeDistance,
                             duration = includeDuration,
                             elevation = includeElevation,
@@ -261,22 +254,20 @@ fun WalkShareScreen(
                             onPhotos = viewModel::togglePhotos,
                         )
                         InteractiveShareSection(
-                            state = InteractiveShareSectionState(
-                                interactiveEnabled = interactiveEnabled,
-                                trimEnabled = trimEnabled,
-                                inputLocked = isShareInFlight,
-                            ),
-                            onInteractiveEnabledChange = { interactiveEnabled = it },
-                            onToggleRowInclude = {},
-                            onFlipRowKind = {},
-                            onTrimEnabledChange = { trimEnabled = it },
+                            state = interactiveState,
+                            onInteractiveEnabledChange = viewModel::setInteractiveEnabled,
+                            onToggleRowInclude = viewModel::toggleRowInclude,
+                            onFlipRowKind = viewModel::flipRowKind,
+                            onTrimEnabledChange = viewModel::toggleTrim,
                         )
                         JournalInput(
                             journal = journal,
+                            enabled = !formFrozen,
                             onJournalChange = viewModel::updateJournal,
                         )
                         ExpiryPicker(
                             selected = selectedExpiry,
+                            enabled = !formFrozen,
                             onSelect = viewModel::updateExpiry,
                         )
                         if (!canShare && !isSharing) {
@@ -290,14 +281,14 @@ fun WalkShareScreen(
                         ShareStatusSection(
                             state = cardState,
                             canShare = canShare,
-                            repairUnavailable = false,
+                            repairUnavailable = repairUnavailable,
                             expiryText = expiryText,
                             routePoints = s.inputs.routePoints,
                             onShare = viewModel::share,
                             onOpenPreview = onOpenPreview,
-                            onRetryMissingFiles = {},
-                            onShareWithoutDroppedPhotos = {},
-                            onCancelDroppedPhotoShare = {},
+                            onRetryMissingFiles = viewModel::retryFailedMedia,
+                            onShareWithoutDroppedPhotos = viewModel::continueShareWithoutDroppedPhotos,
+                            onCancelDroppedPhotoShare = viewModel::cancelDroppedPhotoShare,
                         )
                     }
                 }
@@ -310,6 +301,7 @@ fun WalkShareScreen(
 private fun StatToggles(
     inputs: ShareInputs,
     units: UnitSystem,
+    enabled: Boolean,
     distance: Boolean,
     duration: Boolean,
     elevation: Boolean,
@@ -331,18 +323,21 @@ private fun StatToggles(
             title = stringResource(R.string.share_modal_stat_distance),
             value = ShareStatFormat.distance(inputs.distanceMeters, units),
             on = distance,
+            enabled = enabled,
             onChange = onDistance,
         )
         StatToggleRow(
             title = stringResource(R.string.share_modal_stat_duration),
             value = ShareStatFormat.duration(inputs.activeDurationSeconds),
             on = duration,
+            enabled = enabled,
             onChange = onDuration,
         )
         StatToggleRow(
             title = stringResource(R.string.share_modal_stat_elevation),
             value = ShareStatFormat.elevation(inputs.elevationAscentMeters, units),
             on = elevation,
+            enabled = enabled,
             onChange = onElevation,
         )
         StatToggleRow(
@@ -352,12 +347,14 @@ private fun StatToggles(
                 talkSeconds = inputs.talkDurationSeconds,
             ),
             on = activity,
+            enabled = enabled,
             onChange = onActivity,
         )
         StatToggleRow(
             title = stringResource(R.string.share_modal_stat_steps),
             value = ShareStatFormat.steps(inputs.steps),
             on = steps,
+            enabled = enabled,
             onChange = onSteps,
         )
         val waypointCount = inputs.waypoints.size
@@ -366,6 +363,7 @@ private fun StatToggles(
                 title = stringResource(R.string.share_modal_include_waypoints, waypointCount),
                 value = null,
                 on = waypoints,
+                enabled = enabled,
                 onChange = onWaypoints,
             )
         }
@@ -379,6 +377,7 @@ private fun StatToggles(
                 title = stringResource(R.string.share_modal_stat_photos),
                 value = pluralStringResource(R.plurals.share_modal_photos_pinned, photoCount, photoCount),
                 on = photos,
+                enabled = enabled,
                 onChange = onPhotos,
             )
             if (photos) {
@@ -400,6 +399,7 @@ private fun StatToggleRow(
     title: String,
     value: String?,
     on: Boolean,
+    enabled: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -407,7 +407,7 @@ private fun StatToggleRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(PilgrimCornerRadius.small))
             .background(pilgrimColors.parchmentSecondary)
-            .clickable { onChange(!on) }
+            .clickable(enabled = enabled) { onChange(!on) }
             .padding(horizontal = PilgrimSpacing.normal, vertical = ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -422,6 +422,7 @@ private fun StatToggleRow(
         }
         Switch(
             checked = on,
+            enabled = enabled,
             onCheckedChange = onChange,
             colors = SwitchDefaults.colors(
                 checkedTrackColor = pilgrimColors.moss,
@@ -432,12 +433,13 @@ private fun StatToggleRow(
 }
 
 @Composable
-private fun JournalInput(journal: String, onJournalChange: (String) -> Unit) {
+private fun JournalInput(journal: String, enabled: Boolean, onJournalChange: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
         ShareSectionLabel(stringResource(R.string.share_modal_journal_header))
         OutlinedTextField(
             value = journal,
             onValueChange = onJournalChange,
+            enabled = enabled,
             modifier = Modifier.fillMaxWidth(),
             minLines = 3,
             placeholder = {
@@ -463,7 +465,7 @@ private fun JournalInput(journal: String, onJournalChange: (String) -> Unit) {
 }
 
 @Composable
-private fun ExpiryPicker(selected: ExpiryOption, onSelect: (ExpiryOption) -> Unit) {
+private fun ExpiryPicker(selected: ExpiryOption, enabled: Boolean, onSelect: (ExpiryOption) -> Unit) {
     val expiresMs = remember(selected) {
         Instant.now().toEpochMilli() + selected.days.toLong() * MILLIS_PER_DAY
     }
@@ -477,6 +479,7 @@ private fun ExpiryPicker(selected: ExpiryOption, onSelect: (ExpiryOption) -> Uni
                 ExpiryButton(
                     option = option,
                     selected = selected == option,
+                    enabled = enabled,
                     onClick = { onSelect(option) },
                 )
             }
@@ -502,6 +505,7 @@ private fun ExpiryPicker(selected: ExpiryOption, onSelect: (ExpiryOption) -> Uni
 private fun RowScope.ExpiryButton(
     option: ExpiryOption,
     selected: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     Box(
@@ -509,7 +513,7 @@ private fun RowScope.ExpiryButton(
             .weight(1f)
             .clip(RoundedCornerShape(PilgrimCornerRadius.small))
             .background(if (selected) pilgrimColors.stone else pilgrimColors.parchmentSecondary)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = ROW_VERTICAL_PADDING),
         contentAlignment = Alignment.Center,
     ) {

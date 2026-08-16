@@ -8,22 +8,36 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import org.walktalkmeditate.pilgrim.data.share.SharePrepStore
+import org.walktalkmeditate.pilgrim.data.share.ShareRepairStore
 
 /**
- * Daily background worker that runs [OrphanRecordingSweeper.sweepAll].
- * Catches the global case of walks the user never opens — Stage 2-E's
- * on-init sweep covers walks the user views.
+ * Daily background worker that runs [OrphanRecordingSweeper.sweepAll]
+ * and, since Phase 19, [SharePrepStore.sweepOrphans]. Catches the global
+ * case of walks the user never opens — Stage 2-E's on-init sweep covers
+ * walks the user views.
+ *
+ * The share-prep sweep rides here rather than on its own schedule
+ * because it answers the same question against the same kind of keep
+ * set: the transcode artifacts worth keeping are exactly those a walk
+ * with a live repair record may still need to re-upload (port plan
+ * Decision 3). Everything else — a walk whose Interactive toggle was
+ * never turned off before the screen went away, an attempt abandoned
+ * before it ever POSTed — is cache the OS could have evicted anyway.
  */
 @HiltWorker
 class OrphanSweeperWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val sweeper: OrphanRecordingSweeper,
+    private val sharePrepStore: SharePrepStore,
+    private val shareRepairStore: ShareRepairStore,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
         val result = sweeper.sweepAll()
-        Log.i(TAG, "sweepAll: $result")
+        val prepDirsRemoved = sharePrepStore.sweepOrphans(shareRepairStore.walkUuidsWithRecords())
+        Log.i(TAG, "sweepAll: $result, share-prep dirs removed: $prepDirsRemoved")
         Result.success()
     } catch (cancel: kotlinx.coroutines.CancellationException) {
         // Cooperate with WorkManager cancellation (constraints changed
@@ -32,7 +46,7 @@ class OrphanSweeperWorker @AssistedInject constructor(
         // worker the system was actively cancelling.
         throw cancel
     } catch (t: Throwable) {
-        Log.w(TAG, "sweepAll failed", t)
+        Log.w(TAG, "daily sweep failed", t)
         Result.retry()
     }
 

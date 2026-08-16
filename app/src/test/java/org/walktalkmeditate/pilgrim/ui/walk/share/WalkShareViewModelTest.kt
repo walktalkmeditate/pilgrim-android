@@ -31,15 +31,19 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
+import org.walktalkmeditate.pilgrim.data.share.SharePrepStore
 import org.walktalkmeditate.pilgrim.data.share.ShareRepairStore
 import org.walktalkmeditate.pilgrim.data.share.ShareService
+import org.walktalkmeditate.pilgrim.data.share.TourPhotoExporter
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -51,6 +55,7 @@ class WalkShareViewModelTest {
     private lateinit var server: MockWebServer
     private lateinit var service: ShareService
     private lateinit var cachedStore: CachedShareStore
+    private lateinit var prepStore: SharePrepStore
     private val dispatcher = UnconfinedTestDispatcher()
     private val nextTs = AtomicLong(1_700_000_000_000L)
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -85,6 +90,7 @@ class WalkShareViewModelTest {
             repairStore = ShareRepairStore(context, json),
         )
         cachedStore = CachedShareStore(context, json)
+        prepStore = SharePrepStore(context, FakeShareAudioTranscoder(), VoiceRecordingFileSystem(context))
     }
 
     @After
@@ -95,6 +101,7 @@ class WalkShareViewModelTest {
         File(context.filesDir, "datastore/share_device_token.preferences_pb").delete()
         File(context.filesDir, "datastore/share_cache.preferences_pb").delete()
         File(context.filesDir, "datastore/share_repair.preferences_pb").delete()
+        File(context.cacheDir, "share-prep").deleteRecursively()
     }
 
     private val fakePhotoEncoder = object : SharePhotoEncoder {
@@ -102,10 +109,20 @@ class WalkShareViewModelTest {
     }
 
     private fun vm(walkId: Long): WalkShareViewModel = WalkShareViewModel(
+        context = context,
         repository = repository,
         shareService = service,
         cachedShareStore = cachedStore,
         photoEncoder = fakePhotoEncoder,
+        // Phase 19 dependencies: this file's scenarios are all classic
+        // (Interactive never toggled on), so none of the three is ever
+        // reached — they are constructed rather than faked so the
+        // classic path is proven against the REAL collaborators it will
+        // have in production, which is the whole point of the AE1
+        // "interactive-off touches nothing new" guarantee.
+        sharePrepStore = prepStore,
+        tourPhotoExporter = TourPhotoExporter(context, prepStore),
+        shareRepairStore = ShareRepairStore(context, json),
         unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     )

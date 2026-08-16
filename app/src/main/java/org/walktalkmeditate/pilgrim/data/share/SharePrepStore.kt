@@ -173,6 +173,13 @@ class SharePrepStore @Inject constructor(
         val root = sharePrepRoot()
         if (!root.isDirectory) return@withContext 0
         val rootPath = sharePrepRootPath()
+        // U8: a walk this store is actively preparing is ALWAYS kept,
+        // whatever the caller passed — [_state]'s keys are that fact, so
+        // taking the union here rather than at the call site closes the
+        // "caller must remember to include in-flight walks" trap outright
+        // (a background sweep landing while the share screen is open with
+        // Interactive on would otherwise delete artifacts out from under it).
+        val keep = keepWalkUuids + _state.value.keys
         val entries = try {
             Files.list(root.toPath()).use { stream -> stream.collect(Collectors.toList()) }
         } catch (t: Throwable) {
@@ -192,7 +199,7 @@ class SharePrepStore @Inject constructor(
                 Log.w(TAG, "sweepOrphans: skipping non-uuid dir: $name")
                 continue
             }
-            if (name in keepWalkUuids) continue
+            if (name in keep) continue
             if (deleteWalkPrepDirIfSafe(canonical, rootPath)) removed++
         }
         removed
