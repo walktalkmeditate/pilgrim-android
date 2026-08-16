@@ -363,6 +363,142 @@ class SharePayloadTourTest {
         assertEquals(0, payload.tour?.trimM)
     }
 
+    // MARK: - U8 consent parity (iOS WalkShareViewModel.buildPayload@3f9f9e8)
+
+    @Test
+    fun `excluded recording leaves no talk interval and no minutes on an interactive share`() {
+        // Port of `testExcludedRecordingLeavesNoTalkInterval`
+        // (`UnitTests/WalkShareInteractiveTests.swift:95-110@3f9f9e8`):
+        // "Consent follows the checkbox: an excluded recording leaves no
+        // trace — no talk interval, no rust on the route, no minutes in
+        // the total." (`WalkShareViewModel.swift:343@3f9f9e8`).
+        val kept = recording(startTimestamp = 1_000_000L, endTimestamp = 1_060_000L)
+        val excluded = recording(startTimestamp = 2_000_000L, endTimestamp = 2_090_000L)
+        val artifacts = mapOf(
+            kept.uuid to RecordingArtifact(sizeBytes = 1_000_000L, fileExists = true),
+            excluded.uuid to RecordingArtifact(sizeBytes = 1_500_000L, fileExists = true),
+        )
+        // 150s covers the kept candidate's 60s so the clamp can't mask exclusion filtering
+        // (the Swift test's own note, `WalkShareInteractiveTests.swift:98-99@3f9f9e8`).
+        val inputs = baseInputs(recordings = listOf(kept, excluded), recordingArtifacts = artifacts)
+            .copy(talkDurationSeconds = 150.0)
+
+        val payload = SharePayloadBuilder.build(
+            inputs,
+            allOn().copy(interactive = true, excludedRecordingUuids = setOf(excluded.uuid)),
+        )
+
+        val talk = payload.activityIntervals.filter { it.type == "talk" }
+        assertEquals("the excluded candidate's talk interval must not appear", 1, talk.size)
+        assertEquals(1_000L, talk.first().startTs)
+        assertEquals(1_060L, talk.first().endTs)
+        assertEquals("excluded duration must not count toward the total", 60.0, payload.stats.talkDuration!!, 0.0)
+    }
+
+    @Test
+    fun `classic talk intervals ignore candidate exclusions entirely`() {
+        // Port of `testClassicTalkIntervalsUnchangedByExclusions`
+        // (`WalkShareInteractiveTests.swift:112-127@3f9f9e8`).
+        val rec1 = recording(startTimestamp = 1_000_000L, endTimestamp = 1_060_000L)
+        val rec2 = recording(startTimestamp = 2_000_000L, endTimestamp = 2_090_000L)
+        val inputs = baseInputs(recordings = listOf(rec1, rec2)).copy(talkDurationSeconds = 999.0)
+
+        val payload = SharePayloadBuilder.build(
+            inputs,
+            allOn().copy(interactive = false, excludedRecordingUuids = setOf(rec2.uuid)),
+        )
+
+        val talk = payload.activityIntervals.filter { it.type == "talk" }
+        assertEquals("classic path reads voiceRecordings directly", 2, talk.size)
+        assertEquals(999.0, payload.stats.talkDuration!!, 0.0)
+    }
+
+    @Test
+    fun `interactive talk duration clamps to the walk's own talk duration`() {
+        // Port of `testInteractiveTalkDurationClampedToWalkTalkDuration`
+        // (`WalkShareInteractiveTests.swift:131-141@3f9f9e8`) — the
+        // worker 400s on meditate+talk > active, so a pause-spanning
+        // recording set must clamp (`WalkShareViewModel.swift:364-365@3f9f9e8`).
+        val a = recording(startTimestamp = 1_000_000L, endTimestamp = 1_060_000L)
+        val b = recording(startTimestamp = 2_000_000L, endTimestamp = 2_060_000L)
+        val artifacts = mapOf(
+            a.uuid to RecordingArtifact(sizeBytes = 1_000_000L, fileExists = true),
+            b.uuid to RecordingArtifact(sizeBytes = 1_000_000L, fileExists = true),
+        )
+        val inputs = baseInputs(recordings = listOf(a, b), recordingArtifacts = artifacts)
+            .copy(talkDurationSeconds = 100.0)
+
+        val payload = SharePayloadBuilder.build(inputs, allOn().copy(interactive = true))
+
+        assertEquals("included candidates sum to 120 — must clamp to 100", 100.0, payload.stats.talkDuration!!, 0.0)
+    }
+
+    @Test
+    fun `trim's kept window excludes waypoints outside it and keeps the boundaries`() {
+        // Port of `testInteractiveKeptWindowExcludesTrimmedWaypoints` +
+        // `testInteractiveKeptWindowIncludesWaypointsAtExactBoundary`
+        // (`WalkShareInteractiveTests.swift:189-223@3f9f9e8`): "Trim's
+        // promise covers everything with a coordinate"
+        // (`WalkShareViewModel.swift:477@3f9f9e8`).
+        val base = 1_700_000_000_000L
+        val route = (0 until 20).map { i ->
+            LocationPoint(timestamp = base + i * 30_000L, latitude = 48.8566 + i * 0.001, longitude = 2.3522)
+        }
+        val kept = computeInteractiveRoute(
+            baseInputs(routePoints = route),
+            allOn().copy(interactive = true, trimEnabled = true),
+        )
+        val window = kept.keptWindow!!
+        val inputs = baseInputs(routePoints = route).copy(
+            waypoints = listOf(
+                waypoint("Doorstep", base),
+                waypoint("AtLowerBound", window.first * 1_000L),
+                waypoint("Midpoint", base + 10 * 30_000L),
+                waypoint("AtUpperBound", window.last * 1_000L),
+            ),
+        )
+
+        val payload = SharePayloadBuilder.build(
+            inputs,
+            allOn().copy(interactive = true, trimEnabled = true, includeWaypoints = true),
+        )
+
+        val labels = payload.waypoints.orEmpty().map { it.label }
+        assertFalse("trim excludes waypoints outside the kept route window", labels.contains("Doorstep"))
+        assertTrue(labels.contains("Midpoint"))
+        assertTrue("lower bound is inclusive (ClosedRange parity)", labels.contains("AtLowerBound"))
+        assertTrue("upper bound is inclusive (ClosedRange parity)", labels.contains("AtUpperBound"))
+    }
+
+    @Test
+    fun `a route too short to trim leaves waypoints unfiltered`() {
+        // Port of `testShortRouteTrimIsHonestAndLeavesWaypointsUnfiltered`
+        // (`WalkShareInteractiveTests.swift:225-247@3f9f9e8`).
+        val base = 1_700_000_000_000L
+        val route = (0 until 4).map { i ->
+            LocationPoint(timestamp = base + i * 30_000L, latitude = 48.8566 + i * 0.0006, longitude = 2.3522)
+        }
+        val inputs = baseInputs(routePoints = route)
+            .copy(waypoints = listOf(waypoint("Before the first fix", base - 3_600_000L)))
+
+        val payload = SharePayloadBuilder.build(
+            inputs,
+            allOn().copy(interactive = true, trimEnabled = true, includeWaypoints = true),
+        )
+
+        assertEquals("a route too short to trim reports trimM 0", 0, payload.tour!!.trimM)
+        assertTrue(payload.waypoints.orEmpty().map { it.label }.contains("Before the first fix"))
+    }
+
+    private fun waypoint(label: String, timestampMs: Long) = org.walktalkmeditate.pilgrim.data.entity.Waypoint(
+        walkId = 1L,
+        timestamp = timestampMs,
+        latitude = 48.86,
+        longitude = 2.3522,
+        label = label,
+        icon = "flag",
+    )
+
     private companion object {
         // Captured from the U3 builder with the new WalkShareOptions/
         // ShareInputs fields left at their defaults — proves the

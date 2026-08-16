@@ -22,9 +22,26 @@ data class RecordingArtifact(
     val fileExists: Boolean,
 )
 
-/** Port of iOS `TourRecordingCandidate` (`TourBuilder.swift:5-20`). */
+/**
+ * Port of iOS `TourRecordingCandidate` (`TourBuilder.swift:5-20`), plus
+ * one Android-original field.
+ *
+ * [recordingUuid] has no iOS counterpart: iOS's candidate carries the
+ * playable `fileURL` directly and matches a repair slot back to its
+ * source by truncated `startTs`
+ * (`WalkShareViewModel+ShareOrchestration.swift:340@3f9f9e8`). Android
+ * needs a stable key for four jobs the iOS type never has to do — the
+ * walker's exclusion set, [SharePrepStore]'s per-recording
+ * cancel/artifact path, the [SlotIdentity.Audio] repair identity, and
+ * kind overrides on a *derived* (rather than stored-and-mutated)
+ * candidate list — and
+ * [org.walktalkmeditate.pilgrim.data.entity.VoiceRecording.uuid] is the
+ * Room-unique key all four already agree on (see [SlotIdentity]'s KDoc
+ * for why that is a strict upgrade over a timestamp).
+ */
 data class TourRecordingCandidate(
     val id: Int,
+    val recordingUuid: String,
     val startTs: Long,
     val endTs: Long,
     val duration: Double,
@@ -105,11 +122,24 @@ internal object TourBuilder {
      * [excludedUuids] mirrors a walker's per-recording exclusion choice
      * — distinct from unavailability, it still sets `includeInShare =
      * false` but leaves `unavailableReason` null.
+     *
+     * [kindOverrides] is the walker's spoken/ambient flip, keyed by
+     * [VoiceRecording.uuid]. iOS mutates `kindOverride` in place on its
+     * stored candidate array (`flipKind`,
+     * `WalkShareViewModel.swift:236-241@3f9f9e8`); Android's candidate
+     * list is derived on every emission, so the choice rides in here
+     * instead and is normalized back to null when it matches the
+     * candidate's own `autoKind` — the same "never store a redundant
+     * explicit override" rule iOS applies
+     * (`WalkShareViewModel.swift:240@3f9f9e8`). Applying it inside this
+     * one function is what keeps the UI's rows and
+     * [SharePayloadBuilder]'s own derivation from drifting apart.
      */
     fun candidates(
         recordings: List<VoiceRecording>,
         artifacts: Map<String, RecordingArtifact> = emptyMap(),
         excludedUuids: Set<String> = emptySet(),
+        kindOverrides: Map<String, TourRecordingKind> = emptyMap(),
     ): List<TourRecordingCandidate> {
         val sorted = recordings.sortedBy { it.startTimestamp }
         return sorted.mapIndexedNotNull { index, rec ->
@@ -127,17 +157,19 @@ internal object TourBuilder {
                 else -> null
             }
 
+            val autoKind = classify(rec.transcription)
             TourRecordingCandidate(
                 id = index,
+                recordingUuid = rec.uuid,
                 startTs = startTs,
                 endTs = endTs,
                 duration = rec.durationMillis / MILLIS_PER_SECOND.toDouble(),
                 sizeBytes = sizeBytes ?: 0L,
                 transcription = rec.transcription,
                 wpm = rec.wordsPerMinute,
-                autoKind = classify(rec.transcription),
+                autoKind = autoKind,
                 includeInShare = unavailableReason == null && rec.uuid !in excludedUuids,
-                kindOverride = null,
+                kindOverride = kindOverrides[rec.uuid]?.takeIf { it != autoKind },
                 fileRelativePath = if (unavailableReason == null) rec.fileRelativePath else null,
                 unavailableReason = unavailableReason,
             )
@@ -169,6 +201,22 @@ internal object TourBuilder {
     }
 
     /**
+     * The included-and-carryable subset, in the order that assigns
+     * every downstream 1-based `n`. iOS gets this for free — its
+     * `tourItems` returns a `files` array parallel to
+     * `tour.recordings`, so a slot's declared `n` and its uploaded
+     * bytes are the same list position by construction
+     * (`TourBuilder.swift@3f9f9e8`). Android's uploaded bytes live in a
+     * different place entirely ([SharePrepStore.artifactFile], keyed by
+     * recording uuid rather than list position), so the numbering rule
+     * has to be a shared function instead of a shared array — this one
+     * — called by both [tourItems] and the upload-slot assembly in
+     * `WalkShareOrchestration`.
+     */
+    fun includedCandidates(candidates: List<TourRecordingCandidate>): List<TourRecordingCandidate> =
+        candidates.filter { it.includeInShare && it.unavailableReason == null && it.fileRelativePath != null }
+
+    /**
      * Collapses the included, available candidates into the wire
      * [SharePayload.Tour] plus a parallel file list for the (later
      * unit's) upload step. `n` is a fresh 1-based renumbering over only
@@ -177,9 +225,7 @@ internal object TourBuilder {
      * never leave the device.
      */
     fun tourItems(candidates: List<TourRecordingCandidate>, trimM: Int): TourItemsResult {
-        val included = candidates.filter {
-            it.includeInShare && it.unavailableReason == null && it.fileRelativePath != null
-        }
+        val included = includedCandidates(candidates)
         val recordings = included.mapIndexed { index, c ->
             SharePayload.TourRecording(
                 n = index + 1,
