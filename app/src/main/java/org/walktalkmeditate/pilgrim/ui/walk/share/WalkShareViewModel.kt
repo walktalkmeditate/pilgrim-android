@@ -388,8 +388,16 @@ class WalkShareViewModel @Inject constructor(
             _uiState.collectLatest { state ->
                 if (state is WalkShareUiState.Loaded) {
                     cachedShareStore.observe(state.inputs.walk.uuid).collect { cached ->
+                        // Restore FIRST, publish second. `Idle` renders a
+                        // live Share button and the screen counts a
+                        // non-expired cached share as `isShared`
+                        // (`WalkShareScreen.isShared`), so publishing
+                        // ahead of the restore's own store read puts a
+                        // working Share button on top of a page that
+                        // already exists — one tap there is a second POST
+                        // over the live one.
+                        restoreFromCache(cached)
                         _cachedShare.value = cached
-                        restoreFromCacheIfIdle(cached)
                     }
                 }
             }
@@ -579,6 +587,18 @@ class WalkShareViewModel @Inject constructor(
         } catch (ce: CancellationException) {
             if (!postLanded) _shareCardState.value = ShareCardState.Idle
             throw ce
+        } catch (t: Throwable) {
+            // [completeShare]'s own ladder covers the request and the
+            // media PUTs. Everything OUTSIDE it can throw too — the
+            // photo export list, the base64 encode, the payload build,
+            // and the whole repair pass' store reads and re-exports —
+            // and from a `viewModelScope.launch` that reaches the
+            // default uncaught handler, i.e. takes the process down.
+            // The walker gets the same card any ShareError produces.
+            Log.w(TAG, "share attempt failed outside the request", t)
+            val message = context.getString(UNKNOWN_MESSAGE)
+            _shareCardState.value = ShareCardState.Error(message)
+            _events.tryEmit(WalkShareEvent.Failed(message))
         } finally {
             postLanded = false
             shareJob = null
@@ -896,6 +916,34 @@ class WalkShareViewModel @Inject constructor(
     private fun applyPreparingPhotosProgress(completed: Int, total: Int) {
         _shareCardState.update { current ->
             if (current is ShareCardState.PreparingPhotos) ShareCardState.PreparingPhotos(completed, total) else current
+        }
+    }
+
+    /**
+     * [restoreFromCacheIfIdle] with its store failures contained. One
+     * throw inside the observer's `collect { }` ends that observer for
+     * the life of the ViewModel (Stage 5-D house rule), taking every
+     * later cached-share write with it — and the restore's repair-record
+     * reads are real DataStore I/O.
+     *
+     * A record that cannot be read is also no reason to leave an
+     * actionable [ShareCardState.Idle] over a live page: a live page
+     * with no readable record is exactly the [ShareCardState.Success]
+     * the no-record path restores to, so the failure falls into it
+     * rather than into the state that offers to share again.
+     */
+    private suspend fun restoreFromCache(cached: CachedShare?) {
+        try {
+            restoreFromCacheIfIdle(cached)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "cached-share restore failed", t)
+            val active = cached?.takeIf { !it.isExpiredAt() } ?: return
+            if (!_isSharing.value && _shareCardState.value == ShareCardState.Idle) {
+                didRestoreFromCache = true
+                _shareCardState.value = ShareCardState.Success(active.url)
+            }
         }
     }
 
