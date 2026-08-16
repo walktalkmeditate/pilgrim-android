@@ -139,7 +139,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U1. Anchor re-pin, endpoint probes, fold-in machinery
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** The repo, skill tooling, and docs all name `3f9f9e8`; the worker contract and CDN assumptions are proven before implementation starts.
 
@@ -163,7 +163,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U2. Parity spec — `/ios-parity port` for the interactive share slice
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** A pinned spec with Swift quotes for every behavior U3–U8 implement — the single source of truth that outranks this plan.
 
@@ -185,7 +185,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U3. Tour payload: TourBuilder, RouteTrimmer, pauses
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** A pure, test-pinned Kotlin layer that builds the exact tour/pauses payload iOS sends — before any UI or I/O exists.
 
@@ -219,7 +219,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U4. WAV→AAC transcode prep pipeline (Android-original)
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** Included recordings become cached M4A artifacts with real sizes, produced when Interactive toggles on, cancellable, with watertight cleanup.
 
@@ -246,7 +246,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U5. Hi-res tour photo export
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** Interactive shares export 1600 px EXIF-free JPEGs under 2 MB with the pin's ladder, deadline, and short-export detection.
 
@@ -271,7 +271,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U6. Media uploads and the repair record
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** Sequential PUTs with the pin's order/retry/partial contract, backed by a kill-safe repair record that makes wrong-slot uploads impossible.
 
@@ -298,7 +298,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U7. Interactive consent UI
 
-- [ ] **Status: Not Started**
+- [x] **Status: Complete**
 
 **Goal:** The share screen grows the Interactive section and status card, pixel-parity with the pin's structure and copy.
 
@@ -354,7 +354,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 
 ### U9. Device QA and release v1.4.0
 
-- [ ] **Status: Not Started**
+- [ ] **Status: In Progress — code prep done; device pass pending (docs/qa/2026-08-15-phase19-walk-with-me-qa.md)**
 
 **Goal:** R13's QA pass on hardware against production, then the v1.4.0 release.
 
