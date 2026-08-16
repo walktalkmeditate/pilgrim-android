@@ -337,6 +337,7 @@ Toggle on → prep pipeline transcodes included WAVs to cached M4As (sizes strea
 - Modify: `app/src/main/java/org/walktalkmeditate/pilgrim/ui/walk/share/WalkShareViewModel.kt`
 - Create: `app/src/main/java/org/walktalkmeditate/pilgrim/ui/walk/share/WalkShareOrchestration.kt` (extension-file split mirroring iOS if the VM would exceed its current shape; fold in if small)
 - Modify: `app/src/main/java/org/walktalkmeditate/pilgrim/di/ShareModule.kt` (bind transcoder, exporter, repair store)
+- Modify: `app/src/main/java/org/walktalkmeditate/pilgrim/ui/walk/share/WalkShareScreen.kt` (wire real VM state into the U7 section params; extend the UI-56 in-flight freeze to StatToggles/JournalInput/ExpiryPicker)
 - Test: extend `WalkShareViewModelTest.kt` + new `WalkShareInteractiveTest.kt` (Turbine; fakes from U4/U5/U6)
 
 **Approach:**
