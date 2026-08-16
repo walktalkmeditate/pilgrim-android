@@ -15,6 +15,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -464,7 +466,7 @@ class WalkShareViewModel @Inject constructor(
                 didAutoEnablePhotos = true
                 _includePhotos.value = true
             }
-            startPrep(prepareableRecordings())
+            startPrep(prepareableRecordings(), asToggleTransition = true)
         } else {
             val uuid = walkUuid ?: return
             // The artifacts are gone, so their sizes are unknown again —
@@ -474,9 +476,37 @@ class WalkShareViewModel @Inject constructor(
             // accidental tap can never silently re-include something
             // the walker chose to leave behind.
             _knownArtifactSizes.value = emptyMap()
-            launchPrepWork { sharePrepStore.cancelAndCleanupWalk(uuid) }
+            prepLifecycleJob = launchPrepWork(previous = prepLifecycleJob) {
+                sharePrepStore.cancelAndCleanupWalk(uuid)
+            }
         }
     }
+
+    /**
+     * The Interactive toggle's single-file lifecycle chain: the pass this
+     * toggle's most recent transition launched, which the NEXT transition
+     * cancels and joins before doing anything of its own.
+     *
+     * Launched as free-running coroutines the two halves interleave. A
+     * fast off→on double tap lets the toggle-off's
+     * [SharePrepStore.cancelAndCleanupWalk] land INSIDE the toggle-on's
+     * transcode pass, cancelling its encodes and clearing their state —
+     * and a [PrepState] cleared by cancellation is neither Ready nor
+     * Failed, so [interactiveReadyNow] counts it unresolved forever and
+     * the row is stranded on "audio removed" with the Share gate shut.
+     * Where the same race instead leaves [PrepState.Failed] — which
+     * [interactiveReadyNow] counts as RESOLVED — the gate opens on a tour
+     * quietly missing that recording, which is the worse of the two.
+     *
+     * Chaining rather than a mutex so a toggle-off still PREEMPTS the
+     * pass it is cancelling instead of queueing behind every remaining
+     * encode; [CoroutineStart.ATOMIC] in [launchPrepWork] is what keeps
+     * the [_prepInFlight] bookkeeping honest across that preemption.
+     * Main-confined (both writers are UI callbacks) but marked volatile
+     * for the same reason [shareJob] is.
+     */
+    @Volatile
+    private var prepLifecycleJob: Job? = null
 
     /**
      * iOS `toggleInclude` (`WalkShareViewModel.swift:230-234@3f9f9e8`):
@@ -834,6 +864,34 @@ class WalkShareViewModel @Inject constructor(
 
         _shareCardState.value = ShareCardState.UploadingMedia(completed = 0, total = pending.size)
 
+        try {
+            uploadRepairSlots(uuid, cached, record, pending)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // Everything from here up was store I/O, re-encodes,
+            // re-exports and PUT bookkeeping — all of it able to throw.
+            // Letting that unwind to [runGuarded] would swap the repair
+            // offer for a generic Error card whose "Try Again" calls
+            // [share], i.e. a SECOND POST over the page this pass was
+            // repairing. The page is live either way, so the walker stays
+            // on the repair card with whatever the record still owes.
+            Log.w(TAG, "repair pass failed", t)
+            _shareCardState.value = ShareCardState.Partial(cached.url, pendingCountOrElse(uuid, pending.size))
+        }
+    }
+
+    /**
+     * The repair pass proper, split out so [runRepair] can contain every
+     * throw it can produce without burying the guard clauses that decide
+     * whether there is anything to repair at all.
+     */
+    private suspend fun uploadRepairSlots(
+        uuid: String,
+        cached: CachedShare,
+        record: org.walktalkmeditate.pilgrim.data.share.RepairRecord,
+        pending: List<org.walktalkmeditate.pilgrim.data.share.RepairSlot>,
+    ) {
         val resolution = resolveRepairSlots(
             pending = pending,
             audioArtifacts = ensureArtifactsFor(uuid, pending),
@@ -861,6 +919,12 @@ class WalkShareViewModel @Inject constructor(
         val remaining = outcome.failedCount + resolution.unresolved.size
         if (remaining == 0) {
             _shareCardState.value = ShareCardState.Success(cached.url)
+            // A repair that lands everything is a success like any other
+            // — iOS reveals the page on `.uploadingMedia -> .success`
+            // exactly as it does on `.uploading -> .success`
+            // (`WalkShareView.swift:361-366@3f9f9e8`), and this pass is
+            // the only way to reach the first of those two.
+            _events.tryEmit(WalkShareEvent.Success(cached.url))
             cleanUpArtifacts(uuid)
         } else {
             if (outcome.failedCount == 0) {
@@ -872,6 +936,21 @@ class WalkShareViewModel @Inject constructor(
             }
             _shareCardState.value = ShareCardState.Partial(cached.url, remaining)
         }
+    }
+
+    /**
+     * What the repair record still owes, counted the way
+     * [restoreFromCacheIfIdle] counts it. Falls back to [fallback] — the
+     * count this pass started from — when the record cannot be read at
+     * all, so a failed pass never understates what is still missing.
+     */
+    private suspend fun pendingCountOrElse(uuid: String, fallback: Int): Int = try {
+        shareRepairStore.load(uuid)?.slots?.let(::pendingSlots)?.size ?: fallback
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (t: Throwable) {
+        Log.w(TAG, "repair pending-count read failed for $uuid", t)
+        fallback
     }
 
     /**
@@ -1117,33 +1196,61 @@ class WalkShareViewModel @Inject constructor(
             ?.filter { it.fileRelativePath.isNotEmpty() && it.endTimestamp > it.startTimestamp }
             .orEmpty()
 
-    private fun startPrep(recordings: List<VoiceRecording>) {
+    /**
+     * Launches a transcode pass over [recordings], gating [canShare] for
+     * its whole duration.
+     *
+     * [asToggleTransition] threads the pass onto [prepLifecycleJob]'s
+     * chain. The per-row re-include path leaves it false: re-including
+     * one recording must not preempt the pass preparing the rest.
+     */
+    private fun startPrep(recordings: List<VoiceRecording>, asToggleTransition: Boolean = false) {
         val uuid = walkUuid ?: return
         if (recordings.isEmpty()) return
         _prepInFlight.update { it + 1 }
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                sharePrepStore.prepare(uuid, recordings)
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                Log.w(TAG, "share prep failed", t)
-            } finally {
-                _prepInFlight.update { (it - 1).coerceAtLeast(0) }
-            }
-        }
+        val job = launchPrepWork(
+            previous = if (asToggleTransition) prepLifecycleJob else null,
+            onFinish = { _prepInFlight.update { remaining -> (remaining - 1).coerceAtLeast(0) } },
+        ) { sharePrepStore.prepare(uuid, recordings) }
+        if (asToggleTransition) prepLifecycleJob = job
     }
 
-    /** Fire-and-forget prep-store I/O off Main, with the house CE discipline. */
-    private fun launchPrepWork(block: suspend () -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                block()
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                Log.w(TAG, "share prep work failed", t)
-            }
+    /**
+     * Fire-and-forget prep-store I/O off Main, with the house CE
+     * discipline. [previous], when given, is cancelled and joined before
+     * [block] runs at all — see [prepLifecycleJob].
+     *
+     * [CoroutineStart.ATOMIC] for the same reason [launchShareAttempt]
+     * uses it: a cancellation landing between this `launch` and the IO
+     * dispatch would otherwise skip the body — and with it [onFinish],
+     * stranding the [_prepInFlight] increment its caller already made and
+     * shutting the Share gate for the life of this ViewModel. ATOMIC
+     * makes the `finally` an actual guarantee.
+     */
+    private fun launchPrepWork(
+        previous: Job? = null,
+        onFinish: () -> Unit = {},
+        block: suspend () -> Unit,
+    ): Job = viewModelScope.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) {
+        try {
+            // The CANCEL is prompt — a toggle-off still preempts the pass
+            // it is replacing rather than queueing behind its remaining
+            // encodes. Only the WAIT is [NonCancellable], and it has to
+            // be: a transition cancelled while joining here would release
+            // the next one to start while its own predecessor was still
+            // unwinding, and a cleanup finishing after the final prep is
+            // precisely the interleaving this chain exists to forbid.
+            // Non-cancellable joins make each link imply all the ones
+            // before it, so the chain is a total order rather than a
+            // suggestion.
+            if (previous != null) withContext(NonCancellable) { previous.cancelAndJoin() }
+            block()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "share prep work failed", t)
+        } finally {
+            onFinish()
         }
     }
 
