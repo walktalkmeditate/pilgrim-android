@@ -192,4 +192,23 @@ class ShareRepairStoreTest {
         store.prePopulate(walkUuid, "share-1", listOf(photoSlot(1)))
         assertNull(store.load(otherWalk))
     }
+
+    @Test
+    fun `walkUuidsWithRecords lists every walk holding a record and drops them on clear`() = runBlocking {
+        // The keep-set OrphanSweeperWorker hands SharePrepStore.sweepOrphans:
+        // a walk with un-landed slots is exactly the walk whose transcode
+        // artifacts a repair pass may still need (port plan Decision 3).
+        val other = UUID.randomUUID().toString()
+        store.prePopulate(walkUuid, "share-a", listOf(audioSlot(1)))
+        store.prePopulate(other, "share-b", listOf(photoSlot(1)))
+
+        val uuids = store.walkUuidsWithRecords()
+        assertTrue("$walkUuid missing from $uuids", walkUuid in uuids)
+        assertTrue("$other missing from $uuids", other in uuids)
+
+        store.clear(other)
+        val afterClear = store.walkUuidsWithRecords()
+        assertTrue(walkUuid in afterClear)
+        assertTrue("a cleared record must leave the keep set", other !in afterClear)
+    }
 }

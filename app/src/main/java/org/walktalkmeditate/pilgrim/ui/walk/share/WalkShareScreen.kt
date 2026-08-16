@@ -30,9 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,7 +56,6 @@ import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
 import org.walktalkmeditate.pilgrim.data.share.ShareInputs
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
-import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -151,10 +148,13 @@ fun WalkShareScreen(
     val activeShare = cached?.takeIf { !it.isExpiredAt() }
     // iOS `WalkShareView.isShared` mirrors the VM's own `isShared`
     // (`WalkShareView.swift:24@3f9f9e8`) — `.partial` counts as shared,
-    // the page is live. The cache check stays in the OR so an
-    // already-shared walk shows its card before the restore observer has
-    // had a chance to run (the first-share-only short-circuit, R4/AE1).
-    val isShared = isSharedState(cardState) || activeShare != null
+    // the page is live. The cache arm covers the first-share-only
+    // short-circuit (R4/AE1) before the restore observer has run, but is
+    // suppressed while a share is in flight: the POST caches its result
+    // BEFORE the media PUTs start, and without that guard the form would
+    // vanish out from under `.uploadingMedia` — where iOS still shows it,
+    // frozen (`WalkShareView.swift:56-77@3f9f9e8`).
+    val isShared = isSharedState(cardState) || (activeShare != null && !isShareInFlight(cardState))
 
     // iOS `isDismissLocked` (`WalkShareView.swift:38-48@3f9f9e8`) — a
     // deliberate 2-case SUBSET of isShareInFlight: only states with
