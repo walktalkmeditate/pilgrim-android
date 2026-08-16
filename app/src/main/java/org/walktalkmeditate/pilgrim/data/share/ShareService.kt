@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.share
 
+import android.util.Log
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -290,7 +291,7 @@ class ShareService @Inject constructor(
             else -> {
                 val url = mediaUploadUrl(shareId, kind, slot.n)
                 val mediaType = if (kind == SlotKind.PHOTO) PHOTO_MEDIA_TYPE else AUDIO_MEDIA_TYPE
-                val success = putWithRetry(url, mediaType, slot.file, token, retryBackoffMs)
+                val success = putWithRetry(url, mediaType, slot.file, token, retryBackoffMs, "$kind/${slot.n}")
                 if (success) repairStore.markUploaded(walkUuid, kind, slot.n)
                 success
             }
@@ -312,10 +313,11 @@ class ShareService @Inject constructor(
         file: File,
         token: String,
         retryBackoffMs: Long,
+        slot: String,
     ): Boolean {
         var succeeded = false
         for (attempt in 0 until MEDIA_MAX_ATTEMPTS) {
-            succeeded = attemptPut(url, mediaType, file, token)
+            succeeded = attemptPut(url, mediaType, file, token, slot)
             if (succeeded) break
             if (attempt < MEDIA_MAX_ATTEMPTS - 1) {
                 coroutineContext.ensureActive() // Checkpoint B — see class doc on uploadMedia
@@ -340,8 +342,20 @@ class ShareService @Inject constructor(
      * the file-backed body's `contentLength()` automatically, which is
      * exact by construction (no risk of drifting from the real byte
      * count the way a manually-computed value could).
+     *
+     * Both failure modes fold into `false` for the caller, but neither
+     * folds silently: a partial share is otherwise indistinguishable in a
+     * bug report from a share that never tried, so the reason is logged
+     * against [slot] (`KIND/n`, the slot descriptor the repair record and
+     * the PUT path both key on).
      */
-    private suspend fun attemptPut(url: String, mediaType: MediaType, file: File, token: String): Boolean {
+    private suspend fun attemptPut(
+        url: String,
+        mediaType: MediaType,
+        file: File,
+        token: String,
+        slot: String,
+    ): Boolean {
         val request = Request.Builder()
             .url(url)
             .header("Content-Type", mediaType.toString())
@@ -349,10 +363,14 @@ class ShareService @Inject constructor(
             .put(file.asRequestBody(mediaType))
             .build()
         return try {
-            mediaClient.newCall(request).execute().use { it.isSuccessful }
+            mediaClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) Log.w(TAG, "media PUT $slot rejected with HTTP ${response.code}")
+                response.isSuccessful
+            }
         } catch (ce: CancellationException) {
             throw ce
         } catch (io: IOException) {
+            Log.w(TAG, "media PUT $slot failed", io)
             false
         }
     }
@@ -381,6 +399,7 @@ class ShareService @Inject constructor(
     private data class ErrorResponse(val error: String)
 
     companion object {
+        private const val TAG = "ShareService"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         /** `ShareService.swift:150@3f9f9e8`. */
