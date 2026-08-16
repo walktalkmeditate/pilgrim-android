@@ -308,7 +308,11 @@ class WalkShareViewModel @Inject constructor(
             totalsLabel = tourTotalsLabel(
                 context = context,
                 candidates = sources.candidates,
-                photoCount = if (wantsPhotos) interactivePhotoExportList().size else 0,
+                // Only computed when the label can actually show a photo
+                // clause — the export list re-derives the trimmed route
+                // on every call (iOS's `tourTotalsLabel` does the same,
+                // `WalkShareViewModel.swift:47-59@3f9f9e8`).
+                photoCount = if (wantsPhotos && sources.interactiveEnabled) interactivePhotoExportList().size else 0,
             ),
             // The SAME TourBuilder.validationError call the Share gate
             // uses, so the copy and the gate can never disagree (U7's
@@ -796,7 +800,6 @@ class WalkShareViewModel @Inject constructor(
                 // `:300-304@3f9f9e8`), so re-establish them here.
                 shareRepairStore.prePopulate(uuid, record.shareId, resolution.unresolved)
             }
-            _repairUnavailable.value = !resolution.hasUploadable
             _shareCardState.value = ShareCardState.Partial(cached.url, remaining)
         }
     }
