@@ -211,6 +211,9 @@ fun WalkShareScreen(
                         isSharing -> ShareCardState.Uploading
                         else -> ShareCardState.Idle
                     }
+                    // UI-56 parity: at the pin, .disabled(isShareInFlight) wraps the WHOLE form
+                    // (StatToggles/Journal/Expiry too), not just the Interactive section. U8 must
+                    // extend this gate to those composables when it wires the real ViewModel state.
                     val isShareInFlight = cardState is ShareCardState.Uploading
                     // Safe fallback: `expiryText` only ever RENDERS inside
                     // ShareStatusSection's Success/Partial branches, which

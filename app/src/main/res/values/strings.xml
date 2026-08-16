@@ -504,8 +504,8 @@
     <string name="share_status_retry_button">Carry the missing files</string>
     <string name="share_status_try_again">Try Again</string>
     <plurals name="share_status_photos_dropped">
-        <item quantity="one">%1$d of %2$d photo couldn\'t be prepared — they may still be waiting in iCloud.</item>
-        <item quantity="other">%1$d of %2$d photos couldn\'t be prepared — they may still be waiting in iCloud.</item>
+        <item quantity="one">%1$d of %2$d photo couldn\'t be prepared — it may not be on this device yet.</item>
+        <item quantity="other">%1$d of %2$d photos couldn\'t be prepared — they may not be on this device yet.</item>
     </plurals>
     <string name="share_status_share_without_them">Share without them</string>
     <string name="share_status_dont_share_yet">Don\'t share yet</string>
