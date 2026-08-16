@@ -197,13 +197,13 @@ class ShareStatusSectionTest {
     @Test
     fun `photosDropped singular pluralizes the photo noun on the denominator too`() {
         setSection(ShareCardState.PhotosDropped(prepared = 0, dropped = 1))
-        composeRule.onNodeWithText("1 of 1 photo couldn't be prepared — they may still be waiting in iCloud.").assertIsDisplayed()
+        composeRule.onNodeWithText("1 of 1 photo couldn't be prepared — it may not be on this device yet.").assertIsDisplayed()
     }
 
     @Test
     fun `photosDropped plural denominator when more than one dropped`() {
         setSection(ShareCardState.PhotosDropped(prepared = 2, dropped = 2))
-        composeRule.onNodeWithText("2 of 4 photos couldn't be prepared — they may still be waiting in iCloud.").assertIsDisplayed()
+        composeRule.onNodeWithText("2 of 4 photos couldn't be prepared — they may not be on this device yet.").assertIsDisplayed()
     }
 
     @Test

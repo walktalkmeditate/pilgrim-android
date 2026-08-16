@@ -78,7 +78,66 @@ data class WalkShareOptions(
     val trimEnabled: Boolean = false,
     /** Phase 19: recordings the walker excluded from the tour — a user choice, not an unavailability. */
     val excludedRecordingUuids: Set<String> = emptySet(),
+    /**
+     * Phase 19: per-recording spoken/ambient flips, keyed by
+     * `VoiceRecording.uuid` — the other half of the walker's per-row
+     * choices (iOS `flipKind`, `WalkShareViewModel.swift:236-241@3f9f9e8`).
+     * See [TourBuilder.candidates]' `kindOverrides` parameter.
+     */
+    val kindOverrides: Map<String, TourRecordingKind> = emptyMap(),
 )
+
+/**
+ * The shipped route, the trim actually applied, and the timestamp
+ * window that trim kept. Port of iOS `computeInteractiveRoute()`'s
+ * tuple (`WalkShareViewModel.swift:469-482@3f9f9e8`), including its
+ * "report the trim by OUTCOME, not intent" rule — [trimM] is 0 and
+ * [keptWindow] null whenever [RouteTrimmer] silently no-opped on a
+ * route too short to trim.
+ */
+internal data class InteractiveRoute(
+    val route: List<SharePayload.RoutePoint>,
+    val trimM: Int,
+    /** Epoch-SECOND bounds, INCLUSIVE at both ends — Kotlin's `LongRange` matches Swift's `ClosedRange`. */
+    val keptWindow: LongRange?,
+)
+
+/**
+ * Single source of truth for the trimmed route, shared by
+ * [SharePayloadBuilder.build] and the ViewModel's photo-export window
+ * (iOS `interactiveKeptWindow()`, `WalkShareViewModel.swift:245-247@3f9f9e8`)
+ * — exactly iOS's reason for factoring it out: "`buildPayload` and
+ * `interactiveKeptWindow()` must never compute this independently, or
+ * the payload's route and the filter window could drift apart"
+ * (`WalkShareViewModel.swift:467-468@3f9f9e8`).
+ */
+internal fun computeInteractiveRoute(inputs: ShareInputs, options: WalkShareOptions): InteractiveRoute {
+    val altitudeByTs = inputs.altitudeSamples.associateBy { it.timestamp }
+    val downsampled = RouteDownsampler.downsample(
+        inputs.routePoints.map { p ->
+            SharePayload.RoutePoint(
+                lat = p.latitude,
+                lon = p.longitude,
+                alt = altitudeByTs[p.timestamp]?.altitudeMeters ?: 0.0,
+                // Epoch-MILLIS → epoch-SECONDS per iOS wire parity.
+                ts = p.timestamp / 1_000L,
+            )
+        },
+    )
+    if (!options.interactive || !options.trimEnabled) return InteractiveRoute(downsampled, 0, null)
+
+    val trimmed = RouteTrimmer.trim(downsampled, ShareConfig.INTERACTIVE_TRIM_METERS.toDouble())
+    val didTrim = trimmed.size < downsampled.size
+    return InteractiveRoute(
+        route = trimmed,
+        trimM = if (didTrim) ShareConfig.INTERACTIVE_TRIM_METERS else 0,
+        // "Trim's promise covers everything with a coordinate: waypoints
+        // and photo metadata outside the kept route window are excluded
+        // too — a doorstep photo must not pin the doorstep trim just
+        // hid." (`WalkShareViewModel.swift:477@3f9f9e8`)
+        keptWindow = if (didTrim && trimmed.size >= 2) trimmed.first().ts..trimmed.last().ts else null,
+    )
+}
 
 /**
  * One paused stretch of the walk, in epoch millis. See [ShareInputs.pauseSpans].
@@ -102,36 +161,29 @@ internal object SharePayloadBuilder {
         photos: List<SharePayload.Photo>? = null,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): SharePayload {
-        val altitudeByTs = inputs.altitudeSamples.associateBy { it.timestamp }
-        val projected = inputs.routePoints.map { p ->
-            SharePayload.RoutePoint(
-                lat = p.latitude,
-                lon = p.longitude,
-                alt = altitudeByTs[p.timestamp]?.altitudeMeters ?: 0.0,
-                // Epoch-MILLIS → epoch-SECONDS per iOS wire parity.
-                ts = p.timestamp / MILLIS_PER_SECOND,
-            )
-        }
-        val downsampled = RouteDownsampler.downsample(projected)
-
         // Phase 19: trim runs on the downsampled route (matches iOS
         // `computeInteractiveRoute()` — downsample happens first, trim
         // second) so map/og/tour all inherit the same trimmed points;
-        // there is no separate "trimmed for the tour" copy. Report the
-        // outcome, never the intent: RouteTrimmer silently no-ops on a
-        // route too short to trim, so trimM must reflect what actually
-        // happened, never claim a trim that never ran.
-        val trimApplies = options.interactive && options.trimEnabled
-        val finalRoute = if (trimApplies) {
-            RouteTrimmer.trim(downsampled, ShareConfig.INTERACTIVE_TRIM_METERS.toDouble())
+        // there is no separate "trimmed for the tour" copy.
+        val interactiveRoute = computeInteractiveRoute(inputs, options)
+        val finalRoute = interactiveRoute.route
+        val trimM = interactiveRoute.trimM
+
+        // The walker's per-row choices resolved ONCE, then read by the
+        // tour, the talk intervals, and the talk-duration clamp alike —
+        // iOS's `tourCandidates` array plays the same single-source role
+        // for those three consumers (`WalkShareViewModel.swift:343-365,443@3f9f9e8`).
+        val candidates = if (options.interactive) {
+            TourBuilder.candidates(
+                recordings = inputs.voiceRecordings,
+                artifacts = inputs.recordingArtifacts,
+                excludedUuids = options.excludedRecordingUuids,
+                kindOverrides = options.kindOverrides,
+            )
         } else {
-            downsampled
+            emptyList()
         }
-        val trimM = if (trimApplies && finalRoute.size < downsampled.size) {
-            ShareConfig.INTERACTIVE_TRIM_METERS
-        } else {
-            0
-        }
+        val includedTalkCandidates = candidates.filter { it.includeInShare && it.unavailableReason == null }
 
         val intervals = buildList {
             inputs.activityIntervals
@@ -145,14 +197,26 @@ internal object SharePayloadBuilder {
                         ),
                     )
                 }
-            inputs.voiceRecordings.forEach {
-                add(
-                    SharePayload.ActivityIntervalPayload(
-                        type = "talk",
-                        startTs = it.startTimestamp / MILLIS_PER_SECOND,
-                        endTs = it.endTimestamp / MILLIS_PER_SECOND,
-                    ),
-                )
+            // "Consent follows the checkbox: an excluded recording
+            // leaves no trace — no talk interval, no rust on the route,
+            // no minutes in the total."
+            // (`WalkShareViewModel.swift:343-347@3f9f9e8`). The classic
+            // branch reads the recordings directly and is unaffected by
+            // exclusions, exactly as iOS's is.
+            if (options.interactive) {
+                includedTalkCandidates.forEach {
+                    add(SharePayload.ActivityIntervalPayload(type = "talk", startTs = it.startTs, endTs = it.endTs))
+                }
+            } else {
+                inputs.voiceRecordings.forEach {
+                    add(
+                        SharePayload.ActivityIntervalPayload(
+                            type = "talk",
+                            startTs = it.startTimestamp / MILLIS_PER_SECOND,
+                            endTs = it.endTimestamp / MILLIS_PER_SECOND,
+                        ),
+                    )
+                }
             }
         }
 
@@ -189,7 +253,19 @@ internal object SharePayloadBuilder {
             } else null,
             steps = if (options.includeSteps) inputs.steps?.takeIf { it > 0 } else null,
             meditateDuration = inputs.meditateDurationSeconds.takeIf { it > 0.0 },
-            talkDuration = inputs.talkDurationSeconds.takeIf { it > 0.0 },
+            // "Recordings outrun active time by design (a talk can run
+            // through a pause); NewWalk clamps talkDuration to
+            // activeDuration for the same reason, and the worker 400s on
+            // meditate+talk > active — clamp the included-candidate sum
+            // the same way." (`WalkShareViewModel.swift:364-365@3f9f9e8`).
+            // Interactive branch only: the classic branch trusts the
+            // walk's own total, unclamped by this rule.
+            talkDuration = if (options.interactive) {
+                minOf(includedTalkCandidates.sumOf { it.duration }, inputs.talkDurationSeconds)
+                    .takeIf { it > 0.0 }
+            } else {
+                inputs.talkDurationSeconds.takeIf { it > 0.0 }
+            },
             // Stage 12: weather rides through if the walk captured it
             // (Stage 12-A added the 4 cols on Walk). Already-nullable
             // wire fields keep the format wire-compatible with iOS.
@@ -198,7 +274,13 @@ internal object SharePayloadBuilder {
         )
 
         val waypointsPayload = if (options.includeWaypoints && inputs.waypoints.isNotEmpty()) {
-            inputs.waypoints.map {
+            inputs.waypoints.filter { wp ->
+                // Trim's promise covers everything with a coordinate
+                // (`WalkShareViewModel.swift:409-422,477@3f9f9e8`); the
+                // window is inclusive at both ends, matching Swift's
+                // `ClosedRange.contains`.
+                interactiveRoute.keptWindow?.contains(wp.timestamp / MILLIS_PER_SECOND) ?: true
+            }.map {
                 SharePayload.Waypoint(
                     lat = it.latitude,
                     lon = it.longitude,
@@ -218,14 +300,7 @@ internal object SharePayloadBuilder {
         // iOS's `applyInteractiveTourAndPauses`, which runs
         // unconditionally once `interactive` is true.
         val tour = if (options.interactive) {
-            TourBuilder.tourItems(
-                candidates = TourBuilder.candidates(
-                    recordings = inputs.voiceRecordings,
-                    artifacts = inputs.recordingArtifacts,
-                    excludedUuids = options.excludedRecordingUuids,
-                ),
-                trimM = trimM,
-            ).tour
+            TourBuilder.tourItems(candidates = candidates, trimM = trimM).tour
         } else {
             null
         }

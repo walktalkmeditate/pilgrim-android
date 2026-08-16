@@ -43,6 +43,7 @@ class TourBuilderTest {
         kind: TourRecordingKind = TourRecordingKind.SPOKEN,
     ): TourRecordingCandidate = TourRecordingCandidate(
         id = id,
+        recordingUuid = "rec-$id",
         startTs = 1000L + id * 100L,
         endTs = 1050L + id * 100L,
         duration = seconds,
@@ -122,7 +123,7 @@ class TourBuilderTest {
     @Test
     fun `tourItems always nulls out transcription`() {
         val withTranscript = TourRecordingCandidate(
-            id = 0, startTs = 1000L, endTs = 1060L, duration = 60.0, sizeBytes = 1_000_000L,
+            id = 0, recordingUuid = "rec-0", startTs = 1000L, endTs = 1060L, duration = 60.0, sizeBytes = 1_000_000L,
             transcription = "some real speech", wpm = 120.0, autoKind = TourRecordingKind.SPOKEN,
             includeInShare = true, kindOverride = null, fileRelativePath = "0.m4a", unavailableReason = null,
         )
@@ -136,7 +137,7 @@ class TourBuilderTest {
     @Test
     fun `unavailable candidates never enter the tour`() {
         val removed = TourRecordingCandidate(
-            id = 1, startTs = 1100L, endTs = 1150L, duration = 50.0, sizeBytes = 0L,
+            id = 1, recordingUuid = "rec-1", startTs = 1100L, endTs = 1150L, duration = 50.0, sizeBytes = 0L,
             transcription = "kept transcript", wpm = null, autoKind = TourRecordingKind.SPOKEN,
             includeInShare = false, kindOverride = null, fileRelativePath = null, unavailableReason = "audio removed",
         )
@@ -285,5 +286,82 @@ class TourBuilderTest {
 
         val result = TourBuilder.tourItems(candidates, trimM = 0)
         assertEquals(1, result.tour.recordings.size)
+    }
+
+    // MARK: - U8: identity + kind overrides
+
+    @Test
+    fun `candidates carry the source recording uuid`() {
+        // U8 needs a row-to-recording mapping for exclusion, prep
+        // cancellation, artifact paths, and the repair record's
+        // `SlotIdentity.Audio(recordingUuid)`. iOS never needs this
+        // (its candidate carries the m4a `fileURL` and matches repairs
+        // by `startTs`, `WalkShareViewModel+ShareOrchestration.swift:340@3f9f9e8`);
+        // Android's Room uuid is the stronger identity — see
+        // `SlotIdentity`'s KDoc.
+        val rec = recording()
+        val result = TourBuilder.candidates(
+            recordings = listOf(rec),
+            artifacts = mapOf(rec.uuid to RecordingArtifact(sizeBytes = 1_000L, fileExists = true)),
+        )
+        assertEquals(rec.uuid, result.single().recordingUuid)
+    }
+
+    @Test
+    fun `a kind override by recording uuid wins over the auto classification`() {
+        // iOS stores the override on the mutable candidate struct
+        // (`flipKind`, `WalkShareViewModel.swift:236-241@3f9f9e8`);
+        // Android's candidate list is derived, so the override rides in
+        // keyed by uuid and is applied here — one function, so the UI
+        // rows and `SharePayloadBuilder`'s own derivation cannot drift.
+        val rec = recording(transcription = null)
+        val artifacts = mapOf(rec.uuid to RecordingArtifact(sizeBytes = 1_000L, fileExists = true))
+
+        val auto = TourBuilder.candidates(listOf(rec), artifacts).single()
+        assertEquals(TourRecordingKind.SPOKEN, auto.effectiveKind)
+        assertNull(auto.kindOverride)
+
+        val flipped = TourBuilder.candidates(
+            listOf(rec),
+            artifacts,
+            kindOverrides = mapOf(rec.uuid to TourRecordingKind.AMBIENT),
+        ).single()
+        assertEquals(TourRecordingKind.AMBIENT, flipped.effectiveKind)
+        assertEquals(TourRecordingKind.AMBIENT, flipped.kindOverride)
+    }
+
+    @Test
+    fun `an override matching the auto kind normalizes back to null`() {
+        // iOS `flipKind`: "kindOverride = flipped == autoKind ? nil : flipped"
+        // (`WalkShareViewModel.swift:240@3f9f9e8`).
+        val rec = recording(transcription = null)
+        val candidate = TourBuilder.candidates(
+            listOf(rec),
+            mapOf(rec.uuid to RecordingArtifact(sizeBytes = 1_000L, fileExists = true)),
+            kindOverrides = mapOf(rec.uuid to TourRecordingKind.SPOKEN),
+        ).single()
+        assertNull("a redundant override must not be stored", candidate.kindOverride)
+        assertEquals(TourRecordingKind.SPOKEN, candidate.effectiveKind)
+    }
+
+    @Test
+    fun `includedCandidates is the same filter tourItems uses`() {
+        // U8 numbers audio upload slots from this list; `tourItems`
+        // numbers `tour.recordings[].n` from it too. One function, so
+        // slot `n` can never drift from the declared recording `n`
+        // (iOS gets this for free — `tourItems` returns the parallel
+        // `files` array, `TourBuilder.swift@3f9f9e8`).
+        val candidates = listOf(
+            candidate(id = 0),
+            candidate(id = 1, included = false),
+            candidate(id = 2).copy(unavailableReason = "audio removed", fileRelativePath = null),
+            candidate(id = 3),
+        )
+        val included = TourBuilder.includedCandidates(candidates)
+        assertEquals(listOf(0, 3), included.map { it.id })
+        assertEquals(
+            included.map { it.startTs },
+            TourBuilder.tourItems(candidates, trimM = 0).tour.recordings.map { it.startTs },
+        )
     }
 }
