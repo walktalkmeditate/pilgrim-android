@@ -179,6 +179,19 @@ class SharePrepStore @Inject constructor(
         // "caller must remember to include in-flight walks" trap outright
         // (a background sweep landing while the share screen is open with
         // Interactive on would otherwise delete artifacts out from under it).
+        //
+        // The union is per-RECORDING state, so it does not cover a
+        // photo-only walk: a walk with pinned photos and no recordings
+        // has no [_state] entry at all, and its repair record (the
+        // caller's keep set) is only written after the POST. A sweep
+        // landing inside that pre-POST window — between
+        // [TourPhotoExporter] writing `photos/*.jpg` and the first PUT —
+        // can therefore delete an export out from under an in-flight
+        // share. Deliberately left as is: the sweep is a once-a-day
+        // WorkManager pass against a window measured in seconds, and the
+        // outcome is recoverable rather than lossy — the PUT fails, the
+        // card lands on Partial, and "Carry the missing files" re-exports
+        // exactly the photos it needs.
         val keep = keepWalkUuids + _state.value.keys
         val entries = try {
             Files.list(root.toPath()).use { stream -> stream.collect(Collectors.toList()) }

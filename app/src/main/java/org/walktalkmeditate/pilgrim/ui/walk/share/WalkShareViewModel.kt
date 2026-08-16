@@ -12,6 +12,7 @@ import java.io.File
 import java.time.Instant
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -37,6 +38,7 @@ import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
 import org.walktalkmeditate.pilgrim.data.share.PauseSpan
+import org.walktalkmeditate.pilgrim.data.share.PreparedRoute
 import org.walktalkmeditate.pilgrim.data.share.PrepState
 import org.walktalkmeditate.pilgrim.data.share.RecordingArtifact
 import org.walktalkmeditate.pilgrim.data.share.ShareConfig
@@ -56,6 +58,7 @@ import org.walktalkmeditate.pilgrim.data.share.TourRecordingCandidate
 import org.walktalkmeditate.pilgrim.data.share.TourRecordingKind
 import org.walktalkmeditate.pilgrim.data.share.WalkShareOptions
 import org.walktalkmeditate.pilgrim.data.share.computeInteractiveRoute
+import org.walktalkmeditate.pilgrim.data.share.prepareRoute
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
@@ -228,6 +231,17 @@ class WalkShareViewModel @Inject constructor(
     @Volatile
     private var recordingsByUuid: Map<String, VoiceRecording> = emptyMap()
 
+    /**
+     * The downsampled route + its trim eligibility, computed ONCE by
+     * [loadInputs] on its background dispatcher and published before
+     * [WalkShareUiState.Loaded] is — so every reader that runs on Main
+     * ([interactiveSection]'s transform, [interactivePhotoExportList])
+     * finds it already there and never re-runs the RDP passes.
+     */
+    @Volatile
+    internal var preparedRoute: PreparedRoute? = null
+        private set
+
     /** iOS `didAutoEnablePhotos` — per-VM-instance, never persisted (`WalkShareViewModel.swift:66@3f9f9e8`, spec BEH-80). */
     private var didAutoEnablePhotos = false
 
@@ -284,8 +298,7 @@ class WalkShareViewModel @Inject constructor(
         _includePhotos,
         _uiState,
         _shareCardState,
-    ) { sources, sizes, wantsPhotos, state, card ->
-        val loaded = state as? WalkShareUiState.Loaded
+    ) { sources, sizes, wantsPhotos, _, card ->
         val rows = sources.candidates.map { candidate ->
             TourRecordingRowState(
                 id = candidate.id,
@@ -309,8 +322,9 @@ class WalkShareViewModel @Inject constructor(
                 context = context,
                 candidates = sources.candidates,
                 // Only computed when the label can actually show a photo
-                // clause — the export list re-derives the trimmed route
-                // on every call (iOS's `tourTotalsLabel` does the same,
+                // clause. The export list applies the trim to the
+                // ALREADY-downsampled [preparedRoute] (iOS's
+                // `tourTotalsLabel` reaches for the same shared window,
                 // `WalkShareViewModel.swift:47-59@3f9f9e8`).
                 photoCount = if (wantsPhotos && sources.interactiveEnabled) interactivePhotoExportList().size else 0,
             ),
@@ -323,7 +337,7 @@ class WalkShareViewModel @Inject constructor(
                 null
             },
             trimEnabled = sources.trimEnabled,
-            canTrim = loaded?.let { canTrimRoute(it.inputs) } ?: false,
+            canTrim = preparedRoute?.canTrim == true,
             inputLocked = isShareInFlight(card),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, InteractiveShareSectionState())
@@ -453,8 +467,13 @@ class WalkShareViewModel @Inject constructor(
             startPrep(prepareableRecordings())
         } else {
             val uuid = walkUuid ?: return
+            // The artifacts are gone, so their sizes are unknown again —
+            // but the walker's per-row choices are NOT reset. iOS leaves
+            // `tourCandidates` untouched across a toggle-off/on
+            // (`WalkShareViewModel.swift:217-228@3f9f9e8`), so an
+            // accidental tap can never silently re-include something
+            // the walker chose to leave behind.
             _knownArtifactSizes.value = emptyMap()
-            _excludedRecordingUuids.value = emptySet()
             launchPrepWork { sharePrepStore.cancelAndCleanupWalk(uuid) }
         }
     }
@@ -517,9 +536,7 @@ class WalkShareViewModel @Inject constructor(
         if (!claimShareLock()) return
         _repairUnavailable.value = false
         _shareCardState.value = ShareCardState.Uploading
-        shareJob = viewModelScope.launch(Dispatchers.IO) {
-            runGuarded { runShare() }
-        }
+        launchShareAttempt { runShare() }
     }
 
     /**
@@ -533,11 +550,9 @@ class WalkShareViewModel @Inject constructor(
         if (!claimShareLock()) return
         _shareCardState.value = ShareCardState.Uploading
         val photos = pendingTourPhotos
-        shareJob = viewModelScope.launch(Dispatchers.IO) {
-            runGuarded {
-                completeShare(photos)
-                pendingTourPhotos = emptyList()
-            }
+        launchShareAttempt {
+            completeShare(photos)
+            pendingTourPhotos = emptyList()
         }
     }
 
@@ -562,9 +577,7 @@ class WalkShareViewModel @Inject constructor(
         if (_shareCardState.value !is ShareCardState.Partial) return
         if (!claimShareLock()) return
         _repairUnavailable.value = false
-        shareJob = viewModelScope.launch(Dispatchers.IO) {
-            runGuarded { runRepair() }
-        }
+        launchShareAttempt { runRepair() }
     }
 
     /**
@@ -573,6 +586,30 @@ class WalkShareViewModel @Inject constructor(
      * read-then-write sync guard").
      */
     private fun claimShareLock(): Boolean = _isSharing.compareAndSet(expect = false, update = true)
+
+    /**
+     * Spawns the one attempt the caller has just claimed the lock for,
+     * and names it so [cancelDroppedPhotoShare] can cancel it.
+     *
+     * [CoroutineStart.ATOMIC] is the faithful analogue of the pin's
+     * `Task { await share(); shareTask = nil }` (`:11-14@3f9f9e8`): a
+     * Swift Task always runs its body and observes cancellation at its
+     * own checkpoints. Under Kotlin's default start, a cancel landing
+     * between this `launch` and the IO dispatch skips the body
+     * altogether — and with it [runGuarded]'s `finally`, stranding the
+     * lock claimed just above and disabling Share for the life of this
+     * ViewModel. ATOMIC makes that `finally` an actual guarantee; the
+     * body runs, hits the pre-POST checkpoint, and lands on Idle.
+     *
+     * A body that finishes before the assignment below can leave a
+     * COMPLETED Job in [shareJob] (its own `finally` already nulled the
+     * field). That is inert: cancelling a completed Job is a no-op,
+     * which is exactly right — there is no attempt left to cancel — and
+     * the next attempt overwrites it.
+     */
+    private fun launchShareAttempt(body: suspend () -> Unit) {
+        shareJob = viewModelScope.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) { runGuarded(body) }
+    }
 
     /**
      * The shared body wrapper for all three entry points: releases the
@@ -728,12 +765,19 @@ class WalkShareViewModel @Inject constructor(
                 )
                 if (outcome.failedCount == 0) {
                     _shareCardState.value = ShareCardState.Success(result.url)
+                    _events.tryEmit(WalkShareEvent.Success(result.url))
                     cleanUpArtifacts(walkUuidValue)
                 } else {
                     // The link is revealed anyway — the page IS live —
                     // and the repair record stays for "Carry the missing
                     // files" (`:153-155@3f9f9e8`). Artifacts stay too:
                     // the repair pass uploads from them.
+                    //
+                    // No Success event: that event auto-presents the page
+                    // in a Custom Tab, which would pull the walker off
+                    // the very card carrying "Carry the missing files".
+                    // iOS guards its reveal on `.success` alone
+                    // (`WalkShareView.swift:361@3f9f9e8`).
                     _shareCardState.value = ShareCardState.Partial(result.url, outcome.failedCount)
                 }
             } else {
@@ -742,8 +786,8 @@ class WalkShareViewModel @Inject constructor(
                 // `.partial` share before." (`:157-163@3f9f9e8`)
                 shareRepairStore.clear(walkUuidValue)
                 _shareCardState.value = ShareCardState.Success(result.url)
+                _events.tryEmit(WalkShareEvent.Success(result.url))
             }
-            _events.tryEmit(WalkShareEvent.Success(result.url))
         } catch (ce: CancellationException) {
             throw ce
         } catch (e: ShareError.RateLimited) {
@@ -771,9 +815,15 @@ class WalkShareViewModel @Inject constructor(
      * back to the same button forever.
      */
     private suspend fun runRepair() {
-        val cached = _cachedShare.value?.takeIf { !it.isExpiredAt() } ?: return
-        val uuid = walkUuid ?: return
-        val record = shareRepairStore.load(uuid) ?: return
+        // Each of these three is "there is nothing left to repair
+        // against" — the page expired, the walk is gone, the record was
+        // cleared. Returning silently would leave the retry button
+        // exactly where it was, inviting the same tap forever; the
+        // repair-unavailable explanation is what iOS shows instead
+        // (`:268-282@3f9f9e8`).
+        val cached = _cachedShare.value?.takeIf { !it.isExpiredAt() } ?: return explainRepairUnavailable()
+        val uuid = walkUuid ?: return explainRepairUnavailable()
+        val record = shareRepairStore.load(uuid) ?: return explainRepairUnavailable()
         if (!isRepairRecordCurrent(record.shareId, cached.id)) {
             shareRepairStore.clear(uuid)
             _shareCardState.value = ShareCardState.Success(cached.url)
@@ -822,6 +872,16 @@ class WalkShareViewModel @Inject constructor(
             }
             _shareCardState.value = ShareCardState.Partial(cached.url, remaining)
         }
+    }
+
+    /**
+     * Swaps the retry button for the static explanation
+     * ([ShareStatusSection]'s `PartialFailureBlock`). The card itself is
+     * left alone: every caller is inside a pass that started from
+     * [ShareCardState.Partial] and has not moved off it yet.
+     */
+    private fun explainRepairUnavailable() {
+        _repairUnavailable.value = true
     }
 
     /**
@@ -1038,25 +1098,14 @@ class WalkShareViewModel @Inject constructor(
     internal fun interactivePhotoExportList(): List<WalkPhoto> {
         val loaded = _uiState.value as? WalkShareUiState.Loaded ?: return emptyList()
         if (loaded.inputs.pinnedPhotos.isEmpty()) return emptyList()
+        val prepared = preparedRoute ?: return emptyList()
         val window = computeInteractiveRoute(
-            loaded.inputs,
+            prepared.downsampled,
             shareOptions(_interactiveEnabled.value, _excludedRecordingUuids.value),
         ).keptWindow
         return loaded.inputs.pinnedPhotos
             .filter { window?.contains((it.takenAt ?: 0L) / MILLIS_PER_SECOND) ?: true }
             .take(TourPhotoExporter.MAX_PHOTOS)
-    }
-
-    /**
-     * iOS `canTrimRoute` (`WalkShareViewModel.swift:61-64@3f9f9e8`) —
-     * judged against the same points [computeInteractiveRoute] would
-     * actually trim, "so a route long enough to trim can never disagree
-     * with a route the UI was told could be trimmed."
-     */
-    private fun canTrimRoute(inputs: ShareInputs): Boolean {
-        val untrimmed = computeInteractiveRoute(inputs, shareOptions(interactive = false, excluded = emptySet())).route
-        return org.walktalkmeditate.pilgrim.data.share.RouteTrimmer
-            .canTrim(untrimmed, ShareConfig.INTERACTIVE_TRIM_METERS.toDouble())
     }
 
     private fun hasPinnedPhotos(): Boolean =
@@ -1200,6 +1249,9 @@ class WalkShareViewModel @Inject constructor(
         )
         recordingsByUuid = recordings.associateBy { it.uuid }
         _walkUuid.value = walk.uuid
+        // Published BEFORE Loaded: the UI transform that reads it is
+        // woken by exactly this assignment to _uiState.
+        preparedRoute = prepareRoute(inputs)
         _uiState.value = WalkShareUiState.Loaded(inputs = inputs)
     }
 

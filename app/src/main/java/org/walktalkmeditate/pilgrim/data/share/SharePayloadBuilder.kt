@@ -103,17 +103,34 @@ internal data class InteractiveRoute(
 )
 
 /**
- * Single source of truth for the trimmed route, shared by
- * [SharePayloadBuilder.build] and the ViewModel's photo-export window
- * (iOS `interactiveKeptWindow()`, `WalkShareViewModel.swift:245-247@3f9f9e8`)
- * — exactly iOS's reason for factoring it out: "`buildPayload` and
- * `interactiveKeptWindow()` must never compute this independently, or
- * the payload's route and the filter window could drift apart"
- * (`WalkShareViewModel.swift:467-468@3f9f9e8`).
+ * The route work that depends on nothing a walker can change: the RDP
+ * downsample, and the trim eligibility that follows from it (iOS
+ * `canTrimRoute`, `WalkShareViewModel.swift:61-64@3f9f9e8`).
+ *
+ * Both are functions of [ShareInputs] alone, which is immutable once
+ * loaded — so they are computed ONCE, off the main thread, and every
+ * later read (trim eligibility for the disclosure, the photo-export
+ * window, the totals label) answers from here. Recomputing them per
+ * UI emission put up to 32 RDP passes on the Main-confined transform
+ * of a `stateIn`, for every toggle, on every share.
  */
-internal fun computeInteractiveRoute(inputs: ShareInputs, options: WalkShareOptions): InteractiveRoute {
+internal data class PreparedRoute(
+    val downsampled: List<SharePayload.RoutePoint>,
+    val canTrim: Boolean,
+)
+
+/** Computes [PreparedRoute]; callers run this off Main (it is the expensive half). */
+internal fun prepareRoute(inputs: ShareInputs): PreparedRoute {
+    val downsampled = downsampleRoute(inputs)
+    return PreparedRoute(
+        downsampled = downsampled,
+        canTrim = RouteTrimmer.canTrim(downsampled, ShareConfig.INTERACTIVE_TRIM_METERS.toDouble()),
+    )
+}
+
+private fun downsampleRoute(inputs: ShareInputs): List<SharePayload.RoutePoint> {
     val altitudeByTs = inputs.altitudeSamples.associateBy { it.timestamp }
-    val downsampled = RouteDownsampler.downsample(
+    return RouteDownsampler.downsample(
         inputs.routePoints.map { p ->
             SharePayload.RoutePoint(
                 lat = p.latitude,
@@ -124,6 +141,31 @@ internal fun computeInteractiveRoute(inputs: ShareInputs, options: WalkShareOpti
             )
         },
     )
+}
+
+/**
+ * Single source of truth for the trimmed route, shared by
+ * [SharePayloadBuilder.build] and the ViewModel's photo-export window
+ * (iOS `interactiveKeptWindow()`, `WalkShareViewModel.swift:245-247@3f9f9e8`)
+ * — exactly iOS's reason for factoring it out: "`buildPayload` and
+ * `interactiveKeptWindow()` must never compute this independently, or
+ * the payload's route and the filter window could drift apart"
+ * (`WalkShareViewModel.swift:467-468@3f9f9e8`).
+ */
+internal fun computeInteractiveRoute(inputs: ShareInputs, options: WalkShareOptions): InteractiveRoute =
+    computeInteractiveRoute(downsampleRoute(inputs), options)
+
+/**
+ * The same computation over an ALREADY-downsampled route
+ * ([PreparedRoute.downsampled]). Taking the downsampled points rather
+ * than the inputs is what makes it impossible for a per-emission caller
+ * to smuggle an RDP pass back into the UI path — there is no route to
+ * downsample in this signature.
+ */
+internal fun computeInteractiveRoute(
+    downsampled: List<SharePayload.RoutePoint>,
+    options: WalkShareOptions,
+): InteractiveRoute {
     if (!options.interactive || !options.trimEnabled) return InteractiveRoute(downsampled, 0, null)
 
     val trimmed = RouteTrimmer.trim(downsampled, ShareConfig.INTERACTIVE_TRIM_METERS.toDouble())

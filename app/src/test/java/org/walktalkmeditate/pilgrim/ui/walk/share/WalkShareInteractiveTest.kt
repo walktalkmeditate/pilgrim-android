@@ -11,6 +11,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
@@ -41,6 +42,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -59,6 +61,7 @@ import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
+import org.walktalkmeditate.pilgrim.data.share.PrepState
 import org.walktalkmeditate.pilgrim.data.share.RepairSlot
 import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
 import org.walktalkmeditate.pilgrim.data.share.SharePrepStore
@@ -67,6 +70,7 @@ import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.share.SlotIdentity
 import org.walktalkmeditate.pilgrim.data.share.SlotKind
 import org.walktalkmeditate.pilgrim.data.share.SlotStatus
+import org.walktalkmeditate.pilgrim.data.share.TourBuilder
 import org.walktalkmeditate.pilgrim.data.share.TourPhotoExporter
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
@@ -207,19 +211,21 @@ class WalkShareInteractiveTest {
     private suspend fun seedWalk(
         recordingDurations: List<Long> = emptyList(),
         photoUris: List<String> = emptyList(),
+        // ~111m of latitude per point, so 20 points is well past the
+        // 4x-150m threshold RouteTrimmer needs before it will trim.
+        routePoints: Int = 2,
     ): Seed {
         val walk = repository.startWalk(startTimestamp = nextTs.getAndAdd(600_000L))
-        repository.recordLocation(
-            RouteDataSample(walkId = walk.id, timestamp = walk.startTimestamp, latitude = 45.0, longitude = -70.0),
-        )
-        repository.recordLocation(
-            RouteDataSample(
-                walkId = walk.id,
-                timestamp = walk.startTimestamp + 30_000L,
-                latitude = 45.001,
-                longitude = -70.001,
-            ),
-        )
+        repeat(routePoints) { i ->
+            repository.recordLocation(
+                RouteDataSample(
+                    walkId = walk.id,
+                    timestamp = walk.startTimestamp + i * 30_000L,
+                    latitude = 45.0 + i * 0.001,
+                    longitude = -70.0,
+                ),
+            )
+        }
         val recordings = recordingDurations.mapIndexed { index, durationMs ->
             val start = walk.startTimestamp + 60_000L + index * 120_000L
             val recording = VoiceRecording(
@@ -383,10 +389,24 @@ class WalkShareInteractiveTest {
             server.enqueue(MockResponse().setResponseCode(500))
             server.enqueue(MockResponse().setResponseCode(500))
 
+            val events = mutableListOf<WalkShareEvent>()
+            val watcher = launch(dispatcher) { vm.events.collect { events += it } }
+
             vm.share()
             val partial = vm.awaitCard { it is ShareCardState.Partial } as ShareCardState.Partial
             assertEquals(1, partial.failedCount)
             assertEquals("https://walk.pilgrimapp.org/abc123", partial.url)
+
+            // The lock releases as the attempt unwinds, so any event it
+            // was going to emit has already been emitted by here.
+            awaitReal { vm.isSharing.first { !it } }
+            watcher.cancel()
+            assertTrue(
+                "a partial must not auto-present the page — that yanks the walker off the card carrying " +
+                    "\"Carry the missing files\" (iOS guards the reveal on .success alone, " +
+                    "WalkShareView.swift:361@3f9f9e8): $events",
+                events.none { it is WalkShareEvent.Success },
+            )
 
             val record = requireNotNull(repairStore.load(seed.walkUuid))
             assertEquals("abc123", record.shareId)
@@ -477,6 +497,76 @@ class WalkShareInteractiveTest {
         awaitReal { vm.interactiveSection.first { section -> section.rows.all { it.includeInShare } } }
     }
 
+    @Test
+    fun `an exclusion survives an accidental Interactive toggle-off`() = runTest(dispatcher) {
+        // iOS `prepareInteractive()` leaves `tourCandidates` alone —
+        // toggling Interactive off and on again never rebuilds the
+        // walker's per-row choices (`WalkShareViewModel.swift:217-228@3f9f9e8`).
+        val seed = seedWalk(recordingDurations = listOf(60_000L, 90_000L))
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.setInteractiveEnabled(true)
+        vm.awaitReadyToShare(expectedRows = 2)
+
+        vm.toggleRowInclude(candidateId = 1)
+        awaitReal { vm.tourCandidates.first { candidates -> candidates.none { it.includeInShare && it.id == 1 } } }
+
+        vm.setInteractiveEnabled(false)
+        // The toggle-off's cancel-and-cleanup and the toggle-on's fresh
+        // prep are independent coroutines on IO; letting the cleanup
+        // finish first keeps this test about the consent choice rather
+        // than about their interleaving.
+        awaitReal {
+            prepStore.state.first { it[seed.walkUuid].isNullOrEmpty() }
+            while (File(context.cacheDir, "share-prep/${seed.walkUuid}").exists()) delay(5)
+        }
+        vm.setInteractiveEnabled(true)
+        // Await the flow this test asserts on, and await it settling on
+        // the far side of the re-prep: toggling off drops every known
+        // size, so `canShare` and the section can both still be reading
+        // pre-toggle values for a beat.
+        awaitReal {
+            vm.tourCandidates.first { candidates ->
+                candidates.size == 2 && candidates.all { it.unavailableReason == null }
+            }
+        }
+
+        assertFalse(
+            "a consent choice must not be silently undone by an off/on tap",
+            vm.tourCandidates.value.single { it.id == 1 }.includeInShare,
+        )
+        assertTrue("the untouched row is unaffected", vm.tourCandidates.value.single { it.id == 0 }.includeInShare)
+    }
+
+    // ---- the route work hoisted out of the per-emission path -------------
+
+    @Test
+    fun `the interactive section answers from the route prepared at load`() = runTest(dispatcher) {
+        // Every emission of `interactiveSection` used to re-run the RDP
+        // downsample (once for trim eligibility, once per photo export
+        // list) on the Main-confined transform. The route depends only
+        // on immutable inputs, so it is computed once, off Main, in
+        // loadInputs.
+        val seed = seedWalk(photoUris = listOf("content://media/1"), routePoints = 20)
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+
+        val prepared = requireNotNull(vm.preparedRoute) { "loadInputs must prepare the route before publishing Loaded" }
+        assertTrue("a ~2km route is long enough to trim", prepared.canTrim)
+        awaitReal { vm.interactiveSection.first { it.canTrim } }
+
+        // The emissions a walker produces by the dozen — none of them
+        // may replace the prepared route.
+        repeat(4) {
+            vm.toggleTrim(false)
+            vm.toggleTrim(true)
+            vm.togglePhotos(true)
+            vm.togglePhotos(false)
+        }
+        assertSame("the route work happens once per load, not once per emission", prepared, vm.preparedRoute)
+        assertTrue(vm.interactiveSection.value.canTrim)
+    }
+
     // ---- consent: the pre-POST dropped-photo pause ----------------------
 
     @Test
@@ -540,7 +630,187 @@ class WalkShareInteractiveTest {
 
             vm.awaitCard { it is ShareCardState.Success }
             assertEquals("exactly one POST, no photo PUTs (none exported)", 1, server.requestCount)
+
+            // iOS `testInteractivePhotoMetaUsesOnlyExportedPhotos`'s
+            // second half (`:262-263@3f9f9e8`): "the interactive branch
+            // must never fall back to mapping pinnedPhotos". Nothing
+            // exported, so the key is absent — not a base64 JPEG of the
+            // pinned photo the classic branch would have embedded.
+            val body = drainRequests().single().body.readUtf8().asJsonObject()
+            assertFalse("no photo metadata may be invented for an empty export", body.containsKey("photos"))
         }
+
+    @Test
+    fun `a share cancelled before the POST returns to Idle with nothing sent`() = runTest(dispatcher) {
+        // iOS `testShareCancelledBeforePostReturnsToIdle`
+        // (`WalkShareInteractiveTests.swift:519-526@3f9f9e8`):
+        // "cancelling before the POST must never leave a live-looking
+        // state behind". `cancelDroppedPhotoShare` is Android's cancel
+        // entry point — same body as iOS's `cancelShare()`, a
+        // `shareJob?.cancel()`.
+        val seed = seedWalk(photoUris = listOf("content://media/1"))
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.togglePhotos(true)
+        vm.awaitReadyToShare()
+
+        // Held inside the pre-POST photo encode, so the cancel lands
+        // exactly where iOS's does: after the attempt is genuinely
+        // running, before anything exists server-side.
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        photoEncode = { uri ->
+            entered.countDown()
+            release.await()
+            "BASE64:$uri"
+        }
+
+        vm.share()
+        assertEquals(ShareCardState.Uploading, vm.shareCardState.value)
+        awaitReal { while (entered.count > 0L) delay(5) }
+
+        vm.cancelDroppedPhotoShare()
+        release.countDown()
+
+        awaitReal { vm.shareCardState.first { it == ShareCardState.Idle } }
+        awaitReal { vm.isSharing.first { !it } }
+        assertEquals("nothing was sent", 0, server.requestCount)
+        assertNull("and nothing was cached", cachedStore.observe(seed.walkUuid).first())
+    }
+
+    @Test
+    fun `declining while a resume is in flight cancels it`() = runTest(dispatcher) {
+        // iOS `testDeclineCancelsInFlightResume` (`:559-568@3f9f9e8`):
+        // "declining while a resume is in flight must cancel it —
+        // completeShare's pre-POST checkpoint returns idle before
+        // geocoding or POSTing ever run".
+        val seed = seedWalk(
+            recordingDurations = listOf(60_000L),
+            photoUris = listOf("content://media/external/images/media/999999"),
+        )
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.setInteractiveEnabled(true)
+        vm.awaitReadyToShare(expectedRows = 1)
+
+        vm.share()
+        vm.awaitCard { it is ShareCardState.PhotosDropped }
+        awaitReal { vm.isSharing.first { !it } }
+
+        // The resume has to re-encode this recording (its artifact is
+        // gone), and that encode is held open — so the decline below
+        // lands while the resume is genuinely mid-flight.
+        val recording = seed.recordings.single()
+        transcoder.delaysMs[VoiceRecordingFileSystem(context).absolutePath(recording.fileRelativePath)] = 10_000L
+        assertTrue(prepStore.artifactFile(seed.walkUuid, recording.uuid).delete())
+        transcoder.calls.clear()
+
+        vm.continueShareWithoutDroppedPhotos()
+        assertEquals(ShareCardState.Uploading, vm.shareCardState.value)
+        awaitReal { while (transcoder.calls.isEmpty()) delay(5) }
+
+        vm.cancelDroppedPhotoShare()
+
+        awaitReal { vm.shareCardState.first { it == ShareCardState.Idle } }
+        awaitReal { vm.isSharing.first { !it } }
+        assertEquals("the declined resume never reaches the POST", 0, server.requestCount)
+    }
+
+    // ---- per-row choices -------------------------------------------------
+
+    @Test
+    fun `toggling an unavailable row does nothing at all`() = runTest(dispatcher) {
+        // iOS `testToggleIncludeSkipsUnavailableCandidates`
+        // (`:145-158@3f9f9e8`): "an unavailable candidate can never be
+        // toggled on by the user" — and on Android it must not reach the
+        // prep store either, since include/exclude drives real encodes
+        // and deletes.
+        val seed = seedWalk(recordingDurations = listOf(60_000L, 60_000L))
+        val fileSystem = VoiceRecordingFileSystem(context)
+        transcoder.failures[fileSystem.absolutePath(seed.recordings[1].fileRelativePath)] =
+            RuntimeException("no encoder for this one")
+
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.setInteractiveEnabled(true)
+        // Await the failing encode itself, not just "one row is
+        // unavailable yet" — which is also true while that encode has
+        // not started.
+        awaitReal {
+            prepStore.state.first { it[seed.walkUuid]?.get(seed.recordings[1].uuid) == PrepState.Failed }
+        }
+        awaitReal {
+            vm.tourCandidates.first { candidates ->
+                candidates.size == 2 && candidates.count { it.unavailableReason != null } == 1
+            }
+        }
+        transcoder.calls.clear()
+
+        vm.toggleRowInclude(candidateId = 1)
+        vm.toggleRowInclude(candidateId = 1)
+        // Both would-be effects are asynchronous (a cancel-and-delete,
+        // then a re-encode), so give them room to have happened before
+        // asserting they did not.
+        awaitReal { delay(300) }
+
+        assertFalse(
+            "an unavailable row can never be toggled on",
+            vm.tourCandidates.value.single { it.id == 1 }.includeInShare,
+        )
+        assertTrue("and never triggers a re-encode", transcoder.calls.isEmpty())
+        assertEquals(
+            "nor clears the prep state that made it unavailable",
+            PrepState.Failed,
+            prepStore.state.value[seed.walkUuid]?.get(seed.recordings[1].uuid),
+        )
+
+        // The available row still toggles both ways (iOS's second half).
+        vm.toggleRowInclude(candidateId = 0)
+        awaitReal { vm.tourCandidates.first { c -> c.none { it.id == 0 && it.includeInShare } } }
+        vm.toggleRowInclude(candidateId = 0)
+        awaitReal { vm.tourCandidates.first { c -> c.any { it.id == 0 && it.includeInShare } } }
+    }
+
+    @Test
+    fun `photos auto-enable exactly once — the walker's off stays off`() = runTest(dispatcher) {
+        // iOS `testInteractiveAutoEnablesPhotosOnce` (`:56-66@3f9f9e8`):
+        // "auto-enable happens once; the walker's off stays off".
+        val seed = seedWalk(photoUris = listOf("content://media/1"))
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+
+        vm.setInteractiveEnabled(true)
+        assertTrue("Interactive means carry the media", vm.includePhotos.value)
+
+        vm.togglePhotos(false)
+        vm.setInteractiveEnabled(false)
+        vm.setInteractiveEnabled(true)
+
+        assertFalse("the latch never re-fires", vm.includePhotos.value)
+    }
+
+    @Test
+    fun `the Share gate stays shut while the tour is over its caps`() = runTest(dispatcher) {
+        // iOS `testShareButtonDisabledWhenTourInvalid` (`:293-301@3f9f9e8`):
+        // 13 candidates against a 12-recording cap.
+        val seed = seedWalk(recordingDurations = List(TourBuilder.MAX_RECORDINGS + 1) { 60_000L })
+        val vm = vm(seed.walkId)
+        vm.awaitLoaded()
+        vm.setInteractiveEnabled(true)
+
+        awaitReal {
+            vm.interactiveSection.first { section ->
+                section.rows.size == TourBuilder.MAX_RECORDINGS + 1 &&
+                    section.rows.all { it.availability is RecordingAvailability.Available }
+            }
+        }
+        awaitReal { vm.canShare.first { !it } }
+
+        assertTrue(
+            "the gate and the copy read the same validation call",
+            vm.interactiveSection.value.validationErrorText != null,
+        )
+    }
 
     // ---- the single in-flight lock --------------------------------------
 
