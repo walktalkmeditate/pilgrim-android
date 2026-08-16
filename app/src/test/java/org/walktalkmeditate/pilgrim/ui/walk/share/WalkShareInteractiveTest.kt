@@ -2,16 +2,25 @@
 package org.walktalkmeditate.pilgrim.ui.walk.share
 
 import android.app.Application
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -38,6 +47,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
@@ -152,14 +162,25 @@ class WalkShareInteractiveTest {
         File(context.cacheDir, "share-prep").deleteRecursively()
     }
 
+    /**
+     * Swappable so a test can install an encoder that throws (the
+     * classic branch's pre-POST work sits OUTSIDE `completeShare`'s own
+     * catch ladder) or one that blocks (a deterministic "the attempt is
+     * genuinely mid-flight" window for the cancellation scenarios).
+     */
+    private var photoEncode: (String) -> String? = { "BASE64:$it" }
+
     private val fakePhotoEncoder = object : SharePhotoEncoder {
-        override fun encodeBase64(uriString: String): String? = "BASE64:$uriString"
+        override fun encodeBase64(uriString: String): String? = photoEncode(uriString)
     }
 
     private val vmStore = ViewModelStore()
     private var vmCount = 0
 
-    private fun vm(walkId: Long): WalkShareViewModel = WalkShareViewModel(
+    private fun vm(
+        walkId: Long,
+        repairStoreOverride: ShareRepairStore = repairStore,
+    ): WalkShareViewModel = WalkShareViewModel(
         context = context,
         repository = repository,
         shareService = service,
@@ -167,7 +188,7 @@ class WalkShareInteractiveTest {
         photoEncoder = fakePhotoEncoder,
         sharePrepStore = prepStore,
         tourPhotoExporter = exporter,
-        shareRepairStore = repairStore,
+        shareRepairStore = repairStoreOverride,
         unitsPreferences = FakeUnitsPreferencesRepository(),
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     ).also { vmStore.put("walk-share-${vmCount++}", it) }
@@ -228,6 +249,38 @@ class WalkShareInteractiveTest {
         }
         repository.finishWalk(walk, endTimestamp = walk.startTimestamp + 600_000L)
         return Seed(walk.id, walk.uuid, recordings)
+    }
+
+    private fun liveShare(url: String, id: String) = CachedShare(
+        url = url,
+        id = id,
+        expiryEpochMs = System.currentTimeMillis() + 86_400_000L,
+        shareDateEpochMs = System.currentTimeMillis(),
+        expiryOption = ExpiryOption.Season,
+    )
+
+    /** A DataStore that is simply unavailable — every read and write fails. */
+    private val throwingDataStore = object : DataStore<Preferences> {
+        override val data: Flow<Preferences> = flow { throw IOException("datastore unavailable") }
+        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+            throw IOException("datastore unavailable")
+    }
+
+    /**
+     * An empty DataStore whose first read takes [delayMs] of REAL time —
+     * a cold DataStore file read on a busy device, held open long enough
+     * for a test to observe what the screen would render meanwhile. Real
+     * time (not `runTest`'s virtual clock) because the coroutine under
+     * observation runs on the ViewModel's own dispatchers.
+     */
+    private fun slowEmptyDataStore(delayMs: Long) = object : DataStore<Preferences> {
+        override val data: Flow<Preferences> = flow {
+            withContext(TestRealTimeDispatcher.instance) { delay(delayMs) }
+            emit(emptyPreferences())
+        }
+
+        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+            emptyPreferences()
     }
 
     private suspend fun <T> awaitReal(timeoutMs: Long = 15_000L, block: suspend () -> T): T =
@@ -686,6 +739,96 @@ class WalkShareInteractiveTest {
         assertEquals("https://walk.pilgrimapp.org/current", (card as ShareCardState.Success).url)
         assertNull("the stale record must not survive the load", repairStore.load(seed.walkUuid))
     }
+
+    @Test
+    fun `re-entering a shared walk never pairs an actionable Idle card with the live page`() = runTest(dispatcher) {
+        // ShareStatusSection renders `Idle` as a LIVE "Share Walk"
+        // button, and the screen treats a non-expired cached share as
+        // `isShared` — so publishing the cache before the restore has
+        // finished puts a working Share button on top of a page that
+        // already exists. One tap there is a second POST.
+        val seed = seedWalk(recordingDurations = listOf(60_000L))
+        cachedStore.put(walkUuid = seed.walkUuid, share = liveShare(url = "https://walk.pilgrimapp.org/live", id = "live"))
+
+        // The restore's repair-record read is held open, so the window
+        // the screen would render is wide enough to observe rather than
+        // a sub-millisecond one a sampling assertion could skip past.
+        val vm = vm(seed.walkId, repairStoreOverride = ShareRepairStore(slowEmptyDataStore(300L), json))
+        val cardsSeenWithALivePage = mutableListOf<ShareCardState>()
+        val watcher = launch(dispatcher) {
+            vm.cachedShare.collect { cached ->
+                if (cached?.isExpiredAt() == false) cardsSeenWithALivePage += vm.shareCardState.value
+            }
+        }
+
+        vm.awaitLoaded()
+        vm.awaitCard { it is ShareCardState.Success }
+        awaitReal { vm.cachedShare.first { it != null } }
+        watcher.cancel()
+
+        assertTrue("the screen saw the live page at all", cardsSeenWithALivePage.isNotEmpty())
+        assertTrue(
+            "a live cached share must never become visible while the card is still an actionable Idle: " +
+                "$cardsSeenWithALivePage",
+            cardsSeenWithALivePage.none { it == ShareCardState.Idle },
+        )
+    }
+
+    @Test
+    fun `a repair-record read that throws cannot kill the cached-share observer`() = runTest(dispatcher) {
+        // The restore path's only I/O is the repair-record read. One
+        // throw inside `collect { }` ends the observer for the life of
+        // the ViewModel (the Stage 5-D house rule), so this walk would
+        // never see another cached-share write.
+        val seed = seedWalk()
+        cachedStore.put(walkUuid = seed.walkUuid, share = liveShare(url = "https://walk.pilgrimapp.org/one", id = "one"))
+
+        val vm = vm(seed.walkId, repairStoreOverride = ShareRepairStore(throwingDataStore, json))
+        vm.awaitLoaded()
+
+        val card = vm.awaitCard { it is ShareCardState.Success } as ShareCardState.Success
+        assertEquals(
+            "an unreadable repair record still leaves a live page — restore into its card, not an actionable Idle",
+            "https://walk.pilgrimapp.org/one",
+            card.url,
+        )
+
+        cachedStore.put(walkUuid = seed.walkUuid, share = liveShare(url = "https://walk.pilgrimapp.org/two", id = "two"))
+        awaitReal { vm.cachedShare.first { it?.id == "two" } }
+    }
+
+    // ---- failure handling outside the POST -------------------------------
+
+    @Test
+    fun `an unexpected throw before the POST lands on the error card instead of the crash handler`() =
+        runTest(dispatcher) {
+            // `photoPayloadFor` (classic branch) runs OUTSIDE
+            // completeShare's own catch ladder, as do the interactive
+            // export list, the payload build, and the whole repair pass.
+            // Whatever throws there, the walker must get the same error
+            // card any ShareError produces — not a dead process.
+            val seed = seedWalk(photoUris = listOf("content://media/1"))
+            val vm = vm(seed.walkId)
+            vm.awaitLoaded()
+            vm.togglePhotos(true)
+            vm.awaitReadyToShare()
+
+            val failed = CompletableDeferred<WalkShareEvent.Failed>()
+            val watcher = launch(dispatcher) {
+                vm.events.collect { if (it is WalkShareEvent.Failed) failed.complete(it) }
+            }
+            photoEncode = { throw IllegalStateException("photo encoder blew up") }
+
+            vm.share()
+
+            val card = vm.awaitCard { it is ShareCardState.Error } as ShareCardState.Error
+            assertEquals(context.getString(R.string.share_modal_error_unknown), card.message)
+            assertEquals("nothing reached the server", 0, server.requestCount)
+            awaitReal { vm.isSharing.first { !it } }
+            // The walker is told, not left staring at a spinner.
+            awaitReal { failed.await() }
+            watcher.cancel()
+        }
 
     @Test
     fun `a record for the current share restores Partial so the repair offer survives re-entry`() =
