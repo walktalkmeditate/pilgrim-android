@@ -1,7 +1,7 @@
 ---
 title: "feat: Walk with Me interactive share — iOS v1.10.0 parity port (Phase 19)"
 type: feat
-status: draft
+status: in-progress (U9 device QA pending)
 date: 2026-08-14
 origin: docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md
 ---
@@ -103,7 +103,7 @@ From origin, unchanged: no worker-side work; no whispers bundled bootstrap; no i
 
 1. **Transcode target: AAC-LC mono, 64 kbps, source sample rate (16 kHz), M4A container.** Speech-appropriate; 108 min at 64 kbps ≈ 51.8 MB (still under the 60 MB aggregate — barely; the bytes cap binds first on long tours), one file hits 15 MB at ≈ 31 min. 16 kHz AAC-LC is a standard sample-rate index; the U1 probe proves worker + browser playback before any code exists. If the probe fails on 16 kHz, the pre-agreed contingency is resampling to 32 kHz during encode (MediaCodec consumes the same PCM; only `KEY_SAMPLE_RATE` and an interpolation pass change).
 2. **Prep timing: transcode starts when Interactive toggles on** — sequential over included recordings, per-row "preparing…" until its real size lands, Share button gated until every included artifact is ready (satisfies AE4 with no estimated-sizes state), cancelled by toggle-off; excluding a recording cancels/deletes its artifact.
-3. **Artifact hygiene (closes the review's FYI gaps):** artifacts live in `cacheDir/share-prep/<walkUuid>/<recordingUuid>.m4a`, written and deleted through the same path function. Deleted on: toggle-off, exclusion, share-screen exit without an active repair record, and repair-record clearing. A startup sweep (OrphanRecordingSweeper pattern) removes artifact dirs with no matching active repair record. A repair retry that finds a missing artifact re-encodes from the WAV rather than failing.
+3. **Artifact hygiene (closes the review's FYI gaps):** artifacts live in `cacheDir/share-prep/<walkUuid>/<recordingUuid>.m4a`, written and deleted through the same path function. Deleted on: toggle-off, exclusion, share-screen exit without an active repair record, and repair-record clearing. A startup sweep (OrphanRecordingSweeper pattern) removes artifact dirs with no matching active repair record. A repair retry that finds a missing artifact re-encodes from the WAV rather than failing. Deviation note (final review): share-screen-exit artifact deletion is deliberately NOT implemented — cleanup rides the daily orphan sweep, and the singleton prep-state keep-set retains an abandoned walk's artifacts for the process lifetime (bounded, cacheDir, OS-evictable; enables re-entry reuse).
 4. **Upload lifecycle: VM-scoped coroutine + persisted repair record; no WorkManager in v1.4.0.** Matches the pin's foreground semantics (uploads run while the share screen lives; re-entry offers repair for the share's life). Honest paused reporting: process death or scope cancellation leaves the repair record authoritative; the pin's pre-fail-doomed-PUTs gate translates to marking the untried tail as pending-in-record before cancellation completes. iOS has a background-URLSession rework flagged as a fast-follow — R2 handles it if it lands pre-release; do not pre-build for it.
 5. **Hi-res photo source: the same MediaStore URI the classic embedder reads**, full-resolution decode with EXIF orientation applied before re-encode (re-encode drops EXIF metadata by construction). Android can hit the short-export case (deleted/unresolvable URIs) — the pre-POST consent pause ports unconditionally.
 6. **First-share-only preserved:** the `cachedShare` short-circuit is untouched; the R13 QA list pins it.
@@ -413,4 +413,4 @@ Single phase (19), single release (v1.4.0). Order: U1 → U2 → {U3, U4, U5 in 
 - Origin requirements (incl. full delta triage + resolved decisions): `docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md`
 - ce-doc-review round 1 findings (11 applied): commits `995dd063`, `c8a731e8`
 - Prior retarget plan (structure precedent): `docs/plans/2026-07-23-001-feat-ios-v190-parity-port-plan.md`
-- iOS pin: `pilgrim-ios` @ `3f9f9e8` (2026-08-13)
+- iOS pin: `pilgrim-ios` @ `3f9f9e8` (2026-08-15; 38ef6b2 + PR #60 fold-in)

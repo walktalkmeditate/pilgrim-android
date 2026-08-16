@@ -129,7 +129,7 @@ class ShareService @Inject constructor(
      * pre-computed.
      *
      * **Order is load-bearing**: [photos] upload strictly before
-     * [audio] — the constructor-parameter order below matches this
+     * [audio] — the function-parameter order below matches this
      * (unlike iOS, whose `uploadAllMedia(shareID:audioFiles:photos:)`
      * parameter order is audio-first while its LOOP order is
      * photos-first — the parity spec's §7 "Lens disagreements" flags
