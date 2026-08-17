@@ -354,6 +354,28 @@ class SharePrepStoreTest {
     }
 
     @Test
+    fun `sweepOrphans spares a walk this store is actively preparing even when the keep-set omits it`() = runBlocking {
+        // The walk the daily sweep is most dangerous to is the one on
+        // screen right now: Interactive was just toggled on, nothing has
+        // POSTed, so no repair record exists and the caller's keep set
+        // cannot name it. `_state` is the only thing that knows, which
+        // is why sweepOrphans unions it in rather than trusting callers
+        // to remember. Driven through a real prepare() — seeding files
+        // on disk leaves `_state` empty and the union untested.
+        val walkUuid = UUID.randomUUID().toString()
+        val rec = recording(walkUuid)
+        fakeTranscoder.delaysMs[wavFileFor(rec)] = 300L
+        val prepJob = launch { store.prepare(walkUuid, listOf(rec)) }
+        awaitFakeCalled(rec)
+
+        val removed = store.sweepOrphans(emptySet())
+
+        assertEquals("an in-flight walk is never swept, whatever the caller passed", 0, removed)
+        prepJob.join()
+        assertTrue("and its encode still lands", store.artifactFile(walkUuid, rec.uuid).exists())
+    }
+
+    @Test
     fun `sweepOrphans is a no-op when the share-prep root does not exist yet`() = runBlocking {
         val removed = store.sweepOrphans(emptySet())
 
