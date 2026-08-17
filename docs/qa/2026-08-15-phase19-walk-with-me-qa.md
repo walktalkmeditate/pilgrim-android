@@ -1,6 +1,6 @@
 # Phase 19 — Walk with Me interactive share: device QA checklist (v1.4.0 gate)
 
-Device: OnePlus 13 · production worker (`walk.pilgrimapp.org`) · every line gets a written result before release. Parity pin `3f9f9e8`.
+Device: OnePlus 13 · production worker (`walk.pilgrimapp.org`) · every line gets a written result before release. Parity pin `2ee1185`.
 
 ## Functional
 
