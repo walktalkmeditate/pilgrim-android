@@ -546,10 +546,10 @@ private fun KindChip(displayIndex: Int, kind: TourRecordingKind, included: Boole
             color = pilgrimColors.stone,
             textAlign = TextAlign.Center,
             modifier = Modifier
+                .alpha(chipOpacity(included))
                 .clip(RoundedCornerShape(KIND_CHIP_CORNER_RADIUS))
                 .background(pilgrimColors.stone.copy(alpha = KIND_CHIP_BACKGROUND_ALPHA))
-                .padding(horizontal = KIND_CHIP_H_PADDING, vertical = KIND_CHIP_V_PADDING)
-                .alpha(chipOpacity(included)),
+                .padding(horizontal = KIND_CHIP_H_PADDING, vertical = KIND_CHIP_V_PADDING),
         )
     }
 }
