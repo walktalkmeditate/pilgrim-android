@@ -162,15 +162,28 @@ class MediaCodecShareAudioTranscoder @Inject constructor() : ShareAudioTranscode
                         )
                         inputDone = true
                     } else {
-                        val bytes = ByteArray(chunkSize)
-                        val n = raf.read(bytes)
+                        // Straight into the codec's own input buffer.
+                        // The obvious shape — read into a ByteArray then
+                        // `buffer.put(...)` — allocates and copies once
+                        // per dequeued buffer, and the codec grants
+                        // small buffers: a 20-minute voice note is
+                        // ~36 MiB of 16kHz mono PCM, i.e. hundreds to
+                        // thousands of throwaway arrays for ONE
+                        // recording, on a background thread that also
+                        // has whisper transcription to contend with.
+                        // `raf.channel` shares the RandomAccessFile's
+                        // file position, so the `seek` that positioned
+                        // the data chunk and this read stay in the same
+                        // sequence; `limit` is what keeps the read
+                        // inside the frame-aligned chunk.
+                        buffer.limit(chunkSize)
+                        val n = raf.channel.read(buffer)
                         if (n <= 0) {
                             codec.queueInputBuffer(
                                 inputBufferId, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                             )
                             inputDone = true
                         } else {
-                            buffer.put(bytes, 0, n)
                             codec.queueInputBuffer(inputBufferId, 0, n, presentationTimeUs, 0)
                             bytesRemaining -= n
                             presentationTimeUs += (n / bytesPerFrame).toLong() * 1_000_000L / wav.sampleRateHz
