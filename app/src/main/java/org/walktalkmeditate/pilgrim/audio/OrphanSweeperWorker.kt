@@ -8,6 +8,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.share.SharePrepStore
 import org.walktalkmeditate.pilgrim.data.share.ShareRepairStore
 
@@ -24,6 +25,13 @@ import org.walktalkmeditate.pilgrim.data.share.ShareRepairStore
  * Decision 3). Everything else — a walk whose Interactive toggle was
  * never turned off before the screen went away, an attempt abandoned
  * before it ever POSTed — is cache the OS could have evicted anyway.
+ *
+ * A record for a walk the walker has DELETED is the one case where
+ * that keep set lies: nothing else ever clears such a record (the
+ * clearing paths all live inside that walk's own share screen), so it
+ * would protect the deleted walk's transcoded voice from every future
+ * sweep. [ShareRepairStore.sweepStale] drops those against the live
+ * walk list before the keep set is handed over.
  */
 @HiltWorker
 class OrphanSweeperWorker @AssistedInject constructor(
@@ -32,11 +40,13 @@ class OrphanSweeperWorker @AssistedInject constructor(
     private val sweeper: OrphanRecordingSweeper,
     private val sharePrepStore: SharePrepStore,
     private val shareRepairStore: ShareRepairStore,
+    private val repository: WalkRepository,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
         val result = sweeper.sweepAll()
-        val prepDirsRemoved = sharePrepStore.sweepOrphans(shareRepairStore.walkUuidsWithRecords())
+        val liveWalkUuids = repository.allWalks().map { it.uuid }.toSet()
+        val prepDirsRemoved = sharePrepStore.sweepOrphans(shareRepairStore.sweepStale(liveWalkUuids))
         Log.i(TAG, "sweepAll: $result, share-prep dirs removed: $prepDirsRemoved")
         Result.success()
     } catch (cancel: kotlinx.coroutines.CancellationException) {

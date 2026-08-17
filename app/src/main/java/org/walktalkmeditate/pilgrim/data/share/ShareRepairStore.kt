@@ -136,13 +136,15 @@ class ShareRepairStore(
         dataStore.data.map { prefs -> prefs[keyFor(walkUuid)]?.let(::decode) }.first()
 
     /**
-     * Every walk that currently holds a repair record — the keep set for
-     * [SharePrepStore.sweepOrphans], since a walk with un-landed slots
-     * is exactly the walk whose transcode artifacts a repair pass may
-     * still need. Key-scan shape mirrors [CachedShareStore.observeAll]'s
-     * (same dash-stripped key format, same reconstruction), as a
-     * one-shot rather than a Flow because its only consumer is a daily
-     * [org.walktalkmeditate.pilgrim.audio.OrphanSweeperWorker] pass.
+     * Every walk that currently holds a repair record — the raw input
+     * to [sweepStale], which is what the daily
+     * [org.walktalkmeditate.pilgrim.audio.OrphanSweeperWorker] pass
+     * actually hands [SharePrepStore.sweepOrphans]: a walk with
+     * un-landed slots is exactly the walk whose transcode artifacts a
+     * repair pass may still need, PROVIDED the walk still exists. Key-scan
+     * shape mirrors [CachedShareStore.observeAll]'s (same dash-stripped
+     * key format, same reconstruction), as a one-shot rather than a Flow
+     * because its only consumers are that once-a-day pass and the tests.
      */
     suspend fun walkUuidsWithRecords(): Set<String> =
         dataStore.data.map { prefs ->
@@ -153,6 +155,32 @@ class ShareRepairStore(
                 .mapNotNull { reconstructUuid(it.removePrefix(KEY_PREFIX)) }
                 .toSet()
         }.first()
+
+    /**
+     * Drops every record whose walk no longer exists and returns the
+     * survivors — the keep set
+     * [org.walktalkmeditate.pilgrim.audio.OrphanSweeperWorker] hands
+     * [SharePrepStore.sweepOrphans].
+     *
+     * A record IS that keep set, so a record for a deleted walk pins
+     * the walk's transcoded voice artifacts in cache against every
+     * future sweep — for the lifetime of the install, since the only
+     * other paths that clear a record run inside that walk's own share
+     * screen, which a deleted walk no longer has. Deleting a walk is
+     * the walker asking for its recordings to be gone, so the derived
+     * copies have to go with them.
+     *
+     * A record whose walk is gone is also unrepairable by construction:
+     * a repair pass resolves its slots against the walk's CURRENT
+     * recordings and photos, so clearing it loses nothing that could
+     * ever have been used.
+     */
+    suspend fun sweepStale(liveWalkUuids: Set<String>): Set<String> {
+        val recorded = walkUuidsWithRecords()
+        val stale = recorded - liveWalkUuids
+        for (walkUuid in stale) clear(walkUuid)
+        return recorded - stale
+    }
 
     /**
      * Establishes [slots] (all forced to [SlotStatus.PENDING] unless

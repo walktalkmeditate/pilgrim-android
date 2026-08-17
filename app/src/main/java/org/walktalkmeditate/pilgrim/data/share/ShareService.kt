@@ -241,21 +241,43 @@ class ShareService @Inject constructor(
         val token = deviceTokenStore.getToken()
         var failedPhotos = 0
         var failedAudio = 0
+        val landed = mutableSetOf<Pair<SlotKind, Int>>()
 
         for (slot in photos) {
             coroutineContext.ensureActive() // Checkpoint A — see class doc
-            if (!uploadOne(walkUuid, shareId, SlotKind.PHOTO, slot, record, token, retryBackoffMs)) failedPhotos++
+            if (uploadOne(walkUuid, shareId, SlotKind.PHOTO, slot, record, token, retryBackoffMs)) {
+                landed += SlotKind.PHOTO to slot.n
+            } else {
+                failedPhotos++
+            }
             completed++
             onProgress(completed, total)
         }
         for (slot in audio) {
             coroutineContext.ensureActive() // Checkpoint A — see class doc
-            if (!uploadOne(walkUuid, shareId, SlotKind.AUDIO, slot, record, token, retryBackoffMs)) failedAudio++
+            if (uploadOne(walkUuid, shareId, SlotKind.AUDIO, slot, record, token, retryBackoffMs)) {
+                landed += SlotKind.AUDIO to slot.n
+            } else {
+                failedAudio++
+            }
             completed++
             onProgress(completed, total)
         }
 
-        if (failedPhotos == 0 && failedAudio == 0) {
+        // The RECORD decides, not this batch. [photos] + [audio] can be
+        // a SUBSET of what the record still owes — a repair pass hands
+        // over only the slots whose identity it could re-resolve, and
+        // [ShareRepairStore.prePopulate]'s merge deliberately leaves the
+        // rest sitting at [SlotStatus.PENDING]. Clearing on "this batch
+        // had no failures of its own" therefore deleted the ledger for
+        // media that is still genuinely missing, and a process death
+        // before the caller could write those slots back turned "files
+        // still missing" into a permanent Success card with no repair
+        // offer. Folding [landed] into the merged record instead needs
+        // no second read and no compensating write: the record is
+        // finished exactly when nothing pending is left unlanded.
+        val stillOwed = record.slots.any { it.status == SlotStatus.PENDING && (it.kind to it.n) !in landed }
+        if (!stillOwed) {
             repairStore.clear(walkUuid)
         }
 

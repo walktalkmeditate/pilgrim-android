@@ -211,4 +211,20 @@ class ShareRepairStoreTest {
         assertTrue(walkUuid in afterClear)
         assertTrue("a cleared record must leave the keep set", other !in afterClear)
     }
+
+    @Test
+    fun `sweepStale drops records whose walk is gone and returns only the live keep set`() = runBlocking {
+        // Deleting a walk is the walker asking for its recordings to be
+        // gone; a surviving record would keep the derived AAC copies
+        // pinned against every future sweep instead.
+        val deleted = UUID.randomUUID().toString()
+        store.prePopulate(walkUuid, "share-live", listOf(audioSlot(1)))
+        store.prePopulate(deleted, "share-gone", listOf(audioSlot(1)))
+
+        val keep = store.sweepStale(liveWalkUuids = setOf(walkUuid))
+
+        assertEquals(setOf(walkUuid), keep)
+        assertNull("a record for a deleted walk must not survive the sweep", store.load(deleted))
+        assertTrue("the live walk's record is untouched", store.load(walkUuid) != null)
+    }
 }

@@ -203,6 +203,35 @@ class ShareMediaUploadTest {
     }
 
     @Test
+    fun `a clean batch that leaves other slots pending keeps the record`() = runBlocking {
+        // A repair pass hands this function only the slots it could
+        // resolve; the ones it could not stay PENDING in the record and
+        // are never mentioned by the batch. Clearing on "this batch had
+        // no failures" would delete the ledger for media that is still
+        // genuinely missing — and a kill in that window leaves a Success
+        // card over a page short of files, with the repair offer gone.
+        repairStore.prePopulate(
+            walkUuid,
+            "share-1",
+            listOf(
+                RepairSlot(SlotKind.AUDIO, 1, SlotIdentity.Audio("rec-1"), SlotStatus.PENDING),
+                RepairSlot(SlotKind.AUDIO, 2, SlotIdentity.Audio("rec-2"), SlotStatus.PENDING),
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(200))
+
+        val result = service.uploadMedia(walkUuid, "share-1", "https://x", emptyList(), listOf(audioUploadSlot(1)))
+
+        assertEquals("this batch itself resolved cleanly", 0, result.failedCount)
+        val record = repairStore.load(walkUuid)
+        assertNotNull("the unmentioned pending slot's ledger must survive a clean batch", record)
+        assertEquals(
+            listOf(SlotStatus.UPLOADED, SlotStatus.PENDING),
+            record!!.slots.sortedBy { it.n }.map { it.status },
+        )
+    }
+
+    @Test
     fun `identity mismatch on an already-recorded slot refuses the upload without a PUT`() = runBlocking {
         // A stale record already claims photo/1 belongs to a DIFFERENT source photo than the one about to be offered.
         repairStore.prePopulate(
