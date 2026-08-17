@@ -195,6 +195,8 @@ class SharePrepStore @Inject constructor(
         val keep = keepWalkUuids + _state.value.keys
         val entries = try {
             Files.list(root.toPath()).use { stream -> stream.collect(Collectors.toList()) }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "sweepOrphans: listing failed", t)
             return@withContext 0

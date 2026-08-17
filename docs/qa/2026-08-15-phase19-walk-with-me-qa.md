@@ -25,6 +25,6 @@ Device: OnePlus 13 · production worker (`walk.pilgrimapp.org`) · every line ge
 
 ## Release steps (after QA green)
 
-- R2 re-diff `3f9f9e8..ios-main` once more; triage any delta.
+- R2 re-diff `2ee1185..ios-main` once more; triage any delta.
 - One `production.yml` dispatch (version name/code per release infra — no manual gradle bump).
 - Staged rollout per house practice; then CLAUDE.md phasing note, plan status → completed, memory updates.

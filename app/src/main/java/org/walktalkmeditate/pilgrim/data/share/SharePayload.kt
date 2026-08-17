@@ -8,8 +8,8 @@ import kotlinx.serialization.Serializable
  * Stage 8-A: wire format for `POST /api/share`. Field names use
  * @SerialName to match the backend's snake_case schema
  * (`pilgrim-worker/src/types.ts`). Fields Android doesn't populate
- * yet (place_start/end) are nullable so the serializer omits them
- * when `NetworkModule.provideJson().explicitNulls = false`.
+ * yet (mark, place_start/end) are nullable so the serializer omits
+ * them when `NetworkModule.provideJson().explicitNulls = false`.
  *
  * Integer timestamps are epoch-SECONDS (matches iOS
  * `Int(Date.timeIntervalSince1970)`), NOT millis. Conversion happens
