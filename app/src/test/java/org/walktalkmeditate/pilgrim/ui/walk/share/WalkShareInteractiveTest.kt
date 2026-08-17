@@ -2,6 +2,10 @@
 package org.walktalkmeditate.pilgrim.ui.walk.share
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.net.Uri
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -9,8 +13,11 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -57,6 +64,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.FakeShareAudioTranscoder
@@ -324,6 +332,30 @@ class WalkShareInteractiveTest {
         return Seed(walk.id, walk.uuid, recordings)
     }
 
+    /**
+     * A pinned photo whose `content://` URI actually resolves to JPEG
+     * bytes, so [TourPhotoExporter] genuinely exports it.
+     *
+     * Every other photo fixture in this file is an UNREGISTERED URI —
+     * deliberately, since that is what makes the export come up short
+     * for the consent-pause scenarios. Registering a real stream is the
+     * only way to reach the other branch (`dropped == 0`), where photo
+     * upload slots are actually populated. Mirrors
+     * `TourPhotoExporterTest.registerJpeg`.
+     */
+    private fun registerJpeg(name: String, width: Int = 40, height: Int = 30): String {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawColor(Color.rgb(120, 140, 160))
+        val bytes = ByteArrayOutputStream().use { baos ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+            baos.toByteArray()
+        }
+        bitmap.recycle()
+        val uri = Uri.parse("content://test/$name-${UUID.randomUUID()}")
+        shadowOf(context.contentResolver).registerInputStream(uri, ByteArrayInputStream(bytes))
+        return uri.toString()
+    }
+
     private fun liveShare(url: String, id: String) = CachedShare(
         url = url,
         id = id,
@@ -524,6 +556,56 @@ class WalkShareInteractiveTest {
                 "success is terminal for the prep cache — artifacts are cleaned up",
                 File(context.cacheDir, "share-prep/${seed.walkUuid}").exists(),
             )
+        }
+
+    @Test
+    fun `an interactive share carrying photos and voice PUTs the photos first and lands Shared`() =
+        runTest(dispatcher) {
+            // The feature's marquee scenario — carry the voices AND the
+            // photos, nothing fails. Every other photo fixture here is an
+            // unresolvable URI, so this is the only path that reaches the
+            // `dropped == 0` branch where photo upload slots are actually
+            // populated and the media progress total spans both kinds.
+            val photoUri = registerJpeg("tour-photo")
+            val seed = seedWalk(recordingDurations = listOf(60_000L), photoUris = listOf(photoUri))
+            val vm = vm(seed.walkId)
+            vm.awaitLoaded()
+            vm.setInteractiveEnabled(true)
+            assertTrue("Interactive means carry the media — photos auto-enable once", vm.includePhotos.value)
+            vm.awaitReadyToShare(expectedRows = 1)
+
+            enqueueShareCreated()
+            enqueueOk(2)
+            val cards = mutableListOf<ShareCardState>()
+            val watcher = launch(dispatcher) { vm.shareCardState.collect { cards += it } }
+            vm.share()
+            vm.awaitCard { it is ShareCardState.Success }
+            awaitReal { vm.isSharing.first { !it } }
+            watcher.cancel()
+
+            assertTrue(
+                "an export that lands everything it asked for must never pause for consent: $cards",
+                cards.none { it is ShareCardState.PhotosDropped },
+            )
+
+            val requests = drainRequests()
+            assertEquals(3, requests.size)
+            assertEquals(
+                "photos upload strictly before audio (ShareService's load-bearing order)",
+                listOf("/api/share/abc123/photos/1", "/api/share/abc123/audio/1"),
+                requests.drop(1).map { it.path },
+            )
+
+            val body = requests.first().body.readUtf8().asJsonObject()
+            assertEquals(1, body["tour"]!!.jsonObject["recordings"]!!.jsonArray.size)
+            val photos = body["photos"]!!.jsonArray
+            assertEquals("the exported photo is declared in the payload", 1, photos.size)
+            assertFalse(
+                "interactive photo metadata carries no inline base64 — the bytes travel as their own PUT",
+                photos.single().jsonObject.containsKey("data"),
+            )
+
+            assertNull("a fully-landed share leaves no repair record", repairStore.load(seed.walkUuid))
         }
 
     // ---- AE2: kill after voice 2 ----------------------------------------

@@ -218,6 +218,30 @@ class WalkShareOrchestrationTest {
     }
 
     @Test
+    fun `a recording mid-first-transcode reads as preparing from its own prep state`() {
+        // The normal state of a row during its first-ever transcode:
+        // no size learned yet, and TourBuilder reports "audio removed"
+        // for a recording with no artifact info. If this branch stopped
+        // deciding, the `when` would fall through to that reason and a
+        // row genuinely being prepared would flash "audio removed"
+        // instead of the spinner. Asserted with prepBusy BOTH ways so
+        // the prep-counter branch below it cannot stand in: an
+        // [org.walktalkmeditate.pilgrim.data.share.SharePrepStore.ensureArtifact]
+        // re-encode at share time sets Preparing without touching the
+        // counter at all.
+        val candidate = candidate(0, unavailableReason = TourBuilder.REASON_AUDIO_REMOVED, path = null)
+
+        assertEquals(
+            RecordingAvailability.Preparing,
+            recordingAvailability(candidate, PrepState.Preparing, knownSizeBytes = null, prepBusy = true),
+        )
+        assertEquals(
+            RecordingAvailability.Preparing,
+            recordingAvailability(candidate, PrepState.Preparing, knownSizeBytes = null, prepBusy = false),
+        )
+    }
+
+    @Test
     fun `a failed transcode reads as audio removed, not as a sixth row state`() {
         val row = recordingAvailability(
             candidate = candidate(0, unavailableReason = TourBuilder.REASON_AUDIO_REMOVED, path = null),
