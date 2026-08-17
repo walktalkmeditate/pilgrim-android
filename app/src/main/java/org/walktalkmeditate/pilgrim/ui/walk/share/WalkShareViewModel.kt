@@ -494,7 +494,7 @@ class WalkShareViewModel @Inject constructor(
             // the walker chose to leave behind.
             _knownArtifactSizes.value = emptyMap()
             prepLifecycleJob = launchPrepWork(previous = prepLifecycleJob) {
-                sharePrepStore.cancelAndCleanupWalk(uuid)
+                deleteArtifacts(uuid)
             }
         }
     }
@@ -744,6 +744,23 @@ class WalkShareViewModel @Inject constructor(
      * the single choke point: from here through the POST a live page may
      * exist — every caller gets the dismiss-lock, no caller can forget
      * it."
+     *
+     * The POST and everything after it are two DIFFERENT failure
+     * classes, so they get two different ladders. Before the POST
+     * nothing exists server-side and a throw is a share that did not
+     * happen: [ShareCardState.Error], whose "Try Again" calls [share]
+     * again — correct there. After it, the page IS live and the only
+     * work left is bookkeeping (the cache write, the repair record's
+     * pre-populate, a `markUploaded` per landed PUT, the classic
+     * branch's stale-record clear) — all DataStore I/O that throws on a
+     * full disk. Letting one of those reach the Error card would offer
+     * that same "Try Again" over a page that already exists, i.e. a
+     * SECOND POST and a duplicate public page, which is exactly what
+     * [runRepair]'s catch was written to prevent on the sibling path.
+     * So the post-POST ladder contains instead: the walker keeps the
+     * live url, as [ShareCardState.Partial] when media may still be
+     * owed and [ShareCardState.Success] when only the classic branch's
+     * redundant clear failed.
      */
     private suspend fun completeShare(tourPhotos: List<TourPhoto>) {
         _shareCardState.value = ShareCardState.Uploading
@@ -774,10 +791,35 @@ class WalkShareViewModel @Inject constructor(
         val payload = withContext(Dispatchers.Default) {
             SharePayloadBuilder.build(inputs, options, photos = photoMeta)
         }
+        // Assembled before the POST — a pure re-numbering of what the
+        // export already produced — so the containment below can say
+        // what the page is owed without re-deriving it mid-failure.
+        val photoSlots = if (interactive) planPhotoUploads(tourPhotos) else emptyList()
+
+        val result = try {
+            shareService.share(payload)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: ShareError.RateLimited) {
+            _shareCardState.value = ShareCardState.Error(context.getString(RATE_LIMITED_MESSAGE))
+            _events.tryEmit(WalkShareEvent.RateLimited)
+            return
+        } catch (e: ShareError) {
+            Log.w(TAG, "share failed", e)
+            val message = e.message.orEmpty().ifBlank { context.getString(UNKNOWN_MESSAGE) }
+            _shareCardState.value = ShareCardState.Error(message)
+            _events.tryEmit(WalkShareEvent.Failed(message))
+            return
+        } catch (t: Throwable) {
+            Log.w(TAG, "share failed with unexpected throwable", t)
+            val message = context.getString(UNKNOWN_MESSAGE)
+            _shareCardState.value = ShareCardState.Error(message)
+            _events.tryEmit(WalkShareEvent.Failed(message))
+            return
+        }
+        postLanded = true
 
         try {
-            val result = shareService.share(payload)
-            postLanded = true
             val nowMs = Instant.now().toEpochMilli()
             cachedShareStore.put(
                 walkUuid = walkUuidValue,
@@ -791,7 +833,6 @@ class WalkShareViewModel @Inject constructor(
             )
 
             if (interactive) {
-                val photoSlots = planPhotoUploads(tourPhotos)
                 // Primed synchronously, no dispatch hop to race the
                 // first tick (`:133-136@3f9f9e8`).
                 _shareCardState.value = ShareCardState.UploadingMedia(
@@ -837,19 +878,21 @@ class WalkShareViewModel @Inject constructor(
             }
         } catch (ce: CancellationException) {
             throw ce
-        } catch (e: ShareError.RateLimited) {
-            _shareCardState.value = ShareCardState.Error(context.getString(RATE_LIMITED_MESSAGE))
-            _events.tryEmit(WalkShareEvent.RateLimited)
-        } catch (e: ShareError) {
-            Log.w(TAG, "share failed", e)
-            val message = e.message.orEmpty().ifBlank { context.getString(UNKNOWN_MESSAGE) }
-            _shareCardState.value = ShareCardState.Error(message)
-            _events.tryEmit(WalkShareEvent.Failed(message))
         } catch (t: Throwable) {
-            Log.w(TAG, "share failed with unexpected throwable", t)
-            val message = context.getString(UNKNOWN_MESSAGE)
-            _shareCardState.value = ShareCardState.Error(message)
-            _events.tryEmit(WalkShareEvent.Failed(message))
+            // The page is live — see this function's doc. No Success
+            // event on either arm: that event auto-presents the page in
+            // a Custom Tab, and a reveal fired off a failure path would
+            // pull the walker away from the card that just changed
+            // under them. The url is on the card either way.
+            Log.w(TAG, "share bookkeeping failed after the POST landed", t)
+            _shareCardState.value = if (interactive) {
+                ShareCardState.Partial(
+                    result.url,
+                    pendingCountOrElse(walkUuidValue, photoSlots.size + plan.audioSlots.size),
+                )
+            } else {
+                ShareCardState.Success(result.url)
+            }
         }
     }
 
@@ -870,11 +913,28 @@ class WalkShareViewModel @Inject constructor(
         // (`:268-282@3f9f9e8`).
         val cached = _cachedShare.value?.takeIf { !it.isExpiredAt() } ?: return explainRepairUnavailable()
         val uuid = walkUuid ?: return explainRepairUnavailable()
-        val record = shareRepairStore.load(uuid) ?: return explainRepairUnavailable()
-        if (!isRepairRecordCurrent(record.shareId, cached.id)) {
-            shareRepairStore.clear(uuid)
-            _shareCardState.value = ShareCardState.Success(cached.url)
-            return
+        // The guard phase is store I/O too, so it needs the same
+        // containment the pass body below has: a record that cannot be
+        // read (or a stale one that cannot be cleared) unwinding to
+        // [runGuarded] would swap this walker's repair card for the
+        // generic Error card whose "Try Again" POSTs a second page over
+        // the live one. Unreadable is indistinguishable from
+        // unrepairable from here, and the card is already
+        // [ShareCardState.Partial] — the explanation is the honest end
+        // state for both.
+        val record = try {
+            val loaded = shareRepairStore.load(uuid) ?: return explainRepairUnavailable()
+            if (!isRepairRecordCurrent(loaded.shareId, cached.id)) {
+                shareRepairStore.clear(uuid)
+                _shareCardState.value = ShareCardState.Success(cached.url)
+                return
+            }
+            loaded
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "repair record guard read failed for $uuid", t)
+            return explainRepairUnavailable()
         }
         val pending = pendingSlots(record.slots)
         if (pending.isEmpty()) return
@@ -944,13 +1004,12 @@ class WalkShareViewModel @Inject constructor(
             _events.tryEmit(WalkShareEvent.Success(cached.url))
             cleanUpArtifacts(uuid)
         } else {
-            if (outcome.failedCount == 0) {
-                // uploadMedia clears the whole record when ITS batch is
-                // clean, which would take the unresolvable slots with it
-                // — iOS keeps them ("stillFailed + remainingAfterResolve",
-                // `:300-304@3f9f9e8`), so re-establish them here.
-                shareRepairStore.prePopulate(uuid, record.shareId, resolution.unresolved)
-            }
+            // The unresolvable slots need no re-establishing: they are
+            // already PENDING in the record from the original attempt,
+            // this pass never mentioned them, and [ShareService.uploadMedia]
+            // only clears a record nothing is still owed on — iOS keeps
+            // the same set ("stillFailed + remainingAfterResolve",
+            // `:300-304@3f9f9e8`) with one authoritative write.
             _shareCardState.value = ShareCardState.Partial(cached.url, remaining)
         }
     }
@@ -1137,12 +1196,36 @@ class WalkShareViewModel @Inject constructor(
     /** Success is terminal for this walk's prep cache — nothing left to repair from. */
     private suspend fun cleanUpArtifacts(uuid: String) {
         try {
-            sharePrepStore.cancelAndCleanupWalk(uuid)
+            deleteArtifacts(uuid)
         } catch (ce: CancellationException) {
             throw ce
         } catch (t: Throwable) {
             Log.w(TAG, "share-prep cleanup failed for $uuid", t)
         }
+    }
+
+    /**
+     * Deletes a walk's prep artifacts, [NonCancellable] so the delete
+     * cannot be abandoned halfway.
+     *
+     * Every caller runs inside a coroutine the ViewModel's own scope
+     * owns, and every caller is reached at the exact moment that scope
+     * is most likely to die: the walker toggles Interactive off and
+     * backs out of the screen in one gesture, or the share lands and
+     * the modal closes. A cancellation arriving between the launch and
+     * the first suspension point inside [SharePrepStore.cancelAndCleanupWalk]
+     * would skip the whole delete — leaving transcoded copies of the
+     * walker's voice in cache AFTER consent was withdrawn, and leaving
+     * the store's per-walk state entries behind, which the daily sweep
+     * unions into its keep-set and therefore protects the leak with.
+     *
+     * Bounded work only — cancel this walk's encodes and delete one
+     * directory — so making it non-abandonable costs a few milliseconds
+     * of teardown, never an upload. Same reasoning as [launchPrepWork]'s
+     * non-cancellable join.
+     */
+    private suspend fun deleteArtifacts(uuid: String) = withContext(NonCancellable) {
+        sharePrepStore.cancelAndCleanupWalk(uuid)
     }
 
     private fun shareOptions(interactive: Boolean, excluded: Set<String>) = WalkShareOptions(

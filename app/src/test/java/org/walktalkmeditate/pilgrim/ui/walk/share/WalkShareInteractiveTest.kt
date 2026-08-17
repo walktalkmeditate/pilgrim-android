@@ -17,14 +17,17 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -357,6 +360,29 @@ class WalkShareInteractiveTest {
     }
 
     /**
+     * The mirror image of [WriteFailingDataStore]: an in-memory
+     * Preferences store whose READS can be switched off while writes keep
+     * working — the record was readable when the card restored and is
+     * unreadable by the time the walker taps "Carry the missing files"
+     * (the DataStore-read failure class commit 5e313e2e shipped a fix for
+     * elsewhere in this app).
+     */
+    private class ReadFailingDataStore : DataStore<Preferences> {
+        private val prefs = MutableStateFlow(emptyPreferences())
+
+        @Volatile
+        var failReads = false
+
+        override val data: Flow<Preferences> = flow {
+            if (failReads) throw IOException("datastore unavailable for reads")
+            emitAll(prefs)
+        }
+
+        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+            transform(prefs.value).also { prefs.value = it }
+    }
+
+    /**
      * An empty DataStore whose first read takes [delayMs] of REAL time —
      * a cold DataStore file read on a busy device, held open long enough
      * for a test to observe what the screen would render meanwhile. Real
@@ -406,6 +432,32 @@ class WalkShareInteractiveTest {
 
     private suspend fun WalkShareViewModel.awaitCard(predicate: (ShareCardState) -> Boolean): ShareCardState =
         awaitReal { shareCardState.first(predicate) }
+
+    /**
+     * Collects this ViewModel's events into [into], returning only once
+     * the subscription is genuinely live.
+     *
+     * A `launch` on an unconfined dispatcher from inside an already-
+     * unconfined coroutine is QUEUED on the thread's event loop — its
+     * body does not run (and its collector does not register) until the
+     * launching coroutine next suspends. [events] is a `replay = 0`
+     * SharedFlow, so anything emitted in that window is dropped, and an
+     * attempt that fails fast enough (a pre-POST throw, no network in
+     * the way) can beat the registration. [kotlinx.coroutines.flow.onSubscription]
+     * is what makes "the watcher is watching" observable rather than
+     * assumed.
+     */
+    private suspend fun CoroutineScope.watchEvents(
+        vm: WalkShareViewModel,
+        into: MutableList<WalkShareEvent>,
+    ): Job {
+        val subscribed = CompletableDeferred<Unit>()
+        val watcher = launch(dispatcher) {
+            vm.events.onSubscription { subscribed.complete(Unit) }.collect { into += it }
+        }
+        awaitReal { subscribed.await() }
+        return watcher
+    }
 
     private fun enqueueShareCreated(id: String = "abc123", url: String = "https://walk.pilgrimapp.org/abc123") {
         server.enqueue(
@@ -1000,6 +1052,43 @@ class WalkShareInteractiveTest {
     }
 
     @Test
+    fun `toggling Interactive off deletes the artifacts even when the screen goes away in the same gesture`() =
+        runTest(dispatcher) {
+            // "Toggling OFF cancels that pass and deletes its artifacts"
+            // has to hold when the walker backs out immediately after —
+            // otherwise the transcoded voice survives in cache AND the
+            // stale prep state pins the walk in the daily sweep's
+            // keep-set, i.e. consent was withdrawn and nothing was
+            // deleted.
+            val seed = seedWalk(recordingDurations = listOf(60_000L))
+            val vm = vm(seed.walkId)
+            vm.awaitLoaded()
+            vm.setInteractiveEnabled(true)
+            vm.awaitReadyToShare(expectedRows = 1)
+            val prepDir = File(context.cacheDir, "share-prep/${seed.walkUuid}")
+            assertTrue("the transcode landed, so there is something to delete", prepDir.exists())
+
+            // Cancelled BEFORE the toggle rather than a beat after it:
+            // the cleanup is launched with [CoroutineStart.ATOMIC], so
+            // its body runs either way — the only thing this ordering
+            // changes is that the cancellation has DEFINITELY landed by
+            // the time the body reaches its first suspension point,
+            // which is exactly the interleaving a nav pop racing the IO
+            // dispatch produces non-deterministically on a device.
+            vmStore.clear()
+            vm.setInteractiveEnabled(false)
+
+            awaitReal(timeoutMs = 5_000L) {
+                while (prepDir.exists() || prepStore.state.value[seed.walkUuid]?.isNotEmpty() == true) delay(5)
+            }
+            assertFalse("withdrawn consent must not leave transcoded voice in cache", prepDir.exists())
+            assertTrue(
+                "and must not leave state pinning the walk in the sweep's keep-set",
+                prepStore.state.value[seed.walkUuid].isNullOrEmpty(),
+            )
+        }
+
+    @Test
     fun `photos auto-enable exactly once — the walker's off stays off`() = runTest(dispatcher) {
         // iOS `testInteractiveAutoEnablesPhotosOnce` (`:56-66@3f9f9e8`):
         // "auto-enable happens once; the walker's off stays off".
@@ -1356,10 +1445,8 @@ class WalkShareInteractiveTest {
             vm.togglePhotos(true)
             vm.awaitReadyToShare()
 
-            val failed = CompletableDeferred<WalkShareEvent.Failed>()
-            val watcher = launch(dispatcher) {
-                vm.events.collect { if (it is WalkShareEvent.Failed) failed.complete(it) }
-            }
+            val events = mutableListOf<WalkShareEvent>()
+            val watcher = watchEvents(vm, events)
             photoEncode = { throw IllegalStateException("photo encoder blew up") }
 
             vm.share()
@@ -1368,9 +1455,125 @@ class WalkShareInteractiveTest {
             assertEquals(context.getString(R.string.share_modal_error_unknown), card.message)
             assertEquals("nothing reached the server", 0, server.requestCount)
             awaitReal { vm.isSharing.first { !it } }
-            // The walker is told, not left staring at a spinner.
-            awaitReal { failed.await() }
             watcher.cancel()
+            // The walker is told, not left staring at a spinner.
+            assertEquals(
+                listOf(WalkShareEvent.Failed(context.getString(R.string.share_modal_error_unknown))),
+                events,
+            )
+        }
+
+    @Test
+    fun `a post-POST store failure keeps the live page on the card instead of offering a second share`() =
+        runTest(dispatcher) {
+            // Everything after the POST is DataStore I/O (the repair
+            // record's pre-populate, every markUploaded, the classic
+            // branch's clear). A throw there used to reach the same
+            // generic Error card a share that never left the device
+            // produces — and its "Try Again" calls share(), a SECOND POST
+            // over the page this attempt already created.
+            val seed = seedWalk(recordingDurations = listOf(60_000L))
+            val dataStore = WriteFailingDataStore()
+            val failingRepairStore = ShareRepairStore(dataStore, json)
+            val vm = vm(
+                seed.walkId,
+                repairStoreOverride = failingRepairStore,
+                serviceOverride = shareServiceOver(failingRepairStore),
+            )
+            vm.awaitLoaded()
+            vm.setInteractiveEnabled(true)
+            vm.awaitReadyToShare(expectedRows = 1)
+
+            // The POST is allowed to land; the first bookkeeping write
+            // after it is not — uploadMedia pre-populates the record
+            // before its first PUT.
+            dataStore.failWrites = true
+            enqueueShareCreated()
+
+            val events = mutableListOf<WalkShareEvent>()
+            val watcher = watchEvents(vm, events)
+            vm.share()
+            awaitReal { vm.isSharing.first { !it } }
+            watcher.cancel()
+
+            val card = vm.shareCardState.value
+            assertTrue("a landed POST must never be reported as a failed share: $card", card is ShareCardState.Partial)
+            assertEquals("https://walk.pilgrimapp.org/abc123", (card as ShareCardState.Partial).url)
+            assertEquals("and must still say what the page is owed", 1, card.failedCount)
+            assertEquals("exactly one POST — the page is live, not re-created", 1, server.requestCount)
+            assertTrue("the walker is not told a live share failed: $events", events.none { it is WalkShareEvent.Failed })
+        }
+
+    @Test
+    fun `a classic share whose post-POST record clear fails still lands Shared`() = runTest(dispatcher) {
+        // The classic branch's only post-POST work is wiping any stale
+        // interactive record. That write failing says nothing about the
+        // page, which is live and cached.
+        val seed = seedWalk()
+        val dataStore = WriteFailingDataStore()
+        val failingRepairStore = ShareRepairStore(dataStore, json)
+        val vm = vm(
+            seed.walkId,
+            repairStoreOverride = failingRepairStore,
+            serviceOverride = shareServiceOver(failingRepairStore),
+        )
+        vm.awaitLoaded()
+        vm.awaitReadyToShare()
+
+        dataStore.failWrites = true
+        enqueueShareCreated()
+
+        vm.share()
+        awaitReal { vm.isSharing.first { !it } }
+
+        val card = vm.shareCardState.value
+        assertTrue("bookkeeping that failed after a landed POST is not a failed share: $card", card is ShareCardState.Success)
+        assertEquals("https://walk.pilgrimapp.org/abc123", (card as ShareCardState.Success).url)
+        assertEquals("exactly one POST", 1, server.requestCount)
+    }
+
+    @Test
+    fun `a repair whose record read throws stays on the repair card instead of offering a second share`() =
+        runTest(dispatcher) {
+            // The pass body's throws are already contained; the guard
+            // reads that decide whether there is anything to repair sat
+            // outside that containment, so an unreadable record unwound
+            // onto the Error card whose "Try Again" re-POSTs.
+            val seed = seedWalk(recordingDurations = listOf(60_000L))
+            cachedStore.put(walkUuid = seed.walkUuid, share = liveShare(url = "https://walk.pilgrimapp.org/live", id = "live"))
+
+            val dataStore = ReadFailingDataStore()
+            val failingRepairStore = ShareRepairStore(dataStore, json)
+            failingRepairStore.prePopulate(
+                walkUuid = seed.walkUuid,
+                shareId = "live",
+                slots = listOf(
+                    RepairSlot(SlotKind.AUDIO, 1, SlotIdentity.Audio(seed.recordings.single().uuid), SlotStatus.PENDING),
+                ),
+            )
+
+            val vm = vm(
+                seed.walkId,
+                repairStoreOverride = failingRepairStore,
+                serviceOverride = shareServiceOver(failingRepairStore),
+            )
+            vm.awaitLoaded()
+            vm.awaitCard { it is ShareCardState.Partial }
+
+            dataStore.failReads = true
+            val events = mutableListOf<WalkShareEvent>()
+            val watcher = watchEvents(vm, events)
+            val requestsBeforeRepair = server.requestCount
+
+            vm.retryFailedMedia()
+            awaitReal { vm.isSharing.first { !it } }
+            watcher.cancel()
+
+            val card = vm.shareCardState.value
+            assertTrue("an unreadable record must never unwind onto the Error card: $card", card is ShareCardState.Partial)
+            assertTrue("and must swap the retry button for the explanation", vm.repairUnavailable.value)
+            assertEquals("nothing new is sent — least of all a second POST", requestsBeforeRepair, server.requestCount)
+            assertTrue("the live page is not reported as a failed share: $events", events.none { it is WalkShareEvent.Failed })
         }
 
     @Test
