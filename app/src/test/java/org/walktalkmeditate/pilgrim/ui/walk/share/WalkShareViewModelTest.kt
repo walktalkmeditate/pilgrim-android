@@ -318,6 +318,9 @@ class WalkShareViewModelTest {
         assertEquals(1, meditation.size)
         assertEquals(walkStart + 10_000L, meditation[0].startTimestamp)
         assertEquals(walkStart + 40_000L, meditation[0].endTimestamp)
+        // The same dead-table read also nulled stats.meditate_duration on every
+        // share ever sent — pin the derived stat so it can't regress separately.
+        assertEquals(30.0, loaded.inputs.meditateDurationSeconds, 0.001)
     }
 
     @Test
