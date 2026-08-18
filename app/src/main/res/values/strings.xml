@@ -520,6 +520,8 @@
     <string name="share_status_dont_share_yet">Don\'t share yet</string>
     <string name="share_status_view_page_a11y_label">View shared walk page</string>
     <string name="share_status_view_page_a11y_hint">Opens the scroll of your shared walk</string>
+    <!-- WalkSharingButtons.swift:222@2ee1185 — the summary block's URL row carries its own hint copy, distinct from ShareStatusSection's. -->
+    <string name="share_block_url_a11y_hint">Opens the walk share details to re-view the scroll</string>
 
     <!-- Stage 3.2 (walk-summary bundle): WalkSharingButtons card -->
     <string name="share_button_goshuin">Goshuin</string>
