@@ -8,7 +8,6 @@ import kotlin.math.abs
 import org.walktalkmeditate.pilgrim.data.cairn.CachedCairn
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
-import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.whisper.CachedWhisper
 import org.walktalkmeditate.pilgrim.domain.ActivityType
@@ -31,7 +30,16 @@ sealed class WalkMapAnnotationKind {
     @Immutable data object StartPoint : WalkMapAnnotationKind()
     @Immutable data object EndPoint : WalkMapAnnotationKind()
     @Immutable data class Meditation(val durationMillis: Long) : WalkMapAnnotationKind()
-    @Immutable data class VoiceRecording(val durationMillis: Long) : WalkMapAnnotationKind()
+
+    // No VoiceRecording kind: user product decision 2026-08-18 removed
+    // voice-recording pins from the Walk Summary map entirely (Round-2
+    // QA). iOS DOES place one per recording — `WalkSummaryView.swift:
+    // 728-732` appends `.voiceRecording` into `computeAnnotations`'
+    // result, which `WalkSummaryView+Map.swift:49-65`'s `mapSection`
+    // feeds straight into `PilgrimMapView`'s `pinAnnotations`, rendered
+    // by `PilgrimMapView.swift:365-371@2ee1185` as a rust
+    // CircleAnnotation — so this is a deliberate divergence from
+    // parity, not a pre-existing gap. See [computeWalkMapAnnotations].
 
     /**
      * iOS parity `PilgrimAnnotation.Kind.photo(localIdentifier:)`
@@ -118,14 +126,18 @@ data class WalkMapAnnotation(
 )
 
 /**
- * Build the Walk Summary map's pin set. Verbatim port of iOS
- * `WalkSummaryView.computeAnnotations` (`WalkSummaryView.swift:863-891`):
+ * Build the Walk Summary map's pin set. Port of iOS
+ * `WalkSummaryView.computeAnnotations` (`WalkSummaryView.swift:863-891`)
+ * minus voice-recording pins:
  *   - Start pin at first GPS sample.
  *   - End pin at last GPS sample (only when route has > 1 sample).
  *   - Meditation pin at the GPS sample closest in time to each
  *     meditation interval's start.
- *   - Voice recording pin at the GPS sample closest in time to each
- *     recording's start.
+ *
+ * User product decision 2026-08-18: no pin per voice recording. iOS
+ * places one (see [WalkMapAnnotationKind]'s doc comment for the exact
+ * citations) — this function takes no `voiceRecordings` parameter so
+ * that divergence can't silently regress back in at a call site.
  *
  * Returns empty when the route is empty (cannot place start/end without
  * GPS). Pure function — caller is responsible for ordering samples by
@@ -134,7 +146,6 @@ data class WalkMapAnnotation(
 fun computeWalkMapAnnotations(
     routeSamples: List<RouteDataSample>,
     meditationIntervals: List<ActivityInterval>,
-    voiceRecordings: List<VoiceRecording>,
     waypoints: List<Waypoint> = emptyList(),
     nearbyWhispers: List<CachedWhisper> = emptyList(),
     nearbyCairns: List<CachedCairn> = emptyList(),
@@ -156,16 +167,6 @@ fun computeWalkMapAnnotations(
             ?: continue
         out += WalkMapAnnotation(
             kind = WalkMapAnnotationKind.Meditation(m.endTimestamp - m.startTimestamp),
-            latitude = closest.latitude,
-            longitude = closest.longitude,
-        )
-    }
-
-    for (r in voiceRecordings) {
-        val closest = routeSamples.minByOrNull { abs(it.timestamp - r.startTimestamp) }
-            ?: continue
-        out += WalkMapAnnotation(
-            kind = WalkMapAnnotationKind.VoiceRecording(r.durationMillis),
             latitude = closest.latitude,
             longitude = closest.longitude,
         )

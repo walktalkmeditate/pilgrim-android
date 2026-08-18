@@ -1800,7 +1800,9 @@ class WalkSummaryViewModel @Inject constructor(
                 meditationIntervals = activityIntervals.filter {
                     it.activityType == ActivityType.MEDITATING
                 },
-                voiceRecordings = voiceRecordings,
+                // No voiceRecordings arg: user product decision 2026-08-18
+                // removed voice-recording pins from the summary map — see
+                // [computeWalkMapAnnotations]'s doc comment.
                 waypoints = waypoints,
                 // Whispers + cairns from the proximity geo-cache are
                 // walk-scoped only via the route radius — surfacing

@@ -122,16 +122,35 @@ data class RouteSegmentColors(
 
 /**
  * Theme-resolved colors for the Walk Summary map's annotation pins
- * (start/end + meditation + voice recording). Same packaging pattern
- * as [RouteSegmentColors] — read at the @Composable layer
+ * (start/end + meditation). Same packaging pattern as
+ * [RouteSegmentColors] — read at the @Composable layer
  * (LocalPilgrimColors), passed into [PilgrimMap] so it doesn't need
  * to depend on the theme module directly.
+ *
+ * No `voice` field: user product decision 2026-08-18 removed
+ * voice-recording pins from the summary map entirely (see
+ * `WalkMapAnnotationKind`'s doc comment).
  */
 @Immutable
 data class WalkAnnotationColors(
-    val startEnd: Color,
+    /**
+     * Start pin fill — iOS parity `PilgrimMapView.swift:372-378@2ee1185`
+     * (`.startPoint`: `circleColor = .parchment`).
+     */
+    val startFill: Color,
+    /**
+     * End pin fill — iOS parity `PilgrimMapView.swift:379-385@2ee1185`
+     * (`.endPoint`: `circleColor = .ink`).
+     */
+    val endFill: Color,
+    /**
+     * Shared start/end pin stroke, AND the end-glow's fill — iOS parity
+     * `PilgrimMapView.swift:372-385,407-413@2ee1185` (`circleStrokeColor
+     * = .stone` on both pins; `glow.circleColor = .stone` for the end
+     * halo).
+     */
+    val stroke: Color,
     val meditation: Color,
-    val voice: Color,
     /**
      * Placeholder fill color for iOS-parity photo pins
      * (`WalkSummaryView+Map.swift:34-46@db4196e`). v1 cut renders a
@@ -143,15 +162,16 @@ data class WalkAnnotationColors(
     companion object {
         /**
          * iOS parity — annotation pin colors are fixed assets
-         * (`UIColor.stone/.dawn/.rust/.moss`), not colorScheme-resolved,
-         * so the meditation circle + start/end + voice pins stay
+         * (`UIColor.stone/.parchment/.ink/.dawn`), not colorScheme-
+         * resolved, so the meditation circle + start/end pins stay
          * constant across light/dark/constellation. Frozen base-palette
          * values (see ui/theme/Color.kt light set).
          */
         val Fixed = WalkAnnotationColors(
-            startEnd = Color(0xFF8B7355),
+            startFill = Color(0xFFF5F0E8),
+            endFill = Color(0xFF2C2416),
+            stroke = Color(0xFF8B7355),
             meditation = Color(0xFFC4956A),
-            voice = Color(0xFFA0634B),
             photo = Color(0xFF7A8B6F),
         )
     }
