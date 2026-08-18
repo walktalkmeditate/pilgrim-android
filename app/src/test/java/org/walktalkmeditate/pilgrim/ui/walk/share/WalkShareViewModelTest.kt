@@ -40,6 +40,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.share.SharePhotoEncoder
@@ -49,6 +50,8 @@ import org.walktalkmeditate.pilgrim.data.share.ShareService
 import org.walktalkmeditate.pilgrim.data.share.TourPhotoExporter
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
+import org.walktalkmeditate.pilgrim.domain.ActivityType
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -156,7 +159,12 @@ class WalkShareViewModelTest {
         savedStateHandle = SavedStateHandle(mapOf(WalkShareViewModel.ARG_WALK_ID to walkId)),
     )
 
-    private suspend fun seedWalkWithRoute(): Long {
+    /**
+     * [events] carry timestamps as OFFSETS from the walk's (dynamic,
+     * per-test) start — mirroring the route samples below — and are
+     * stamped with the real walkId + absolute timestamp before insert.
+     */
+    private suspend fun seedWalkWithRoute(events: List<WalkEvent> = emptyList()): Long {
         val walk = repository.startWalk(startTimestamp = nextTs.getAndAdd(60_000L))
         repository.recordLocation(
             RouteDataSample(walkId = walk.id, timestamp = walk.startTimestamp, latitude = 45.0, longitude = -70.0),
@@ -164,6 +172,9 @@ class WalkShareViewModelTest {
         repository.recordLocation(
             RouteDataSample(walkId = walk.id, timestamp = walk.startTimestamp + 30_000L, latitude = 45.001, longitude = -70.001),
         )
+        events.forEach { e ->
+            repository.recordEvent(e.copy(walkId = walk.id, timestamp = walk.startTimestamp + e.timestamp))
+        }
         repository.finishWalk(walk, endTimestamp = walk.startTimestamp + 60_000L)
         return walk.id
     }
@@ -276,5 +287,57 @@ class WalkShareViewModelTest {
             withTimeout(5_000L) { vm.isSharing.first { !it } }
         }
         assertEquals(false, vm.isSharing.value)
+    }
+
+    // --- activity_intervals: derived from walk events, not the dead table ---
+    //
+    // Regression for the device-QA finding: a walk with a
+    // MEDITATION_START/END pair shared an interactive story page with
+    // `meditation: []`, because `activity_intervals` has no production
+    // writer. loadInputs must derive ShareInputs.activityIntervals from
+    // the walk's own event log (deriveActivityIntervals), not the
+    // always-empty repository.activityIntervalsFor read.
+
+    @Test
+    fun `meditation interval reaches ShareInputs, derived from walk events`() = runTest(dispatcher) {
+        val walkId = seedWalkWithRoute(
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 10_000L, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 0L, timestamp = 40_000L, eventType = WalkEventType.MEDITATION_END),
+            ),
+        )
+        val walkStart = repository.getWalk(walkId)!!.startTimestamp
+        val vm = vm(walkId)
+        val loaded = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(5_000L) {
+                vm.uiState.first { it is WalkShareUiState.Loaded } as WalkShareUiState.Loaded
+            }
+        }
+
+        val meditation = loaded.inputs.activityIntervals.filter { it.activityType == ActivityType.MEDITATING }
+        assertEquals(1, meditation.size)
+        assertEquals(walkStart + 10_000L, meditation[0].startTimestamp)
+        assertEquals(walkStart + 40_000L, meditation[0].endTimestamp)
+    }
+
+    @Test
+    fun `dangling MEDITATION_START with no END is closed at the walk's end timestamp`() = runTest(dispatcher) {
+        val walkId = seedWalkWithRoute(
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 50_000L, eventType = WalkEventType.MEDITATION_START),
+            ),
+        )
+        val walk = repository.getWalk(walkId)!!
+        val vm = vm(walkId)
+        val loaded = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(5_000L) {
+                vm.uiState.first { it is WalkShareUiState.Loaded } as WalkShareUiState.Loaded
+            }
+        }
+
+        val meditation = loaded.inputs.activityIntervals.filter { it.activityType == ActivityType.MEDITATING }
+        assertEquals(1, meditation.size)
+        assertEquals(walk.startTimestamp + 50_000L, meditation[0].startTimestamp)
+        assertEquals(walk.endTimestamp, meditation[0].endTimestamp)
     }
 }

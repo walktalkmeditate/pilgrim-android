@@ -66,6 +66,7 @@ import org.walktalkmeditate.pilgrim.data.share.prepareRoute
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -1389,7 +1390,13 @@ class WalkShareViewModel @Inject constructor(
             samples = repository.locationSamplesFor(walkId)
             altitudes = repository.altitudeSamplesFor(walkId)
             events = repository.eventsFor(walkId)
-            intervals = repository.activityIntervalsFor(walkId)
+            // `activity_intervals` has no production writer
+            // (WalkRepository.recordActivityInterval has zero callers) —
+            // the table is always empty, so meditation intervals are
+            // reconstructed from the walk's own event log instead
+            // (mirrors WalkSummaryViewModel.buildState, and the
+            // `totals` replay just below).
+            intervals = deriveActivityIntervals(events = events, walkId = walkId, closeAt = endTs)
             recordings = repository.voiceRecordingsFor(walkId)
             waypoints = repository.waypointsFor(walkId)
             pinnedPhotos = repository.photosFor(walkId)

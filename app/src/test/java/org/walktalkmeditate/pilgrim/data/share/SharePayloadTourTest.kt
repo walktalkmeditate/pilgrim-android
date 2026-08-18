@@ -16,8 +16,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
@@ -194,11 +196,12 @@ class SharePayloadTourTest {
         recordings: List<VoiceRecording> = emptyList(),
         pauseSpans: List<PauseSpan> = emptyList(),
         recordingArtifacts: Map<String, RecordingArtifact> = emptyMap(),
+        activityIntervals: List<ActivityInterval> = emptyList(),
     ) = ShareInputs(
         walk = walk(),
         routePoints = routePoints,
         altitudeSamples = emptyList(),
-        activityIntervals = emptyList(),
+        activityIntervals = activityIntervals,
         voiceRecordings = recordings,
         waypoints = emptyList(),
         distanceMeters = 1_234.0,
@@ -515,6 +518,56 @@ class SharePayloadTourTest {
         val payload = SharePayloadBuilder.build(inputs, allOn().copy(interactive = true))
 
         assertEquals("included candidates sum to 120 — must clamp to 100", 100.0, payload.stats.talkDuration!!, 0.0)
+    }
+
+    // MARK: - meditation intervals (SharePayloadBuilder.build integration)
+    //
+    // ShareInputs.activityIntervals arrives pre-derived from the walk's
+    // event log (WalkShareViewModel.loadInputs) — activity_intervals
+    // itself has no production writer. These prove the builder's own
+    // mapping (MEDITATING -> type="meditation", truncated to seconds)
+    // on a fixture that previously always left activityIntervals empty.
+
+    @Test
+    fun `meditation interval reaches the payload as type=meditation on the classic build`() {
+        val interval = ActivityInterval(
+            walkId = 1L,
+            startTimestamp = 1_700_000_010_000L,
+            endTimestamp = 1_700_000_070_500L,
+            activityType = ActivityType.MEDITATING,
+        )
+        val payload = SharePayloadBuilder.build(baseInputs(activityIntervals = listOf(interval)), allOn())
+
+        val meditation = payload.activityIntervals.filter { it.type == "meditation" }
+        assertEquals(1, meditation.size)
+        assertEquals(1_700_000_010L, meditation.first().startTs)
+        assertEquals(1_700_000_070L, meditation.first().endTs)
+    }
+
+    @Test
+    fun `meditation interval reaches the payload as type=meditation on the interactive build, alongside talk intervals`() {
+        val interval = ActivityInterval(
+            walkId = 1L,
+            startTimestamp = 1_700_000_010_000L,
+            endTimestamp = 1_700_000_070_000L,
+            activityType = ActivityType.MEDITATING,
+        )
+        val talk = recording(startTimestamp = 1_100_000L, endTimestamp = 1_160_000L)
+        val artifacts = mapOf(talk.uuid to RecordingArtifact(sizeBytes = 500_000L, fileExists = true))
+
+        val payload = SharePayloadBuilder.build(
+            baseInputs(activityIntervals = listOf(interval), recordings = listOf(talk), recordingArtifacts = artifacts),
+            allOn().copy(interactive = true),
+        )
+
+        val meditation = payload.activityIntervals.filter { it.type == "meditation" }
+        assertEquals("meditation interval must be present", 1, meditation.size)
+        assertEquals(1_700_000_010L, meditation.first().startTs)
+        assertEquals(1_700_000_070L, meditation.first().endTs)
+        assertTrue(
+            "talk interval must be present too — meditation and talk are independent",
+            payload.activityIntervals.any { it.type == "talk" },
+        )
     }
 
     @Test

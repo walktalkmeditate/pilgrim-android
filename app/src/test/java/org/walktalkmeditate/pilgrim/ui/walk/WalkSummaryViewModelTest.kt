@@ -1128,12 +1128,7 @@ class WalkSummaryViewModelTest {
         insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
         insertRouteSample(walkId, t = 20_000L, lat = 2.0, lng = 2.0)
         insertRouteSample(walkId, t = 40_000L, lat = 3.0, lng = 3.0)
-        insertActivityInterval(
-            walkId,
-            startTimestamp = 15_000L,
-            endTimestamp = 25_000L,
-            type = ActivityType.MEDITATING,
-        )
+        insertMeditationEvents(walkId, startTimestamp = 15_000L, endTimestamp = 25_000L)
 
         val vm = newViewModel(walkId)
         val loaded = awaitLoaded(vm)
@@ -1165,12 +1160,7 @@ class WalkSummaryViewModelTest {
         val walkId = createFinishedWalk(durationMillis = 60_000L)
         insertRouteSample(walkId, t = 10_000L, lat = 1.0, lng = 1.0)
         insertRouteSample(walkId, t = 20_000L, lat = 2.0, lng = 2.0)
-        insertActivityInterval(
-            walkId,
-            startTimestamp = 5_000L,
-            endTimestamp = 25_000L,
-            type = ActivityType.MEDITATING,
-        )
+        insertMeditationEvents(walkId, startTimestamp = 5_000L, endTimestamp = 25_000L)
         insertVoiceRecording(walkId, startOffset = 10_000L, durationMillis = 10_000L)
 
         val vm = newViewModel(walkId)
@@ -1193,12 +1183,21 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
-    fun meditationIntervals_filtered_excludesNonMeditationTypes() = runTest(dispatcher) {
-        val walkId = createFinishedWalk(durationMillis = 60_000L)
-        insertActivityInterval(walkId, startTimestamp = 5_000L, endTimestamp = 15_000L,
-            type = ActivityType.MEDITATING)
-        insertActivityInterval(walkId, startTimestamp = 20_000L, endTimestamp = 30_000L,
-            type = ActivityType.WALKING)
+    fun meditationIntervals_derivedFromEvents_excludesUnrelatedEventTypes() = runTest(dispatcher) {
+        // meditationIntervals is reconstructed from MEDITATION_START/END
+        // pairs in the walk's event log (activity_intervals has no
+        // production writer — see deriveActivityIntervals). A PAUSED/
+        // RESUMED pair in the same log must not leak in as a meditation
+        // interval.
+        val walkId = createFinishedWalk(
+            durationMillis = 60_000L,
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 5_000L, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 0L, timestamp = 15_000L, eventType = WalkEventType.MEDITATION_END),
+                WalkEvent(walkId = 0L, timestamp = 20_000L, eventType = WalkEventType.PAUSED),
+                WalkEvent(walkId = 0L, timestamp = 30_000L, eventType = WalkEventType.RESUMED),
+            ),
+        )
 
         val vm = newViewModel(walkId)
         val loaded = awaitLoaded(vm)
@@ -1213,8 +1212,7 @@ class WalkSummaryViewModelTest {
         insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
         insertRouteSample(walkId, t = 30_000L, lat = 2.0, lng = 2.0)
         insertRouteSample(walkId, t = 60_000L, lat = 3.0, lng = 3.0)
-        insertActivityInterval(walkId, startTimestamp = 28_000L, endTimestamp = 32_000L,
-            type = ActivityType.MEDITATING)
+        insertMeditationEvents(walkId, startTimestamp = 28_000L, endTimestamp = 32_000L)
         insertVoiceRecording(walkId, startOffset = 55_000L, durationMillis = 5_000L)
 
         val vm = newViewModel(walkId)
@@ -1995,19 +1993,20 @@ class WalkSummaryViewModelTest {
         )
     }
 
-    private suspend fun insertActivityInterval(
-        walkId: Long,
-        startTimestamp: Long,
-        endTimestamp: Long,
-        type: ActivityType,
-    ) {
-        db.activityIntervalDao().insert(
-            org.walktalkmeditate.pilgrim.data.entity.ActivityInterval(
-                walkId = walkId,
-                startTimestamp = startTimestamp,
-                endTimestamp = endTimestamp,
-                activityType = type,
-            ),
+    /**
+     * Seeds a MEDITATION_START/END event pair directly (bypassing
+     * [createFinishedWalk]'s events param) for tests that need to add
+     * meditation after other post-hoc setup (route samples, etc.) —
+     * mirrors how the walk summary VM derives `meditationIntervals` /
+     * `routeSegments` / `walkAnnotations` from the event log rather than
+     * the (never production-written) `activity_intervals` table.
+     */
+    private suspend fun insertMeditationEvents(walkId: Long, startTimestamp: Long, endTimestamp: Long) {
+        repository.recordEvent(
+            WalkEvent(walkId = walkId, timestamp = startTimestamp, eventType = WalkEventType.MEDITATION_START),
+        )
+        repository.recordEvent(
+            WalkEvent(walkId = walkId, timestamp = endTimestamp, eventType = WalkEventType.MEDITATION_END),
         )
     }
 
