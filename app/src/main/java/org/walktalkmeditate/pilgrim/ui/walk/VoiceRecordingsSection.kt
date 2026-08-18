@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -26,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -536,6 +538,41 @@ private fun SpeedPill(
     }
 }
 
+/**
+ * User product decision 2026-08-18: [EditableTranscription]'s
+ * edit/copy/retranscribe icon cluster still read as three separate
+ * buttons with huge gaps next to a compact (often 2-line) transcript,
+ * even after the round-1 iOS-parity spacing fix
+ * (`PilgrimSpacing.xs` = 4dp `Arrangement.spacedBy`) — because
+ * `minimumInteractiveComponentSize()`'s Material default (48dp)
+ * dominated the visual pitch regardless of the coded gap: 48dp box +
+ * 4dp gap = 52dp between icons, though the glyph itself rendered at
+ * only 16dp (32dp box minus 8dp internal padding). This overrides the
+ * a11y CONTRACT, not just a visual constant, so the tradeoff is
+ * documented here rather than silently shrinking a touch target:
+ *
+ * - Visual: icon box shrinks from 32dp (with 8dp internal padding, a
+ *   16dp glyph) to a bare 24dp (Material's own standard icon size,
+ *   filling its box with no internal padding) — a clearer glyph, not
+ *   just a smaller one.
+ * - a11y preservation: [LocalMinimumInteractiveComponentSize] is
+ *   scoped DOWN to iOS's own 44pt tap-target floor (the same `cbd24fc`
+ *   sweep the round-1 fix already cites below) for just this Column,
+ *   in place of Material's 48dp default — `minimumInteractiveComponentSize()`
+ *   still reserves `max(content, override) = max(24dp, 44dp) = 44dp`
+ *   per icon, i.e. every icon keeps a genuine ≥44dp touch target, not
+ *   a smaller one.
+ * - A negative `Arrangement.spacedBy` overlaps consecutive 44dp touch
+ *   boxes by 12dp so the VISUAL icons (24dp, centered in each box)
+ *   land at the target ~32dp pitch (24dp icon + ~8dp gap) instead of
+ *   52dp. A tap in the 12dp overlap band resolves to whichever icon is
+ *   drawn on top there — acceptable overlap for three unambiguous,
+ *   low-consequence actions stacked vertically, not a dense list.
+ */
+internal val ICON_CLUSTER_TOUCH_TARGET = 44.dp
+internal val ICON_CLUSTER_VISUAL_SIZE = 24.dp
+internal val ICON_CLUSTER_ARRANGEMENT_GAP = (-12).dp
+
 @Composable
 private fun EditableTranscription(
     recordingId: Long,
@@ -633,71 +670,74 @@ private fun EditableTranscription(
             }
         }
         if (!isEditing) {
-            Column(
-                // iOS parity `VoiceRecordingRow.swift:185@2ee1185` —
-                // `VStack(spacing: 4)`. iOS briefly used 8→12pt during
-                // an earlier pass, but its 44pt-tap-target a11y sweep
-                // (`cbd24fc`) tightened the cluster back down to 4pt so
-                // the three enlarged buttons still read as one compact
-                // group next to the transcript instead of spreading
-                // across it. This Column had drifted to iOS's old 12dp
-                // value and never followed that later tightening —
-                // device QA: icons at large, even gaps regardless of
-                // transcript height.
-                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            // See [ICON_CLUSTER_TOUCH_TARGET]'s doc comment for the full
+            // user-directive + a11y-preservation rationale — this scopes
+            // Material's 48dp `minimumInteractiveComponentSize()` default
+            // down to iOS's own 44pt tap-target floor for just this
+            // cluster, then lets the Column's negative spacing overlap
+            // those (still ≥44dp) touch boxes to reach the tight visual
+            // pitch.
+            CompositionLocalProvider(
+                LocalMinimumInteractiveComponentSize provides ICON_CLUSTER_TOUCH_TARGET,
             ) {
-                // iOS v1.6.0 — pencil-icon Edit button replaces the
-                // hidden tap-to-edit gesture (the body-tap conflicted
-                // with the new Show more / Show less toggle). 32x32
-                // tap targets matching iOS sizing.
-                Icon(
-                    painter = painterResource(R.drawable.ic_sf_pencil),
-                    contentDescription = stringResource(
-                        R.string.recording_action_edit_cd,
-                    ),
-                    tint = pilgrimColors.fog,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable {
-                            editText = text
-                            isEditing = true
-                        }
-                        .padding(8.dp),
-                )
-                Icon(
-                    imageVector = Icons.Outlined.ContentCopy,
-                    contentDescription = stringResource(
-                        R.string.recordings_action_copy_transcription,
-                    ),
-                    tint = pilgrimColors.fog,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable { clipboard.setText(AnnotatedString(text)) }
-                        .padding(8.dp),
-                )
-                // Disabled until the model is Ready (U11 spec section 5):
-                // retranscribe nulls the transcript BEFORE scheduling, so
-                // firing it pre-Ready is silent data loss while the work
-                // spins on a missing model.
-                Icon(
-                    imageVector = Icons.Outlined.Refresh,
-                    contentDescription = stringResource(
-                        R.string.recording_action_retranscribe_cd,
-                    ),
-                    tint = pilgrimColors.fog,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable(enabled = retranscribeEnabled, onClick = onRetranscribe)
-                        .alpha(if (retranscribeEnabled) 1f else 0.38f)
-                        .padding(8.dp),
-                )
+                Column(
+                    // iOS parity `VoiceRecordingRow.swift:185@2ee1185` —
+                    // `VStack(spacing: 4)`, an even tighter coded gap than
+                    // this negative value; iOS's 24pt icons carry no
+                    // enlarged touch-target box at all, so its literal 4pt
+                    // doesn't translate directly once Android reserves a
+                    // real ≥44dp touch target per icon (see above).
+                    verticalArrangement = Arrangement.spacedBy(ICON_CLUSTER_ARRANGEMENT_GAP),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // iOS v1.6.0 — pencil-icon Edit button replaces the
+                    // hidden tap-to-edit gesture (the body-tap conflicted
+                    // with the new Show more / Show less toggle).
+                    Icon(
+                        painter = painterResource(R.drawable.ic_sf_pencil),
+                        contentDescription = stringResource(
+                            R.string.recording_action_edit_cd,
+                        ),
+                        tint = pilgrimColors.fog,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(ICON_CLUSTER_VISUAL_SIZE)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                editText = text
+                                isEditing = true
+                            },
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.ContentCopy,
+                        contentDescription = stringResource(
+                            R.string.recordings_action_copy_transcription,
+                        ),
+                        tint = pilgrimColors.fog,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(ICON_CLUSTER_VISUAL_SIZE)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { clipboard.setText(AnnotatedString(text)) },
+                    )
+                    // Disabled until the model is Ready (U11 spec section 5):
+                    // retranscribe nulls the transcript BEFORE scheduling, so
+                    // firing it pre-Ready is silent data loss while the work
+                    // spins on a missing model.
+                    Icon(
+                        imageVector = Icons.Outlined.Refresh,
+                        contentDescription = stringResource(
+                            R.string.recording_action_retranscribe_cd,
+                        ),
+                        tint = pilgrimColors.fog,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(ICON_CLUSTER_VISUAL_SIZE)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = retranscribeEnabled, onClick = onRetranscribe)
+                            .alpha(if (retranscribeEnabled) 1f else 0.38f),
+                    )
+                }
             }
         }
     }

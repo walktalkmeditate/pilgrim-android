@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.walk.summary
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -51,6 +56,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -60,6 +66,16 @@ import org.walktalkmeditate.pilgrim.ui.walk.share.formatExpiryDateLong
 private const val KANJI_WATERMARK_SIZE_SP = 120
 private const val CHEVRON_ALPHA = 0.4f
 internal const val COPY_TOAST_DURATION_MS = 2_000L
+
+/**
+ * iOS parity `WalkSharingButtons.swift:229-276@2ee1185` — the row's two
+ * buttons are deliberately asymmetric (Copy = low-emphasis outline,
+ * Share = high-emphasis solid fill), NOT a matched pair. Both share
+ * this vertical content padding (`.padding(.vertical, 12)`, a literal
+ * that doesn't map to any [PilgrimSpacing] token) and corner radius.
+ */
+private val SHARE_BUTTON_V_PADDING = 12.dp
+private val COPY_BORDER_ALPHA = 0.35f
 
 /**
  * iOS parity `WalkSharingButtons.activeShareSection(_:)`
@@ -221,12 +237,24 @@ private fun CopyShareRow(url: String, onEngaged: () -> Unit, modifier: Modifier 
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
     ) {
+        // Low-emphasis outline — iOS `:240-255@2ee1185`:
+        // `.foregroundColor(.stone)`, `.overlay(RoundedRectangle(cornerRadius:
+        // small).strokeBorder(Color.stone.opacity(0.35), lineWidth: 1))`,
+        // `.padding(.vertical, 12)`. No `.background` — the card's own
+        // parchmentSecondary shows through.
         OutlinedButton(
             onClick = {
                 onEngaged()
                 clipboard.setText(AnnotatedString(url))
                 copyToast.trigger(scope)
             },
+            shape = RoundedCornerShape(PilgrimCornerRadius.small),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = pilgrimColors.stone),
+            border = BorderStroke(1.dp, pilgrimColors.stone.copy(alpha = COPY_BORDER_ALPHA)),
+            contentPadding = PaddingValues(
+                horizontal = PilgrimSpacing.normal,
+                vertical = SHARE_BUTTON_V_PADDING,
+            ),
             modifier = Modifier
                 .weight(1f)
                 .testTag("share-active-copy"),
@@ -249,11 +277,31 @@ private fun CopyShareRow(url: String, onEngaged: () -> Unit, modifier: Modifier 
                 maxLines = 1,
             )
         }
-        OutlinedButton(
+        // High-emphasis solid fill — iOS `:257-273@2ee1185`:
+        // `.background(Color.stone)`, `.foregroundColor(.parchment)`,
+        // `.cornerRadius(small)`, `.padding(.vertical, 12)`, no stroke.
+        // Flat elevation (0dp) — iOS's plain background fill has no
+        // shadow; M3's default `Button` elevation would add one.
+        Button(
             onClick = {
                 ShareIntents.shareUrl(context, url)
                 onEngaged()
             },
+            shape = RoundedCornerShape(PilgrimCornerRadius.small),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = pilgrimColors.stone,
+                contentColor = pilgrimColors.parchment,
+            ),
+            elevation = ButtonDefaults.buttonElevation(
+                defaultElevation = 0.dp,
+                pressedElevation = 0.dp,
+                focusedElevation = 0.dp,
+                hoveredElevation = 0.dp,
+            ),
+            contentPadding = PaddingValues(
+                horizontal = PilgrimSpacing.normal,
+                vertical = SHARE_BUTTON_V_PADDING,
+            ),
             modifier = Modifier
                 .weight(1f)
                 .testTag("share-active-share"),

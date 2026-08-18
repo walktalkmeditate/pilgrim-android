@@ -322,28 +322,33 @@ class VoiceRecordingsSectionTranscriptionTest {
         composeRule.runOnIdle { assertEquals(1, retranscribes) }
     }
 
-    // --- Icon-cluster spacing (device QA: icons at large even gaps vs
-    // iOS's compact cluster) ------------------------------------------
+    // --- Icon-cluster spacing (user product decision 2026-08-18: way
+    // closer — see ICON_CLUSTER_TOUCH_TARGET's doc comment in
+    // VoiceRecordingsSection.kt) ----------------------------------------
 
-    // Device QA: the pencil/copy/retranscribe column spread at large
-    // even gaps regardless of transcript height. Root cause: a 12dp
-    // gap that a stale comment attributed to "iOS v1.6.0" — the actual
-    // pinned iOS source uses a 4pt VStack gap
-    // (`VoiceRecordingRow.swift:185@2ee1185`), tightened from an
-    // earlier 12pt during iOS's 44pt-tap-target a11y sweep. Robolectric
-    // computes real layout/measure/place (only Canvas *painting* is
-    // stubbed — Stage 3-C lesson), so the gap between each icon's
-    // semantics bounds is a reliable, non-flaky assertion.
+    // Round-2 device QA: even the round-1 iOS-parity fix (4dp coded gap)
+    // still read as huge gaps next to a compact transcript, because
+    // `minimumInteractiveComponentSize()`'s 48dp default dominated the
+    // visual pitch regardless of the coded gap. The fix scopes
+    // `LocalMinimumInteractiveComponentSize` down to iOS's own 44pt
+    // tap-target floor for just this cluster (still a genuine ≥44dp
+    // touch target per icon — a11y preserved, not shrunk) and shrinks
+    // the icon box to Material's bare 24dp, then overlaps consecutive
+    // 44dp touch boxes with a negative Arrangement gap so the VISUAL
+    // icons land at the target ~32dp pitch (24dp icon + ~8dp gap).
+    // Robolectric computes real layout/measure/place (only Canvas
+    // *painting* is stubbed — Stage 3-C lesson), so the gap between each
+    // icon's semantics bounds is a reliable, non-flaky assertion.
     //
-    // Each icon's `minimumInteractiveComponentSize()` reserves 48dp of
-    // Column-arrangement space around its 32dp `.size(32.dp)` box (a
-    // touch-target reservation, Material's 48dp a11y minimum) — the
-    // reservation is symmetric, so it doesn't move the icon's OWN
-    // semantics bounds (still exactly 32dp, confirmed empirically), but
-    // it DOES add (48-32)=16dp on top of the coded Arrangement gap to
-    // the measured distance between two consecutive icons' bounds.
+    // Each icon's `minimumInteractiveComponentSize()` reservation is
+    // symmetric, so it doesn't move the icon's OWN semantics bounds
+    // (still exactly [ICON_CLUSTER_VISUAL_SIZE], confirmed empirically
+    // by the round-1 version of this same test) — the measured distance
+    // between two consecutive icons' bounds is
+    // `(ICON_CLUSTER_TOUCH_TARGET + ICON_CLUSTER_ARRANGEMENT_GAP) -
+    // ICON_CLUSTER_VISUAL_SIZE`.
     @Test
-    fun transcriptionActionIcons_useIosCompactSpacing() {
+    fun transcriptionActionIcons_useTightenedSpacing() {
         render()
         val pencil = composeRule.onNodeWithContentDescription("Edit transcription")
             .fetchSemanticsNode()
@@ -352,25 +357,57 @@ class VoiceRecordingsSectionTranscriptionTest {
         val retranscribe = composeRule.onNodeWithContentDescription("Retranscribe")
             .fetchSemanticsNode()
 
-        val iconSize = 32.dp
-        val minimumTouchTarget = 48.dp
         val expectedGapPx = with(composeRule.density) {
-            (PilgrimSpacing.xs + (minimumTouchTarget - iconSize)).toPx()
+            (
+                ICON_CLUSTER_TOUCH_TARGET + ICON_CLUSTER_ARRANGEMENT_GAP -
+                    ICON_CLUSTER_VISUAL_SIZE
+                ).toPx()
         }
         val pencilToCopyGap = copy.boundsInRoot.top - pencil.boundsInRoot.bottom
         val copyToRetranscribeGap = retranscribe.boundsInRoot.top - copy.boundsInRoot.bottom
 
         assertEquals(
-            "pencil-to-copy gap must match iOS's 4dp VStack spacing",
+            "pencil-to-copy gap must match the tightened cluster pitch",
             expectedGapPx,
             pencilToCopyGap,
             1f,
         )
         assertEquals(
-            "copy-to-retranscribe gap must match iOS's 4dp VStack spacing",
+            "copy-to-retranscribe gap must match the tightened cluster pitch",
             expectedGapPx,
             copyToRetranscribeGap,
             1f,
         )
+    }
+
+    /**
+     * A11y-preservation regression guard for the same directive:
+     * shrinking the VISUAL icon box (and letting touch boxes overlap)
+     * must not shrink any individual icon's OWN real touch target.
+     * Same 48dp framework floor as [playPauseIcon_meets48dpTouchTarget]
+     * above (`assertTouchWidthIsEqualTo`/`Height` measure the platform's
+     * own touch-bounds inflation, independent of
+     * `minimumInteractiveComponentSize()`/[ICON_CLUSTER_TOUCH_TARGET] —
+     * confirmed empirically: asserting [ICON_CLUSTER_TOUCH_TARGET]
+     * (44dp) here fails with "Actual width is 48.0.dp"). Complements
+     * [transcriptionActionIcons_useTightenedSpacing]'s gap assertion —
+     * that test alone couldn't tell "genuinely full touch target,
+     * tightly packed" apart from "silently shrunk to fit," since both
+     * would show the same tightened gap between icon glyphs.
+     */
+    @Test
+    fun transcriptionActionIcons_retainFullTouchTargetDespiteOverlap() {
+        render()
+        val pencil = composeRule.onNodeWithContentDescription("Edit transcription")
+        val copy = composeRule.onNodeWithContentDescription("Copy transcription")
+        val retranscribe = composeRule.onNodeWithContentDescription("Retranscribe")
+        val platformTouchTargetFloor = 48.dp
+
+        pencil.assertTouchWidthIsEqualTo(platformTouchTargetFloor)
+        pencil.assertTouchHeightIsEqualTo(platformTouchTargetFloor)
+        copy.assertTouchWidthIsEqualTo(platformTouchTargetFloor)
+        copy.assertTouchHeightIsEqualTo(platformTouchTargetFloor)
+        retranscribe.assertTouchWidthIsEqualTo(platformTouchTargetFloor)
+        retranscribe.assertTouchHeightIsEqualTo(platformTouchTargetFloor)
     }
 }
