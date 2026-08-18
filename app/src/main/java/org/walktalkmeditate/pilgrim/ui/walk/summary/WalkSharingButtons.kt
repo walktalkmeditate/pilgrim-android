@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.share.CachedShare
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -45,8 +46,16 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
  *     ring, plain (button-style-less) Button wrapping the VStack
  *   - Caption-sized label, micro-sized fog subtitle below each
  *   - 0.5pt fog/15 horizontal divider
- *   - Plain text "Share Journey" button + two micro fog footer rows
- *     ("Create a web page" / "walk.pilgrimapp.org")
+ *   - Below the divider: iOS `journeySection` branches on the cached
+ *     share (`WalkSharingButtons.swift:148-159@2ee1185`) — a
+ *     non-expired [activeCachedShare] renders [WalkSharingBlock]
+ *     (issue #222); everything else (no cache, or expired) falls back
+ *     to the plain text "Share Journey" button + two micro fog footer
+ *     rows ("Create a web page" / "walk.pilgrimapp.org"). Per the
+ *     issue #222 scope, Android does NOT port Swift's separate
+ *     "returned to the trail" expired-state layout
+ *     (`returnedSection(_:)`, `:310-344@2ee1185`) — an expired cached
+ *     share is treated the same as never-shared.
  */
 @Composable
 internal fun WalkSharingButtons(
@@ -56,6 +65,8 @@ internal fun WalkSharingButtons(
     onGoshuinShare: () -> Unit,
     onEtegamiShare: () -> Unit,
     onWalkJourneyShare: () -> Unit,
+    activeCachedShare: CachedShare?,
+    onCachedShareEngaged: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (!hasRoute) return
@@ -98,12 +109,21 @@ internal fun WalkSharingButtons(
             thickness = 0.5.dp,
             modifier = Modifier.padding(horizontal = PilgrimSpacing.big),
         )
-        JourneyFooter(
-            onClick = onWalkJourneyShare,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("share-button-walk-journey"),
-        )
+        if (activeCachedShare != null) {
+            WalkSharingBlock(
+                cachedShare = activeCachedShare,
+                onOpenJourney = onWalkJourneyShare,
+                onEngaged = onCachedShareEngaged,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            JourneyFooter(
+                onClick = onWalkJourneyShare,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("share-button-walk-journey"),
+            )
+        }
     }
 }
 
