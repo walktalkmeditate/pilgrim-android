@@ -49,6 +49,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
+import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
@@ -72,6 +73,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoReliquarySection
+import org.walktalkmeditate.pilgrim.ui.walk.reliquary.ReliquaryState
 import org.walktalkmeditate.pilgrim.ui.walk.summary.AIPromptsRow
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_INTERVAL_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.COUNT_UP_STEPS
@@ -110,6 +112,54 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryDetailsCard
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryTopBar
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkTimeBreakdownGrid
 import org.walktalkmeditate.pilgrim.ui.walk.summary.ZOOM_HOLD_MS
+
+/**
+ * Photo pins for the Walk Summary map, gated exactly like iOS's
+ * `combinedAnnotations` guard (`WalkSummaryView+Map.swift:29-33@2ee1185`):
+ *
+ * ```swift
+ * guard UserPreferences.walkReliquaryEnabled.value,
+ *       PermissionManager.standard.isPhotosGranted else {
+ *     return cachedAnnotations
+ * }
+ * ```
+ *
+ * [ReliquaryState.Populated] is reachable only when both the toggle
+ * preference AND the photo permission are true — `resolveReliquaryState`'s
+ * precedence is `ToggleOff > PermissionDenied > Loading > Populated` — so
+ * checking it here reuses the same two booleans iOS checks instead of
+ * re-deriving them. [pinnedPhotos] is Room-observed and persists across a
+ * later toggle-off / permission-revoke, so without this gate the map kept
+ * showing previously-pinned photos regardless of the live preference —
+ * unconditional where iOS is conditional. (The production-unreachable
+ * `Loading` state also hides pins here: [WalkSummaryViewModel.reliquaryState]
+ * hard-wires `resolveReliquaryState`'s `isFetching` argument to false, and
+ * any walk with pinned photos already has a non-empty `candidates` list,
+ * which precludes `Loading` regardless.)
+ */
+internal fun photoMapAnnotations(
+    reliquaryState: ReliquaryState,
+    pinnedPhotos: List<WalkPhoto>,
+): List<WalkMapAnnotation> {
+    if (reliquaryState !is ReliquaryState.Populated) return emptyList()
+    return pinnedPhotos.mapNotNull { p ->
+        val lat = p.capturedLat
+        val lng = p.capturedLng
+        if (lat == null || lng == null) {
+            null
+        } else {
+            org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation(
+                kind = org.walktalkmeditate.pilgrim.data.walk
+                    .WalkMapAnnotationKind.Photo(
+                        walkPhotoId = p.id,
+                        photoUri = p.photoUri,
+                    ),
+                latitude = lat,
+                longitude = lng,
+            )
+        }
+    }
+}
 
 @Composable
 fun WalkSummaryScreen(
@@ -360,25 +410,13 @@ fun WalkSummaryScreen(
                         // (indoor shots, screenshots, stripped metadata)
                         // are omitted from the map but still appear in
                         // the reliquary carousel below.
-                        val combinedAnnotations = remember(s.summary.walkAnnotations, pinnedPhotos) {
-                            val photoAnnotations = pinnedPhotos.mapNotNull { p ->
-                                val lat = p.capturedLat
-                                val lng = p.capturedLng
-                                if (lat == null || lng == null) {
-                                    null
-                                } else {
-                                    org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation(
-                                        kind = org.walktalkmeditate.pilgrim.data.walk
-                                            .WalkMapAnnotationKind.Photo(
-                                                walkPhotoId = p.id,
-                                                photoUri = p.photoUri,
-                                            ),
-                                        latitude = lat,
-                                        longitude = lng,
-                                    )
-                                }
-                            }
-                            s.summary.walkAnnotations + photoAnnotations
+                        val combinedAnnotations = remember(
+                            s.summary.walkAnnotations,
+                            pinnedPhotos,
+                            reliquaryState,
+                        ) {
+                            s.summary.walkAnnotations +
+                                photoMapAnnotations(reliquaryState, pinnedPhotos)
                         }
                         SummaryMap(
                             points = s.summary.routePoints,
