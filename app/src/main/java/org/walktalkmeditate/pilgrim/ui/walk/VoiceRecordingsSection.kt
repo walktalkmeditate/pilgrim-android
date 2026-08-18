@@ -634,10 +634,17 @@ private fun EditableTranscription(
         }
         if (!isEditing) {
             Column(
-                // iOS v1.6.0 ups the icon-cluster spacing from
-                // 8 to 12 dp so the three buttons don't visually
-                // collide on small screens.
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                // iOS parity `VoiceRecordingRow.swift:185@2ee1185` —
+                // `VStack(spacing: 4)`. iOS briefly used 8→12pt during
+                // an earlier pass, but its 44pt-tap-target a11y sweep
+                // (`cbd24fc`) tightened the cluster back down to 4pt so
+                // the three enlarged buttons still read as one compact
+                // group next to the transcript instead of spreading
+                // across it. This Column had drifted to iOS's old 12dp
+                // value and never followed that later tightening —
+                // device QA: icons at large, even gaps regardless of
+                // transcript height.
+                verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 // iOS v1.6.0 — pencil-icon Edit button replaces the
