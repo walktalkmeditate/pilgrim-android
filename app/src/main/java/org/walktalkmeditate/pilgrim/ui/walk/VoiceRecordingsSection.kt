@@ -539,39 +539,29 @@ private fun SpeedPill(
 }
 
 /**
- * User product decision 2026-08-18: [EditableTranscription]'s
- * edit/copy/retranscribe icon cluster still read as three separate
- * buttons with huge gaps next to a compact (often 2-line) transcript,
- * even after the round-1 iOS-parity spacing fix
- * (`PilgrimSpacing.xs` = 4dp `Arrangement.spacedBy`) — because
- * `minimumInteractiveComponentSize()`'s Material default (48dp)
- * dominated the visual pitch regardless of the coded gap: 48dp box +
- * 4dp gap = 52dp between icons, though the glyph itself rendered at
- * only 16dp (32dp box minus 8dp internal padding). This overrides the
- * a11y CONTRACT, not just a visual constant, so the tradeoff is
- * documented here rather than silently shrinking a touch target:
+ * [EditableTranscription]'s edit/copy/retranscribe icon cluster —
+ * straight iOS parity, `VoiceRecordingRow.swift:184-217@2ee1185`:
+ * small `.font(.caption)` glyphs floating in generous 44pt tap frames
+ * (`.frame(minWidth: 44, minHeight: 44)` + `.contentShape`), stacked
+ * with `VStack(spacing: 4)`. (Round-2 QA briefly tried a tighter
+ * negative-overlap pitch; on-device comparison against iOS reversed
+ * that — the airy look IS the iOS look, its icons are just smaller.)
  *
- * - Visual: icon box shrinks from 32dp (with 8dp internal padding, a
- *   16dp glyph) to a bare 24dp (Material's own standard icon size,
- *   filling its box with no internal padding) — a clearer glyph, not
- *   just a smaller one.
- * - a11y preservation: [LocalMinimumInteractiveComponentSize] is
- *   scoped DOWN to iOS's own 44pt tap-target floor (the same `cbd24fc`
- *   sweep the round-1 fix already cites below) for just this Column,
- *   in place of Material's 48dp default — `minimumInteractiveComponentSize()`
- *   still reserves `max(content, override) = max(24dp, 44dp) = 44dp`
- *   per icon, i.e. every icon keeps a genuine ≥44dp touch target, not
- *   a smaller one.
- * - A negative `Arrangement.spacedBy` overlaps consecutive 44dp touch
- *   boxes by 12dp so the VISUAL icons (24dp, centered in each box)
- *   land at the target ~32dp pitch (24dp icon + ~8dp gap) instead of
- *   52dp. A tap in the 12dp overlap band resolves to whichever icon is
- *   drawn on top there — acceptable overlap for three unambiguous,
- *   low-consequence actions stacked vertically, not a dense list.
+ * - Glyph: SwiftUI `.caption` is 12pt, and SF Symbols at that font
+ *   size render ~12pt of ink. A Material icon's 24dp viewport carries
+ *   ~2dp internal padding per side, so a 16dp viewport (~13dp ink) is
+ *   the closest visual match.
+ * - Touch target: [LocalMinimumInteractiveComponentSize] is scoped
+ *   down from Material's 48dp default to iOS's own 44pt floor for
+ *   just this Column — `minimumInteractiveComponentSize()` reserves
+ *   `max(16dp, 44dp) = 44dp` per icon, the same real target iOS
+ *   frames give.
+ * - Gap: iOS's literal `spacing: 4` between the 44pt frames → 48pt
+ *   pitch, mirrored exactly (44dp + 4dp).
  */
 internal val ICON_CLUSTER_TOUCH_TARGET = 44.dp
-internal val ICON_CLUSTER_VISUAL_SIZE = 24.dp
-internal val ICON_CLUSTER_ARRANGEMENT_GAP = (-12).dp
+internal val ICON_CLUSTER_VISUAL_SIZE = 16.dp
+internal val ICON_CLUSTER_ARRANGEMENT_GAP = PilgrimSpacing.xs
 
 @Composable
 private fun EditableTranscription(
@@ -670,23 +660,17 @@ private fun EditableTranscription(
             }
         }
         if (!isEditing) {
-            // See [ICON_CLUSTER_TOUCH_TARGET]'s doc comment for the full
-            // user-directive + a11y-preservation rationale — this scopes
+            // See [ICON_CLUSTER_TOUCH_TARGET]'s doc comment — scopes
             // Material's 48dp `minimumInteractiveComponentSize()` default
-            // down to iOS's own 44pt tap-target floor for just this
-            // cluster, then lets the Column's negative spacing overlap
-            // those (still ≥44dp) touch boxes to reach the tight visual
-            // pitch.
+            // down to iOS's own 44pt tap-target floor
+            // (`VoiceRecordingRow.swift:193@2ee1185`) for just this
+            // cluster.
             CompositionLocalProvider(
                 LocalMinimumInteractiveComponentSize provides ICON_CLUSTER_TOUCH_TARGET,
             ) {
                 Column(
-                    // iOS parity `VoiceRecordingRow.swift:185@2ee1185` —
-                    // `VStack(spacing: 4)`, an even tighter coded gap than
-                    // this negative value; iOS's 24pt icons carry no
-                    // enlarged touch-target box at all, so its literal 4pt
-                    // doesn't translate directly once Android reserves a
-                    // real ≥44dp touch target per icon (see above).
+                    // `VStack(spacing: 4)` between the 44pt frames —
+                    // `VoiceRecordingRow.swift:185@2ee1185`.
                     verticalArrangement = Arrangement.spacedBy(ICON_CLUSTER_ARRANGEMENT_GAP),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
