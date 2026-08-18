@@ -73,6 +73,7 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.computeAscend
 import org.walktalkmeditate.pilgrim.data.walk.computeRouteSegments
 import org.walktalkmeditate.pilgrim.data.walk.computeWalkMapAnnotations
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
@@ -1743,9 +1744,21 @@ class WalkSummaryViewModel @Inject constructor(
         // Stage 13-B: `activityIntervals` joins the same hoisted set —
         // both the route-segments classifier (top-level field) and the
         // etegami spec consume it.
+        //
+        // `activity_intervals` has no production writer
+        // (WalkRepository.recordActivityInterval has zero callers) — the
+        // table is always empty, so this reconstructs MEDITATING
+        // intervals from the same event log `totals` above already
+        // replayed, closing a dangling MEDITATION_START at the walk's
+        // end timestamp exactly like `replayWalkEventTotals` does for
+        // the aggregate. See deriveActivityIntervals.
         val voiceRecordings = repository.voiceRecordingsFor(walkId)
         val altitudeSamples = repository.altitudeSamplesFor(walkId)
-        val activityIntervals = repository.activityIntervalsFor(walkId)
+        val activityIntervals = deriveActivityIntervals(
+            events = events,
+            walkId = walkId,
+            closeAt = walk.endTimestamp,
+        )
         // U11: one-shot photo read for the seek-summary sign grouping
         // (photos group to clearings by their EXIF capture fix). The
         // reliquary carousel keeps its own live observePhotosFor flow.
