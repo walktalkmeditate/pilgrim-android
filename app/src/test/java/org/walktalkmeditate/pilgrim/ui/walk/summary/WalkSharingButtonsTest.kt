@@ -12,6 +12,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.share.CachedShare
+import org.walktalkmeditate.pilgrim.data.share.ExpiryOption
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -19,6 +21,14 @@ class WalkSharingButtonsTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    private fun activeShare(expiryOption: ExpiryOption? = ExpiryOption.Cycle) = CachedShare(
+        url = "https://walk.pilgrimapp.org/s/abc123",
+        id = "abc123",
+        expiryEpochMs = System.currentTimeMillis() + 600_000L,
+        shareDateEpochMs = System.currentTimeMillis() - 600_000L,
+        expiryOption = expiryOption,
+    )
 
     @Test
     fun rendersThreeShareActions_whenRouteHasPoints() {
@@ -30,6 +40,8 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
+                activeCachedShare = null,
+                onCachedShareEngaged = {},
             )
         }
         composeRule.onNodeWithTag("sharing-card").assertExists()
@@ -48,6 +60,8 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
+                activeCachedShare = null,
+                onCachedShareEngaged = {},
             )
         }
         composeRule.onNodeWithTag("sharing-card").assertDoesNotExist()
@@ -63,6 +77,8 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
+                activeCachedShare = null,
+                onCachedShareEngaged = {},
             )
         }
         composeRule.onNodeWithTag("share-button-goshuin").assertIsNotEnabled()
@@ -79,6 +95,8 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
+                activeCachedShare = null,
+                onCachedShareEngaged = {},
             )
         }
         composeRule.onNodeWithTag("share-button-etegami").assertIsNotEnabled()
@@ -96,10 +114,86 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = { fired += 1 },
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
+                activeCachedShare = null,
+                onCachedShareEngaged = {},
             )
         }
         composeRule.onNodeWithTag("share-button-goshuin").performClick()
         composeRule.waitForIdle()
         assert(fired == 1) { "expected goshuin callback, got fired=$fired" }
+    }
+
+    // -- issue #222: cached-share branch in the journey footer --
+
+    @Test
+    fun noCachedShare_showsPlainButton_notTheBlock() {
+        composeRule.setContent {
+            WalkSharingButtons(
+                hasRoute = true,
+                isGoshuinGenerating = false,
+                isEtegamiGenerating = false,
+                onGoshuinShare = {},
+                onEtegamiShare = {},
+                onWalkJourneyShare = {},
+                activeCachedShare = null,
+                onCachedShareEngaged = {},
+            )
+        }
+        composeRule.onNodeWithTag("share-button-walk-journey").assertExists()
+        composeRule.onNodeWithTag("share-active-block").assertDoesNotExist()
+    }
+
+    @Test
+    fun nonExpiredCachedShare_showsBlock_withUrlCopyShareAndReturnsCaption() {
+        composeRule.setContent {
+            WalkSharingButtons(
+                hasRoute = true,
+                isGoshuinGenerating = false,
+                isEtegamiGenerating = false,
+                onGoshuinShare = {},
+                onEtegamiShare = {},
+                onWalkJourneyShare = {},
+                activeCachedShare = activeShare(),
+                onCachedShareEngaged = {},
+            )
+        }
+        composeRule.onNodeWithTag("share-button-walk-journey").assertDoesNotExist()
+        composeRule.onNodeWithTag("share-active-block").assertExists()
+        composeRule.onNodeWithTag("share-active-url").assertExists()
+        composeRule.onNodeWithTag("share-active-copy").assertExists()
+        composeRule.onNodeWithTag("share-active-share").assertExists()
+        composeRule.onNodeWithTag("share-active-returns").assertExists()
+    }
+
+    @Test
+    fun expiredCachedShare_fallsBackToPlainButton() {
+        // issue #222 scope: expired is treated the same as never-shared,
+        // NOT iOS's separate `returnedSection` layout. `WalkSharingButtons`
+        // itself is expiry-agnostic — it only ever sees `activeCachedShare`
+        // after the caller applies the same filter WalkSummaryScreen uses
+        // in production (`cachedShare?.takeIf { !it.isExpiredAt() }`).
+        val expired = CachedShare(
+            url = "https://walk.pilgrimapp.org/s/expired",
+            id = "expired",
+            expiryEpochMs = System.currentTimeMillis() - 60_000L,
+            shareDateEpochMs = System.currentTimeMillis() - 600_000L,
+            expiryOption = ExpiryOption.Moon,
+        )
+        assert(expired.isExpiredAt()) { "fixture must actually be expired for this test to mean anything" }
+
+        composeRule.setContent {
+            WalkSharingButtons(
+                hasRoute = true,
+                isGoshuinGenerating = false,
+                isEtegamiGenerating = false,
+                onGoshuinShare = {},
+                onEtegamiShare = {},
+                onWalkJourneyShare = {},
+                activeCachedShare = expired.takeIf { !it.isExpiredAt() },
+                onCachedShareEngaged = {},
+            )
+        }
+        composeRule.onNodeWithTag("share-button-walk-journey").assertExists()
+        composeRule.onNodeWithTag("share-active-block").assertDoesNotExist()
     }
 }

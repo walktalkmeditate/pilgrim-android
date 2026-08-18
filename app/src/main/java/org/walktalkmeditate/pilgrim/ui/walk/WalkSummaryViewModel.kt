@@ -582,12 +582,16 @@ class WalkSummaryViewModel @Inject constructor(
         )
 
     /**
-     * Stage 8-A: observer for the per-walk cached journey-share. Drives
-     * the Fresh / Active / Expired state of [WalkShareJourneyRow] on
-     * the summary. `flatMapLatest` re-opens the DataStore observer
-     * only when the Loaded state first arrives (one-shot
-     * transition). `Eagerly` is safe here because the flow is
-     * trivially cheap and the UI always subscribes when on summary.
+     * Stage 8-A / issue #222: observer for the per-walk cached
+     * journey-share. Drives the plain-button vs inline shared-state
+     * block branch in
+     * [org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSharingButtons]
+     * on the summary (non-expired cached share ->
+     * [org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSharingBlock]).
+     * `flatMapLatest` re-opens the DataStore observer only when the
+     * Loaded state first arrives (one-shot transition). `Eagerly` is
+     * safe here because the flow is trivially cheap and the UI always
+     * subscribes when on summary.
      */
     @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val cachedShareFlow: StateFlow<CachedShare?> = state
