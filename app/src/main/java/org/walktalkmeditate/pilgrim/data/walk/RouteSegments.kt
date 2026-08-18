@@ -73,6 +73,43 @@ fun computeRouteSegments(
     return segments
 }
 
+/**
+ * Reorders [segments] (as returned by [computeRouteSegments], in
+ * chronological order) for polyline PAINT order: every Walking segment
+ * first, then every Talking segment, then every Meditating segment.
+ * `sortedBy` is stable, so segments sharing a priority keep their
+ * relative (chronological) order.
+ *
+ * Callers still need [computeRouteSegments]'s chronological order for
+ * everything else (the activity timeline bar, segment-tap-zoom) — this
+ * function exists only for the renderer, which creates one polyline
+ * annotation per segment and paints later-created annotations on top.
+ *
+ * A route that doubles back on itself (an out-and-back, a loop, a
+ * meandering path) can have a chronologically-LATER Walking stretch
+ * retrace the exact GPS coordinates of an EARLIER Talking or Meditating
+ * stretch. Painting strictly in chronological order then lets that
+ * later Walking polyline visually bury the earlier rust/dawn tint at
+ * the overlap, even though [classify] tagged every sample correctly.
+ * Round-2 QA (2026-08-18), device walk id=3: a 43s talk survived
+ * classification (confirmed by a dedicated fixture test) but rendered
+ * as plain "moss" because the walker re-crossed those coordinates ~29
+ * minutes later on the way back. Applying [classify]'s existing overlap
+ * priority (Meditating > Talking > Walking) to paint order — instead of
+ * only to same-timestamp classification — guarantees the
+ * higher-priority tint always wins the overlap, regardless of which
+ * segment is chronologically later.
+ */
+fun routeSegmentsInPaintOrder(segments: List<RouteSegment>): List<RouteSegment> =
+    segments.sortedBy { it.activity.paintPriority }
+
+private val RouteActivity.paintPriority: Int
+    get() = when (this) {
+        RouteActivity.Walking -> 0
+        RouteActivity.Talking -> 1
+        RouteActivity.Meditating -> 2
+    }
+
 private fun classify(
     timestampMs: Long,
     meditationIntervals: List<ActivityInterval>,
