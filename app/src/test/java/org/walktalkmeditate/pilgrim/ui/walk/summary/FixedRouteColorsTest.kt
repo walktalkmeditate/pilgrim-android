@@ -22,9 +22,10 @@ class FixedRouteColorsTest {
 
     @Test
     fun annotation_colors_are_the_frozen_base_palette() {
-        assertEquals(Color(0xFF8B7355), WalkAnnotationColors.Fixed.startEnd)
+        assertEquals(Color(0xFFF5F0E8), WalkAnnotationColors.Fixed.startFill)
+        assertEquals(Color(0xFF2C2416), WalkAnnotationColors.Fixed.endFill)
+        assertEquals(Color(0xFF8B7355), WalkAnnotationColors.Fixed.stroke)
         assertEquals(Color(0xFFC4956A), WalkAnnotationColors.Fixed.meditation)
-        assertEquals(Color(0xFFA0634B), WalkAnnotationColors.Fixed.voice)
         assertEquals(Color(0xFF7A8B6F), WalkAnnotationColors.Fixed.photo)
     }
 }

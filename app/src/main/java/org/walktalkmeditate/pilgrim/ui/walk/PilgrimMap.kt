@@ -73,6 +73,7 @@ import com.mapbox.maps.plugin.scalebar.scalebar
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.UNRESOLVED_WHISPER_ARGB
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
+import org.walktalkmeditate.pilgrim.data.walk.routeSegmentsInPaintOrder
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotationKind
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -408,9 +409,15 @@ internal fun PilgrimMap(
     val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
         walkAnnotationColors?.let { colors ->
             mapOf(
-                "startEnd" to createCircleBitmap(colors.startEnd, darkMode),
+                // No "startEnd" entry: issue #224 / iOS parity
+                // `PilgrimMapView.swift:372-385,407-413@2ee1185` moved
+                // start/end from a shared opaque bitmap PointAnnotation
+                // to distinct CircleAnnotations — see the
+                // meditationCircleManager block below.
                 "meditation" to createCircleBitmap(colors.meditation, darkMode),
-                "voice" to createCircleBitmap(colors.voice, darkMode),
+                // No "voice" entry: user product decision 2026-08-18
+                // removed voice-recording pins from the summary map
+                // entirely (see [WalkMapAnnotationKind]'s doc comment).
                 // Placeholder photo pin — shown while the real circular
                 // thumbnail loads from the content URI. Replaced per-photo
                 // via [photoPinBitmaps] below as soon as the decode +
@@ -711,7 +718,17 @@ internal fun PilgrimMap(
                     if (segmentPolylines.isNotEmpty()) {
                         segmentPolylines.forEach { manager.delete(it) }
                     }
-                    segmentPolylines = routeSegments.map { seg ->
+                    // Painted in priority order (Walking, then Talking, then
+                    // Meditating), NOT chronological order — see
+                    // [routeSegmentsInPaintOrder]. Mapbox paints
+                    // later-created annotations on top, and a walk that
+                    // doubles back on itself can have a chronologically
+                    // later Walking stretch retrace the same coordinates as
+                    // an earlier Talking/Meditating one; painting by
+                    // priority guarantees the higher-priority tint always
+                    // wins that overlap, matching the same precedence
+                    // [classify] already applies to same-timestamp overlap.
+                    segmentPolylines = routeSegmentsInPaintOrder(routeSegments).map { seg ->
                         val mapboxPoints =
                             seg.points.map { Point.fromLngLat(it.longitude, it.latitude) }
                         val color = when (seg.activity) {
@@ -924,17 +941,89 @@ internal fun PilgrimMap(
                         val dawnArgb =
                             (walkAnnotationColors?.meditation ?: WalkAnnotationColors.Fixed.meditation)
                                 .toArgb()
-                        // Issue #220 / iOS parity `PilgrimMapView.swift:365-371@2ee1185`
-                        // — voice recordings render as a translucent rust
-                        // CircleAnnotation (opacity 0.8) so a stationary talk
-                        // melts into the rust "talking" route segment
-                        // instead of standing out as a solid opaque dot.
-                        val rustArgb =
-                            (walkAnnotationColors?.voice ?: WalkAnnotationColors.Fixed.voice)
+                        // Issue #224 / iOS parity
+                        // `PilgrimMapView.swift:372-385,407-413@2ee1185` —
+                        // start/end pins + the end-glow share these colors.
+                        val startFillArgb =
+                            (walkAnnotationColors?.startFill ?: WalkAnnotationColors.Fixed.startFill)
+                                .toArgb()
+                        val endFillArgb =
+                            (walkAnnotationColors?.endFill ?: WalkAnnotationColors.Fixed.endFill)
+                                .toArgb()
+                        val strokeArgb =
+                            (walkAnnotationColors?.stroke ?: WalkAnnotationColors.Fixed.stroke)
                                 .toArgb()
                         renderedMeditationCircles = walkAnnotations
                             .flatMap { ann ->
                                 when (val kind = ann.kind) {
+                                    // Issue #224 / iOS parity
+                                    // `PilgrimMapView.swift:372-378@2ee1185`
+                                    // — `circleRadius = 6`, `circleColor =
+                                    // .parchment`, `circleOpacity = 0.9`,
+                                    // `circleStrokeColor = .stone`,
+                                    // `circleStrokeWidth = 2`,
+                                    // `circleStrokeOpacity = 1.0`. Was a
+                                    // shared opaque "startEnd" bitmap
+                                    // PointAnnotation (the "gold discs" at
+                                    // both route ends).
+                                    WalkMapAnnotationKind.StartPoint -> {
+                                        listOf(
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(
+                                                        Point.fromLngLat(ann.longitude, ann.latitude),
+                                                    )
+                                                    .withCircleRadius(6.0)
+                                                    .withCircleColor(startFillArgb)
+                                                    .withCircleOpacity(0.9)
+                                                    .withCircleStrokeColor(strokeArgb)
+                                                    .withCircleStrokeWidth(2.0)
+                                                    .withCircleStrokeOpacity(1.0),
+                                            ),
+                                        )
+                                    }
+                                    // Issue #224 / iOS parity
+                                    // `PilgrimMapView.swift:379-385,407-413@2ee1185`
+                                    // — end pin: `circleRadius = 7`,
+                                    // `circleColor = .ink`, `circleOpacity =
+                                    // 0.9`, `circleStrokeColor = .stone`,
+                                    // `circleStrokeWidth = 2`,
+                                    // `circleStrokeOpacity = 1.0`; PLUS a
+                                    // separate glow appended FIRST (so it
+                                    // paints below the pin, like iOS's
+                                    // `buildCircles` append order):
+                                    // `circleRadius = 18`, `circleColor =
+                                    // .stone`, `circleOpacity = 0.15`,
+                                    // `circleStrokeWidth = 0`.
+                                    WalkMapAnnotationKind.EndPoint -> {
+                                        listOf(
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(
+                                                        Point.fromLngLat(ann.longitude, ann.latitude),
+                                                    )
+                                                    .withCircleRadius(18.0)
+                                                    .withCircleColor(strokeArgb)
+                                                    .withCircleOpacity(0.15)
+                                                    .withCircleStrokeWidth(0.0),
+                                            ),
+                                            medMgr.create(
+                                                com.mapbox.maps.plugin.annotation.generated
+                                                    .CircleAnnotationOptions()
+                                                    .withPoint(
+                                                        Point.fromLngLat(ann.longitude, ann.latitude),
+                                                    )
+                                                    .withCircleRadius(7.0)
+                                                    .withCircleColor(endFillArgb)
+                                                    .withCircleOpacity(0.9)
+                                                    .withCircleStrokeColor(strokeArgb)
+                                                    .withCircleStrokeWidth(2.0)
+                                                    .withCircleStrokeOpacity(1.0),
+                                            ),
+                                        )
+                                    }
                                     is WalkMapAnnotationKind.Meditation -> {
                                         val scale = ((kind.durationMillis / 1000.0) / 600.0)
                                             .coerceIn(0.0, 1.0)
@@ -955,33 +1044,12 @@ internal fun PilgrimMap(
                                             ),
                                         )
                                     }
-                                    // Issue #220 / iOS parity
-                                    // `PilgrimMapView.swift:365-371@2ee1185`
-                                    // — `circleRadius = 8`, `circleColor =
-                                    // .rust`, `circleOpacity = 0.8`,
-                                    // `circleStrokeColor = .rust`,
-                                    // `circleStrokeWidth = 1.5`,
-                                    // `circleStrokeOpacity = 1.0`. Was an
-                                    // opaque bitmap PointAnnotation (below)
-                                    // that read as a solid dot instead of
-                                    // melting into the rust route segment.
-                                    is WalkMapAnnotationKind.VoiceRecording -> {
-                                        listOf(
-                                            medMgr.create(
-                                                com.mapbox.maps.plugin.annotation.generated
-                                                    .CircleAnnotationOptions()
-                                                    .withPoint(
-                                                        Point.fromLngLat(ann.longitude, ann.latitude),
-                                                    )
-                                                    .withCircleRadius(8.0)
-                                                    .withCircleColor(rustArgb)
-                                                    .withCircleOpacity(0.8)
-                                                    .withCircleStrokeColor(rustArgb)
-                                                    .withCircleStrokeWidth(1.5)
-                                                    .withCircleStrokeOpacity(1.0),
-                                            ),
-                                        )
-                                    }
+                                    // No VoiceRecording branch: user product
+                                    // decision 2026-08-18 removed
+                                    // voice-recording pins from the summary
+                                    // map entirely (see
+                                    // [WalkMapAnnotationKind]'s doc
+                                    // comment) — falls through to `else`.
                                     // Seek arrivals: the hour-lit glow only.
                                     // The bright core became the clearing's
                                     // tree — a point pin in the pass below —
@@ -1013,13 +1081,17 @@ internal fun PilgrimMap(
                     renderedWalkAnnotations = walkAnnotations
                         .filter {
                             it.kind !is WalkMapAnnotationKind.Meditation &&
-                                it.kind !is WalkMapAnnotationKind.VoiceRecording
+                                it.kind != WalkMapAnnotationKind.StartPoint &&
+                                it.kind != WalkMapAnnotationKind.EndPoint
                         }
                         .map { ann ->
                         val bitmap: Bitmap? = when (val k = ann.kind) {
+                            // Start/End are filtered out above (issue #224:
+                            // they render as CircleAnnotations now, not a
+                            // shared opaque bitmap point pin); branches
+                            // kept for exhaustiveness.
                             WalkMapAnnotationKind.StartPoint,
-                            WalkMapAnnotationKind.EndPoint ->
-                                bitmaps.getValue("startEnd")
+                            WalkMapAnnotationKind.EndPoint -> null
                             // Meditation is filtered out above (it renders
                             // as a CircleAnnotation, not a point pin);
                             // branch kept for exhaustiveness.
@@ -1032,12 +1104,6 @@ internal fun PilgrimMap(
                                 // built above (point managers stack above
                                 // the circle manager, like iOS).
                                 seekClearingGlyphBitmaps[k.lightHex]
-                            // Issue #220: also filtered out above (it now
-                            // renders as a translucent rust
-                            // CircleAnnotation, not a point pin); branch
-                            // kept for exhaustiveness.
-                            is WalkMapAnnotationKind.VoiceRecording ->
-                                bitmaps.getValue("voice")
                             is WalkMapAnnotationKind.Photo ->
                                 photoPinBitmaps[k.walkPhotoId]
                                     ?: bitmaps.getValue("photo")

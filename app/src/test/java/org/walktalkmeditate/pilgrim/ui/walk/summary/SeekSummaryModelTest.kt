@@ -540,7 +540,6 @@ class SeekSummaryModelTest {
                 RouteDataSample(walkId = 1L, timestamp = walkStart, latitude = 0.0, longitude = 0.0),
             ),
             meditationIntervals = emptyList(),
-            voiceRecordings = emptyList(),
             waypoints = listOf(
                 Waypoint(
                     walkId = 1L,

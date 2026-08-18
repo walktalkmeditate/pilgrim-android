@@ -42,7 +42,6 @@ class MapAnnotationsContractTest {
                 ),
             ),
             meditationIntervals = emptyList(),
-            voiceRecordings = emptyList(),
             nearbyWhispers = whispers,
         )
         val packed = annotations.mapNotNull {

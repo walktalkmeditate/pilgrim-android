@@ -1206,8 +1206,22 @@ class WalkSummaryViewModelTest {
         assertEquals(ActivityType.MEDITATING, loaded.summary.meditationIntervals[0].activityType)
     }
 
+    /**
+     * User product decision 2026-08-18: voice-recording pins are gone
+     * from the Walk Summary map entirely, even though this walk HAS a
+     * voice recording ([insertVoiceRecording] below) that would have
+     * produced one before the change (formerly
+     * `walkAnnotations_populated_includesStartEndMeditationVoice`,
+     * asserting a 4th `WalkMapAnnotationKind.VoiceRecording` entry).
+     * `computeWalkMapAnnotations` no longer has a `voiceRecordings`
+     * parameter at all (see its doc comment), so there is no
+     * `WalkMapAnnotationKind.VoiceRecording` type left to check against
+     * — the annotation count staying at 3 despite a recording being
+     * present is the proof that none reaches the map from this
+     * pipeline.
+     */
     @Test
-    fun walkAnnotations_populated_includesStartEndMeditationVoice() = runTest(dispatcher) {
+    fun walkAnnotations_populated_excludesVoiceRecording() = runTest(dispatcher) {
         val walkId = createFinishedWalk(durationMillis = 60_000L)
         insertRouteSample(walkId, t = 1_000L, lat = 1.0, lng = 1.0)
         insertRouteSample(walkId, t = 30_000L, lat = 2.0, lng = 2.0)
@@ -1219,11 +1233,10 @@ class WalkSummaryViewModelTest {
         val loaded = awaitLoaded(vm)
 
         val annotations = loaded.summary.walkAnnotations
-        assertEquals(4, annotations.size)
+        assertEquals(3, annotations.size)
         assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.StartPoint })
         assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.EndPoint })
         assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.Meditation })
-        assertTrue(annotations.any { it.kind is WalkMapAnnotationKind.VoiceRecording })
     }
 
     // --- Stage 13-EFG: altitudeSamples + selectedFavicon -----------------
