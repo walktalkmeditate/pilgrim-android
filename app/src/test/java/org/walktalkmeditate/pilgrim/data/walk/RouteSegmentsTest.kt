@@ -214,6 +214,13 @@ class RouteSegmentsTest {
      * applying that priority to render order guarantees a
      * higher-priority tint always ends up on top, regardless of which
      * segment is chronologically later.
+     *
+     * The fixture below reproduces walk 3's REAL timestamps only; its
+     * coordinates are synthetic `(i, i)` placeholders. That's
+     * sufficient because [routeSegmentsInPaintOrder] orders purely by
+     * activity type — geometry never enters the sort — so the
+     * geographic re-crossing above is documentation of the on-device
+     * symptom, not something these assertions encode.
      */
     @Test fun paintOrder_walk3RealFixture_talkingSegmentsPaintAfterAllWalking() {
         val segments = walk3RealSegments()

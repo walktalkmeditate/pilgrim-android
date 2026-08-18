@@ -261,7 +261,7 @@ internal fun PilgrimMap(
     var renderedWaypointsKey by remember {
         mutableStateOf<List<Any?>?>(null)
     }
-    // Stage 13-D annotation pins (start/end + meditation + voice). Same
+    // Stage 13-D annotation pins (start/end + meditation). Same
     // snapshot-rebuild pattern as `renderedSegments` above: the update
     // lambda re-runs on every revealPhase / zoomTargetBounds tick, but we
     // only want to delete + recreate when the annotation set or its
@@ -274,10 +274,10 @@ internal fun PilgrimMap(
     // U11: seek-arrival halos share this manager — glow only since the
     // clearing grew its tree (@b4decad; the old bright core became a
     // point pin) — same delete/rebuild bookkeeping, summary-map-only.
-    // Issue #220 / iOS parity `PilgrimMapView.swift:365-371@2ee1185` —
-    // voice-recording pins share this manager too: a translucent rust
-    // CircleAnnotation that melts into the rust "talking" route segment,
-    // not the opaque bitmap PointAnnotation this used to be.
+    // Also hosts the start/end pin circles and the end glow
+    // (`PilgrimMapView.swift:372-385,407-413@2ee1185`). Voice-recording
+    // circles are gone: user product decision 2026-08-18 (see
+    // MapAnnotations.kt for the documented divergence).
     var meditationCircleManager by remember {
         mutableStateOf<com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager?>(
             null,
@@ -592,7 +592,8 @@ internal fun PilgrimMap(
             polylineManager = view.annotations.createPolylineAnnotationManager(
                 com.mapbox.maps.plugin.annotation.AnnotationConfig(layerId = ROUTE_LINE_LAYER_ID),
             )
-            // Above the route line, below the point pins (start/end/voice).
+            // Above the route line, below the waypoint point pins; hosts
+            // the meditation, start/end, and end-glow circles.
             meditationCircleManager = view.annotations.createCircleAnnotationManager()
             waypointManager = view.annotations.createPointAnnotationManager()
                 .also(::allowIconOverlap)
@@ -900,8 +901,8 @@ internal fun PilgrimMap(
                 }
                 renderedWaypointsKey = waypointsKey
             }
-            // Stage 13-D walk-summary annotations (start/end + meditation
-            // + voice). Snapshot-rebuild gate keyed on the (annotations,
+            // Stage 13-D walk-summary annotations (start/end + meditation).
+            // Snapshot-rebuild gate keyed on the (annotations,
             // colors) pair so revealPhase / zoomTargetBounds re-fires of
             // the update lambda don't tear the pins down. Legacy callers
             // (Active Walk, Walk Share) pass empty annotations and skip

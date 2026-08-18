@@ -1774,8 +1774,8 @@ class WalkSummaryViewModel @Inject constructor(
         // [computeRouteSegments] for the priority rules.
         //
         // Stage 13-D: same Default-dispatcher hop also computes the
-        // map annotation pin set (start / end / meditation / voice
-        // recording). Pair-return keeps both pure computations on a
+        // map annotation pin set (start / end / meditation).
+        // Pair-return keeps both pure computations on a
         // single dispatcher hop instead of two.
         //
         // Hopped to Dispatchers.Default because `buildState()` runs on
