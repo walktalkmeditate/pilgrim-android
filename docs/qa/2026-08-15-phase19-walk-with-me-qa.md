@@ -28,3 +28,9 @@ Device: OnePlus 13 · production worker (`walk.pilgrimapp.org`) · every line ge
 - R2 re-diff `2ee1185..ios-main` once more; triage any delta.
 - One `production.yml` dispatch (version name/code per release infra — no manual gradle bump).
 - Staged rollout per house practice; then CLAUDE.md phasing note, plan status → completed, memory updates.
+
+## Results — session 2026-08-17 (OnePlus 13 / CPH2655, build 338d579a)
+
+- **Line 6 (Interactive-off regression): PASS** — July 29 walk shared classic; logcat shows zero SharePrepStore/transcoder/uploadMedia activity; page `Tt5fwSWaYO` served with 0 audio elements, no tour script, no tour.json (story-chrome tokens are worker-side page furniture, present for all shares). Test page deleted from R2 post-verification (404 confirmed).
+- **Line 7 (already-shared short-circuit): PASS** — re-entering the shared walk lands directly on the Shared card ("View scroll"); no form, Interactive unreachable, no network activity.
+- Env note: initial "photos missing from pin screen" report was READ_MEDIA_IMAGES not granted on the debug install (user-granted; photos then appeared). Investigation still open on whether the not-granted state should surface an in-app grant affordance.
