@@ -169,7 +169,7 @@ internal fun WalkSharingBlock(
 @Composable
 private fun UrlRow(url: String, onClick: () -> Unit) {
     val label = stringResource(R.string.share_status_view_page_a11y_label)
-    val hint = stringResource(R.string.share_status_view_page_a11y_hint)
+    val hint = stringResource(R.string.share_block_url_a11y_hint)
     Row(
         modifier = Modifier
             .clickable(onClick = onClick)
