@@ -111,7 +111,7 @@ class WalkStatsSheetActionRowTest {
     fun `Recording state renders the live waveform`() {
         render(
             WalkState.Active(WalkAccumulator(1L, 0L)),
-            recorderState = VoiceRecorderUiState.Recording,
+            recorderState = VoiceRecorderUiState.Recording(startedAtMillis = 0L),
         )
         // useUnmergedTree: the bars live inside the mic button's clickable
         // node, which merges its descendants' semantics.

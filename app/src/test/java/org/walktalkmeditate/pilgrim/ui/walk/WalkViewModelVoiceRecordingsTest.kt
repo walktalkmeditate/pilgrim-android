@@ -12,7 +12,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -63,6 +65,8 @@ class WalkViewModelVoiceRecordingsTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         context = ApplicationProvider.getApplicationContext()
+        org.robolectric.Shadows.shadowOf(context as Application)
+            .grantPermissions(android.Manifest.permission.RECORD_AUDIO)
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .setQueryExecutor(dispatcher.asExecutor())
@@ -151,6 +155,117 @@ class WalkViewModelVoiceRecordingsTest {
         }
     }
 
+    // #217: the chip used to derive from Room rows alone, so it sat frozen
+    // for the whole recording. iOS recomputes
+    // `completed + Date().timeIntervalSince(recordingStart)` on its 1 Hz
+    // walk timer (ActiveWalkViewModel.swift:455-458@2ee1185).
+    @Test
+    fun `talkMillis ticks second by second while a recording is in flight`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+        val walkId = requireActiveWalkId()
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = walkId,
+                startTimestamp = 1_000L,
+                endTimestamp = 5_000L,
+                durationMillis = 4_000L,
+                fileRelativePath = "recordings/x/done.wav",
+            ),
+        )
+
+        clock.advanceTo(10_000L)
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+
+        val trace = mutableListOf<Long>()
+        viewModel.talkMillis.test(timeout = 10.seconds) {
+            awaitTotal(4_000L, trace)
+
+            clock.advanceTo(11_000L)
+            advanceTimeBy(TICK_MS)
+            awaitTotal(5_000L, trace)
+
+            clock.advanceTo(12_000L)
+            advanceTimeBy(TICK_MS)
+            awaitTotal(6_000L, trace)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertMonotonic(trace)
+    }
+
+    // The row lands asynchronously through Room's invalidation tracker, so
+    // a naive "completed rows only" total dips by the whole recording for
+    // the frames between the recorder going Idle and the row arriving.
+    @Test
+    fun `talkMillis never dips across the stop seam`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+
+        clock.advanceTo(10_000L)
+        viewModel.toggleRecording()
+        viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+        viewModel.audioLevel.first { it > 0f }
+
+        val trace = mutableListOf<Long>()
+        viewModel.talkMillis.test(timeout = 10.seconds) {
+            clock.advanceTo(13_000L)
+            advanceTimeBy(TICK_MS)
+            awaitTotal(3_000L, trace)
+
+            viewModel.toggleRecording()
+            viewModel.voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
+            advanceTimeBy(TICK_MS)
+            trace += cancelAndConsumeRemainingEvents()
+                .filterIsInstance<app.cash.turbine.Event.Item<Long>>()
+                .map { it.value }
+        }
+
+        assertMonotonic(trace)
+        assertEquals(
+            "the finished recording must stay counted across the seam: $trace",
+            3_000L,
+            trace.last(),
+        )
+    }
+
+    @Test
+    fun `talkMillis stays frozen at the recorded total after the recording ends`() =
+        runTest(dispatcher) {
+            controller.startWalk(intention = null)
+
+            clock.advanceTo(10_000L)
+            viewModel.toggleRecording()
+            viewModel.voiceRecorderState.first { it is VoiceRecorderUiState.Recording }
+            viewModel.audioLevel.first { it > 0f }
+
+            clock.advanceTo(13_000L)
+            viewModel.toggleRecording()
+            viewModel.voiceRecorderState.first { it !is VoiceRecorderUiState.Recording }
+
+            viewModel.talkMillis.test(timeout = 10.seconds) {
+                awaitTotal(3_000L, mutableListOf())
+                // Six more heartbeats with no recording: a frozen total is
+                // the correct behavior once the talk is over.
+                clock.advanceTo(19_000L)
+                advanceTimeBy(TICK_MS * 6)
+                expectNoEvents()
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `talkMillis stays 0L across ticks on a walk with no recordings`() = runTest(dispatcher) {
+        controller.startWalk(intention = null)
+
+        viewModel.talkMillis.test(timeout = 10.seconds) {
+            assertEquals(0L, awaitItem())
+            clock.advanceTo(60_000L)
+            advanceTimeBy(TICK_MS * 10)
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     @Test
     fun `talkMillis resets to 0L for a fresh walk after the previous finishes`() = runTest(dispatcher) {
         controller.startWalk(intention = null)
@@ -205,7 +320,7 @@ class WalkViewModelVoiceRecordingsTest {
                     fileRelativePath = "recordings/x/a.wav",
                 ),
             )
-            assertEquals(1 to 5_000L, awaitItem())
+            awaitPair(1 to 5_000L)
 
             repository.recordVoice(
                 VoiceRecording(
@@ -216,7 +331,7 @@ class WalkViewModelVoiceRecordingsTest {
                     fileRelativePath = "recordings/x/b.wav",
                 ),
             )
-            assertEquals(2 to 8_000L, awaitItem())
+            awaitPair(2 to 8_000L)
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -276,6 +391,55 @@ class WalkViewModelVoiceRecordingsTest {
                 else -> error("expected Active state, got $state")
             }
         }
+}
+
+/** One period of `WalkViewModel.TICK_INTERVAL_MS`, plus a nudge past it. */
+private const val TICK_MS = 1_001L
+
+/**
+ * Collect until the total reaches [expected], recording everything seen
+ * in [trace] so the caller can assert the path taken as well as the
+ * destination.
+ *
+ * A settled `talkMillis` is reached over more than one emission: `stateIn`
+ * hands every new collector its 0L seed first, and the five-way `combine`
+ * behind it lands a dispatch after the sibling single-`map` flows fed by
+ * the same Room emission. Asserting only `awaitItem()` would pin the test
+ * to that dispatch count; asserting the trace is monotonic (see
+ * [assertMonotonic]) is the property that actually matters.
+ */
+private suspend fun app.cash.turbine.ReceiveTurbine<Long>.awaitTotal(
+    expected: Long,
+    trace: MutableList<Long>,
+) {
+    while (true) {
+        val value = awaitItem()
+        trace += value
+        if (value == expected) return
+    }
+}
+
+private fun assertMonotonic(trace: List<Long>) {
+    assertEquals("talk total regressed: $trace", trace.sorted(), trace)
+}
+
+/**
+ * Collect until both flows reflect the same insert. `recordingsCount` is
+ * one `map` off the shared row flow while `talkMillis` is a five-way
+ * `combine`, so the count can land a dispatch ahead of the total — the
+ * guarantee under test is that a single insert moves BOTH, not that they
+ * arrive in the same emission.
+ */
+private suspend fun app.cash.turbine.ReceiveTurbine<Pair<Int, Long>>.awaitPair(
+    expected: Pair<Int, Long>,
+) {
+    val seen = mutableListOf<Pair<Int, Long>>()
+    while (true) {
+        val value = awaitItem()
+        seen += value
+        if (value == expected) return
+        assertTrue("expected to converge on $expected, saw $seen", seen.size < 5)
+    }
 }
 
 private class TestClock(initial: Long) : Clock {

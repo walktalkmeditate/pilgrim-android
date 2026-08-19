@@ -8,7 +8,22 @@ package org.walktalkmeditate.pilgrim.ui.walk
  */
 sealed class VoiceRecorderUiState {
     data object Idle : VoiceRecorderUiState()
-    data object Recording : VoiceRecorderUiState()
+
+    /**
+     * @param startedAtMillis epoch wall-clock reading taken when the
+     *        capture session opened, straight off the same
+     *        [org.walktalkmeditate.pilgrim.domain.Clock] that stamps a
+     *        finished recording's `startTimestamp` / `durationMillis`.
+     *        The Talk chip adds `now - startedAtMillis` to the completed
+     *        sum so it ticks during a talk instead of freezing until the
+     *        row lands (iOS `ActiveWalkViewModel.swift:456-458@2ee1185`
+     *        reads `voiceRecordingManagement.recordingStartDate` the same
+     *        way). Epoch, not `elapsedRealtime`: a completed row's
+     *        duration is `endedAt - startedAt` on the epoch clock
+     *        (`VoiceRecorder.finalizeSession`), so any other time base
+     *        would make the total jump at the live-to-completed seam.
+     */
+    data class Recording(val startedAtMillis: Long) : VoiceRecorderUiState()
 
     /**
      * @param id monotonic counter assigned by the emitter (WalkViewModel).

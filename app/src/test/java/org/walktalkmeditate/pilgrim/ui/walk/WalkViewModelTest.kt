@@ -493,7 +493,13 @@ class WalkViewModelTest {
         viewModel.voiceRecorderState.test(timeout = 10.seconds) {
             assertEquals(VoiceRecorderUiState.Idle, awaitItem())
             viewModel.toggleRecording()
-            assertEquals(VoiceRecorderUiState.Recording, awaitItem())
+            // The state carries the recorder's own session start, which is
+            // the clock reading at the moment capture opened — the Talk
+            // chip measures elapsed time against exactly this stamp.
+            assertEquals(
+                VoiceRecorderUiState.Recording(startedAtMillis = clock.now()),
+                awaitItem(),
+            )
             cancelAndIgnoreRemainingEvents()
         }
     }
