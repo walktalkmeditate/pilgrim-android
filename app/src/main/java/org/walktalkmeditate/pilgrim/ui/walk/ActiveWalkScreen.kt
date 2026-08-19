@@ -742,6 +742,10 @@ fun ActiveWalkScreen(
         null
     }
 
+    // Shared by both the single-color and segment-color params below — the
+    // turning-day override rides the walking slot in each.
+    val liveWalkingColor = activeWalkRouteColor(activeTurning, pilgrimColors)
+
     Box(modifier = Modifier.fillMaxSize()) {
         PilgrimMap(
             points = routePoints,
@@ -750,7 +754,7 @@ fun ActiveWalkScreen(
             // route the turning's cardinal accent on a solstice/equinox
             // (the same color the celestial-vignette halo wears); fixed
             // walking moss otherwise.
-            walkingColor = activeWalkRouteColor(activeTurning, pilgrimColors),
+            walkingColor = liveWalkingColor,
             // #218: the live line colors talk and meditation as they
             // happen. iOS renders the same three activities from one match
             // expression — meditating to dawn, talking to rust, everything
@@ -761,7 +765,7 @@ fun ActiveWalkScreen(
             // summary map already uses.
             routeSegments = liveRouteSegments,
             segmentColors = RouteSegmentColors(
-                walking = activeWalkRouteColor(activeTurning, pilgrimColors),
+                walking = liveWalkingColor,
                 talking = RouteSegmentColors.Fixed.talking,
                 meditating = RouteSegmentColors.Fixed.meditating,
             ),
