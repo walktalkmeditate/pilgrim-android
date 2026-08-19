@@ -68,6 +68,17 @@ class VoiceRecorder @Inject constructor(
      */
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    /**
+     * Wall-clock reading taken when the in-flight capture session opened,
+     * or null when nothing is recording. Same [Clock] that stamps the
+     * finished row's `startTimestamp`, so a caller adding
+     * `now - recordingStartedAtMillis` to the completed-row sum lands on
+     * the same number the row will carry (iOS reads the equivalent
+     * `VoiceRecordingManagement.recordingStartDate@2ee1185:21`).
+     */
+    val recordingStartedAtMillis: Long?
+        get() = session.get()?.startedAt
+
     // replay = 0 is safe: a recording can only START via WalkViewModel, which
     // subscribes to this flow in its init (eagerly, on Main.immediate) before
     // any recording is started — so no interruption can be emitted before the

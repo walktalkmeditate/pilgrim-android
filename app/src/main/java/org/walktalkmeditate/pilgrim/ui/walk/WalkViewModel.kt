@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -350,9 +351,33 @@ class WalkViewModel @Inject constructor(
         viewModelScope.launch { walkRecoveryRepository.clearRecovered() }
     }
 
+    /**
+     * The screen's single 1 Hz heartbeat. [uiState] (walk / meditation /
+     * pause timers) and [talkMillis] (the Talk chip's live recording
+     * elapsed) both ride it, so a walk runs ONE ticker coroutine rather
+     * than one per derived timer — iOS drives every one of those numbers
+     * off a single `Timer.TimerPublisher(interval: 1, ...)`
+     * (`ActiveWalkViewModel.swift:440-464@2ee1185`).
+     *
+     * `replay = 1` so a late subscriber starts from the last tick instead
+     * of waiting up to a second for the next one, and `onStart` emits one
+     * synchronously on subscribe: `shareIn` only spins the upstream up
+     * once the subscription registers, so without it a `combine` riding
+     * this flow would sit on its `stateIn` seed until that handshake
+     * completed — long enough for a derived timer to lag a sibling flow
+     * fed by the same Room emission.
+     */
+    private val ticker: Flow<Long> = tickerFlow(TICK_INTERVAL_MS)
+        .shareIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            replay = 1,
+        )
+        .onStart { emit(clock.now()) }
+
     val uiState: StateFlow<WalkUiState> = combine(
         controller.state,
-        tickerFlow(TICK_INTERVAL_MS),
+        ticker,
     ) { walkState, _ ->
         WalkUiState(walkState = walkState, nowMillis = clock.now())
     }.stateIn(
@@ -743,17 +768,44 @@ class WalkViewModel @Inject constructor(
         )
 
     /**
-     * Live total voice-recording duration, summed across all rows for
-     * the current walk. Drives the Talk time chip in the active-walk
-     * sheet.
+     * A recording the recorder has already finalized and inserted, held
+     * until its row surfaces through [voiceRecordings]. See
+     * [PendingTalkBridge] for why the seam needs covering at all.
      */
-    val talkMillis: StateFlow<Long> = voiceRecordings
-        .map { rows -> rows.sumOf { it.durationMillis } }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
-            initialValue = 0L,
+    private val _pendingTalkBridge = MutableStateFlow<PendingTalkBridge?>(null)
+
+    /**
+     * Live total voice-recording duration for the current walk: completed
+     * rows, plus the elapsed time of a recording that is happening right
+     * now, plus the stop-seam bridge. Drives the Talk time chip in the
+     * active-walk sheet.
+     *
+     * iOS parity `ActiveWalkViewModel.swift:455-458@2ee1185` — the same
+     * 1 Hz timer that refreshes the walk duration recomputes
+     * `recordings.reduce(duration) + Date().timeIntervalSince(recordingStart)`,
+     * so the Talk chip advances second by second during a talk. Before
+     * this, Android summed Room rows alone and the chip sat frozen for
+     * the whole recording (#217).
+     */
+    val talkMillis: StateFlow<Long> = combine(
+        voiceRecordings,
+        voiceRecorderState,
+        _pendingTalkBridge,
+        controller.state,
+        ticker,
+    ) { rows, recorder, bridge, walkState, _ ->
+        talkTotalMillis(
+            completed = rows,
+            recorder = recorder,
+            bridge = bridge,
+            walkId = walkIdOrNull(walkState),
+            nowMillis = clock.now(),
         )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+        initialValue = 0L,
+    )
 
     /**
      * Live count of Waypoint rows for the current walk. Drives the
@@ -901,10 +953,22 @@ class WalkViewModel @Inject constructor(
         val info = walkInfoOrNull() ?: return // walk ended between tap and dispatch
         val result = voiceRecorder.start(walkId = info.walkId, walkUuid = info.walkUuid)
         result.fold(
-            onSuccess = { _voiceRecorderState.value = VoiceRecorderUiState.Recording },
+            onSuccess = { _voiceRecorderState.value = recordingState() },
             onFailure = { _voiceRecorderState.value = mapStartFailure(it) },
         )
     }
+
+    /**
+     * Recording state stamped with the recorder's own session start, so
+     * the Talk chip measures the same span the finished row will carry.
+     * The recorder can only report null if an audio-focus loss finalized
+     * the session between `start()` returning and this read — a
+     * sub-millisecond window, where `clock.now()` is the same reading.
+     */
+    private fun recordingState(): VoiceRecorderUiState.Recording =
+        VoiceRecorderUiState.Recording(
+            startedAtMillis = voiceRecorder.recordingStartedAtMillis ?: clock.now(),
+        )
 
     /**
      * The recorder finalized an in-flight recording because the OS
@@ -924,11 +988,15 @@ class WalkViewModel @Inject constructor(
     internal suspend fun handleRecordingInterruption(result: Result<VoiceRecording>) {
         val recording = result.getOrNull()
         if (recording != null) {
+            _pendingTalkBridge.value = PendingTalkBridge.of(recording)
             try {
                 repository.recordVoice(recording)
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Exception) {
+                // No row will ever land, so the bridge must stop claiming
+                // one — otherwise the Talk chip counts audio that was lost.
+                _pendingTalkBridge.value = null
                 // Orphan .wav with no DB row — the sweeper reclaims it. Log so
                 // an interrupted-but-not-saved recording is diagnosable rather
                 // than silently lost (e.g. the walk was purged mid-interruption).
@@ -947,6 +1015,11 @@ class WalkViewModel @Inject constructor(
         val result = voiceRecorder.stop()
         result.fold(
             onSuccess = { recording ->
+                // Publish the bridge BEFORE the insert: Room's invalidation
+                // can surface the new row before this coroutine resumes, and
+                // the seam has to be covered from the moment the recorder
+                // stopped, not from whenever the insert returns.
+                _pendingTalkBridge.value = PendingTalkBridge.of(recording)
                 // If the insert fails we have a .wav on disk with no DB
                 // row — Stage 2-E's sweeper cleans orphans. Surface the
                 // failure to the user as a generic Other-kind banner.
@@ -956,6 +1029,7 @@ class WalkViewModel @Inject constructor(
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (_: Exception) {
+                    _pendingTalkBridge.value = null
                     _voiceRecorderState.value = errorState(
                         "couldn't save the recording",
                         VoiceRecorderUiState.Kind.Other,
@@ -988,7 +1062,7 @@ class WalkViewModel @Inject constructor(
         // the first start's state propagation. The first start succeeded;
         // surfacing a banner for the second tap is noise. Stay in
         // Recording (which the first start is about to set anyway).
-        is VoiceRecorderError.ConcurrentRecording -> VoiceRecorderUiState.Recording
+        is VoiceRecorderError.ConcurrentRecording -> recordingState()
         else -> errorState(
             err.message ?: "recording failed",
             VoiceRecorderUiState.Kind.Other,
@@ -1768,6 +1842,97 @@ class WalkViewModel @Inject constructor(
         // iOS parity `ActiveWalkView.swift:898` — nearest-cairn merge
         // radius for the StonePlacementSheet "Add to cairn" branch.
         const val NEAREST_CAIRN_RADIUS_M = 42.0
+    }
+}
+
+/**
+ * A recording the recorder has finalized and the view model has handed to
+ * Room, held until the matching row surfaces through
+ * `observeVoiceRecordings`.
+ *
+ * The seam it covers: `VoiceRecorder.stop()` hands back the entity, the
+ * view model inserts it and flips the recorder state out of Recording.
+ * Room's invalidation tracker delivers the new row asynchronously, so
+ * between the state flip and that delivery the Talk total would be
+ * "completed rows only" — visibly dipping by the whole recording the user
+ * just finished before snapping back. iOS has the same shape (its
+ * `stopRecording` clears `recordingStartDate` at
+ * `VoiceRecordingManagement.swift:141@2ee1185` while the finished
+ * recording only reaches the relay later, from the AVAudioRecorder
+ * delegate's `commitRecording` → `finalizeRecording`) but samples the
+ * total on a 1 Hz timer, so its window closes before the next read.
+ * Android's total recomputes on every input change, so the dip is
+ * reachable and gets bridged explicitly.
+ *
+ * [startTimestamp] is the identity: it is the recorder's session start,
+ * unique per walk because recordings are serialized and `stop()` blocks
+ * for a full capture cycle. [walkId] scopes the bridge so a recording
+ * held at the end of one walk can never inflate the next walk's total.
+ */
+internal data class PendingTalkBridge(
+    val walkId: Long,
+    val startTimestamp: Long,
+    val endTimestamp: Long,
+    val durationMillis: Long,
+) {
+    companion object {
+        fun of(recording: VoiceRecording) = PendingTalkBridge(
+            walkId = recording.walkId,
+            startTimestamp = recording.startTimestamp,
+            endTimestamp = recording.endTimestamp,
+            durationMillis = recording.durationMillis,
+        )
+    }
+}
+
+/**
+ * Talk-chip total for an in-progress walk: [completed] row durations, the
+ * elapsed time of a recording in flight right now, and [bridge] while a
+ * just-finished recording's row is still in Room's pipeline.
+ *
+ * iOS parity `ActiveWalkViewModel.swift:455-458@2ee1185`:
+ * ```swift
+ * var talk = recordings.reduce(0.0) { $0 + $1.duration }
+ * if let recordingStart = self.voiceRecordingManagement.recordingStartDate {
+ *     talk += Date().timeIntervalSince(recordingStart)
+ * }
+ * ```
+ */
+internal fun talkTotalMillis(
+    completed: List<VoiceRecording>,
+    recorder: VoiceRecorderUiState,
+    bridge: PendingTalkBridge?,
+    walkId: Long?,
+    nowMillis: Long,
+): Long {
+    val completedSum = completed.sumOf { it.durationMillis }
+    val liveStart = (recorder as? VoiceRecorderUiState.Recording)?.startedAtMillis
+    // Stopping a recording inserts the row and only then flips the
+    // recorder out of Recording, so a combine can observe the finished row
+    // while the state still says a talk is in flight. [completedSum]
+    // already carries it there — measuring elapsed time on top would count
+    // the same talk twice.
+    val liveAlreadyLanded = liveStart != null &&
+        completed.any { row -> row.startTimestamp == liveStart }
+    // coerceAtLeast: a wall-clock correction landing mid-recording must
+    // shrink the chip's growth rate, never push the total backwards.
+    val live = if (liveStart != null && !liveAlreadyLanded) {
+        (nowMillis - liveStart).coerceAtLeast(0L)
+    } else {
+        0L
+    }
+    val unlandedBridge = bridge?.takeIf { pending ->
+        pending.walkId == walkId &&
+            completed.none { row -> row.startTimestamp == pending.startTimestamp }
+    } ?: return completedSum + live
+    // The bridge is published one `MutableStateFlow` write before the
+    // recorder state leaves Recording, so a combine can see both terms
+    // describing the SAME recording. `now - startedAt` already spans
+    // everything the bridge would add there, so take it once.
+    return if (liveStart == unlandedBridge.startTimestamp) {
+        completedSum + maxOf(live, unlandedBridge.durationMillis)
+    } else {
+        completedSum + live + unlandedBridge.durationMillis
     }
 }
 
