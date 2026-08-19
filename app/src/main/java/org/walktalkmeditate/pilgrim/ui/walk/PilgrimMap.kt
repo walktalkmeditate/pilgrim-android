@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -67,11 +68,16 @@ import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.extension.style.layers.properties.generated.LineCap
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
+import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
+import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateBearing
+import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateOptions
+import com.mapbox.maps.plugin.viewport.viewport
+import kotlin.math.abs
 import org.walktalkmeditate.pilgrim.data.walk.RouteActivity
 import org.walktalkmeditate.pilgrim.data.walk.UNRESOLVED_WHISPER_ARGB
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
@@ -108,10 +114,11 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
  * (which uses Mapbox's stock `.light` and `.dark` styles). Line color
  * is Pilgrim's `stone` token in the appropriate palette.
  *
- * When [followLatest] is true (Active Walk), the camera eases to the
- * newest sample on every recomposition so the map tracks the walker.
- * When false (Summary), the camera fits the full route's bounds once
- * on first render.
+ * When [followLatest] is true (Active Walk), the camera is handed to
+ * Mapbox's follow-puck viewport state, which tracks the puck and rotates
+ * with the compass (iOS `PilgrimMapView.swift:210-221@2ee1185`). When
+ * false (Summary), the camera fits the full route's bounds once on first
+ * render and the viewport plugin is never touched.
  */
 @Composable
 internal fun PilgrimMap(
@@ -321,13 +328,18 @@ internal fun PilgrimMap(
     var proximityPinIndex by remember {
         mutableStateOf<Map<String, ProximityPinFilter.Pin>>(emptyMap())
     }
-    // 13-B/13-D flicker-class gates for the live-route branch: the update
+    // 13-B/13-D flicker-class gate for the live-route branch: the update
     // lambda re-fires on recompositions that change neither the points nor
-    // the camera target (seek fog states, pulse tokens). Without these keys
-    // every such re-fire re-uploaded the unchanged polyline geometry and
-    // re-issued an easeTo to the camera's current target.
+    // the line colour (seek fog states, pulse tokens). Without this key
+    // every such re-fire re-uploaded the unchanged polyline geometry.
     var renderedLiveLineColor by remember { mutableStateOf<Int?>(null) }
-    var lastFollowCameraKey by remember { mutableStateOf<Pair<Point, Double>?>(null) }
+    // iOS parity `PilgrimMapView.swift:212-215,223-224@2ee1185` — the
+    // follow-puck viewport's re-entry bookkeeping. `isFollowingViewport`
+    // is iOS's `coordinator.isFollowing`; `lastFollowInsetDp` is its
+    // `lastBottomInset`. There is no per-sample camera key any more: the
+    // viewport state tracks the puck itself.
+    var isFollowingViewport by remember { mutableStateOf(false) }
+    var lastFollowInsetDp by remember { mutableFloatStateOf(0f) }
     // Seek fog + crescent renderers — bookkeeping + Mapbox writes live in
     // ui/walk/map/SeekFogRenderer.kt + SeekCrescentRenderer.kt; this
     // composable only owns lifecycle. The fog surface checks the casing
@@ -553,7 +565,6 @@ internal fun PilgrimMap(
         renderedSegments = null
         renderedSegmentColors = null
         renderedLiveLineColor = null
-        lastFollowCameraKey = null
         waypointManager?.let { view.annotations.removeAnnotationManager(it) }
         waypointManager = null
         waypointAnnotations = emptyList()
@@ -715,7 +726,57 @@ internal fun PilgrimMap(
             pulsingEnabled = true
             pulsingColor = pulseArgb
             locationPuck = buildStonePuck(puckBitmap)
+            // iOS parity `PilgrimMapView.swift:216-220@2ee1185` — the
+            // follow-puck state omits `bearing`, so the iOS SDK default
+            // `.heading` applies and the camera rotates with the compass.
+            // Android's viewport default is SyncWithLocationPuck, which
+            // reads the PUCK's bearing — and the puck's own bearing ships
+            // disabled (`LocationComponentSettings.Builder` leaves
+            // `puckBearingEnabled` false while defaulting `puckBearing` to
+            // HEADING). Both are set explicitly so the compass source is
+            // stated, not inherited. Gated on `followLatest`, so the
+            // heading sensor only ever spins up on the live walk map — the
+            // summary map never enables the location component at all.
+            puckBearing = PuckBearing.HEADING
+            puckBearingEnabled = true
         }
+    }
+
+    // iOS parity `PilgrimMapView.swift:210-224@2ee1185` — hand the live
+    // map's camera to the viewport system. Enter once on first follow,
+    // re-enter only when the sheet's bottom inset moves past the
+    // half-point guard; NEVER per GPS sample (the state tracks the puck
+    // itself, and a re-transition mid-walk would yank a user who had
+    // panned away). A user pan idles the viewport via the SDK's
+    // `transitionsToIdleUponUserInteraction` default, exactly as on iOS,
+    // and follow re-engages on the next inset change.
+    //
+    // `followLatest == false` (Walk Summary / Walk Share) never reaches
+    // the plugin: those maps keep their fit-bounds + reveal camera paths.
+    LaunchedEffect(mapView, followLatest, bottomInsetDp, styleLoaded) {
+        if (!followLatest) {
+            // iOS's else-branch: drop the follow flags but leave the
+            // camera to the bounds/centre code (no explicit `idle()`).
+            isFollowingViewport = false
+            lastFollowInsetDp = bottomInsetDp.value
+            return@LaunchedEffect
+        }
+        if (!styleLoaded) return@LaunchedEffect
+        val view = mapView ?: return@LaunchedEffect
+        if (
+            !shouldEnterFollowViewport(
+                isFollowing = isFollowingViewport,
+                lastBottomInsetDp = lastFollowInsetDp,
+                bottomInsetDp = bottomInsetDp.value,
+            )
+        ) {
+            return@LaunchedEffect
+        }
+        isFollowingViewport = true
+        lastFollowInsetDp = bottomInsetDp.value
+        view.viewport.transitionTo(
+            view.viewport.makeFollowPuckViewportState(buildFollowPuckOptions(bottomInsetPx)),
+        )
     }
 
     AndroidView(
@@ -837,32 +898,7 @@ internal fun PilgrimMap(
                     }
                 }
 
-                if (followLatest) {
-                    // Ease rather than snap — each new GPS sample nudges
-                    // the camera smoothly instead of jittering it. Keep
-                    // the duration below the typical GPS interval so the
-                    // ease completes before the next cancel/restart. Only
-                    // center + zoom are written; bearing, pitch, padding
-                    // come from the live camera so user-set rotation /
-                    // tilt survives each sample. Keyed on (target, inset)
-                    // so recompositions that move neither don't re-issue
-                    // the ease.
-                    val cameraKey = mapboxPoints.last() to bottomInsetPx
-                    if (lastFollowCameraKey != cameraKey) {
-                        lastFollowCameraKey = cameraKey
-                        val current = view.mapboxMap.cameraState
-                        view.mapboxMap.easeTo(
-                            CameraOptions.Builder()
-                                .center(mapboxPoints.last())
-                                .zoom(FOLLOW_ZOOM)
-                                .bearing(current.bearing)
-                                .pitch(current.pitch)
-                                .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
-                                .build(),
-                            MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
-                        )
-                    }
-                } else if (!didFitBounds && revealPhase == null) {
+                if (!followLatest && !didFitBounds && revealPhase == null) {
                     val camera = view.mapboxMap.cameraForCoordinates(
                         mapboxPoints,
                         CameraOptions.Builder().build(),
@@ -884,32 +920,21 @@ internal fun PilgrimMap(
                     view.mapboxMap.setCamera(clamped)
                     didFitBounds = true
                 }
-            } else if (points.size == 1 && followLatest) {
-                val only = points.first()
-                // Same (target, inset) gate as the multi-point follow branch.
-                val cameraKey = Point.fromLngLat(only.longitude, only.latitude) to bottomInsetPx
-                if (lastFollowCameraKey != cameraKey) {
-                    lastFollowCameraKey = cameraKey
-                    val current = view.mapboxMap.cameraState
-                    view.mapboxMap.easeTo(
-                        CameraOptions.Builder()
-                            .center(cameraKey.first)
-                            .zoom(FOLLOW_ZOOM)
-                            .bearing(current.bearing)
-                            .pitch(current.pitch)
-                            .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
-                            .build(),
-                        MapAnimationOptions.Builder().duration(FOLLOW_EASE_MS).build(),
-                    )
-                }
-            } else if (points.isEmpty() && followLatest && !didSetInitialCenter) {
-                // No GPS samples yet. If the caller handed us a cached
-                // last-known location, snap the camera there so the
-                // first paint lands near the user instead of at
-                // Mapbox's global default (historically over the US
-                // east coast). Setting via setCamera (not easeTo) so
-                // the world doesn't visibly fly from zoom 0 to here.
-                val center = initialCenter
+            } else if (followLatest && !didSetInitialCenter) {
+                // Fewer than two samples. The follow-puck viewport owns the
+                // camera from here on, but it emits nothing until Mapbox's
+                // own location component reports an indicator position
+                // (`FollowPuckViewportStateImpl.shouldNotifyLatestViewportData`
+                // gates on a non-null last location), so without a seed the
+                // first paint is Mapbox's zoom-0 world view. iOS needs no
+                // equivalent because its map starts at the device region
+                // rather than the globe. Prefer our own first sample, else
+                // the caller's cached last-known location. setCamera, never
+                // easeTo: a camera ANIMATION from a non-viewport owner
+                // idles the viewport plugin (ViewportPluginImpl's
+                // cameraAnimationsLifecycleListener), which would silently
+                // cancel follow.
+                val center = points.firstOrNull() ?: initialCenter
                 if (center != null) {
                     view.mapboxMap.setCamera(
                         CameraOptions.Builder()
@@ -1276,7 +1301,8 @@ internal fun PilgrimMap(
                 renderedSegments = null
                 renderedSegmentColors = null
                 renderedLiveLineColor = null
-                lastFollowCameraKey = null
+                isFollowingViewport = false
+                lastFollowInsetDp = 0f
                 waypointManager = null
                 waypointAnnotations = emptyList()
                 renderedWaypointsKey = null
@@ -1699,10 +1725,59 @@ internal fun applyRouteLineCap(manager: PolylineAnnotationManager) {
     manager.lineCap = LineCap.ROUND
 }
 
+/**
+ * iOS parity `PilgrimMapView.swift:216-220@2ee1185` —
+ * `FollowPuckViewportStateOptions(padding: padding, zoom: 16)`.
+ *
+ * `bearing` and `pitch` are omitted on iOS, inheriting `.heading` and
+ * `45` from the SDK's initialiser
+ * (`FollowPuckViewportStateOptions.swift:38-44`, mapbox-maps-ios).
+ * Android's builder defaults land in the same place
+ * (`SyncWithLocationPuck`, pitch 45.0, verified by decompiling
+ * `FollowPuckViewportStateOptions$Builder.<init>` in 11.11.0), and both
+ * are written explicitly here so an SDK bump that moves one platform's
+ * default shows up as a test failure rather than a silent camera change.
+ *
+ * Extracted so the real builder path is exercised by a Robolectric test
+ * (CLAUDE.md platform-object-builder rule).
+ */
+internal fun buildFollowPuckOptions(bottomInsetPx: Double): FollowPuckViewportStateOptions =
+    FollowPuckViewportStateOptions.Builder()
+        .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
+        .zoom(FOLLOW_ZOOM)
+        .bearing(FollowPuckViewportStateBearing.SyncWithLocationPuck)
+        .pitch(FOLLOW_PITCH)
+        .build()
+
+/**
+ * iOS parity `PilgrimMapView.swift:212-213@2ee1185`:
+ *
+ * ```swift
+ * let insetChanged = abs(context.coordinator.lastBottomInset - bottomInset) > 0.5
+ * if !context.coordinator.isFollowing || insetChanged { … }
+ * ```
+ *
+ * Compared in dp so the half-point guard means the same thing on every
+ * screen density (iOS compares points).
+ */
+internal fun shouldEnterFollowViewport(
+    isFollowing: Boolean,
+    lastBottomInsetDp: Float,
+    bottomInsetDp: Float,
+): Boolean = !isFollowing || abs(lastBottomInsetDp - bottomInsetDp) > FOLLOW_INSET_EPSILON_DP
+
+/** iOS's `> 0.5` re-entry guard — `PilgrimMapView.swift:212@2ee1185`. */
+internal const val FOLLOW_INSET_EPSILON_DP = 0.5f
+
 private const val FOLLOW_ZOOM = 16.0
+
+/**
+ * Both SDKs default a follow-puck state to pitch 45; iOS inherits it by
+ * omitting the argument (`PilgrimMapView.swift:218@2ee1185`).
+ */
+private const val FOLLOW_PITCH = 45.0
 private const val REVEAL_ZOOM = 16.0
 private const val MAX_FIT_ZOOM = 17.0
-private const val FOLLOW_EASE_MS = 800L
 private const val FIT_PADDING_DP = 32
 private const val FADE_IN_MS = 400
 // Bitmap size in pixels for the waypoint marker. Mapbox icon images
