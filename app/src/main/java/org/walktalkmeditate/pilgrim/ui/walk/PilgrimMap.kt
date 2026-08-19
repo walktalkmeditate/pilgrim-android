@@ -65,6 +65,8 @@ import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createCircleAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
+import com.mapbox.maps.extension.style.layers.properties.generated.LineCap
+import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
@@ -210,6 +212,16 @@ internal fun PilgrimMap(
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var segmentPolylines by remember { mutableStateOf<List<PolylineAnnotation>>(emptyList()) }
+    // iOS parity `PilgrimMapView+RouteSource.swift:121-127@2ee1185` — the
+    // white casing layer beneath the route. Its own manager (created
+    // BEFORE the route manager so Mapbox stacks it below) mirroring every
+    // route polyline one-for-one; the mirrors below the route line are
+    // what give the walked path its halo against dark map tiles.
+    var casingManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
+    var casingPolyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
+    var casingSegmentPolylines by remember {
+        mutableStateOf<List<PolylineAnnotation>>(emptyList())
+    }
     // AF46: cache the prior domain points + their projected Mapbox points so
     // the live polyline maps only the new tail per GPS fix instead of
     // re-projecting the whole growing list on the main thread. Reset alongside
@@ -318,9 +330,9 @@ internal fun PilgrimMap(
     var lastFollowCameraKey by remember { mutableStateOf<Pair<Point, Double>?>(null) }
     // Seek fog + crescent renderers — bookkeeping + Mapbox writes live in
     // ui/walk/map/SeekFogRenderer.kt + SeekCrescentRenderer.kt; this
-    // composable only owns lifecycle. The fog surface checks the route
+    // composable only owns lifecycle. The fog surface checks the casing
     // layer id for existence at install time, so fog lands below the route
-    // line once the manager exists and at the top of the stack (iOS
+    // casing once the manager exists and at the top of the stack (iOS
     // fallback parity) before then. The hour's light (ring + crescent) is
     // read at write time from the cached puck point's solar elevation —
     // iOS `currentSeekDaypart(on:)`, U7 spec B6 — and the constellation
@@ -329,7 +341,11 @@ internal fun PilgrimMap(
     // without rebuilding the renderer).
     val seekFogStyle = remember(mapView) {
         mapView?.let { view ->
-            MapboxSeekFogStyle(view.mapboxMap) { ROUTE_LINE_LAYER_ID }
+            // iOS parity `PilgrimMapView+SeekFog.swift:277-280@2ee1185` —
+            // `fogLayerPosition` anchors `.below("pilgrim-route-casing")`,
+            // i.e. below the LOWEST route layer, so the fog never covers
+            // the casing halo either.
+            MapboxSeekFogStyle(view.mapboxMap) { ROUTE_CASING_LAYER_ID }
         }
     }
     val displayDensity = LocalDensity.current.density
@@ -528,6 +544,10 @@ internal fun PilgrimMap(
         polylineManager = null
         polyline = null
         segmentPolylines = emptyList()
+        casingManager?.let { view.annotations.removeAnnotationManager(it) }
+        casingManager = null
+        casingPolyline = null
+        casingSegmentPolylines = emptyList()
         liveRoutePoints = emptyList()
         liveMapboxPoints = emptyList()
         renderedSegments = null
@@ -586,12 +606,24 @@ internal fun PilgrimMap(
                     pulsingEnabled = true
                 }
             }
-            // Named layer id so the seek fog can insert below the route
-            // line without touching Mapbox's restricted associatedLayers
-            // accessor (iOS anchors on its named "pilgrim-route-casing").
+            // iOS parity `PilgrimMapView+RouteSource.swift:121-133@2ee1185`
+            // — the casing goes in FIRST so Mapbox stacks it below the
+            // route line (each annotation manager appends its layer at
+            // the top of the stack), exactly like iOS's addLayer order.
+            // Nothing may be created between these two calls.
+            //
+            // Both carry named layer ids so the seek fog can insert below
+            // the route without touching Mapbox's restricted
+            // associatedLayers accessor; the fog anchors on the casing,
+            // matching iOS's `.below("pilgrim-route-casing")`.
+            casingManager = view.annotations.createPolylineAnnotationManager(
+                com.mapbox.maps.plugin.annotation.AnnotationConfig(
+                    layerId = ROUTE_CASING_LAYER_ID,
+                ),
+            ).also(::applyRouteLineCap)
             polylineManager = view.annotations.createPolylineAnnotationManager(
                 com.mapbox.maps.plugin.annotation.AnnotationConfig(layerId = ROUTE_LINE_LAYER_ID),
-            )
+            ).also(::applyRouteLineCap)
             // Above the route line, below the waypoint point pins; hosts
             // the meditation, start/end, and end-glow circles.
             meditationCircleManager = view.annotations.createCircleAnnotationManager()
@@ -706,6 +738,11 @@ internal fun PilgrimMap(
         },
         update = { view ->
             val manager = polylineManager ?: return@AndroidView
+            // Created together inside the same loadStyle callback, so
+            // either both managers exist or neither does. Bailing when the
+            // casing is missing keeps the mirror invariant total: no route
+            // polyline is ever drawn without its casing twin.
+            val casing = casingManager ?: return@AndroidView
             if (routeSegments.isNotEmpty() && segmentColors != null) {
                 // Multi-segment path. Skip the delete-and-recreate when the
                 // segment list AND colors are structurally identical to what's
@@ -719,6 +756,12 @@ internal fun PilgrimMap(
                     if (segmentPolylines.isNotEmpty()) {
                         segmentPolylines.forEach { manager.delete(it) }
                     }
+                    // The casing mirrors are torn down in the same pass so a
+                    // rebuilt segment set can never leave stale white
+                    // geometry tracing a route that no longer exists.
+                    if (casingSegmentPolylines.isNotEmpty()) {
+                        casingSegmentPolylines.forEach { casing.delete(it) }
+                    }
                     // Painted in priority order (Walking, then Talking, then
                     // Meditating), NOT chronological order — see
                     // [routeSegmentsInPaintOrder]. Mapbox paints
@@ -729,7 +772,7 @@ internal fun PilgrimMap(
                     // priority guarantees the higher-priority tint always
                     // wins that overlap, matching the same precedence
                     // [classify] already applies to same-timestamp overlap.
-                    segmentPolylines = routeSegmentsInPaintOrder(routeSegments).map { seg ->
+                    val painted = routeSegmentsInPaintOrder(routeSegments).map { seg ->
                         val mapboxPoints =
                             seg.points.map { Point.fromLngLat(it.longitude, it.latitude) }
                         val color = when (seg.activity) {
@@ -737,12 +780,16 @@ internal fun PilgrimMap(
                             RouteActivity.Talking -> segmentColors.talking.toArgb()
                             RouteActivity.Meditating -> segmentColors.meditating.toArgb()
                         }
-                        manager.create(
-                            PolylineAnnotationOptions()
-                                .withPoints(mapboxPoints)
-                                .withLineColor(color)
-                                .withLineWidth(POLYLINE_WIDTH_DP),
-                        )
+                        mapboxPoints to color
+                    }
+                    // Casing polylines are uniform white, so the
+                    // paint-priority ordering above is irrelevant to them —
+                    // but each still mirrors one route segment's geometry.
+                    casingSegmentPolylines = painted.map { (segmentPoints, _) ->
+                        casing.create(routeCasingOptions(segmentPoints))
+                    }
+                    segmentPolylines = painted.map { (segmentPoints, color) ->
+                        manager.create(routeLineOptions(segmentPoints, color))
                     }
                     renderedSegments = routeSegments
                     renderedSegmentColors = segmentColors
@@ -765,12 +812,7 @@ internal fun PilgrimMap(
                 liveMapboxPoints = mapboxPoints
                 val existing = polyline
                 if (existing == null) {
-                    polyline = manager.create(
-                        PolylineAnnotationOptions()
-                            .withPoints(mapboxPoints)
-                            .withLineColor(lineColor)
-                            .withLineWidth(POLYLINE_WIDTH_DP),
-                    )
+                    polyline = manager.create(routeLineOptions(mapboxPoints, lineColor))
                     renderedLiveLineColor = lineColor
                 } else if (routeChanged || renderedLiveLineColor != lineColor) {
                     // Mutate in place — cheaper than delete + create for
@@ -779,6 +821,20 @@ internal fun PilgrimMap(
                     existing.lineColorInt = lineColor
                     manager.update(existing)
                     renderedLiveLineColor = lineColor
+                }
+                // Single owner for the casing mirror. `routeChanged` is
+                // always true on the pass that first creates the route line
+                // (the cached mapped list starts empty), so the mirror can
+                // never be skipped at birth; a colour-only update needs no
+                // casing work because the casing is always white.
+                if (routeChanged) {
+                    val existingCasing = casingPolyline
+                    if (existingCasing == null) {
+                        casingPolyline = casing.create(routeCasingOptions(mapboxPoints))
+                    } else {
+                        existingCasing.points = mapboxPoints
+                        casing.update(existingCasing)
+                    }
                 }
 
                 if (followLatest) {
@@ -1212,6 +1268,9 @@ internal fun PilgrimMap(
                 polylineManager = null
                 polyline = null
                 segmentPolylines = emptyList()
+                casingManager = null
+                casingPolyline = null
+                casingSegmentPolylines = emptyList()
                 liveRoutePoints = emptyList()
                 liveMapboxPoints = emptyList()
                 renderedSegments = null
@@ -1567,13 +1626,79 @@ internal fun activeWalkRouteColor(turning: SeasonalMarker?, colors: PilgrimColor
 
 /**
  * Explicit id for the route polyline's backing LineLayer (via
- * [com.mapbox.maps.plugin.annotation.AnnotationConfig]) so the seek fog
- * renderer can insert its circles below the route — the analogue of iOS
- * fog sitting below "pilgrim-route-casing".
+ * [com.mapbox.maps.plugin.annotation.AnnotationConfig]) — iOS's
+ * `"pilgrim-route-layer"` (`PilgrimMapView+RouteSource.swift:129@2ee1185`).
  */
 internal const val ROUTE_LINE_LAYER_ID = "pilgrim-route-line"
 
-private const val POLYLINE_WIDTH_DP = 4.0
+/**
+ * Id for the white casing LineLayer that sits BENEATH the route
+ * (`PilgrimMapView+RouteSource.swift:121@2ee1185`). The seek fog anchors
+ * its circles below this layer, matching iOS's `fogLayerPosition`
+ * (`PilgrimMapView+SeekFog.swift:277-280@2ee1185`) — the casing is the
+ * lowest route layer, so anchoring on the route line instead would have
+ * let fog cover the halo.
+ */
+internal const val ROUTE_CASING_LAYER_ID = "pilgrim-route-casing"
+
+/** iOS `layer.lineWidth = .constant(6)` — `…RouteSource.swift:130@2ee1185`. */
+internal const val ROUTE_LINE_WIDTH_DP = 6.0
+
+/** iOS `casing.lineWidth = .constant(10)` — `…RouteSource.swift:122@2ee1185`. */
+internal const val ROUTE_CASING_WIDTH_DP = 10.0
+
+/** iOS `casing.lineOpacity = .constant(0.3)` — `…RouteSource.swift:125@2ee1185`. */
+internal const val ROUTE_CASING_OPACITY = 0.3
+
+/**
+ * iOS `casing.lineColor = .constant(StyleColor(.white))` —
+ * `…RouteSource.swift:126@2ee1185`. Opaque white; the 0.3 lives in
+ * [ROUTE_CASING_OPACITY], not in this colour's alpha.
+ */
+internal const val ROUTE_CASING_ARGB = 0xFFFFFFFF.toInt()
+
+/**
+ * The route line's own polyline. iOS sets `lineOpacity = .constant(1.0)`
+ * explicitly; that is already Mapbox's default, so leaving it unset keeps
+ * the layer's opacity a plain constant instead of promoting it to a
+ * data-driven expression.
+ *
+ * Extracted so the real `PolylineAnnotationOptions` builder path is
+ * exercised by a Robolectric test (CLAUDE.md platform-object-builder
+ * rule) rather than only on-device.
+ */
+internal fun routeLineOptions(points: List<Point>, colorArgb: Int): PolylineAnnotationOptions =
+    PolylineAnnotationOptions()
+        .withPoints(points)
+        .withLineColor(colorArgb)
+        .withLineWidth(ROUTE_LINE_WIDTH_DP)
+        .withLineJoin(LineJoin.ROUND)
+
+/**
+ * The white casing mirror for one route polyline
+ * (`PilgrimMapView+RouteSource.swift:121-127@2ee1185`). Takes the SAME
+ * point list its route line was built from, so the halo can never trace
+ * geometry the route itself has moved on from.
+ */
+internal fun routeCasingOptions(points: List<Point>): PolylineAnnotationOptions =
+    PolylineAnnotationOptions()
+        .withPoints(points)
+        .withLineColor(ROUTE_CASING_ARGB)
+        .withLineWidth(ROUTE_CASING_WIDTH_DP)
+        .withLineOpacity(ROUTE_CASING_OPACITY)
+        .withLineJoin(LineJoin.ROUND)
+
+/**
+ * iOS `lineCap = .constant(.round)` on both route layers
+ * (`…RouteSource.swift:123,131@2ee1185`). Mapbox's style-spec default is
+ * `butt`, which leaves a squared-off stub at each end of the walked path.
+ * `line-cap` is not data-driven in the style spec, so unlike width /
+ * colour / join it can only be set on the manager's layer.
+ */
+internal fun applyRouteLineCap(manager: PolylineAnnotationManager) {
+    manager.lineCap = LineCap.ROUND
+}
+
 private const val FOLLOW_ZOOM = 16.0
 private const val REVEAL_ZOOM = 16.0
 private const val MAX_FIT_ZOOM = 17.0
