@@ -1,7 +1,7 @@
 ---
 title: "feat: Walk with Me interactive share — iOS v1.10.0 parity port (Phase 19)"
 type: feat
-status: in-progress (U9 device QA pending)
+status: completed (shipped as v1.4.0, code 650, 2026-08-19 — PRs #215/#227, GH release v1.4.0)
 date: 2026-08-14
 origin: docs/brainstorms/2026-08-14-ios-v1100-parity-retarget-requirements.md
 ---
