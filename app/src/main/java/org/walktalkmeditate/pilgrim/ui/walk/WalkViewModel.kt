@@ -54,6 +54,11 @@ import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.walk.ActivityWindow
+import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
+import org.walktalkmeditate.pilgrim.data.walk.computeLiveRouteSegments
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
+import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -805,6 +810,111 @@ class WalkViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
         initialValue = 0L,
+    )
+
+    /**
+     * Closed talk spans for the walk in progress — every finished
+     * recording's row, plus the one held by [_pendingTalkBridge] while
+     * Room's invalidation is still in flight. Without the bridged span the
+     * stretch a walker just talked through would flick back to walking
+     * green for the frames between the recorder stopping and the row
+     * landing, and take the whole polyline set down with it.
+     *
+     * The recording happening RIGHT NOW is not here: iOS classifies it
+     * with an open-ended `timestamp >= recStart` test instead
+     * (`ActiveWalkViewModel.swift:597-601@2ee1185`), which
+     * [computeLiveRouteSegments] takes as its own parameter.
+     */
+    private val talkWindows: StateFlow<List<ActivityWindow>> = combine(
+        voiceRecordings,
+        _pendingTalkBridge,
+        controller.state,
+    ) { rows, bridge, walkState ->
+        val closed = rows.map { ActivityWindow(it.startTimestamp, it.endTimestamp) }
+        val unlanded = bridge?.takeIf { pending ->
+            pending.walkId == walkIdOrNull(walkState) &&
+                rows.none { row -> row.startTimestamp == pending.startTimestamp }
+        } ?: return@combine closed
+        closed + ActivityWindow(unlanded.startTimestamp, unlanded.endTimestamp)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+        initialValue = emptyList(),
+    )
+
+    /**
+     * Closed meditation spans for the walk in progress, replayed from the
+     * walk-event log by the same [deriveActivityIntervals] the Walk Summary
+     * and the share payload use — `activity_intervals` has no production
+     * writer, so the event log is the source of truth on every surface.
+     *
+     * `closeAt = null` drops a dangling MEDITATION_START rather than
+     * closing it at "now": that dangling start IS the meditation in
+     * progress, and iOS handles it with a separate open-ended
+     * `timestamp >= meditationStartDate` test
+     * (`ActiveWalkViewModel.swift:589-591@2ee1185`) rather than a closed
+     * interval. Closing it here instead would rewrite the tail window on
+     * every tick and rebuild the polyline under it.
+     */
+    private val meditationWindows: StateFlow<List<ActivityWindow>> = controller.state
+        .map { walkIdOrNull(it) }
+        .distinctUntilChanged()
+        .flatMapLatest { walkId ->
+            if (walkId == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeEventsForWalk(walkId).map { events ->
+                    deriveActivityIntervals(events = events, walkId = walkId, closeAt = null)
+                        .filter { it.activityType == ActivityType.MEDITATING }
+                        .map { ActivityWindow(it.startTimestamp, it.endTimestamp) }
+                }
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = emptyList(),
+        )
+
+    /**
+     * The Active Walk route, split into activity-tinted segments as the
+     * fixes arrive — the walker sees the line turn rust the moment they
+     * start talking, dawn while they sit, instead of one flat green trace
+     * that only gains its colors on the summary map (#218).
+     *
+     * iOS classifies every live fix the same way
+     * (`ActiveWalkViewModel.activityType(at:)@2ee1185:583-602`, grouped by
+     * `buildActivitySegments@2ee1185:605`) and renders through the route
+     * source's match expression — meditating to dawn, talking to rust,
+     * everything else to the walking color
+     * (`PilgrimMapView+RouteSource.swift:134-143@2ee1185`).
+     *
+     * Recomputed whole per GPS fix on [Dispatchers.Default]: the walk's
+     * fixes times its activity windows is a few hundred thousand
+     * comparisons on a long walk, which is far too much for the main
+     * thread but cheap off it. The renderer, not this flow, is what keeps
+     * the cost bounded — settled segments come back structurally identical
+     * so their annotations are never touched (see [diffRouteSegments]).
+     */
+    val liveRouteSegments: StateFlow<List<RouteSegment>> = combine(
+        routePoints,
+        meditationWindows,
+        talkWindows,
+        voiceRecorderState,
+        controller.state,
+    ) { points, meditations, talks, recorder, walkState ->
+        computeLiveRouteSegments(
+            points = points,
+            meditationWindows = meditations,
+            liveMeditationStartMillis =
+                (walkState as? WalkState.Meditating)?.meditationStartedAt,
+            talkWindows = talks,
+            liveTalkStartMillis =
+                (recorder as? VoiceRecorderUiState.Recording)?.startedAtMillis,
+        )
+    }.flowOn(Dispatchers.Default).stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+        initialValue = emptyList(),
     )
 
     /**

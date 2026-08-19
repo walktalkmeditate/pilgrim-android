@@ -130,6 +130,12 @@ internal fun PilgrimMap(
     waypoints: List<org.walktalkmeditate.pilgrim.data.entity.Waypoint> = emptyList(),
     routeSegments: List<RouteSegment> = emptyList(),
     segmentColors: RouteSegmentColors? = null,
+    // Active Walk feeds [routeSegments] a list that grows with the walk, so
+    // it renders them in the order given (chronological) and the renderer
+    // mutates only the tail per GPS fix. Summary and Share pass a finished
+    // list and leave this false, keeping the activity-priority paint order.
+    // See the branch in the update lambda for the full rationale.
+    chronologicalSegmentOrder: Boolean = false,
     revealPhase: RevealPhase? = null,
     reduceMotion: Boolean = false,
     walkAnnotations: List<WalkMapAnnotation> = emptyList(),
@@ -805,35 +811,108 @@ internal fun PilgrimMap(
             // polyline is ever drawn without its casing twin.
             val casing = casingManager ?: return@AndroidView
             if (routeSegments.isNotEmpty() && segmentColors != null) {
-                // Multi-segment path. Skip the delete-and-recreate when the
-                // segment list AND colors are structurally identical to what's
-                // already rendered (revealPhase changes re-fire the update
-                // lambda but don't change segments, so without this guard the
-                // polylines would visibly flicker during the reveal sequence).
-                val needsRebuild =
-                    renderedSegments != routeSegments ||
-                        renderedSegmentColors != segmentColors
-                if (needsRebuild) {
-                    if (segmentPolylines.isNotEmpty()) {
-                        segmentPolylines.forEach { manager.delete(it) }
+                // Only one branch may own route geometry. Active Walk's
+                // segment list lands a dispatch behind its route points
+                // (it is computed off the main thread), so the first fixes
+                // of a walk can render through the single-polyline branch
+                // below before this one takes over — leaving that polyline
+                // to keep tracing the whole route in one flat color under
+                // the tinted segments. Retire it on the handover.
+                polyline?.let {
+                    manager.delete(it)
+                    polyline = null
+                    renderedLiveLineColor = null
+                }
+                casingPolyline?.let {
+                    casing.delete(it)
+                    casingPolyline = null
+                }
+                liveRoutePoints = emptyList()
+                liveMapboxPoints = emptyList()
+
+                // Summary maps paint in priority order (Walking, then
+                // Talking, then Meditating), NOT chronological order — see
+                // [routeSegmentsInPaintOrder]. Mapbox paints later-created
+                // annotations on top, and a finished walk that doubles back
+                // on itself can have a chronologically later Walking stretch
+                // retrace the same coordinates as an earlier
+                // Talking/Meditating one; painting by priority guarantees the
+                // higher-priority tint wins that overlap.
+                //
+                // The live map keeps chronological order instead, which is
+                // both what iOS does (its route is one GeoJSON source whose
+                // chunks are appended in walk order —
+                // `PilgrimMapView+RouteSource.swift@2ee1185`, with no
+                // reordering pass anywhere) and what the tail-mutation plan
+                // below requires: priority sorting would move the growing
+                // tail through the annotation list as its activity changed,
+                // forcing exactly the rebuild-per-fix this avoids. The
+                // segment a walker is in right now is always the newest, so
+                // an in-progress talk is never the one buried; only
+                // completed-versus-completed overlaps paint chronologically
+                // live, and the summary's priority pass restores those tints
+                // the moment the walk ends.
+                val ordered = if (chronologicalSegmentOrder) {
+                    routeSegments
+                } else {
+                    routeSegmentsInPaintOrder(routeSegments)
+                }
+                // Each annotation bakes in its color at creation, so a
+                // palette change (a walk crossing midnight into a turning
+                // day) rebuilds the set. iOS tears down its route layers and
+                // source for the same reason
+                // (`PilgrimMapView+RouteSource.swift:24-27@2ee1185`).
+                if (renderedSegmentColors != segmentColors) {
+                    segmentPolylines.forEach { manager.delete(it) }
+                    casingSegmentPolylines.forEach { casing.delete(it) }
+                    segmentPolylines = emptyList()
+                    casingSegmentPolylines = emptyList()
+                    renderedSegments = null
+                    renderedSegmentColors = segmentColors
+                }
+                val prevSegments = renderedSegments
+                // Skip everything when the rendered set already matches
+                // (revealPhase and zoomTargetBounds re-fire this lambda
+                // without changing segments; without the gate the polylines
+                // would flicker through the reveal sequence).
+                if (prevSegments != ordered) {
+                    // The mirror invariant is load-bearing for the plan: it
+                    // indexes both lists with one keepCount. Any desync — no
+                    // path produces one today — rebuilds from scratch rather
+                    // than reusing annotations it can't account for.
+                    val bookkeepingIntact = prevSegments != null &&
+                        segmentPolylines.size == prevSegments.size &&
+                        casingSegmentPolylines.size == prevSegments.size
+                    val plan = if (bookkeepingIntact) {
+                        diffRouteSegments(prev = prevSegments, next = ordered)
+                    } else {
+                        RouteSegmentDiff(keepCount = 0, mutateIndex = null)
                     }
-                    // The casing mirrors are torn down in the same pass so a
-                    // rebuilt segment set can never leave stale white
-                    // geometry tracing a route that no longer exists.
-                    if (casingSegmentPolylines.isNotEmpty()) {
-                        casingSegmentPolylines.forEach { casing.delete(it) }
+
+                    // The tail grew by this fix's point: move the geometry
+                    // rather than recreating the polyline and its mirror.
+                    plan.mutateIndex?.let { index ->
+                        val grown = ordered[index].points
+                            .map { Point.fromLngLat(it.longitude, it.latitude) }
+                        segmentPolylines[index].points = grown
+                        manager.update(segmentPolylines[index])
+                        casingSegmentPolylines[index].points = grown
+                        casing.update(casingSegmentPolylines[index])
                     }
-                    // Painted in priority order (Walking, then Talking, then
-                    // Meditating), NOT chronological order — see
-                    // [routeSegmentsInPaintOrder]. Mapbox paints
-                    // later-created annotations on top, and a walk that
-                    // doubles back on itself can have a chronologically
-                    // later Walking stretch retrace the same coordinates as
-                    // an earlier Talking/Meditating one; painting by
-                    // priority guarantees the higher-priority tint always
-                    // wins that overlap, matching the same precedence
-                    // [classify] already applies to same-timestamp overlap.
-                    val painted = routeSegmentsInPaintOrder(routeSegments).map { seg ->
+
+                    // Independent loops: a desynced pair still drains fully
+                    // instead of indexing past the shorter list.
+                    for (i in plan.keepCount until segmentPolylines.size) {
+                        manager.delete(segmentPolylines[i])
+                    }
+                    for (i in plan.keepCount until casingSegmentPolylines.size) {
+                        casing.delete(casingSegmentPolylines[i])
+                    }
+
+                    val lines = segmentPolylines.take(plan.keepCount).toMutableList()
+                    val casings = casingSegmentPolylines.take(plan.keepCount).toMutableList()
+                    for (i in plan.keepCount until ordered.size) {
+                        val seg = ordered[i]
                         val mapboxPoints =
                             seg.points.map { Point.fromLngLat(it.longitude, it.latitude) }
                         val color = when (seg.activity) {
@@ -841,21 +920,27 @@ internal fun PilgrimMap(
                             RouteActivity.Talking -> segmentColors.talking.toArgb()
                             RouteActivity.Meditating -> segmentColors.meditating.toArgb()
                         }
-                        mapboxPoints to color
+                        // Casing first, so no route polyline can exist for
+                        // even one statement without its white mirror.
+                        casings += casing.create(routeCasingOptions(mapboxPoints))
+                        lines += manager.create(routeLineOptions(mapboxPoints, color))
                     }
-                    // Casing polylines are uniform white, so the
-                    // paint-priority ordering above is irrelevant to them —
-                    // but each still mirrors one route segment's geometry.
-                    casingSegmentPolylines = painted.map { (segmentPoints, _) ->
-                        casing.create(routeCasingOptions(segmentPoints))
-                    }
-                    segmentPolylines = painted.map { (segmentPoints, color) ->
-                        manager.create(routeLineOptions(segmentPoints, color))
-                    }
-                    renderedSegments = routeSegments
-                    renderedSegmentColors = segmentColors
+                    segmentPolylines = lines
+                    casingSegmentPolylines = casings
+                    renderedSegments = ordered
                 }
             } else if (points.size >= 2) {
+                // Mirror of the handover above: a caller that goes from a
+                // segmented route back to a plain one must not leave the
+                // tinted polylines behind.
+                if (segmentPolylines.isNotEmpty() || casingSegmentPolylines.isNotEmpty()) {
+                    segmentPolylines.forEach { manager.delete(it) }
+                    casingSegmentPolylines.forEach { casing.delete(it) }
+                    segmentPolylines = emptyList()
+                    casingSegmentPolylines = emptyList()
+                    renderedSegments = null
+                    renderedSegmentColors = null
+                }
                 // AF46: project only the new tail; reuse the cached prefix.
                 val mapboxPoints = incrementalMap(
                     prevSource = liveRoutePoints,

@@ -48,13 +48,37 @@ fun computeRouteSegments(
     if (samples.size < 2) return emptyList()
 
     val meditationIntervals = intervals.filter { it.activityType == ActivityType.MEDITATING }
-    val classified = samples.map { classify(it.timestamp, meditationIntervals, recordings) }
+    val points = samples.map { sample ->
+        LocationPoint(
+            timestamp = sample.timestamp,
+            latitude = sample.latitude,
+            longitude = sample.longitude,
+        )
+    }
+    return groupIntoSegments(
+        points = points,
+        classified = samples.map { classify(it.timestamp, meditationIntervals, recordings) },
+    )
+}
+
+/**
+ * Group consecutive runs of identical activity into [RouteSegment]s.
+ * [classified] is parallel to [points]. Shared by the summary segmenter
+ * above and the live one in `LiveRouteSegments.kt` so both produce the
+ * same shape — the live renderer relies on a settled segment coming back
+ * structurally identical fix after fix.
+ */
+internal fun groupIntoSegments(
+    points: List<LocationPoint>,
+    classified: List<RouteActivity>,
+): List<RouteSegment> {
+    if (points.isEmpty()) return emptyList()
 
     val segments = mutableListOf<RouteSegment>()
     var currentActivity = classified[0]
     var currentIndices = mutableListOf(0)
 
-    for (i in 1 until samples.size) {
+    for (i in 1 until points.size) {
         val activity = classified[i]
         if (activity == currentActivity) {
             currentIndices.add(i)
@@ -63,12 +87,12 @@ fun computeRouteSegments(
             // polylines connect rather than leaving a visible gap at
             // the activity transition.
             currentIndices.add(i)
-            segments.add(buildSegment(currentActivity, currentIndices, samples))
+            segments.add(buildSegment(currentActivity, currentIndices, points))
             currentActivity = activity
             currentIndices = mutableListOf(i)
         }
     }
-    segments.add(buildSegment(currentActivity, currentIndices, samples))
+    segments.add(buildSegment(currentActivity, currentIndices, points))
 
     return segments
 }
@@ -127,14 +151,8 @@ private fun classify(
 private fun buildSegment(
     activity: RouteActivity,
     indices: List<Int>,
-    samples: List<RouteDataSample>,
+    points: List<LocationPoint>,
 ): RouteSegment = RouteSegment(
     activity = activity,
-    points = indices.map { i ->
-        LocationPoint(
-            timestamp = samples[i].timestamp,
-            latitude = samples[i].latitude,
-            longitude = samples[i].longitude,
-        )
-    },
+    points = indices.map { points[it] },
 )

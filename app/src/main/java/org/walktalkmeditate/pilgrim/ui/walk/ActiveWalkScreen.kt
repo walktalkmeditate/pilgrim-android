@@ -85,6 +85,7 @@ import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
+import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 private val SHEET_HEIGHT_EXPANDED_DP = 340.dp
@@ -261,6 +262,7 @@ fun ActiveWalkScreen(
     // WalkViewModel.walkState kdoc.
     val navWalkState by viewModel.walkState.collectAsStateWithLifecycle()
     val routePoints by viewModel.routePoints.collectAsStateWithLifecycle()
+    val liveRouteSegments by viewModel.liveRouteSegments.collectAsStateWithLifecycle()
     val recorderState by viewModel.voiceRecorderState.collectAsStateWithLifecycle()
     // U9 seek session feeds — the orchestrator's hot StateFlows through
     // the thin SeekWalkViewModel bridge. Fog/pulse feed PilgrimMap; the
@@ -749,6 +751,23 @@ fun ActiveWalkScreen(
             // (the same color the celestial-vignette halo wears); fixed
             // walking moss otherwise.
             walkingColor = activeWalkRouteColor(activeTurning, pilgrimColors),
+            // #218: the live line colors talk and meditation as they
+            // happen. iOS renders the same three activities from one match
+            // expression — meditating to dawn, talking to rust, everything
+            // else to the walking color the view hands in
+            // (`PilgrimMapView+RouteSource.swift:134-143@2ee1185`), so the
+            // turning-day override rides the walking slot exactly as it
+            // does above, and the other two are the fixed constants the
+            // summary map already uses.
+            routeSegments = liveRouteSegments,
+            segmentColors = RouteSegmentColors(
+                walking = activeWalkRouteColor(activeTurning, pilgrimColors),
+                talking = RouteSegmentColors.Fixed.talking,
+                meditating = RouteSegmentColors.Fixed.meditating,
+            ),
+            // The list grows with the walk: render it in walk order and
+            // mutate only the tail per fix.
+            chronologicalSegmentOrder = true,
             initialCenter = initialCameraCenter,
             // Match map bottom-inset to the visible sheet height so the
             // user puck stays just above the sheet in BOTH detents.
