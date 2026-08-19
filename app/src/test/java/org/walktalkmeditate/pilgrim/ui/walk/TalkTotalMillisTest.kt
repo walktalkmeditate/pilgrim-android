@@ -8,8 +8,8 @@ import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 /**
  * Pure-function cover for the Talk chip's total
  * (`ActiveWalkViewModel.swift:455-458@2ee1185`): completed rows plus the
- * elapsed time of an in-flight recording, plus the stop-seam bridge that
- * keeps the total monotonic while the finished row is still in Room's
+ * elapsed time of an in-flight recording, plus every stop-seam bridge that
+ * keeps the total monotonic while a finished row is still in Room's
  * invalidation pipeline.
  */
 class TalkTotalMillisTest {
@@ -29,7 +29,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = emptyList(),
                 recorder = VoiceRecorderUiState.Idle,
-                bridge = null,
+                bridges = emptyList(),
                 walkId = 1L,
                 nowMillis = 50_000L,
             ),
@@ -43,7 +43,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L), row(20_000L, 7_500L)),
                 recorder = VoiceRecorderUiState.Idle,
-                bridge = null,
+                bridges = emptyList(),
                 walkId = 1L,
                 nowMillis = 90_000L,
             ),
@@ -57,7 +57,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L)),
                 recorder = VoiceRecorderUiState.Recording(startedAtMillis = 20_000L),
-                bridge = null,
+                bridges = emptyList(),
                 walkId = 1L,
                 nowMillis = 23_000L,
             ),
@@ -71,7 +71,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L)),
                 recorder = VoiceRecorderUiState.Recording(startedAtMillis = 20_000L),
-                bridge = null,
+                bridges = emptyList(),
                 walkId = 1L,
                 nowMillis = 19_000L,
             ),
@@ -91,7 +91,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L)),
                 recorder = VoiceRecorderUiState.Idle,
-                bridge = bridge,
+                bridges = listOf(bridge),
                 walkId = 1L,
                 nowMillis = 23_010L,
             ),
@@ -111,7 +111,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L), row(20_000L, 3_000L)),
                 recorder = VoiceRecorderUiState.Idle,
-                bridge = bridge,
+                bridges = listOf(bridge),
                 walkId = 1L,
                 nowMillis = 40_000L,
             ),
@@ -131,7 +131,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = emptyList(),
                 recorder = VoiceRecorderUiState.Idle,
-                bridge = bridge,
+                bridges = listOf(bridge),
                 walkId = 2L,
                 nowMillis = 40_000L,
             ),
@@ -155,7 +155,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L)),
                 recorder = VoiceRecorderUiState.Recording(startedAtMillis = 20_000L),
-                bridge = bridge,
+                bridges = listOf(bridge),
                 walkId = 1L,
                 nowMillis = 23_000L,
             ),
@@ -179,7 +179,7 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(20_000L, 3_000L)),
                 recorder = VoiceRecorderUiState.Recording(startedAtMillis = 20_000L),
-                bridge = bridge,
+                bridges = listOf(bridge),
                 walkId = 1L,
                 nowMillis = 23_000L,
             ),
@@ -199,9 +199,100 @@ class TalkTotalMillisTest {
             talkTotalMillis(
                 completed = listOf(row(1_000L, 5_000L)),
                 recorder = VoiceRecorderUiState.Recording(startedAtMillis = 30_000L),
-                bridge = bridge,
+                bridges = listOf(bridge),
                 walkId = 1L,
                 nowMillis = 32_000L,
+            ),
+        )
+    }
+
+    // Reviewer-caught regression: a single-slot bridge dropped talk 1's
+    // still-unlanded contribution the instant talk 2 published its own
+    // bridge over it (reproduced: justBeforeTalk2Stops=4000,
+    // justAfterTalk2Stops=1000). Two back-to-back recordings, NEITHER row
+    // landed yet, must sum both durations — the type itself (a list) is
+    // the fix; this pins the arithmetic once it can be expressed at all.
+    @Test
+    fun `two unlanded bridges from back-to-back recordings both count`() {
+        val talk1 = PendingTalkBridge(
+            walkId = 1L,
+            startTimestamp = 1_000L,
+            endTimestamp = 4_000L,
+            durationMillis = 3_000L,
+        )
+        val talk2 = PendingTalkBridge(
+            walkId = 1L,
+            startTimestamp = 4_000L,
+            endTimestamp = 5_000L,
+            durationMillis = 1_000L,
+        )
+        assertEquals(
+            3_000L + 1_000L,
+            talkTotalMillis(
+                completed = emptyList(),
+                recorder = VoiceRecorderUiState.Idle,
+                bridges = listOf(talk1, talk2),
+                walkId = 1L,
+                nowMillis = 10_000L,
+            ),
+        )
+    }
+
+    // One row landing must not disturb a sibling bridge still in flight —
+    // the defensive "already landed" filter has to apply per-bridge, not
+    // all-or-nothing.
+    @Test
+    fun `one bridge landing does not drop a sibling bridge still in flight`() {
+        val talk1 = PendingTalkBridge(
+            walkId = 1L,
+            startTimestamp = 1_000L,
+            endTimestamp = 4_000L,
+            durationMillis = 3_000L,
+        )
+        val talk2 = PendingTalkBridge(
+            walkId = 1L,
+            startTimestamp = 4_000L,
+            endTimestamp = 5_000L,
+            durationMillis = 1_000L,
+        )
+        assertEquals(
+            3_000L + 1_000L,
+            talkTotalMillis(
+                completed = listOf(row(1_000L, 3_000L)),
+                recorder = VoiceRecorderUiState.Idle,
+                bridges = listOf(talk1, talk2),
+                walkId = 1L,
+                nowMillis = 10_000L,
+            ),
+        )
+    }
+
+    // Generalizes the single-bridge "counted once" case: a live recording
+    // plus TWO unlanded bridges from earlier talks — only the bridge that
+    // matches the live recording's start collapses via maxOf; the other
+    // is a disjoint span and contributes in full.
+    @Test
+    fun `a live recording plus two earlier unlanded bridges all count once each`() {
+        val talk1 = PendingTalkBridge(
+            walkId = 1L,
+            startTimestamp = 1_000L,
+            endTimestamp = 4_000L,
+            durationMillis = 3_000L,
+        )
+        val talk2 = PendingTalkBridge(
+            walkId = 1L,
+            startTimestamp = 4_000L,
+            endTimestamp = 5_000L,
+            durationMillis = 1_000L,
+        )
+        assertEquals(
+            3_000L + 1_000L + 2_000L,
+            talkTotalMillis(
+                completed = emptyList(),
+                recorder = VoiceRecorderUiState.Recording(startedAtMillis = 10_000L),
+                bridges = listOf(talk1, talk2),
+                walkId = 1L,
+                nowMillis = 12_000L,
             ),
         )
     }

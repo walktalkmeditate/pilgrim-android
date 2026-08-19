@@ -773,11 +773,44 @@ class WalkViewModel @Inject constructor(
         )
 
     /**
-     * A recording the recorder has already finalized and inserted, held
-     * until its row surfaces through [voiceRecordings]. See
-     * [PendingTalkBridge] for why the seam needs covering at all.
+     * Recordings the recorder has already finalized and inserted, held
+     * until each row surfaces through [voiceRecordings]. A list, not a
+     * single slot: two recordings can be un-landed at the same time when
+     * they stop back-to-back faster than Room's invalidation tracker can
+     * propagate the first insert. A single slot drops the earlier
+     * recording's contribution the instant the later one publishes over
+     * it — reviewer-caught regression, reproduced with two talks whose
+     * rows both landed after the second stop. See [PendingTalkBridge] for
+     * why the seam needs covering at all.
      */
-    private val _pendingTalkBridge = MutableStateFlow<PendingTalkBridge?>(null)
+    private val _pendingTalkBridges = MutableStateFlow<List<PendingTalkBridge>>(emptyList())
+
+    /**
+     * Append [recording]'s bridge, dropping any existing bridge whose row
+     * has already landed in [voiceRecordings] — idempotent hygiene so the
+     * list can't accumulate stale entries across a long walk with many
+     * talks. Reads [voiceRecordings] directly rather than the walk-scoped
+     * [talkWindows]/[talkTotalMillis] filtering: this is bookkeeping on
+     * the publish side, independent of any particular consumer.
+     */
+    private fun publishTalkBridge(recording: VoiceRecording) {
+        val landedStarts = voiceRecordings.value.mapTo(HashSet()) { it.startTimestamp }
+        _pendingTalkBridges.update { current ->
+            current.filterNot { it.startTimestamp in landedStarts } + PendingTalkBridge.of(recording)
+        }
+    }
+
+    /**
+     * Drop exactly one bridge — used when its recording's insert throws,
+     * so no row will ever land to self-neutralize it. Other in-flight
+     * bridges (e.g. a second talk that stopped before this one's insert
+     * failed) are untouched.
+     */
+    private fun removeTalkBridge(walkId: Long, startTimestamp: Long) {
+        _pendingTalkBridges.update { current ->
+            current.filterNot { it.walkId == walkId && it.startTimestamp == startTimestamp }
+        }
+    }
 
     /**
      * Live total voice-recording duration for the current walk: completed
@@ -795,14 +828,14 @@ class WalkViewModel @Inject constructor(
     val talkMillis: StateFlow<Long> = combine(
         voiceRecordings,
         voiceRecorderState,
-        _pendingTalkBridge,
+        _pendingTalkBridges,
         controller.state,
         ticker,
-    ) { rows, recorder, bridge, walkState, _ ->
+    ) { rows, recorder, bridges, walkState, _ ->
         talkTotalMillis(
             completed = rows,
             recorder = recorder,
-            bridge = bridge,
+            bridges = bridges,
             walkId = walkIdOrNull(walkState),
             nowMillis = clock.now(),
         )
@@ -814,11 +847,11 @@ class WalkViewModel @Inject constructor(
 
     /**
      * Closed talk spans for the walk in progress — every finished
-     * recording's row, plus the one held by [_pendingTalkBridge] while
-     * Room's invalidation is still in flight. Without the bridged span the
-     * stretch a walker just talked through would flick back to walking
-     * green for the frames between the recorder stopping and the row
-     * landing, and take the whole polyline set down with it.
+     * recording's row, plus every span held by [_pendingTalkBridges]
+     * while Room's invalidation is still in flight. Without the bridged
+     * spans the stretch a walker just talked through would flick back to
+     * walking green for the frames between the recorder stopping and the
+     * row landing, and take the whole polyline set down with it.
      *
      * The recording happening RIGHT NOW is not here: iOS classifies it
      * with an open-ended `timestamp >= recStart` test instead
@@ -827,15 +860,16 @@ class WalkViewModel @Inject constructor(
      */
     private val talkWindows: StateFlow<List<ActivityWindow>> = combine(
         voiceRecordings,
-        _pendingTalkBridge,
+        _pendingTalkBridges,
         controller.state,
-    ) { rows, bridge, walkState ->
+    ) { rows, bridges, walkState ->
         val closed = rows.map { ActivityWindow(it.startTimestamp, it.endTimestamp) }
-        val unlanded = bridge?.takeIf { pending ->
-            pending.walkId == walkIdOrNull(walkState) &&
+        val walkId = walkIdOrNull(walkState)
+        val unlanded = bridges.filter { pending ->
+            pending.walkId == walkId &&
                 rows.none { row -> row.startTimestamp == pending.startTimestamp }
-        } ?: return@combine closed
-        closed + ActivityWindow(unlanded.startTimestamp, unlanded.endTimestamp)
+        }
+        closed + unlanded.map { ActivityWindow(it.startTimestamp, it.endTimestamp) }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
@@ -1098,15 +1132,19 @@ class WalkViewModel @Inject constructor(
     internal suspend fun handleRecordingInterruption(result: Result<VoiceRecording>) {
         val recording = result.getOrNull()
         if (recording != null) {
-            _pendingTalkBridge.value = PendingTalkBridge.of(recording)
+            publishTalkBridge(recording)
             try {
                 repository.recordVoice(recording)
             } catch (cancel: CancellationException) {
+                // Not cleared here: a cancellation only reaches this catch
+                // via viewModelScope teardown (the VM being cleared), and
+                // the bridge's state dies with it — there is no surviving
+                // Talk chip left to over-count.
                 throw cancel
             } catch (t: Exception) {
                 // No row will ever land, so the bridge must stop claiming
                 // one — otherwise the Talk chip counts audio that was lost.
-                _pendingTalkBridge.value = null
+                removeTalkBridge(recording.walkId, recording.startTimestamp)
                 // Orphan .wav with no DB row — the sweeper reclaims it. Log so
                 // an interrupted-but-not-saved recording is diagnosable rather
                 // than silently lost (e.g. the walk was purged mid-interruption).
@@ -1129,7 +1167,7 @@ class WalkViewModel @Inject constructor(
                 // can surface the new row before this coroutine resumes, and
                 // the seam has to be covered from the moment the recorder
                 // stopped, not from whenever the insert returns.
-                _pendingTalkBridge.value = PendingTalkBridge.of(recording)
+                publishTalkBridge(recording)
                 // If the insert fails we have a .wav on disk with no DB
                 // row — Stage 2-E's sweeper cleans orphans. Surface the
                 // failure to the user as a generic Other-kind banner.
@@ -1137,9 +1175,12 @@ class WalkViewModel @Inject constructor(
                     repository.recordVoice(recording)
                     _voiceRecorderState.value = VoiceRecorderUiState.Idle
                 } catch (cancel: CancellationException) {
+                    // Not cleared here: reachable only via viewModelScope
+                    // teardown (the VM being cleared), so the bridge's
+                    // state dies with it — nothing left to over-count.
                     throw cancel
                 } catch (_: Exception) {
-                    _pendingTalkBridge.value = null
+                    removeTalkBridge(recording.walkId, recording.startTimestamp)
                     _voiceRecorderState.value = errorState(
                         "couldn't save the recording",
                         VoiceRecorderUiState.Kind.Other,
@@ -1997,8 +2038,11 @@ internal data class PendingTalkBridge(
 
 /**
  * Talk-chip total for an in-progress walk: [completed] row durations, the
- * elapsed time of a recording in flight right now, and [bridge] while a
- * just-finished recording's row is still in Room's pipeline.
+ * elapsed time of a recording in flight right now, and every span in
+ * [bridges] whose just-finished recording's row is still in Room's
+ * pipeline. More than one bridge can be unlanded at once — two talks
+ * stopped back-to-back, the second before the first's row has propagated
+ * — and each contributes its own duration.
  *
  * iOS parity `ActiveWalkViewModel.swift:455-458@2ee1185`:
  * ```swift
@@ -2011,7 +2055,7 @@ internal data class PendingTalkBridge(
 internal fun talkTotalMillis(
     completed: List<VoiceRecording>,
     recorder: VoiceRecorderUiState,
-    bridge: PendingTalkBridge?,
+    bridges: List<PendingTalkBridge>,
     walkId: Long?,
     nowMillis: Long,
 ): Long {
@@ -2031,19 +2075,26 @@ internal fun talkTotalMillis(
     } else {
         0L
     }
-    val unlandedBridge = bridge?.takeIf { pending ->
+    val unlandedBridges = bridges.filter { pending ->
         pending.walkId == walkId &&
             completed.none { row -> row.startTimestamp == pending.startTimestamp }
-    } ?: return completedSum + live
-    // The bridge is published one `MutableStateFlow` write before the
-    // recorder state leaves Recording, so a combine can see both terms
-    // describing the SAME recording. `now - startedAt` already spans
-    // everything the bridge would add there, so take it once.
-    return if (liveStart == unlandedBridge.startTimestamp) {
-        completedSum + maxOf(live, unlandedBridge.durationMillis)
-    } else {
-        completedSum + live + unlandedBridge.durationMillis
     }
+    // The bridge for the recording that's CURRENTLY live (if any) is
+    // published one `MutableStateFlow` write before the recorder state
+    // leaves Recording, so a combine can see both terms describing the
+    // SAME recording. `now - startedAt` already spans everything that
+    // bridge would add, so take it once via maxOf rather than summing.
+    // Every OTHER unlanded bridge — an earlier, already-stopped recording
+    // whose row hasn't landed yet — describes a disjoint span and
+    // contributes its own duration in full.
+    val liveBridgeDuration = unlandedBridges
+        .firstOrNull { it.startTimestamp == liveStart }
+        ?.durationMillis
+    val liveTerm = if (liveBridgeDuration != null) maxOf(live, liveBridgeDuration) else live
+    val otherBridgesSum = unlandedBridges
+        .filter { it.startTimestamp != liveStart }
+        .sumOf { it.durationMillis }
+    return completedSum + liveTerm + otherBridgesSum
 }
 
 /**
