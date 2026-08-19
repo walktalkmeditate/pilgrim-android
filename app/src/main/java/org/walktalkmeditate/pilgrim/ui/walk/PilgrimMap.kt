@@ -930,10 +930,13 @@ internal fun PilgrimMap(
                 // equivalent because its map starts at the device region
                 // rather than the globe. Prefer our own first sample, else
                 // the caller's cached last-known location. setCamera, never
-                // easeTo: a camera ANIMATION from a non-viewport owner
-                // idles the viewport plugin (ViewportPluginImpl's
-                // cameraAnimationsLifecycleListener), which would silently
-                // cancel follow.
+                // easeTo: the viewport plugin owns the camera while a
+                // follow state is active, and a competing animator from
+                // this seam would fight its writes frame-by-frame. (The
+                // plugin's own idle-on-animator listener is scoped to
+                // gesture-owned animators only — verified against
+                // ViewportPluginImpl bytecode in 11.11.0 — so the risk is
+                // camera contention, not a formal idle transition.)
                 val center = points.firstOrNull() ?: initialCenter
                 if (center != null) {
                     view.mapboxMap.setCamera(
