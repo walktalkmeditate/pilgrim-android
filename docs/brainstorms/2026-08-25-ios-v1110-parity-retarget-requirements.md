@@ -1,0 +1,124 @@
+---
+date: 2026-08-25
+topic: ios-v1110-parity-retarget
+---
+
+# iOS v1.11.0 Parity Retarget — Thought Threads
+
+## Summary
+
+Re-pin the frozen Android parity anchor from `2ee1185` (the commit iOS tagged v1.10.0) to `0172e2b` (the v1.11.0 tag, 2026-08-25), then port the one feature iOS shipped since: **Thought Threads** — on-device semantic analysis of walk transcripts feeding the AI-prompt dossier and intention chips — in its **net post-field-verdict state**, as Phase 20. Ships as Android v1.5.0, single release.
+
+---
+
+## Problem Frame
+
+Android v1.4.0 shipped at exact parity with `2ee1185` = the v1.10.0 tag, so the delta is exactly v1.10.0 → v1.11.0: 89 commits, ~17.6K insertions, tag `0172e2b` at the head. The feature was built, field-tested, and partially *removed* inside the delta — iOS's Stage 3 surfaces (per-walk card, thread history view, lunation recap, release gesture) died at the real-device field verdict of 2026-08-24 and never shipped. Android ports the end state only.
+
+| iOS delta | Content | Android disposition |
+|---|---|---|
+| PR #65 (`feat/thought-threads`, Stages 1–2) | Engine: `TranscriptNLP`, `ThemeExtractor`, `MarkerAnalyzer`/`MarkerLexicons`, `TranscriptContext`(+Store/Analyzer), `ThreadStore`, `ThreadsBackfill`, `ThreadsDossierBuilder`/`Formatter`, dossier sections, `AttentionDirectives` v2, toggle, deletion hygiene | Port — Phase 20 |
+| PR #66 (`feat/thought-threads-stage3`) | Card, thread view, lunation machinery + recap, release gesture, chips live, demo threads | Port only the survivors: chips + `LunationCalendar`; card/view/recap/release removed by PR #67 (end-state port) |
+| PR #67 (`refactor/threads-dossier-first`) | Field-verdict refit: noun-only themes + `SpokenStoplist`, surface removal, released-set unwind, backfill key V3, intention-shelf alignment fixes | Absorbed (end-state port). Shelf-alignment fixes are iOS-layout-specific — Android's new Recurring shelf simply matches its own existing shelf layout |
+| PR #68 (`feat/dossier-senses-2`) | Nine senses → eight after ship gate, coordinate hygiene, module-purity architecture, field report seam, memo write-count invalidation | Port — net state (question density never built) |
+| PR #69 (`fix/context-schema-v2`) | Analysis-version stamping (stale cache can't masquerade as current), empty-read prune guard | Absorbed (end-state port) |
+| PR #70 (`feat/modal-lean`) | Modal families lexicon (six named families, ordered arrays) + dossier lean lines | Port |
+| PR #71 (`fix/gate-adjustments`) | Ship-gate cuts: question-density sense removed, climate guard majority→mode, `day`/`days`/`area` join `lightNouns` | Absorbed (end-state port) |
+| `9529fff` (CoreStore UUID-as-string fix) | iOS query-layer bug: `queryAttributes` returned empty for UUID columns | N/A — Room uses typed indexed columns; no such query path exists on Android |
+| `41b2249` (test dataStack tearDown fix) | iOS test-harness hygiene | N/A |
+| PR #64 (README), build bumps, docs/plans | iOS release tooling and chores; `ScreenshotDataSeeder` demo threads (App Store screenshot tooling — Android has no seeder analogue) | Out of scope (standing precedent) |
+
+Nothing in the delta touches `pilgrim-worker` — the iOS spec pins "nothing leaves the device; worker/viewer untouched." There is no schema migration on either platform: derived analysis is a recomputable file cache.
+
+**The one mechanical divergence:** iOS's engine rides Apple's NaturalLanguage framework (`NLLanguageRecognizer`, `NLTagger` lemmatization/POS/sentiment, `NLEmbedding`). Android has no OS-provided equivalent, so the port substitutes a self-contained substrate with the same semantics (R6). Decisions taken at brainstorm (2026-08-25): WordNet-derived lemma/POS assets + Kotlin Morphy rules; lemma-or-shared-synset for relatedness; VADER-lite for sentiment; ML Kit `language-id` for detection; **English-only analysis in v1** with honest language-gated degradation.
+
+---
+
+## Requirements
+
+**Anchor re-pin**
+
+- R1. The frozen parity anchor becomes `pilgrim-ios` @ `0172e2b` (the v1.11.0 tag, 2026-08-25). Update the parity-scope section of `CLAUDE.md`, the `ios-parity` skill's pinned anchor, and memory/doc references that name `2ee1185` as the current target.
+- R2. The fold-in rule carries forward unchanged: iOS commits landing before Android v1.5.0 ships are re-diffed and triaged — chores, hotfixes, and incremental refinements to the dossier/senses/chips surfaces fold into Phase 20 (reopening it if closed; once v1.5.0 is code-complete and awaiting release, the delta becomes a named pre-release stage gated before the tag), then re-pin. A new headline feature, a revert of ported work, or a redesign triggers explicit user re-triage.
+
+**Phase 20 — Thought Threads, net state (iOS PRs #65–#71)**
+
+- R3. Port the end-state Swift at the pin. Spec sources: iOS `docs/superpowers/specs/2026-08-22-thought-threads-design.md` (including its Stage 3 field verdict) + `docs/superpowers/specs/2026-08-24-dossier-senses-2-design.md` + the four plan docs, cross-checked against shipped code wherever the journey diverged — shipped code wins. Known superseded content at the pin: every Stage 3 surface section (card, thread view, recap, release gesture — removed by the dossier-first refit; never build), the question-density sense (cut at ship gate), the majority-form climate guard (now mode-based), `[noun, verb, adjective]` theme classes (now noun-only + `SpokenStoplist`), and chips' `pendingFieldGate` (shipped `false` — chips are live). Port-spec writers re-derive all details from the Swift at `0172e2b`.
+- R4. Engine parity — themes and markers:
+  - `TranscriptNlp`: single tokenizer (lowercased letters-only split) for every word count and density; lemma mentions with character offsets; a POS-classes parameter defaulting to noun+verb+adjective (intention echo and insight words keep verbs) with `ThemeExtractor` passing noun-only; surface forms ≤ 2 characters skipped; language detection confidence ≥ 0.5.
+  - `ThemeExtractor`: exact-lemma thread identity, `minimumMentions = 2`, display-term selection (lemma cohorts can share one display term), deterministic with the `recurringWord` tie-break convention, `walkingDomain` suppression list and `SpokenStoplist.lightNouns` (including the ship-gate additions `day`, `days`, `area`) verbatim from iOS.
+  - `MarkerAnalyzer` + `MarkerLexicons`: 19-word absolutist dictionary (Al-Mosaiwi & Johnstone 2018 Table 1, copied verbatim), first-person-singular density, insight/causation/discrepancy mini-lexicons, temporal-orientation heuristic, modal families (six named families as ordered arrays so dominant-word ties are stable; single-token only — "have to" stays deferred), sentiment in the optional slot. Marker reporting rules: densities with baselines only at ≥ 100 words, raw counts + small-sample note below, every density carries its word count, baselines are the walker's own rolling spoken baseline with literature figures secondary and register-labeled.
+  - `SpokenStoplist.scaffoldLemmas` skips scaffold words in the recurring-word attention directive; modal words are excluded from the recurring-word directive but keep per-word identity in the markers channel.
+- R5. English-only analysis in v1 (accepted divergence): the detected language gates everything — a non-English recording produces no themes and no markers (silent skip, matching iOS's "degradation, not pretense" principle; iOS themes work wherever Apple ships models, Android bundles English only). The "prompts name the detected transcript language" behavior ports fully and works for all languages.
+- R6. NLP substrate (Android-original mechanics, parity semantics):
+  - Dev-time derivation script (committed, re-runnable; it fetches WordNet 3.1 at run time — only the derived assets are committed) produces compressed assets: noun/verb/adjective lemma sets, Morphy suffix rules + irregular-form exceptions, and a lemma→synset map. License attribution joins the app's existing third-party notices (WordNet's BSD-style license; VADER's MIT).
+  - Runtime is pure Kotlin: dictionary-based lemmatization + POS membership (no contextual disambiguation — accepted; the suppression lists, noun-only classes, and ≥ 2-mention floor absorb homograph noise), deterministic by construction (stronger than iOS's "deterministic per OS release").
+  - `related(a, b)` = same lemma OR shared WordNet synset (replaces `NLEmbedding` cosine; deterministic and traceable).
+  - Sentiment = VADER-lite Kotlin port feeding the same optional `sentiment: Double?` slot; the dossier line self-omits when null (non-English, or lexicon miss).
+  - Language detection = ML Kit `language-id` behind an `MlKitLanguageIdClient` wrapper following the existing `MlKit*Client` pattern.
+- R7. Context pipeline parity:
+  - Analysis triggers immediately after the transcription persists, in the transcription worker, off-main. The whisper JNI layer gains per-segment output (text, t0/t1, no-speech probability); compression ratio is computed Kotlin-side from segment text (OpenAI semantics). Segments failing iOS's quality thresholds are excluded before analysis, and a theme's thread membership requires ≥ 1 mention in a non-flagged segment — hallucinations cannot found threads. Recordings under 25 words are skipped.
+  - One JSON per recording under `filesDir/transcript_contexts/<uuid>.json`, holding the `TranscriptContext` + a hash of the transcript it was computed from (inline edits recompute on next access) + the analysis version (stale-version contexts recompute rather than masquerade as current). Files excluded from Auto Backup via backup rules. An empty or failed directory read is treated as "unknown", never as "empty history" — the prune stays its hand (iOS PR #69 semantics).
+- R8. Backfill and battery-gate parity: when the feature first activates, a one-time backfill analyzes all existing transcribed recordings — toggle-gated, battery-gated, resumable; Android mechanism is a plain `OneTimeWorkRequest` with `BatteryNotLow` (KEEP policy; **not** expedited — Stage 2-F lesson), plus whatever lazy fallback the shipped iOS code keeps for missed recordings (exact trigger re-derived at port per R3). One completion key at iOS's V3 semantics — no legacy-key clears (V1/V2 never existed on Android). Toggle re-enable re-arms the backfill. iOS's `BatteryGate` (allow when level unknown, above 20%, or charging) also gates **auto-transcription kickoff** at the pin — Android ports that consumer as a runtime check in the transcription scheduling path, NOT as a WorkManager constraint on the transcription request, which is expedited and would crash on `Expedited + BatteryNotLow` (the documented Stage 2-F trap).
+- R9. `ThreadStore` parity: compute-on-demand aggregation; *first time* computed against full analyzed history; recurrence counted over a trailing 30-day window anchored to the viewed walk's own date; origin-claiming labels suppressed until backfill completes; salience direction computed but dossier-only; deterministic; in-memory memoization whose key includes a store write-count so external writes always invalidate (iOS "the memo counts its own writes").
+- R10. Dossier parity: `PromptAssembler` gains the threads sections — per-recording marker profiles with word counts and personal baselines, modal leans with family names, thread trajectories, themes-vs-pace correlation, thread-aware attention directives — plus the handling note in the response contract (markers are descriptive signals, not diagnoses), emitted only when the dossier is present. `AttentionDirectives` v2: lemma-based content words and recurring word (scaffold-skipping), `related()`-based intention echo, 4-directive cap and deterministic tie-breaks unchanged.
+- R11. Dossier Senses parity — eight senses at iOS's field-tuned thresholds, inherited not re-derived:
+  - Place-theme resonance (150 m clusters, ≥ 2 walks, specificity guard as strict `spread < baseline/2` with the zero-baseline degenerate suppressed, candidate cap 4, backfill-gated).
+  - Moon line (once per closed lunation via a persisted lunation index; only the most-recently-closed lunation ever eligible; requires the current walk to have recorded words; `LunationCalendar` port with timezone-pinned month-moon names).
+  - Theme-marker coloring (±15-word windows, ≥ 2× overall density, ≥ 3 tokens, emitted only when the full dossier — and thus the handling note — is present).
+  - Intention lineage (≥ 3 in-window walks sharing a non-scaffold intention lemma; the "want"-only pair must not cluster).
+  - Climb anchoring (top-decile smoothed gradient, ≥ 20 m gain, skip when total ascent < 50 m).
+  - Weather weave (mode-based climate guard — skip when the shared category is or ties for the window's most common condition; Open-Meteo condition mapping into iOS's buckets — rain, snow, clear, cloud, wind, fog, unknown — with a drift test asserting every storable Android condition maps; any excluded walk voids the claim).
+  - Photo adjacency (75 m + 10 min, place-first framing; nearest qualifying pair only).
+  - Speech shape (all recordings in the first third + wordless remainder > 30 min).
+  - Block rules: at most one line per sense, 3-line cap, fixed priority order, one-theme-one-line dedup, silence as default. Coordinate hygiene everywhere a recording is located: nearest route sample within 90 s of recording start AND accuracy < 100 m (the ceiling `FusedLocationSource` already enforces). Module purity: `DossierSenses` receives every input as an argument — no DataManager/singleton access — with the caller (`ThreadsDossierBuilder`) doing all fetches via bounded, indexed Room queries.
+- R12. Surfaces parity:
+  - Intention chips: a "Recurring" section in `IntentionSettingSheet` — a thread qualifies after recurring across ≥ 2 distinct walks in the trailing 30 days, ranked by distinct-walk count then alphabetically, capped at 2, live from day one (iOS's field gate passed; `pendingFieldGate` shipped `false`), laid out flush-left matching the existing shelves.
+  - Settings: one "Thought threads after walks" toggle (default ON) in the voice settings card. Off means off everywhere: no dossier sections, no senses, no chips, no new analysis, no backfill; contexts already on disk are neither read nor extended; re-enabling re-arms the backfill.
+  - The dev field report (sense-firing visibility for humans) ports as a debug-only seam.
+- R13. Hygiene parity: recording/walk deletion (single and Delete All Data) removes the corresponding context files directly; `ThreadStore` aggregation additionally prunes orphans; Delete All clears threads preference state (backfill key, moon-line index) with everything else; `.pilgrim` import invalidates contexts via a generation bump so imported databases never read another install's stale analysis. Threads data never enters shares, exports, or the worker payload — permanently.
+- R14. Privacy posture parity: nothing is collected or transmitted; derived data is a recomputable local cache; the only egress is the walker deliberately copying a prompt. Play Data Safety declarations are verified unchanged (nothing new is collected). Marketing/store copy uses the precise "the app never transmits transcripts or derived data" form, never an absolute claim.
+
+**Acceptance and verification**
+
+- R15. Phase 20 stages get `/ios-parity port` specs with Swift quotes pinned to `0172e2b` before implementation.
+- R16. Unit tests per house rules, including the platform-object builder Robolectric rule — the backfill `WorkRequest` builder and the ML Kit client wrapper qualify; the JNI segment surface gets a real-invocation test appropriate to its seam (Robolectric for the Kotlin side; the native path is device-verified). Android-original test families: WordNet-asset derivation pins (regenerating assets cannot silently change pinned lemma/POS/synset outcomes), VADER fixtures with exact scores, Open-Meteo→bucket drift test. Ported test families: lexicon fixtures with exact counts, the noun-only scaffold regression (pure-scaffold transcript yields zero themes; "music" ×3 among scaffolding yields exactly "music"), determinism, per-sense geometry/guard fixtures, cap+priority+dedup, string-pinned sense templates with substituted counts, hash and version invalidation, deletion/import hygiene, backfill state machine, marker floors, ASR-flag exclusion.
+- R17. Device QA on the OnePlus 13: real recordings → transcription → analysis → dossier read out of a copied AI prompt; chips appear after a theme recurs across 2 real walks; toggle-off sweep (dossier sections, senses, chips all gone; no new contexts written); first-activation backfill over the existing on-device history with origin suppression observed until completion; deletion hygiene (single + Delete All); field-report inspection of sense firings; a non-English recording produces no analysis and the prompt names the language. LLM-readback spot check: paste a real Android dossier (including elevated marker profiles if available) into a consumer LLM and verify no clinical or diagnostic language — the handling note ports verbatim from iOS's passed gate, so this is inherited-pass verification, not re-tuning.
+
+**Release**
+
+- R18. Single Android release: v1.5.0 containing Phase 20 and the re-pin, versionCode assigned at release dispatch per pipeline convention, staged rollout via the normal `production.yml` dispatch. Android versioning stays independent of iOS's 1.11.0.
+
+---
+
+## Acceptance Examples
+
+- AE1. **Covers R4, R7.** Given a ≥ 25-word transcript of pure spoken scaffolding ("was", "have", "think", …), analysis yields zero themes; given "music" spoken three times amid that scaffolding, exactly the "music" theme emerges. (The iOS field-verdict regression, pinned on both platforms.)
+- AE2. **Covers R7.** Given a recording whose transcript is edited inline after analysis, when the dossier next builds, the stored hash mismatch forces recomputation and no stale theme or marker renders.
+- AE3. **Covers R11.** Given a walker whose recordings all cluster on one neighborhood loop, the place-resonance line never fires (spread ≥ baseline/2); given a wide-roaming walker whose "music" mentions cluster within 150 m across two walks, it fires with the actual count substituted.
+- AE4. **Covers R5.** Given a Japanese-language recording, no themes, markers, or chips derive from it, the AI prompt names Japanese as the detected language, and no junk English analysis appears.
+- AE5. **Covers R8, R13.** Given Delete All Data, the context directory empties, the backfill key and moon-line index reset, and chips disappear; re-recording after that starts clean.
+- AE6. **Covers R8, R9.** Given a device holding 40 transcribed walks when v1.5.0 first launches, the backfill sweeps them battery-gated and origin-claiming labels stay suppressed until it completes.
+- AE7. **Covers R2.** Given iOS ships a v1.11.x hotfix before Android v1.5.0 is tagged, the delta is re-diffed and folds into Phase 20 without reopening this doc.
+
+---
+
+## Success Criteria
+
+- Android v1.5.0 ships Thought Threads at net-state parity with `0172e2b` per the R15 parity specs, confirmed by the R17 device QA pass including the LLM-readback spot check.
+- `CLAUDE.md` and the `ios-parity` skill name `0172e2b` as the frozen parity target; nothing still points at `2ee1185` as current.
+- A dossier generated from a given transcript set is section-equivalent to iOS's for the same inputs — same sections, same rules, same caps, same template strings — with the acknowledged mechanical differences (lemma engine, synset-vs-embedding echo, VADER-vs-Apple sentiment values) documented, not silent.
+- With the toggle off, prompts render exactly as v1.4.0 does today and no analysis artifact is written.
+- Planning can start Phase 20 from this doc plus the iOS spec/plan docs without inventing scope, sequencing, or acceptance criteria.
+
+---
+
+## Scope Boundaries
+
+- The dead Stage 3 surfaces — per-walk card, thread history view, lunation recap UI, "let this one go" release gesture and its released-set `.pilgrim` carve-out — were removed by iOS before ship and are never built on Android.
+- The question-density sense — cut at iOS's ship gate as a Whisper punctuation artifact; never built.
+- Multilingual theme extraction — English-only analysis in v1 (R5); revisit only on real demand, as its own re-triage.
+- Embedding-based relatedness and clustering — synset matching stands in (R6); numeric parity with `NLEmbedding` distances is explicitly a non-goal, as is numeric parity of sentiment scores.
+- Worker-side work of any kind — the delta touches none.
+- iOS release tooling: `ScreenshotDataSeeder` demo threads (no Android seeder exists), build bumps, pbxproj churn, README content (Android's README already walks its own path).
+- Foundation-Models-style on-device generation, wellbeing scores, alerting, streaks, notifications — out of scope on iOS too, permanently.
