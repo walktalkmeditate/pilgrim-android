@@ -57,13 +57,13 @@ R1–R18 in `docs/brainstorms/2026-08-25-ios-v1110-parity-retarget-requirements.
 | Unit | Covers |
 |---|---|
 | U1 | R1, R2 |
-| U2 | R15 (engine slice spec) |
+| U2 | R15 (engine slice spec), R3 (shipped-code-wins sourcing) |
 | U3 | R5, R6 |
 | U4 | R4 (+AE1) |
 | U5 | R7 (+AE2), R13 (file hygiene) |
 | U6 | R8 (+AE5, AE6 backfill side), R12 (toggle plumbing) |
 | U7 | R9, R10 |
-| U8 | R15 (senses slice spec) |
+| U8 | R15 (senses slice spec), R3 (shipped-code-wins sourcing) |
 | U9 | R11 (+AE3), R12 (field report) |
 | U10 | R12 (chips, toggle UI), R14 (clipboard hardening) |
 | U11 | R16 (golden fixture + integration families), Success Criteria |
@@ -83,7 +83,7 @@ Everything in the requirements doc's Scope Boundaries section — dead surfaces,
 - `location/FusedLocationSource.kt:206` — the 100 m accuracy ceiling ("iOS hard ceiling: any horizontalAccuracy >= 100m is rejected") the coordinate-hygiene rule reuses.
 - `ui/settings/voice/VoiceCard.kt` + `SettingToggle` (description is a required parameter), `ui/walk/IntentionSettingSheet.kt` (existing `ChipSection` shelves: Suggested, Recent — Recurring renders above both), `ui/walk/summary/` recordings section (battery-skip banner home).
 - `OrphanRecordingSweeper` — daily WorkManager job re-enqueueing untranscribed rows; this is the retry loop that makes a runtime battery-gate skip safe (case (d) re-enqueue verified).
-- `LunarPhase` (existing moon-phase math from the Light Reading card) — `LunationCalendar` builds beside it, not into it.
+- `core/celestial/MoonCalc.kt` + `MoonPhase.kt` (the Android moon math; iOS's `LunarPhase` exists here only in porting comments) — `LunationCalendar` builds beside them, not into them; the private new-moon epoch constant needs promotion to `internal` (same precedent as `SYNODIC_DAYS`) so lunation arithmetic shares the exact epoch and can never disagree with phase math.
 
 ### Institutional Learnings (memory, directly applicable)
 
@@ -105,7 +105,7 @@ Everything in the requirements doc's Scope Boundaries section — dead surfaces,
 2. **`related()` = same lemma OR shared synset** — deterministic, traceable; no embeddings, no numeric parity with `NLEmbedding`.
 3. **VADER-lite sentiment** into the optional `sentiment` slot; numeric non-parity with Apple accepted; formatter self-omits on null.
 4. **Segment quality:** JNI exposes per-segment `text/t0/t1/no_speech_prob` (additive API — the existing full-text path is untouched); compression ratio computed Kotlin-side (UTF-8 byte length ÷ deflate length, matching OpenAI semantics). Thresholds `compressionRatio > 2.4 || noSpeechProb > 0.6` with the QA flag-rate gate before release. Flags are never persisted; the guard applies to initial analysis only (parity with iOS).
-5. **Backfill = V6 semantics from day one:** freshness is `analysisVersion`-aware, stale-schema orphans pruned before sweep, completion recorded only when every snapshot item is accounted for; checkpointed batches (25 per pass, matching iOS's batch size) so a mid-run process kill resumes rather than restarts. Single fresh key — no legacy hygiene.
+5. **Backfill = V6 semantics from day one:** freshness is `analysisVersion`-aware, stale-schema orphans pruned before sweep, completion recorded only when every snapshot item is accounted for; checkpointed batches (25 per pass, matching iOS's batch size) so a mid-run process kill resumes rather than restarts. Single fresh key that stores the `ANALYSIS_VERSION` it completed at (version bump → automatic re-arm) — no legacy hygiene.
 6. **Battery gate placement:** runtime check at *enqueue* (the scheduling path — mirroring iOS's `MainCoordinatorView` kickoff site), with `OrphanRecordingSweeper`'s daily re-enqueue as the retry loop; the skipped-reason banner rides walk summary state. The backfill worker also re-checks at run start (cheap, defense in depth).
 7. **File cache format:** one gzip'd JSON per recording, `filesDir/transcript_contexts/<uuid>.json.gz`, kotlinx.serialization, `transcriptHash` = SHA-256 of the transcript string, `analysisVersion` int const. Backup exclusion via `res/xml` backup rules (both `fullBackupContent` and `dataExtractionRules` documents).
 8. **Asset packaging:** derived WordNet + VADER assets ship as gzip'd flat files under `app/src/main/assets/threads/`, lazily loaded once off-main into an in-memory `WordNetLexicon` on first analysis; derivation script is `tools/threads/derive_nlp_assets.py` (committed, fetches WordNet 3.1 at run time, emits assets + a pinned manifest of counts/hashes that R16's derivation-pin tests assert against).
@@ -123,6 +123,10 @@ Everything in the requirements doc's Scope Boundaries section — dead surfaces,
 - Recovery affordance after battery skip → port iOS's transcribe-all affordance alongside the banner; exact copy from the U2 spec (Swift wins).
 - NLP substrate field gate → folded into U12 device QA: real-transcript theme-quality read + flagged-segment rates via the field report, with an explicit accept-or-tune decision before release (R17).
 - `recurringWord` tie-break convention → pinned verbatim in the U2 parity spec from `AttentionDirectives.swift`; not restated here.
+- (Plan-review round) Delete All Data → no such Android surface exists; full-wipe hygiene is an internal tested API that preserves `threadsAfterWalks` + the backfill key and clears the moon-line key + contexts (pin-verified iOS `deleteAll` behavior).
+- (Plan-review round) Backfill activation site → the app launch path calls `ensureScheduled()` toggle-gated until completion (U6).
+- (Plan-review round) Memo placement → above the I/O in `ThreadsDossierBuilder` and `ThreadIntentionSuggestions`; `ThreadStore.build` stays pure (iOS placement).
+- (Plan-review round) Golden-capture harness home → committed as a patch beside the fixture README in this repo (the iOS pin is frozen).
 
 ### Deferred to Implementation (pinned by the U2/U8 specs)
 
@@ -130,6 +134,8 @@ Everything in the requirements doc's Scope Boundaries section — dead surfaces,
 - Exact segment-flag thresholds' constants home and the transcribe-all copy.
 - `SenseInputs` field-by-field shape (mirrors `DossierSenses.lines` parameters at the pin).
 - What's-new / release copy (U12; discloses speech analysis default-ON + first-launch backfill).
+- Whether `OrphanRecordingSweeper`'s daily re-enqueue should itself pass the battery gate, or remains intentionally ungated recovery — the U2 spec pins whichever behavior is parity.
+- Acoustic language detection (`whisper_full_lang_id`, free from the multilingual model at transcription time) as a documented Android-original improvement over the pin's text-based gate — candidate for a fast-follow, not v1 (v1 stays bug-for-bug with iOS).
 
 ## High-Level Technical Design
 
@@ -169,7 +175,7 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 
 ### U2. Parity spec A — `/ios-parity port` engine slice
 
-**Goal:** A pinned spec with Swift quotes for every behavior U3–U7 implement: `TranscriptNLP`, `ThemeExtractor` + `SpokenStoplist`, `MarkerLexicons`/`MarkerAnalyzer` (incl. modal families), `TranscriptContext(+Store/Analyzer)`, `TranscriptionService` trigger + flag thresholds + skipped-reason surface, `ThreadsBackfill` (V6), `BatteryGate`, `ThreadStore`, `ThreadsDossierBuilder/Formatter`, `AttentionDirectives` v2, `PromptAssembler` sections + handling note + language naming, `UserPreferences` keys, deletion/import hygiene (`DataManager` + `PilgrimPackageImporter` generation).
+**Goal:** A pinned spec with Swift quotes for every behavior U3–U7 and U10 implement: `TranscriptNLP`, `ThemeExtractor` + `SpokenStoplist`, `MarkerLexicons`/`MarkerAnalyzer` (incl. modal families), `TranscriptContext(+Store/Analyzer)` incl. tombstone deletion, `TranscriptionService` trigger + flag thresholds + skipped-reason surface, `ThreadsBackfill` (V6), `BatteryGate`, `ThreadStore`, `ThreadsDossierBuilder/Formatter` (incl. the pace-correlation tuple + memo placement), `AttentionDirectives` v2, `PromptAssembler` sections + handling note + language naming, `UserPreferences` keys, deletion/import hygiene (`DataManager` + `PilgrimPackageImporter` generation), and — because no third spec unit exists — `ThreadIntentionSuggestions` (chip phrase template "walk with '<term>'", dedup-before-cap) plus the chips/toggle surfaces (`IntentionSettingView` Recurring section incl. its async empty-start load, `VoiceCard` toggle row copy + placement).
 
 **Files:**
 - Create: `docs/parity/<run-date>-threads-engine-port.md` (path assigned by the ios-parity skill at run time)
@@ -198,7 +204,7 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 - `class MlKitLanguageIdClient`: `suspend fun detect(text: String): String?` (null below 0.5 confidence, mirroring iOS)
 
 **Steps:**
-- [ ] Write + run the derivation script; commit assets + manifest. Script excludes abbreviation/initialism-only noun entries per decision 1; README-style header in the script documents provenance + licenses; attribution lines land in the About/notices surface.
+- [ ] Write + run the derivation script; commit assets + manifest. Script verifies the downloaded WordNet archive against a checksum pinned in the script itself and sourced independently of the download (a compromised mirror cannot silently seed the committed assets); excludes abbreviation/initialism-only noun entries per decision 1; README-style header documents provenance + licenses; attribution lines land in the About/notices surface.
 - [ ] RED: `NlpAssetPinTest` — manifest counts/hashes match committed assets; pinned lemma outcomes (`grieving→grieve` verb, `days→day` noun, `thoughts→thought` noun, `was` lemmatizes into scaffold territory but is NOT admitted as noun "washington"); pinned synset relatedness (`grief`~`sorrow` true, `grief`~`bicycle` false).
 - [ ] RED: tokenizer parity fixtures (single tokenizer for counts and offsets — the iOS `wordTokens`/`wordTokenOffsets` contract), `related()` fixtures, VADER exact-score fixtures, language-id gate ≥ 0.5.
 - [ ] Implement minimally; suite green; commit `feat(threads): the words find their roots — WordNet substrate, VADER, language id`.
@@ -227,20 +233,21 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 
 **Files:**
 - Modify: `app/src/main/cpp/` JNI bridge + `audio/WhisperCppEngine.kt` (additive `transcribeWithSegments` surface exposing `text/t0Ms/t1Ms/noSpeechProb` per segment; existing entry point untouched), `audio/TranscriptionRunner.kt` (post-persist analyzer call, toggle-gated)
-- Create: `core/threads/TranscriptContext.kt` (+ `ANALYSIS_VERSION`), `core/threads/TranscriptContextStore.kt`, `core/threads/TranscriptContextAnalyzer.kt`, `core/threads/CompressionRatio.kt`
-- Modify: backup rules XML (both documents) — exclude `transcript_contexts/`; `DataManager`-equivalent deletion paths (recording delete, walk delete, Delete All) remove context files; `data/pilgrim package importer` bumps `importGeneration`
+- Create: `core/threads/TranscriptContext.kt` (+ `ANALYSIS_VERSION`), `core/threads/TranscriptContextStore.kt`, `core/threads/TranscriptContextAnalyzer.kt`, `core/threads/CompressionRatio.kt`, `core/threads/ThreadsPreferences.kt` (DataStore — created here because U5's own gates consume it: `threadsAfterWalks` default true, `importGeneration`; U6 adds the backfill keys)
+- Modify: backup rules XML — exclude `transcript_contexts/` in BOTH `data_extraction_rules.xml` domains (`cloud-backup` AND `device-transfer`, following the existing `share_device_token.preferences_pb` device-transfer exclusion precedent) and in the legacy `fullBackupContent` document; deletion seams that actually exist (single-recording delete, single-walk delete via `WalkRepository`, and the `.pilgrim` importer's replace path) remove context files; the importer bumps `importGeneration`. **Android has no user-facing Delete All Data surface** (verified: `WalkRepository` exposes only per-walk/per-recording deletes; iOS's `DataManager.deleteAll` is `#if DEBUG`-only at the pin) — full-wipe hygiene ships as an internal, unit-tested API (`TranscriptContextStore.deleteAll()` + threads-key reset) so AE5 holds at the API level; matching iOS's shipped `deleteAll`, the wipe preserves `threadsAfterWalks` and the backfill key and clears the moon-line key + contexts
 - Test: `TranscriptContextStoreTest.kt`, `TranscriptContextAnalyzerTest.kt`, `CompressionRatioTest.kt`, `WhisperSegmentBridgeTest.kt` (Robolectric Kotlin seam), `ThreadsDeletionHygieneTest.kt`
 
 **Interfaces:**
 - Consumes: U3/U4 outputs; `VoiceRecording.uuid/transcription`
-- Produces: `data class TranscriptContext(uuid: String, languageCode: String?, wordCount: Int, themes: List<Theme>, markers: TranscriptMarkers, transcriptHash: String, analysisVersion: Int)`; `class TranscriptContextStore`: `read(uuid): TranscriptContext?` (null on hash/version mismatch — caller recomputes), `readRaw(uuid)`, `write(ctx)`, `delete(uuid)`, `deleteAll()`, `allUuids(): List<String>` (throws/returns null-signal on unreadable dir — never "empty world"), `changeCount: StateFlow<Long>`; `class TranscriptContextAnalyzer`: `suspend analyzeAndStore(uuid: String, transcript: String, flaggedRanges: List<IntRange> = emptyList()): TranscriptContext?` (null when non-English or toggle off)
+- Produces: `data class TranscriptContext(uuid: String, languageCode: String?, wordCount: Int, themes: List<Theme>, markers: TranscriptMarkers, transcriptHash: String, analysisVersion: Int)`; `class TranscriptContextStore`: `read(uuid): TranscriptContext?` (null on hash/version mismatch — caller recomputes), `readRaw(uuid)`, `loadAll(): List<TranscriptContext>` (the one bulk read — consumers memoize above it, per U7), `write(ctx)`, `delete(uuid)`, `deleteAll()`, `allUuids(): List<String>` (throws/returns null-signal on unreadable dir — never "empty world"), `changeCount: StateFlow<Long>` — deletes are **tombstone-backed** (iOS parity: `delete`/`deleteAll` record tombstones that `write` checks, so an in-flight analysis queued before a delete cannot resurrect the context file); `class TranscriptContextAnalyzer`: `suspend analyzeAndStore(uuid: String, transcript: String, flaggedRanges: List<IntRange> = emptyList()): TranscriptContext?` (null when non-English or toggle off)
 - `WhisperCppEngine.transcribeWithSegments(...)` returns the engine's existing result type extended with `segments: List<WhisperSegment>`, where `data class WhisperSegment(text: String, t0Ms: Long, t1Ms: Long, noSpeechProb: Float)`
 
 **Steps:**
-- [ ] RED: store round-trip, hash-mismatch → null (AE2), version-mismatch → null, unreadable-dir signal ≠ empty, delete paths (single + Delete All + orphan file for vanished uuid).
+- [ ] RED: store round-trip, hash-mismatch → null (AE2), version-mismatch → null, unreadable-dir signal ≠ empty, delete paths (single delete + internal full-wipe API + orphan file for vanished uuid), tombstone race (analyzer write racing a delete does not resurrect the file), and a resource-parsing test asserting the `transcript_contexts/` exclude exists in BOTH `data_extraction_rules.xml` domains so the rule cannot silently regress.
 - [ ] RED: analyzer — flagged ranges excluded from theme mentions (a theme resting only on flagged segments does not form); flag thresholds per U2 spec; toggle-off → no write; non-English → no write, language still returned for prompt naming.
 - [ ] JNI: additive segment API + Kotlin bridge; Robolectric seam test; native path flagged for U12 device verification.
-- [ ] Wire `TranscriptionRunner` post-persist call; deletion + import-generation hygiene; backup rules.
+- [ ] Wire `TranscriptionRunner` post-persist call; deletion + import-generation hygiene; backup rules (both domains).
+- [ ] Reality probe for R5 (feeds U12): run one real non-English recording through the existing forced-English decoder (`whisper-jni.cpp` pins `wparams.language = "en"` — deliberate iOS parity) and record what ML Kit detects on its output; the language gate's practical coverage is bounded by this shared-with-iOS limitation, and U12's QA expectation is written from the observed behavior, not the idealized one.
 - [ ] Green; commit `feat(threads): the context takes shape — segment-gated analysis, hash-true file cache, hygiene everywhere`.
 
 ### U6. Backfill, battery gate, toggle plumbing
@@ -248,18 +255,20 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 **Goal:** One-time V6-semantics backfill over history (checkpointed, battery-gated, toggle-gated, re-armable); `BatteryGate` runtime check also gating auto-transcription with the skipped-reason banner + transcribe-all recovery.
 
 **Files:**
-- Create: `core/threads/ThreadsBackfill.kt` (worker + state), `core/threads/BatteryGate.kt`, `core/threads/ThreadsPreferences.kt` (DataStore: `threadsAfterWalks` default true, `backfillCompleted`, `backfillCheckpoint`, `moonLineLastLunationIndex`, `importGeneration`)
-- Modify: transcription scheduling path (enqueue-time gate + skip reason), walk summary recordings section (banner + transcribe-all), Delete All (clear threads keys)
+- Create: `core/threads/ThreadsBackfill.kt` (worker + state), `core/threads/BatteryGate.kt`
+- Modify: `core/threads/ThreadsPreferences.kt` (created in U5; adds the backfill keys — `backfillCompletedAtVersion: Int?` stores the `ANALYSIS_VERSION` the sweep completed at, so a future version bump re-arms automatically (the single-key analogue of iOS's V-rename ladder), plus `backfillCheckpoint`, `moonLineLastLunationIndex`)
+- Modify: the app launch site (application entry point / main coordinator) — `ThreadsBackfill.ensureScheduled()` on process start, toggle-gated, until completion (mirrors iOS's `MainCoordinatorView` kickoff; without this call site the backfill never runs and AE6 fails at QA)
+- Modify: transcription scheduling path (enqueue-time gate + skip reason), `ui/walk/VoiceRecordingsSection.kt` + its `PendingTranscriptionSubstate` mapper (a battery-skipped recording's row must show an honest skipped state — never `QueuedForProcessing` while the walk-level banner says skipped; the banner + transcribe-all live here, and the transcribe-all button's own states are pinned: hidden/disabled while its batch is in flight, with batch progress feedback), internal full-wipe API from U5 (threads-key clearing joins it)
 - Test: `ThreadsBackfillTest.kt` (state machine: fresh sweep, checkpoint resume, version-stale re-sweep, toggle-off inert, re-enable re-arm, all-accounted completion), `BatteryGateTest.kt`, `ThreadsBackfillWorkRequestTest.kt` (Robolectric `.build()` on the production request — BatteryNotLow, KEEP, not expedited), `AutoTranscriptionBatteryGateTest.kt`
 
 **Interfaces:**
 - Consumes: `TranscriptContextAnalyzer`, `TranscriptContextStore`, `ThreadsPreferences`
-- Produces: `ThreadsBackfill.ensureScheduled(context)`; `BatteryGate.allowsBackgroundWork(context): Boolean` (unknown level → true; > 20% → true; charging → true); `ThreadsPreferences` reader used by every gate in U5–U10
+- Produces: `ThreadsBackfill.ensureScheduled(context)`; `BatteryGate.allowsBackgroundWork(context): Boolean` (unknown level → true; > 20% → true; charging → true); worker run-start battery re-check below 20% returns `Result.retry` — `BatteryNotLow`'s system floor (~15%) admits runs the 20% gate refuses, so the 15–20% band is a real, tested path
 
 **Steps:**
-- [ ] RED: backfill state machine per U2 spec's V6 quotes (prune stale-version contexts before sweep; snapshot uuids+text; batch 25; checkpoint persisted per batch; completion only when every snapshot item accounted; Delete All resets; re-enable re-arms).
-- [ ] RED: WorkRequest builder Robolectric test; battery-gate truth table; auto-transcription enqueue gate + skip-reason surfaced + `OrphanRecordingSweeper` re-enqueue path untouched.
-- [ ] Implement + banner/transcribe-all UI per spec copy; green; commit `feat(threads): the backfill earns completion — V6 freshness, checkpoints, and a battery gate that says so`.
+- [ ] RED: backfill state machine per U2 spec's V6 quotes (prune stale-version contexts before sweep; snapshot uuids+text; batch 25; checkpoint persisted per batch; completion only when every snapshot item accounted; an `ANALYSIS_VERSION` bump re-arms via `backfillCompletedAtVersion`; re-enable re-arms; the internal full-wipe clears the moon-line key while the toggle and backfill key survive — pin-verified iOS `deleteAll` behavior, corrected from AE5's letter per R3's shipped-code-wins rule).
+- [ ] RED: WorkRequest builder Robolectric test; battery-gate truth table incl. the 15–20% band (`Result.retry`); auto-transcription enqueue gate + skip-reason surfaced + `OrphanRecordingSweeper` re-enqueue path untouched; battery-skipped row never renders `QueuedForProcessing`.
+- [ ] Implement + banner/transcribe-all UI per spec copy — the banner text carries `Modifier.semantics { liveRegion = LiveRegionMode.Polite }` (existing IntentionSettingSheet countdown precedent) so its appearance and clearing are announced to TalkBack; green; commit `feat(threads): the backfill earns completion — V6 freshness, checkpoints, and a battery gate that says so`.
 
 ### U7. ThreadStore + dossier core + AttentionDirectives v2
 
@@ -267,15 +276,16 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 
 **Files:**
 - Create: `core/threads/ThreadStore.kt`, `core/threads/ThreadsDossierBuilder.kt`, `core/threads/ThreadsDossierFormatter.kt`
+- Modify: `data/dao/VoiceRecordingDao.kt` (uuid→walk projection for the recording-to-walk index), `data/dao/WalkDao.kt` (`WalkLite` projection query)
 - Modify: `core/prompt/AttentionDirectives.kt` (lemma content words, scaffold-skipping recurring word, `related()` intention echo, 4-cap + tie-breaks unchanged), `core/prompt/PromptAssembler.kt` (+ handling note gated on dossier presence; prompts name detected language for all recordings)
 - Test: `ThreadStoreTest.kt`, `ThreadsDossierBuilderTest.kt`, `ThreadsDossierFormatterTest.kt` (string-pinned templates incl. small-sample line), `AttentionDirectivesTest.kt` (extended in place)
 
 **Interfaces:**
 - Consumes: `TranscriptContextStore.changeCount/read`, walk queries, `ThreadsPreferences`
-- Produces: `data class WalkLite(val walkId: Long, val startedAt: Instant, val intention: String?, val weatherCondition: String?)` (projection query, no entity coupling); `data class ActiveThread(val lemma: String, val displayTerm: String, val distinctWalkIds: List<Long>, val mentionsByRecording: Map<String, List<LemmaMention>>)`; `ThreadStore.build(contexts: List<TranscriptContext>, walks: List<WalkLite>, anchor: Instant, backfillComplete: Boolean): Threads` (memo key includes store `changeCount`); `data class Threads(active: List<ActiveThread>, firstTimeLemmas: Set<String>)`; `ThreadsDossierBuilder.build(walkId: Long): DossierBlock?` (null when toggle off / nothing analyzed); `DossierBlock.render(): List<String>`
+- Produces: `data class WalkLite(val walkId: Long, val startedAt: Instant, val intention: String?, val weatherCondition: String?)` (projection query, no entity coupling); `data class ActiveThread(val lemma: String, val displayTerm: String, val distinctWalkIds: List<Long>, val mentionsByRecording: Map<String, List<LemmaMention>>)`; `ThreadStore.build(contexts: List<TranscriptContext>, recordingToWalk: Map<String, WalkLite>, anchor: Instant, backfillComplete: Boolean): Threads` — the walks parameter is keyed by **recording uuid** (iOS parity: `walks[context.recordingUUID]` is the join; a `List<WalkLite>` alone cannot produce `distinctWalkIds`); `ThreadStore.build` is **pure and unmemoized** — memoization lives above the I/O in the consumers, matching iOS: `ThreadsDossierBuilder` memoizes the finished dossier against (`changeCount`, walkId, backfillComplete) and `ThreadIntentionSuggestions` keeps its own day-keyed memo above `loadAll()`, so reopening the prompt screen or intention sheet never re-reads the whole context directory; `data class Threads(active: List<ActiveThread>, firstTimeLemmas: Set<String>)`; `ThreadsDossierBuilder.build(walkId: Long): DossierBlock?` (null when toggle off / nothing analyzed) — the builder pairs each context with its recording's `wordsPerMinute` (iOS's `(context, wordsPerMinute)` tuple) to render the themes-vs-pace correlation section at the pin's 0.15 relative-change threshold; `DossierBlock.render(): List<String>`
 
 **Steps:**
-- [ ] RED: first-time vs full history (a 31-day-old theme is never "first"); 30-day window respects the caller's anchor (dossier: walk date — old walk stable; chips path: now); origin suppression until backfill completes; salience direction present in dossier output, absent from every other surface; memo invalidates on store write.
+- [ ] RED: first-time vs full history (a 31-day-old theme is never "first"); 30-day window respects the caller's anchor (dossier: walk date — old walk stable; chips path: now); origin suppression until backfill completes; salience direction present in dossier output, absent from every other surface; builder memo invalidates on store write; a context whose uuid resolves to no walk is silently excluded from aggregation (orphan prune, R13 — neither crash nor dossier leak); pace-correlation renders at the 0.15 threshold and self-omits below it.
 - [ ] RED: formatter string pins — density-with-baseline ≥ 100 words, raw-counts small-sample below, word count always attached, modal lean naming, ≥/register-labeled literature figures secondary; handling note emitted only with dossier.
 - [ ] RED: directives — scaffold recurring-word skip ("think" ×4 no fire, "river" fires), lemma inflection unify, synset echo with pairs pinned from the U2 spec's own fixtures, cap + tie-breaks.
 - [ ] Implement; green; commit `feat(threads): the dossier speaks — profiles with baselines, threads with anchors, directives with roots`.
@@ -296,16 +306,17 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 **Goal:** The eight senses as pure functions behind `DossierSenses.lines(...)` (3-line cap, priority, one-theme-one-line), fed by bounded Room queries; the moon line's once-per-lunation state; the debug-only field report.
 
 **Files:**
-- Create: `core/threads/DossierSenses.kt`, `core/threads/DossierSensesTracks.kt`, `core/threads/LunationCalendar.kt`, `core/threads/SenseInputs.kt`, `core/threads/ThreadsFieldReport.kt` (debug builds only — compiled out of release via build-type source set or `BuildConfig.DEBUG` + release-stripped logging; explicit developer trigger; ephemeral logging only, no file/preference writes)
+- Create: `core/threads/DossierSenses.kt`, `core/threads/DossierSensesTracks.kt`, `core/threads/LunationCalendar.kt`, `core/threads/SenseInputs.kt`, and `src/debug/kotlin/.../ThreadsFieldReport.kt` — a **debug-only source set is the sole mechanism** (the class is never compiled into release, satisfying R12's "not merely runtime-flagged" regardless of minification config); explicit developer trigger; ephemeral logging only, no file/preference writes
+- Modify: `data/dao/RouteDataSampleDao.kt` (timestamp-window + accuracy-predicate projection), `data/dao/WalkPhotoDao.kt` (per-walk photo coords/timestamps), `data/dao/WalkDao.kt` (in-window intentions/weather projections)
 - Modify: `ThreadsDossierBuilder.kt` (gathers `SenseInputs` via bounded queries — route samples by timestamp predicate with accuracy filter, photos, weather, in-window intentions; module purity: `DossierSenses` fetches nothing), weather condition → bucket mapper beside the existing weather layer
 - Test: `DossierSensesTest.kt` (per-sense geometry/guard fixtures), `LunationCalendarTest.kt`, `WeatherBucketTest.kt` (drift test: every storable Android condition maps), `SenseInputsQueryTest.kt`, `ThreadsFieldReportTest.kt`
 
 **Interfaces:**
 - Consumes: `Threads` from U7, Room entities, `LunarPhase` boundaries, `ThreadsPreferences.moonLineLastLunationIndex`
-- Produces: `DossierSenses.lines(inputs: SenseInputs): List<String>` (pure; ≤ 3); `LunationCalendar.mostRecentClosed(now: Instant, zone: ZoneId): Lunation?` with `data class Lunation(index: Int, monthMoonName: String, start: Instant, end: Instant)`
+- Produces: `DossierSenses.lines(inputs: SenseInputs): SenseOutput` where `data class SenseOutput(val lines: List<String>, val reportedLunationIndex: Int?)` (pure; ≤ 3 lines; iOS parity — the moon-line index is reported only when the line actually survives cap and dedup into the emitted block, so the caller persists `moonLineLastLunationIndex` on emission, never on evaluation; a bare `List<String>` return cannot support once-per-lunation); `LunationCalendar.mostRecentClosed(now: Instant, zone: ZoneId): Lunation?` with `data class Lunation(index: Int, monthMoonName: String, start: Instant, end: Instant)`
 
 **Steps:**
-- [ ] RED per sense, from the U8 spec's quotes: place resonance (150 m, ≥ 2 walks, strict `spread < baseline/2`, zero-baseline suppressed, cap 4, backfill-gated); moon line (once per closed lunation, most-recent-only, current-walk-words gate, Delete All re-arms); marker coloring (±15 words, ≥ 2×, ≥ 3 tokens, dossier-present gate); intention lineage (≥ 3 walks, scaffold filter — the "want"-only pair must not cluster); climb anchoring (top-decile smoothed gradient, ≥ 20 m gain, < 50 m ascent skip); weather weave (mode-based climate guard incl. ties, total-claim rule, unknown bucket); photo adjacency (75 m + 10 min, nearest pair only); speech shape (first third + > 30 min wordless).
+- [ ] RED per sense, from the U8 spec's quotes: place resonance (150 m, ≥ 2 walks, strict `spread < baseline/2`, zero-baseline suppressed, cap 4, backfill-gated); moon line (once per closed lunation, most-recent-only, current-walk-words gate, the internal full-wipe re-arms it, and `reportedLunationIndex` is set only when the line survives cap + dedup into the emitted block — a cap-dropped line never burns the lunation); marker coloring (±15 words, ≥ 2×, ≥ 3 tokens, dossier-present gate); intention lineage (≥ 3 walks, scaffold filter — the "want"-only pair must not cluster); climb anchoring (top-decile smoothed gradient, ≥ 20 m gain, < 50 m ascent skip); weather weave (mode-based climate guard incl. ties, total-claim rule, unknown bucket); photo adjacency (75 m + 10 min, nearest pair only); speech shape (first third + > 30 min wordless).
 - [ ] RED: block rules — 5 senses firing → exactly 3 lines in priority order; theme named at rank 1 never reappears; string pins with substituted counts ("Both"/"twice" only when literally 2).
 - [ ] RED: coordinate hygiene — stale sample (> 90 s) and accuracy ≥ 100 m never participate.
 - [ ] Implement + field report seam; green; commit `feat(threads): eight senses, three lines, silence by default`.
@@ -316,12 +327,12 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 
 **Files:**
 - Create: `core/threads/ThreadIntentionSuggestions.kt`
-- Modify: `ui/walk/IntentionSettingSheet.kt` (Recurring `ChipSection` first, flush-left, empty-field gated), `ui/settings/voice/VoiceCard.kt` (+ toggle row wired to `ThreadsPreferences`), `strings.xml` (toggle label/description per U2 spec copy + English-only clause), `ui/walk/summary/PromptDetailDialog.kt` (clip marked sensitive on API 33+ when dossier present)
-- Test: `ThreadIntentionSuggestionsTest.kt` (≥ 2 distinct walks/30 days anchored at now, rank by distinct-walk count then alphabetical, cap 2, toggle-off empty), `IntentionSettingSheetTest.kt` (shelf order + gating), `VoiceCardToggleTest.kt`, `PromptClipboardSensitivityTest.kt` (Robolectric: `ClipDescription` extras on 33+, no-crash below)
+- Modify: `ui/walk/IntentionSettingSheet.kt` (Recurring `ChipSection` first, flush-left, empty-field gated; the shelf loads via a coroutine that starts empty and populates when ready — e.g. `produceState(initialValue = emptyList())` keyed like the existing `resetKey` — so "not yet loaded" renders identically to "genuinely empty" and the sheet's appearance never blocks on disk I/O, mirroring iOS's `.task` load), `ui/settings/voice/VoiceCard.kt` (toggle row wired to `ThreadsPreferences`, inserted immediately after the Auto-transcribe toggle and before the model-download row, matching shipped `VoiceCard.swift` order), `strings.xml` (toggle label/description per U2 spec copy + English-only clause), `ui/walk/summary/PromptDetailDialog.kt` (clip marked sensitive on API 33+ when the prompt carries a dossier — the generated-prompt model gains a hasThreadsDossier signal for this)
+- Test: `ThreadIntentionSuggestionsTest.kt` (≥ 2 distinct walks/30 days anchored at now, rank by distinct-walk count then alphabetical, display-term dedup BEFORE the cap — the walker is never offered the same chip twice while a distinct one waits behind it, phrase template pinned "walk with '<term>'", cap 2, toggle-off empty), `IntentionSettingSheetTest.kt` (shelf order + gating + empty-start load), `VoiceCardToggleTest.kt`, `PromptClipboardSensitivityTest.kt` (Robolectric: `ClipDescription` extras on 33+, no-crash below)
 
 **Interfaces:**
 - Consumes: `ThreadStore.build(..., anchor = now)`, `ThreadsPreferences`
-- Produces: `ThreadIntentionSuggestions.current(now: Instant): List<String>`
+- Produces: `suspend fun ThreadIntentionSuggestions.current(now: Instant): List<String>` (suspend — it reads the context store and aggregates off-main; day-keyed memo above `loadAll()` per U7's memo-placement rule)
 
 **Steps:**
 - [ ] RED per the interfaces above; shelf-order assertion; description-string presence (the `SettingToggle` description parameter is required — copy per U2 spec + R5 clause).
@@ -336,9 +347,10 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 - Modify: none (test-only unit; production gaps found here are fixed under their owning unit's files)
 
 **Steps:**
-- [ ] Capture golden outputs on the iOS side at the pin (run documented in the fixture README so future re-pins can refresh); commit corpus + outputs.
-- [ ] RED→GREEN: section structure, ordering, caps, and template strings match iOS output, with annotated allowances where theme sets legitimately diverge (lemma engine).
-- [ ] Toggle-off sweep: prompts byte-identical to a no-threads build; zero context writes.
+- [ ] Author the transcript corpus **synthetically** — hand-written text designed to exercise the pinned thresholds and senses, never sourced from any real recorded walk (including the implementer's own): real reflective speech in git history is a permanent exposure outside every privacy control the app has. The constraint is recorded in the capture README so future refreshes preserve it.
+- [ ] Capture golden outputs on the iOS side at the pin and **commit the capture harness itself** (a standalone Swift test file stored as a patch beside the README, with the exact inputs — dates, senses bundle — it uses), since no capture seam exists in the iOS tree at `0172e2b`; the README also records the macOS/Xcode version used (Apple NL models are deterministic only per OS release). Commit corpus + outputs + harness patch.
+- [ ] RED→GREEN: section structure, ordering, caps, and template strings match iOS output, with annotated allowances for the three acknowledged divergences (theme sets from the lemma engine, VADER-vs-Apple sentiment values, synset-vs-embedding echo outcomes) — named up front so strict string pins can go green.
+- [ ] Toggle-off sweep: prompts byte-identical to a no-threads build; zero context writes; chips render empty after the internal full-wipe (AE5's chips clause, pinned).
 - [ ] Green; commit `test(threads): the golden dossier — parity you can run`.
 
 ### U12. Device QA + release v1.5.0
@@ -350,7 +362,7 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 - Create: QA checklist doc under `docs/qa/` per house pattern
 
 **Steps:**
-- [ ] Device QA per R17: real recordings → dossier read from a copied prompt; chips after 2 real recurring walks; toggle-off sweep; first-activation backfill with origin suppression observed; deletion hygiene; field-report inspection incl. flagged-segment rates with the accept-or-tune decision on the 0.6 no-speech threshold; theme-quality read on real transcripts (the substrate field gate); non-English recording → no analysis, prompt names language, toggle copy present; battery-skip banner + transcribe-all on a < 20% walk; long-walk transcription regression check (JNI touched the critical path).
+- [ ] Device QA per R17: real recordings → dossier read from a copied prompt; chips after 2 real recurring walks; toggle-off sweep; first-activation backfill with origin suppression observed; deletion hygiene (single-recording + single-walk deletes; the internal full-wipe API exercised via a debug seam); field-report inspection incl. flagged-segment rates with the accept-or-tune decision on the 0.6 no-speech threshold — the decision is the product owner's and release-blocking, and it accounts for whisper.cpp's own native pre-filter (the engine already suppresses windows where `no_speech_prob > 0.6` AND `avg_logprob < -1.0` before segments surface, so the Kotlin filter sees only survivors); theme-quality read on real transcripts (the substrate field gate); the non-English check runs against the U5 probe's *observed* behavior (the decoder forces English — a limitation shared with iOS at the pin — so the expectation is what the probe recorded, with toggle copy presence verified regardless); battery-skip banner + transcribe-all on a < 20% walk incl. the honest per-row state; long-walk transcription regression check (JNI touched the critical path).
 - [ ] LLM-readback spot check with a real Android dossier (no clinical/diagnostic language); note the vendor used.
 - [ ] Verify Play Data Safety needs no change against current Play guidance (nothing collected/transmitted).
 - [ ] Release: version bump, `production.yml` dispatch per house release memory (staged rollout), tag; CLAUDE.md phasing update; fold-in re-diff of any iOS delta since `0172e2b` before tagging (R2/AE7).
