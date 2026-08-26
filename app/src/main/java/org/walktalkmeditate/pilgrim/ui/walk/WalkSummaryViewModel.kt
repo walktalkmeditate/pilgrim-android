@@ -612,6 +612,21 @@ class WalkSummaryViewModel @Inject constructor(
         )
 
     /**
+     * U6: drives [org.walktalkmeditate.pilgrim.ui.walk.VoiceRecordingsSection]'s
+     * banner (parity spec UI-24/UI-21) — independent of any one row's
+     * [PendingTranscriptionSubstate], matching iOS's two separately-set
+     * `TranscriptionService.shared` properties.
+     */
+    val autoTranscriptionSkipped: StateFlow<Boolean> =
+        autoTranscriptionSkipState.skipReason
+            .map { it != null }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+                initialValue = autoTranscriptionSkipState.skipReason.value != null,
+            )
+
+    /**
      * Live list of voice recordings for this walk. Backed by a Room
      * Flow so transcription updates from Stage 2-D's worker land in
      * the UI without a manual refresh.

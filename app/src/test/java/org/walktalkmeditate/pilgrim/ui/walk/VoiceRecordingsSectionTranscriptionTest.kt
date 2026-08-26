@@ -2,6 +2,10 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -51,6 +55,8 @@ class VoiceRecordingsSectionTranscriptionTest {
             PendingTranscriptionSubstate.QueuedForProcessing,
         retranscribeEnabled: Boolean = true,
         manualTranscribingIds: Set<Long> = emptySet(),
+        autoTranscriptionSkipped: Boolean = false,
+        isBatchInFlight: Boolean = false,
         onManualTranscribe: () -> Unit = {},
         onOpenModelDownloadSheet: () -> Unit = {},
         onRetryModelDownload: () -> Unit = {},
@@ -79,6 +85,8 @@ class VoiceRecordingsSectionTranscriptionTest {
                     pendingSubstate = pendingSubstate,
                     retranscribeEnabled = retranscribeEnabled,
                     manualTranscribingIds = manualTranscribingIds,
+                    autoTranscriptionSkipped = autoTranscriptionSkipped,
+                    isBatchInFlight = isBatchInFlight,
                     onManualTranscribe = onManualTranscribe,
                     onOpenModelDownloadSheet = onOpenModelDownloadSheet,
                     onRetryModelDownload = onRetryModelDownload,
@@ -264,6 +272,67 @@ class VoiceRecordingsSectionTranscriptionTest {
             pendingSubstate = PendingTranscriptionSubstate.QueuedForProcessing,
         )
         composeRule.onNodeWithText("Queued for transcription…").assertExists()
+    }
+
+    // --- U6: battery-skip banner + honest row state ---------------------
+
+    @Test
+    fun autoTranscriptionSkipped_showsBanner_withExactCopy() {
+        render(autoTranscriptionSkipped = true)
+        composeRule.onNodeWithText("Auto-transcription skipped — battery below 20%").assertExists()
+    }
+
+    @Test
+    fun autoTranscriptionSkippedBanner_carriesPoliteLiveRegion() {
+        render(autoTranscriptionSkipped = true)
+        val node = composeRule
+            .onNodeWithText("Auto-transcription skipped — battery below 20%")
+            .fetchSemanticsNode()
+        assertEquals(
+            LiveRegionMode.Polite,
+            node.config.getOrNull(SemanticsProperties.LiveRegion),
+        )
+    }
+
+    @Test
+    fun autoTranscriptionNotSkipped_bannerAbsent() {
+        render(autoTranscriptionSkipped = false)
+        composeRule.onAllNodesWithText("Auto-transcription skipped", substring = true)
+            .assertCountEquals(0)
+    }
+
+    @Test
+    fun skippedForBattery_rowNeverShowsQueued_andOffersTranscribe() {
+        var transcribes = 0
+        render(
+            recording = baseRecording.copy(transcription = null),
+            pendingSubstate = PendingTranscriptionSubstate.SkippedForBattery(
+                transcribeEnabled = true,
+            ),
+            autoTranscriptionSkipped = true,
+            onManualTranscribe = { transcribes++ },
+        )
+        assertTrue(
+            "a battery-skipped row must never claim it is queued",
+            composeRule.onAllNodesWithText("Queued for transcription…")
+                .fetchSemanticsNodes().isEmpty(),
+        )
+        composeRule.onNodeWithText("Transcribe").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, transcribes) }
+    }
+
+    @Test
+    fun batchInFlight_replacesPendingSubstateWithTranscribingPlaceholder() {
+        render(
+            recording = baseRecording.copy(transcription = null),
+            pendingSubstate = PendingTranscriptionSubstate.QueuedForProcessing,
+            isBatchInFlight = true,
+        )
+        composeRule.onNodeWithText("Transcribing…").assertExists()
+        assertTrue(
+            composeRule.onAllNodesWithText("Queued for transcription…")
+                .fetchSemanticsNodes().isEmpty(),
+        )
     }
 
     @Test

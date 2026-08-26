@@ -242,6 +242,11 @@
     <string name="model_state_failed_checksum">Model download failed</string>
     <string name="model_state_failed_storage">Not enough space for the transcription model</string>
     <string name="model_state_failed_storage_hint">Not enough space for the transcription model \u2014 free up space to continue</string>
+
+    <!-- U6: auto-transcription battery-skip banner (parity spec
+         docs/parity/2026-08-25-threads-engine-port.md, UI-24). Copy is
+         pinned verbatim against iOS's literal string. -->
+    <string name="transcription_skipped_battery">Auto-transcription skipped \u2014 battery below 20%</string>
     <string name="model_action_retry">Retry</string>
 
     <!-- U11 model download sheet + Settings voice row -->

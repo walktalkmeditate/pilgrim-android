@@ -28,6 +28,8 @@ import org.walktalkmeditate.pilgrim.audio.model.FakeWhisperModelDownloadSchedule
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+import org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipReason
+import org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
 
 /**
@@ -73,13 +75,17 @@ class ModelDownloadViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun newViewModel(autoTranscribe: Boolean = false) = ModelDownloadViewModel(
+    private fun newViewModel(
+        autoTranscribe: Boolean = false,
+        autoTranscriptionSkipState: FakeAutoTranscriptionSkipState = FakeAutoTranscriptionSkipState(),
+    ) = ModelDownloadViewModel(
         modelStore = store,
         voicePreferences = FakeVoicePreferencesRepository(
             initialAutoTranscribe = autoTranscribe,
         ),
         downloadScheduler = scheduler,
         backgroundDataProbe = { dataSaverRestricted },
+        autoTranscriptionSkipState = autoTranscriptionSkipState,
     )
 
     @Test
@@ -147,6 +153,37 @@ class ModelDownloadViewModelTest {
             }
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // --- U6: battery-skip flag joins the pendingSubstate combine -------
+
+    @Test
+    fun `skip flag does not override a non-Ready (delivery-phase) substate`() = runTest(dispatcher) {
+        val skipState = FakeAutoTranscriptionSkipState()
+        val vm = newViewModel(autoTranscribe = true, autoTranscriptionSkipState = skipState)
+
+        vm.pendingSubstate.test(timeout = 10.seconds) {
+            assertEquals(PendingTranscriptionSubstate.WaitingOnDownload(WhisperModelState.Absent), awaitItem())
+            skipState.setSkipped(AutoTranscriptionSkipReason.LowBattery)
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pendingSubstate seeds from the skip state's CURRENT value at construction`() = runTest(dispatcher) {
+        val skipState = FakeAutoTranscriptionSkipState()
+        skipState.setSkipped(AutoTranscriptionSkipReason.LowBattery)
+
+        val vm = newViewModel(autoTranscribe = false, autoTranscriptionSkipState = skipState)
+
+        // Pref-off cell is unaffected by the skip flag either way — this
+        // pins that the VM reads skipReason.value (not a stale default)
+        // for its initialValue seed, without depending on a Ready model.
+        assertEquals(
+            PendingTranscriptionSubstate.ManualPreparing(WhisperModelState.Absent),
+            vm.pendingSubstate.value,
+        )
     }
 
     @Test
