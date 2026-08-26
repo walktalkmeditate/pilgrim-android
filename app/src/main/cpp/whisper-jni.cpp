@@ -133,6 +133,76 @@ Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeTranscribe(
     return env->NewStringUTF(out.c_str());
 }
 
+// Additive (Phase 20 U5): a second, parallel decode entry point returning
+// per-segment text/timing/no-speech-probability so the Thought Threads
+// analyzer can compute hallucination-flag ranges. Deliberately NOT
+// refactored to share code with nativeTranscribe above (which stays
+// byte-for-byte unchanged) — the wparams setup here is duplicated on
+// purpose so the pinned original entry point can never be affected by a
+// change made for this one.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeTranscribeSegments(
+    JNIEnv* env, jobject /*this*/, jlong ctxHandle, jstring wavPath) {
+    auto ctx = reinterpret_cast<whisper_context*>(ctxHandle);
+    if (!ctx) return nullptr;
+
+    jclass segmentClass = env->FindClass("org/walktalkmeditate/pilgrim/audio/WhisperSegment");
+    if (!segmentClass) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jmethodID ctor = env->GetMethodID(segmentClass, "<init>", "(Ljava/lang/String;JJF)V");
+    if (!ctor) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+
+    const char* path = env->GetStringUTFChars(wavPath, nullptr);
+    auto samples = readWavPcmF32(path);
+    env->ReleaseStringUTFChars(wavPath, path);
+    if (samples.empty()) {
+        LOGW("readWavPcmF32 returned empty (segments)");
+        return env->NewObjectArray(0, segmentClass, nullptr);
+    }
+
+    auto wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    wparams.print_realtime = false;
+    wparams.print_progress = false;
+    wparams.print_timestamps = false;
+    wparams.print_special = false;
+    wparams.translate = false;
+    // Forced English — see the identical comment on nativeTranscribe
+    // above; this is iOS parity, not a leftover.
+    wparams.language = "en";
+    unsigned hw = std::thread::hardware_concurrency();
+    wparams.n_threads = std::max(1u, std::min(4u, hw == 0 ? 2u : hw));
+
+    int rc = whisper_full(ctx, wparams, samples.data(), samples.size());
+    if (rc != 0) {
+        LOGW("whisper_full failed rc=%d (segments)", rc);
+        return nullptr;
+    }
+
+    int n = whisper_full_n_segments(ctx);
+    jobjectArray result = env->NewObjectArray(n, segmentClass, nullptr);
+    for (int i = 0; i < n; ++i) {
+        const char* text = whisper_full_get_segment_text(ctx, i);
+        // t0/t1 are whisper.cpp's native 10ms units (centiseconds) —
+        // sample_to_timestamp()/to_timestamp() in whisper.cpp confirm the
+        // ×10 scale to milliseconds.
+        auto t0Ms = static_cast<jlong>(whisper_full_get_segment_t0(ctx, i) * 10);
+        auto t1Ms = static_cast<jlong>(whisper_full_get_segment_t1(ctx, i) * 10);
+        float noSpeechProb = whisper_full_get_segment_no_speech_prob(ctx, i);
+
+        jstring jtext = env->NewStringUTF(text ? text : "");
+        jobject segment = env->NewObject(segmentClass, ctor, jtext, t0Ms, t1Ms, noSpeechProb);
+        env->SetObjectArrayElement(result, i, segment);
+        env->DeleteLocalRef(jtext);
+        env->DeleteLocalRef(segment);
+    }
+    return result;
+}
+
 // Frees a whisper_context so its ~75 MB of model weights are released
 // back to the OS without waiting for process exit. Called after a
 // transcription batch (AF33). The Kotlin side serializes this against

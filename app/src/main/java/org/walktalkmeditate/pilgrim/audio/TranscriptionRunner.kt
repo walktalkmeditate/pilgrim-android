@@ -9,6 +9,9 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+import org.walktalkmeditate.pilgrim.core.threads.CompressionRatio
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 
 /**
@@ -26,6 +29,8 @@ class TranscriptionRunner @Inject constructor(
     private val engine: WhisperEngine,
     private val modelStore: WhisperModelStore,
     private val modelDownloadScheduler: WhisperModelDownloadScheduler,
+    private val threadsAnalyzer: TranscriptContextAnalyzer,
+    private val threadsPreferences: ThreadsPreferencesRepository,
 ) {
     suspend fun transcribePending(walkId: Long): Result<Int> {
         val pending = try {
@@ -78,21 +83,31 @@ class TranscriptionRunner @Inject constructor(
                     continue
                 }
                 attempted++
-                val outcome = engine.transcribe(absolute)
+                val outcome = engine.transcribeWithSegments(absolute)
                 outcome.fold(
                     onSuccess = { result ->
                         val noSpeech = result.text.isBlank()
                         val text = if (noSpeech) NO_SPEECH_PLACEHOLDER else result.text
                         val wpm = if (noSpeech) null else computeWpm(text, recording.durationMillis)
-                        try {
+                        val persisted = try {
                             repository.updateVoiceRecording(
                                 recording.copy(transcription = text, wordsPerMinute = wpm),
                             )
                             count++
+                            true
                         } catch (ce: CancellationException) {
                             throw ce
                         } catch (t: Throwable) {
                             Log.w(TAG, "DB update failed for recording ${recording.id}", t)
+                            false
+                        }
+                        // Analysis triggers after a successful persist only, and never
+                        // for the no-speech placeholder (there is no real transcript to
+                        // analyze). Toggle-gated here to skip the segment-flag/language
+                        // work entirely when the feature is off; analyzeAndStore itself
+                        // re-checks the toggle too (defense in depth, not trust).
+                        if (persisted && !noSpeech && threadsPreferences.threadsAfterWalks.value) {
+                            analyzeThreadsSafely(recording.id, recording.uuid, result)
                         }
                     },
                     onFailure = { error ->
@@ -139,6 +154,33 @@ class TranscriptionRunner @Inject constructor(
         }
     }
 
+    /**
+     * Never blocks transcription persist: any failure here (language
+     * detection, theme/marker computation, the store write) is logged
+     * and swallowed, `CancellationException` re-thrown. The recording's
+     * transcription is already durably committed by the time this runs.
+     */
+    private suspend fun analyzeThreadsSafely(recordingId: Long, uuid: String, result: TranscriptionResult) {
+        try {
+            val flaggedFragments = result.segments.filter { it.isFlagged() }.map { it.text }
+            val flaggedRanges = TranscriptContextAnalyzer.flaggedRanges(result.text, flaggedFragments)
+            val language = threadsAnalyzer.detectLanguage(result.text)
+            Log.i(TAG, "recording $recordingId: threads detected language=$language")
+            threadsAnalyzer.analyzeAndStore(uuid, result.text, flaggedRanges)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "threads analysis failed for recording $recordingId", t)
+        }
+    }
+
+    /** ASR-quality flag (U2/BEH-56): whisper.cpp's own segment-level
+     * `noSpeechProb` is a real signal on Android (unlike WhisperKit 0.16
+     * on iOS, which hardcodes it to 0) — this branch is LIVE here, a
+     * deliberate parity divergence iOS never exercises (Open question 1). */
+    private fun WhisperSegment.isFlagged(): Boolean =
+        CompressionRatio.of(text) > COMPRESSION_RATIO_THRESHOLD || noSpeechProb > NO_SPEECH_PROB_THRESHOLD
+
     private fun computeWpm(text: String, durationMillis: Long): Double? {
         if (durationMillis <= 0) return null
         val words = text.trim().split(WORD_SPLIT).count { it.isNotBlank() }
@@ -151,6 +193,10 @@ class TranscriptionRunner @Inject constructor(
         const val NO_SPEECH_PLACEHOLDER = "(no speech detected)"
         private const val TAG = "TranscriptionRunner"
         private val WORD_SPLIT = Regex("\\s+")
+
+        // U2/BEH-56 segment flag thresholds, verbatim from iOS.
+        private const val COMPRESSION_RATIO_THRESHOLD = 2.4
+        private const val NO_SPEECH_PROB_THRESHOLD = 0.6
     }
 }
 

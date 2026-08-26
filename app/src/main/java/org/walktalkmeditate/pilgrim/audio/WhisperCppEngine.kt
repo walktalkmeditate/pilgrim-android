@@ -18,6 +18,17 @@ import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 internal interface WhisperNative {
     fun init(modelPath: String): Long
     fun transcribe(handle: Long, wavPath: String): String?
+
+    /**
+     * Additive (U5): a second, parallel decode entry point returning
+     * per-segment text/timing/no-speech-probability instead of one
+     * joined string. Null means the same "inference failed" outcome as
+     * [transcribe] returning null; an empty (zero-length) array means
+     * "no speech" (readable WAV, nothing decodable) — the same
+     * distinction [transcribe] makes between a null return and an empty
+     * string.
+     */
+    fun transcribeSegments(handle: Long, wavPath: String): Array<WhisperSegment>?
     fun free(handle: Long)
 }
 
@@ -35,10 +46,13 @@ internal object JniWhisperNative : WhisperNative {
     override fun init(modelPath: String): Long = nativeInit(modelPath)
     override fun transcribe(handle: Long, wavPath: String): String? =
         nativeTranscribe(handle, wavPath)
+    override fun transcribeSegments(handle: Long, wavPath: String): Array<WhisperSegment>? =
+        nativeTranscribeSegments(handle, wavPath)
     override fun free(handle: Long) = nativeFree(handle)
 
     private external fun nativeInit(modelPath: String): Long
     private external fun nativeTranscribe(ctx: Long, wavPath: String): String?
+    private external fun nativeTranscribeSegments(ctx: Long, wavPath: String): Array<WhisperSegment>?
     private external fun nativeFree(ctx: Long)
 }
 
@@ -129,6 +143,46 @@ class WhisperCppEngine internal constructor(
                 Result.failure(e)
             } catch (e: Throwable) {
                 Log.w(TAG, "transcribe failed", e)
+                Result.failure(WhisperError.InferenceFailed(-1).also { it.initCause(e) })
+            }
+        }
+
+    /**
+     * Additive (U5): parallels [transcribe]'s model-resolution +
+     * native-lock dance exactly, but calls [WhisperNative.transcribeSegments]
+     * instead. [transcribe] itself is left untouched (existing entry
+     * point unchanged) rather than refactored to share this logic, so
+     * the two paths duplicate the model-resolution block rather than
+     * risking any behavior change to the pinned original.
+     */
+    override suspend fun transcribeWithSegments(wavPath: Path): Result<TranscriptionResult> =
+        withContext(Dispatchers.Default) {
+            val modelPath = try {
+                store.readyModelPath()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "model resolution failed", t)
+                return@withContext Result.failure(WhisperError.ModelLoadFailed(t))
+            } ?: return@withContext Result.failure(WhisperError.ModelLoadFailed())
+            try {
+                val segments = synchronized(nativeLock) {
+                    val handle = ensureLoaded(modelPath)
+                    native.transcribeSegments(handle, wavPath.absolutePathString())
+                }
+                    ?: return@withContext Result.failure(WhisperError.InferenceFailed(-1))
+                val text = segments.joinToString("") { it.text }
+                Result.success(
+                    TranscriptionResult(
+                        text = text.trim(),
+                        wordsPerMinute = null,
+                        segments = segments.toList(),
+                    ),
+                )
+            } catch (e: WhisperError) {
+                Result.failure(e)
+            } catch (e: Throwable) {
+                Log.w(TAG, "transcribeWithSegments failed", e)
                 Result.failure(WhisperError.InferenceFailed(-1).also { it.initCause(e) })
             }
         }

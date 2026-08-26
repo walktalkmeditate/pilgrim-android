@@ -17,6 +17,9 @@ class FakeWhisperEngine(
     var resultText: String = "hello world from the fake engine",
     var failure: Throwable? = null,
     var delayMs: Long = 0L,
+    /** When set, [transcribeWithSegments] returns these instead of the
+     * single-segment fallback built from [resultText]. */
+    var resultSegments: List<WhisperSegment>? = null,
 ) : WhisperEngine {
 
     val transcribeCalls: MutableList<Path> = Collections.synchronizedList(mutableListOf())
@@ -30,6 +33,16 @@ class FakeWhisperEngine(
         if (delayMs > 0) delay(delayMs)
         failure?.let { return Result.failure(it) }
         return Result.success(TranscriptionResult(text = resultText, wordsPerMinute = null))
+    }
+
+    override suspend fun transcribeWithSegments(wavPath: Path): Result<TranscriptionResult> {
+        transcribeCalls.add(wavPath)
+        if (delayMs > 0) delay(delayMs)
+        failure?.let { return Result.failure(it) }
+        val segments = resultSegments
+            ?: listOf(WhisperSegment(text = resultText, t0Ms = 0L, t1Ms = 0L, noSpeechProb = 0f))
+        val text = segments.joinToString("") { it.text }
+        return Result.success(TranscriptionResult(text = text, wordsPerMinute = null, segments = segments))
     }
 
     override fun unloadModel() {

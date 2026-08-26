@@ -21,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -29,11 +30,20 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlinx.serialization.json.Json
 import org.walktalkmeditate.pilgrim.audio.model.FakeWhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+import org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess
+import org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway
+import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
+import org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -58,9 +68,17 @@ class TranscriptionRunnerTest {
     private lateinit var store: WhisperModelStore
     private lateinit var downloadScheduler: FakeWhisperModelDownloadScheduler
     private lateinit var runner: TranscriptionRunner
+    private lateinit var threadsPreferences: FakeThreadsPreferencesRepository
+    private lateinit var threadsStore: TranscriptContextStore
+    private var languageGuess = LanguageGuess("en", 0.99f)
+    private var languageDetectionError: Throwable? = null
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
     private val modelRoot: File
         get() = File(context.filesDir, "whisper-model")
+
+    private val threadsContextsDir: File
+        get() = File(context.filesDir, "transcript_contexts")
 
     @Before
     fun setUp() {
@@ -92,6 +110,13 @@ class TranscriptionRunnerTest {
             scope = storeScope,
         )
         downloadScheduler = FakeWhisperModelDownloadScheduler()
+        threadsContextsDir.deleteRecursively()
+        // Off by default: every PRE-EXISTING test in this file transcribes
+        // without caring about Threads at all, so the toggle stays off
+        // unless a test explicitly opts in — this is the same fast
+        // bail-out path production takes for a real toggled-off user.
+        threadsPreferences = FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false)
+        threadsStore = TranscriptContextStore(context, json)
         runner = buildRunner(engine)
     }
 
@@ -99,11 +124,31 @@ class TranscriptionRunnerTest {
     fun tearDown() {
         storeScope.cancel()
         modelRoot.deleteRecursively()
+        threadsContextsDir.deleteRecursively()
         db.close()
     }
 
-    private fun buildRunner(engine: WhisperEngine) =
-        TranscriptionRunner(context, repository, engine, store, downloadScheduler)
+    private fun buildRunner(engine: WhisperEngine) = TranscriptionRunner(
+        context,
+        repository,
+        engine,
+        store,
+        downloadScheduler,
+        TranscriptContextAnalyzer(
+            store = threadsStore,
+            environment = ThreadsAnalysisEnvironment(context, WordNetLexicon(context, json)),
+            languageIdClient = MlKitLanguageIdClient(
+                object : LanguageIdentifierGateway {
+                    override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> {
+                        languageDetectionError?.let { throw it }
+                        return listOf(languageGuess)
+                    }
+                },
+            ),
+            preferences = threadsPreferences,
+        ),
+        threadsPreferences,
+    )
 
     private fun installLegacyTiny() {
         val tiny = File(modelRoot, "ggml-tiny.en.bin")
@@ -426,6 +471,135 @@ class TranscriptionRunnerTest {
             "cancellation still triggers unload via the finally",
             1,
             engine.unloadModelCalls,
+        )
+    }
+
+    // ---- Phase 20 U5: post-persist Threads analysis wiring ----
+
+    @Test
+    fun `threads analysis is skipped entirely when the toggle is off`() = runBlocking {
+        // threadsPreferences defaults to off in setUp().
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(WhisperSegment("hello there world", 0L, 500L, 0.01f))
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertFalse(threadsStore.hasContext(updated.uuid))
+    }
+
+    @Test
+    fun `threads analysis writes a context when the toggle is on and language is English`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        // 30 words, English, no flagged segments.
+        engine.resultSegments = listOf(
+            WhisperSegment(
+                text = "I was walking along the river this morning and noticed how quiet the trail " +
+                    "was with the light moving gently through the leaves above the water and stones",
+                t0Ms = 0L,
+                t1Ms = 12_000L,
+                noSpeechProb = 0.01f,
+            ),
+        )
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertTrue("a context must be written for a toggled-on English recording", threadsStore.hasContext(updated.uuid))
+    }
+
+    @Test
+    fun `threads analysis is skipped for a no-speech placeholder recording`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(WhisperSegment("", 0L, 0L, 0.95f))
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertEquals(TranscriptionRunner.NO_SPEECH_PLACEHOLDER, updated.transcription)
+        assertFalse(
+            "no real transcript exists for a no-speech row — nothing should be analyzed",
+            threadsStore.hasContext(updated.uuid),
+        )
+    }
+
+    @Test
+    fun `threads analysis does not write when the detected language is not English`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        languageGuess = LanguageGuess("ja", 0.99f)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(
+            WhisperSegment(
+                text = "I was walking along the river this morning and noticed how quiet the trail " +
+                    "was with the light moving gently through the leaves above the water and stones",
+                t0Ms = 0L,
+                t1Ms = 12_000L,
+                noSpeechProb = 0.01f,
+            ),
+        )
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertFalse(threadsStore.hasContext(updated.uuid))
+    }
+
+    @Test
+    fun `an analyzer failure never blocks the already-persisted transcription`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        // Language detection itself throws — proves TranscriptionRunner's
+        // analyzeThreadsSafely try/catch, not just a store-level no-op.
+        languageDetectionError = RuntimeException("boom")
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(WhisperSegment("hello there friend", 0L, 500L, 0.01f))
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertEquals(Result.success(1), outcome)
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertEquals("hello there friend", updated.transcription)
+        assertFalse(
+            "the thrown error must not have left a context behind",
+            threadsStore.hasContext(updated.uuid),
+        )
+    }
+
+    // ---- flagged-segment quality signal (compressionRatio / noSpeechProb) ----
+
+    @Test
+    fun `a segment flagged by noSpeechProb is scrubbed from the marker text`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        // "should" appears in a segment whose noSpeechProb clears the 0.6
+        // flag threshold; the analysis must scrub it from markers even
+        // though the persisted transcription keeps the raw text.
+        engine.resultSegments = listOf(
+            WhisperSegment("should should should. ", 0L, 500L, 0.95f),
+            WhisperSegment(
+                "apple banana cherry date fig grape kiwi lemon mango orange peach quince fruit basket",
+                500L,
+                6000L,
+                0.01f,
+            ),
+        )
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        val context = threadsStore.readRaw(updated.uuid)
+        assertTrue(context != null)
+        assertEquals(
+            "the flagged 'should should should' fragment must be scrubbed from markers",
+            0,
+            context!!.markers.discrepancyCount,
         )
     }
 
