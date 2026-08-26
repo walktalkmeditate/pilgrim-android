@@ -10,7 +10,7 @@ Device: OnePlus 13. Build: `feat/phase20-thought-threads` debug variant (`org.wa
 
 ## B. Field report + flag rates (debug build)
 
-- [ ] Trigger: `adb shell am broadcast -a org.walktalkmeditate.pilgrim.debug.RUN_SENSES_FIELD_REPORT`, then `adb logcat` for the `===== DOSSIER SENSES FIELD REPORT =====` banner. CAVEAT (by design): rates are inflated vs production — uncapped, no dedup, moon line fires every eligible walk.
+- [ ] Trigger: `adb shell am broadcast -n org.walktalkmeditate.pilgrim.debug/org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReportReceiver -a org.walktalkmeditate.pilgrim.debug.RUN_SENSES_FIELD_REPORT`, then `adb logcat` for the `===== DOSSIER SENSES FIELD REPORT =====` banner. CAVEAT (by design): rates are inflated vs production — uncapped, no dedup, moon line fires every eligible walk.
 - [ ] **Flagged-segment rates** (accept-or-tune, release-blocking, product-owner decision): inspect per-walk flagged-fragment behavior on real recordings. Remember whisper.cpp's native pre-filter already suppresses the worst windows (`no_speech_prob > 0.6 AND avg_logprob < -1.0`) before the Kotlin `2.4/0.6` filter sees segments — the Kotlin filter's job is the survivors. If real speech is being flagged away (themes missing words you clearly said), tune the 0.6 threshold before release; record the decision here.
 - [ ] Sense firing sanity on real ground: any sense firing near-every-walk (degeneration) or provably-wrongly (e.g. place resonance on a daily loop) → re-threshold/cut decision per the iOS ship-gate precedent.
 
@@ -19,6 +19,7 @@ Device: OnePlus 13. Build: `feat/phase20-thought-threads` debug variant (`org.wa
 - [ ] First-activation backfill: install the build over existing history (or toggle off→on) → backfill sweeps history battery-gated; origin-claiming labels ("first appearance in the record", "(first spoken …)", Quiet lines) stay ABSENT until it completes, then appear.
 - [ ] Battery gate: with battery < 20% and not charging, finish a walk with recordings + auto-transcribe ON → summary shows "Auto-transcription skipped — battery below 20%", the recording row does NOT read "Queued", TalkBack announces the banner; tap Transcribe (all) on charge → banner clears only when something actually transcribed.
 - [ ] Long-walk regression (JNI touched the critical path): one 45+ min walk, screen off, recordings at intervals → transcriptions land, stats intact.
+- [ ] Release-candidate (minified) build: one recording transcribes end-to-end (guards the JNI keep-rule bug class).
 
 ## D. Sovereignty + hygiene
 

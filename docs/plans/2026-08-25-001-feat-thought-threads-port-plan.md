@@ -373,7 +373,7 @@ settings toggle (DataStore, default ON) gates every arrow above          [U6/U10
 - **APK:** +~2–4 MB (WordNet-derived + VADER assets, ML Kit language-id); measured by the derivation manifest; no other binary growth.
 - **Prompt surface:** dossier sections render only when the toggle is on AND contexts exist; prompts otherwise byte-identical (U11 pins this).
 - **Backup:** new exclusion rules for `transcript_contexts/`; existing backup behavior otherwise unchanged.
-- **DataStore:** five new threads keys; Delete All clears them.
+- **DataStore:** eight new threads keys (toggle, import generation, backfill completion pair, checkpoint triple, moon-line index); Delete All clears them.
 
 ## Risk Analysis & Mitigation
 
