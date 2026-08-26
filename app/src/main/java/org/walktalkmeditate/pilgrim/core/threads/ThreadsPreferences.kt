@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import javax.inject.Inject
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -22,16 +23,21 @@ import org.walktalkmeditate.pilgrim.di.ThreadsPreferencesDataStore
 /**
  * U6 backfill progress marker: how far [ThreadsBackfillRunner] got through
  * the current sweep attempt, so a mid-run WorkManager kill resumes rather
- * than restarts. [processedCount] is a prefix length into the snapshot
- * sorted by uuid ascending (matching [TranscriptContextStore.loadAll]'s
- * own determinism convention) — it only ever advances past a batch whose
- * every item was confirmed accounted for, so a resume never skips a
- * still-failing item. [forImportGeneration] pins the checkpoint to the
- * import epoch it was computed against: a mismatch against the CURRENT
+ * than restarts. [watermark] is the LAST uuid of the clean prefix of the
+ * snapshot sorted by uuid ascending (matching [TranscriptContextStore.loadAll]'s
+ * own determinism convention), `null` when no batch has come back clean
+ * yet — a resume starts at the first snapshot uuid strictly greater. A
+ * uuid survives recordings being deleted between attempts, where an
+ * integer prefix LENGTH would reshape under the sort and let a resume
+ * skip never-analyzed items or stamp completion without attempting the
+ * remainder. It only ever advances past a batch whose every item was
+ * confirmed accounted for, so a resume never skips a still-failing item.
+ * [forImportGeneration] pins the checkpoint to the import epoch it was
+ * computed against: a mismatch against the CURRENT
  * [ThreadsPreferencesRepository.importGeneration] means an import landed
  * since, and the checkpoint must be discarded rather than trusted (a
- * fresh, differently-shaped snapshot may not agree on what "the first N
- * items" means). [atAnalysisVersion] pins it the same way to the
+ * fresh, differently-shaped snapshot may not agree on what "the clean
+ * prefix" means). [atAnalysisVersion] pins it the same way to the
  * [TranscriptContext.ANALYSIS_VERSION] it was computed against: a mismatch
  * means the accounting rules themselves changed since this checkpoint was
  * written, so the prefix it counts as "already accounted for" may still
@@ -41,12 +47,12 @@ import org.walktalkmeditate.pilgrim.di.ThreadsPreferencesDataStore
  * generation still matches.
  */
 data class BackfillCheckpoint(
-    val processedCount: Int,
+    val watermark: String?,
     val forImportGeneration: Int,
     val atAnalysisVersion: Int,
 ) {
     companion object {
-        val EMPTY = BackfillCheckpoint(processedCount = 0, forImportGeneration = 0, atAnalysisVersion = 0)
+        val EMPTY = BackfillCheckpoint(watermark = null, forImportGeneration = 0, atAnalysisVersion = 0)
     }
 }
 
@@ -192,24 +198,26 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
 
     override suspend fun backfillCheckpoint(): BackfillCheckpoint {
         val prefs = dataStore.data.first()
-        val processedCount = prefs[BACKFILL_CHECKPOINT_PROCESSED_COUNT]
+        // The generation key signals checkpoint presence — the watermark
+        // itself is legitimately absent when no batch has come back clean.
         val forImportGeneration = prefs[BACKFILL_CHECKPOINT_IMPORT_GENERATION]
-        return if (processedCount == null || forImportGeneration == null) {
-            BackfillCheckpoint.EMPTY
-        } else {
-            // A checkpoint persisted before this key existed decodes with
-            // no recorded version at all; NO_STORED_ANALYSIS_VERSION is
-            // guaranteed to mismatch the current ANALYSIS_VERSION so an
-            // old-shape checkpoint is treated as stale rather than
-            // trusted.
-            val atAnalysisVersion = prefs[BACKFILL_CHECKPOINT_ANALYSIS_VERSION] ?: NO_STORED_ANALYSIS_VERSION
-            BackfillCheckpoint(processedCount, forImportGeneration, atAnalysisVersion)
-        }
+            ?: return BackfillCheckpoint.EMPTY
+        // A checkpoint persisted without this key decodes with no
+        // recorded version at all; NO_STORED_ANALYSIS_VERSION is
+        // guaranteed to mismatch the current ANALYSIS_VERSION so such a
+        // checkpoint is treated as stale rather than trusted.
+        val atAnalysisVersion = prefs[BACKFILL_CHECKPOINT_ANALYSIS_VERSION] ?: NO_STORED_ANALYSIS_VERSION
+        return BackfillCheckpoint(prefs[BACKFILL_CHECKPOINT_WATERMARK], forImportGeneration, atAnalysisVersion)
     }
 
     override suspend fun setBackfillCheckpoint(checkpoint: BackfillCheckpoint) {
         dataStore.edit { prefs ->
-            prefs[BACKFILL_CHECKPOINT_PROCESSED_COUNT] = checkpoint.processedCount
+            val watermark = checkpoint.watermark
+            if (watermark == null) {
+                prefs.remove(BACKFILL_CHECKPOINT_WATERMARK)
+            } else {
+                prefs[BACKFILL_CHECKPOINT_WATERMARK] = watermark
+            }
             prefs[BACKFILL_CHECKPOINT_IMPORT_GENERATION] = checkpoint.forImportGeneration
             prefs[BACKFILL_CHECKPOINT_ANALYSIS_VERSION] = checkpoint.atAnalysisVersion
         }
@@ -217,7 +225,7 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
 
     override suspend fun clearBackfillCheckpoint() {
         dataStore.edit { prefs ->
-            prefs.remove(BACKFILL_CHECKPOINT_PROCESSED_COUNT)
+            prefs.remove(BACKFILL_CHECKPOINT_WATERMARK)
             prefs.remove(BACKFILL_CHECKPOINT_IMPORT_GENERATION)
             prefs.remove(BACKFILL_CHECKPOINT_ANALYSIS_VERSION)
         }
@@ -245,7 +253,7 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         // backfill runs across).
         val BACKFILL_COMPLETED_AT_VERSION = intPreferencesKey("backfillCompletedAtVersion")
         val BACKFILL_COMPLETED_AT_IMPORT_GENERATION = intPreferencesKey("backfillCompletedAtImportGeneration")
-        val BACKFILL_CHECKPOINT_PROCESSED_COUNT = intPreferencesKey("backfillCheckpointProcessedCount")
+        val BACKFILL_CHECKPOINT_WATERMARK = stringPreferencesKey("backfillCheckpointWatermark")
         val BACKFILL_CHECKPOINT_IMPORT_GENERATION = intPreferencesKey("backfillCheckpointImportGeneration")
         val BACKFILL_CHECKPOINT_ANALYSIS_VERSION = intPreferencesKey("backfillCheckpointAnalysisVersion")
 

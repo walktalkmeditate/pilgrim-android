@@ -693,6 +693,49 @@ class PromptsCoordinatorTest {
     }
 
     @Test
+    fun `buildContext swallows a dossier builder throw and returns a dossier-less context`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        // ThreadsDossierBuilder is final, so the throw is injected via its
+        // preferences collaborator — build()'s first internal read.
+        val throwingPrefs = object :
+            org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
+            by org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository() {
+            override val threadsAfterWalks: kotlinx.coroutines.flow.StateFlow<Boolean>
+                get() = throw IllegalStateException("dossier build blew up")
+        }
+        val throwingBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+            context,
+            db,
+            throwingPrefs,
+        )
+        val coordinator = newCoordinator(threadsDossierBuilder = throwingBuilder)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)
+
+        assertNotNull("a dossier failure must never break context assembly", ctx)
+        assertNull(ctx!!.threadsDossier)
+    }
+
+    @Test
+    fun `buildContext swallows a language detection throw and returns a code-less context`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, "some text")
+        val throwingLanguageClient = MlKitLanguageIdClient(
+            object : LanguageIdentifierGateway {
+                override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> =
+                    throw IllegalStateException("language id blew up")
+            },
+        )
+        val coordinator = newCoordinator(mlKitLanguageIdClient = throwingLanguageClient)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)
+
+        assertNotNull("a language-id failure must never break context assembly", ctx)
+        assertNull(ctx!!.detectedLanguageCode)
+    }
+
+    @Test
     fun `generateAll feeds the detected language name into both a built-in AND a custom prompt`() = runTest(dispatcher) {
         val walk = insertWalkRow()
         recordingForWalk(walk, "some text")

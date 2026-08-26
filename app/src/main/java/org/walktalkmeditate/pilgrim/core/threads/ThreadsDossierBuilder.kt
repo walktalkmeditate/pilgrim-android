@@ -132,7 +132,12 @@ class ThreadsDossierBuilder @Inject constructor(
         if (!preferences.threadsAfterWalks.value) return null
 
         val walkLite = walkDao.getWalkLite(walkId)?.toWalkLite() ?: return null
-        val recordings = voiceRecordingDao.getForWalk(walkId).filter { !it.transcription.isNullOrEmpty() }
+        // The no-speech placeholder is display text, not spoken content —
+        // a placeholder-only walk has nothing to analyze, exactly like a
+        // walk whose transcriptions are all null.
+        val recordings = voiceRecordingDao.getForWalk(walkId).filter {
+            !it.transcription.isNullOrEmpty() && it.transcription != VoiceRecording.NO_SPEECH_PLACEHOLDER
+        }
         if (recordings.isEmpty()) return null
 
         // One consistent read each, captured BEFORE any store mutation this
@@ -205,6 +210,7 @@ class ThreadsDossierBuilder @Inject constructor(
         // no current recordings never reaches here (the `current.isEmpty()`
         // guard above already returned). All-or-nothing append; zero
         // lines never produces an empty "**Noticed:**" heading.
+        var reportedLunationIndex: Int? = null
         val dossier = dossierText?.let { base ->
             val senseInput = gatherSenseInput(
                 walkDao = walkDao,
@@ -226,7 +232,10 @@ class ThreadsDossierBuilder @Inject constructor(
             )
             val output = DossierSenses.lines(senseInput)
             val text = if (output.lines.isEmpty()) base else base + "\n\n**Noticed:**\n" + output.lines.joinToString("\n")
-            output.reportedLunationIndex?.let { preferences.setMoonLineLastLunationIndex(it) }
+            output.reportedLunationIndex?.let {
+                preferences.setMoonLineLastLunationIndex(it)
+                reportedLunationIndex = it
+            }
             DossierBlock(text)
         }
 
@@ -234,9 +243,16 @@ class ThreadsDossierBuilder @Inject constructor(
         // a fresh re-read (BEH-38/EDG-70). A concurrent external writer
         // (the backfill sweep, another recording's transcription analysis)
         // landing a save inside this same call would otherwise get folded
-        // into the memo as if it were this build's own mutation.
+        // into the memo as if it were this build's own mutation. moonState
+        // carries this build's OWN moon-line write forward the same way
+        // (iOS's postBuildMoonState) — keying on the pre-build value would
+        // self-invalidate the memo right after the write, and the rebuild
+        // would drop the once-per-lunation line it just showed.
         val ownWriteCount = ownDeleteWrite + freshlySaved.size
-        val postBuildKey = preBuildKey.copy(changeCount = preBuildChangeCount + ownWriteCount)
+        val postBuildKey = preBuildKey.copy(
+            changeCount = preBuildChangeCount + ownWriteCount,
+            moonState = reportedLunationIndex ?: moonState,
+        )
         memoMutex.withLock { memo = CachedDossier(postBuildKey, dossier) }
         return dossier
     }

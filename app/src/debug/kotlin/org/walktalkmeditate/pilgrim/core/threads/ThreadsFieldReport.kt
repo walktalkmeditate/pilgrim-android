@@ -17,6 +17,7 @@ import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
 /**
  * DEBUG-only ship-gate diagnostic (parity spec
@@ -35,11 +36,17 @@ import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
  * walk instead of once-per-lunation. Judge DEGENERATION/DEADNESS from
  * these rates, never production frequency.
  *
- * This class only ever READS — it never calls
- * [ThreadsPreferencesRepository.setMoonLineLastLunationIndex] or any
- * other preference/file write, so running it can never corrupt the
- * device's real once-per-lunation budget or leave any on-disk trace
- * (ephemeral logging only, per R12).
+ * **Write behavior**: preferences are never touched — this class never
+ * calls [ThreadsPreferencesRepository.setMoonLineLastLunationIndex] or
+ * any other preference write, so the device's real once-per-lunation
+ * budget is safe. It is NOT fully read-only, though: [resolveReportContexts]
+ * self-heals a missing/stale stored context via
+ * [TranscriptContextAnalyzer.analyzeAndStore], which writes
+ * `transcript_contexts/` files and bumps
+ * [TranscriptContextStore.changeCount] exactly like production analysis —
+ * invalidating any production dossier memo built over the previous
+ * count. Those writes are the same ones normal use would eventually
+ * make; the harness just makes them early.
  *
  * **Android divergence (planned, not drift)**: iOS gates this harness
  * behind a `--senses-field-report` launch argument; Android has no
@@ -85,7 +92,9 @@ class ThreadsFieldReport @Inject constructor(
         val eligible = allWalks
             .sortedBy { it.startTimestamp }
             .mapNotNull { walk ->
-                val recordings = voiceRecordingDao.getForWalk(walk.id).filter { !it.transcription.isNullOrEmpty() }
+                val recordings = voiceRecordingDao.getForWalk(walk.id).filter {
+                    !it.transcription.isNullOrEmpty() && it.transcription != VoiceRecording.NO_SPEECH_PLACEHOLDER
+                }
                 if (recordings.isEmpty()) null else walk.id to recordings
             }
         if (eligible.isEmpty()) {

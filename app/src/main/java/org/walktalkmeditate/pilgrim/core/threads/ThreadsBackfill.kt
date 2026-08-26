@@ -19,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.yield
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.dao.TranscribedRecordingSnapshot
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
 /**
  * One-time historical sweep over already-transcribed recordings — origin
@@ -90,39 +91,56 @@ class ThreadsBackfillRunner @Inject constructor(
     ): ThreadsBackfillOutcome {
         if (!preferences.threadsAfterWalks.value) return ThreadsBackfillOutcome.ToggleOff
 
+        // The no-speech placeholder is display text the transcription
+        // runner commits for silent recordings and deliberately never
+        // analyzes — those rows are accounted for by definition. Dropped
+        // here (not per-item) so they can neither burn analysis on
+        // placeholder text nor make a placeholder-only history read as
+        // "recordings exist but zero contexts" to the distrust check.
+        val spokenSnapshot: suspend () -> List<TranscribedRecordingSnapshot> = {
+            snapshotProvider().filterNot { it.transcription == VoiceRecording.NO_SPEECH_PLACEHOLDER }
+        }
+
         val startGeneration = preferences.importGeneration.value
         val alreadyComplete = preferences.backfillCompletedAtVersion() == TranscriptContext.ANALYSIS_VERSION &&
             preferences.backfillCompletedAtImportGeneration() == startGeneration
         if (alreadyComplete) {
-            if (isCompletionTrustworthy(snapshotProvider)) return ThreadsBackfillOutcome.Completed
+            if (isCompletionTrustworthy(spokenSnapshot)) return ThreadsBackfillOutcome.Completed
             // D2D device-transfer carries this completion flag (a
             // DataStore file) but the transfer rules exclude
             // transcript_contexts/ (data_extraction_rules.xml —
             // recomputable derived data, never worth carrying) — a
             // migrated device can read "complete" with zero contexts ever
-            // saved. Clear ONLY the completion flag (never the toggle, the
-            // checkpoint already reads as empty from the same transfer)
-            // and fall through into a real, full sweep below.
+            // saved. Clear the completion flag AND the checkpoint (never
+            // the toggle): a clean completion leaves no checkpoint behind,
+            // but a kill inside an earlier completion write could — and a
+            // surviving full-length checkpoint would make the "full sweep"
+            // below resume past everything and re-stamp with zero
+            // contexts. Then fall through into a real, full sweep.
             preferences.clearBackfillCompleted()
+            preferences.clearBackfillCheckpoint()
         }
 
         if (!gate()) return ThreadsBackfillOutcome.GateClosed
 
-        val items = snapshotProvider().sortedBy { it.uuid }
+        val items = spokenSnapshot().sortedBy { it.uuid }
         pruneStaleOrphans(items.map { it.uuid }.toSet())
 
         val checkpoint = preferences.backfillCheckpoint()
-        val startIndex = if (checkpoint.forImportGeneration == startGeneration &&
+        val checkpointValid = checkpoint.forImportGeneration == startGeneration &&
             checkpoint.atAnalysisVersion == TranscriptContext.ANALYSIS_VERSION
-        ) {
-            checkpoint.processedCount
-        } else {
-            0
-        }
+        // Resume at the first uuid strictly past the watermark — the same
+        // string order the sort above uses. Items deleted since the
+        // checkpoint was written simply vanish from the list without
+        // shifting anything still ahead of the watermark into the
+        // "already done" prefix, which an integer index would.
+        var watermark = if (checkpointValid) checkpoint.watermark else null
+        val startIndex = watermark?.let { mark ->
+            items.indexOfFirst { it.uuid > mark }.takeIf { it >= 0 } ?: items.size
+        } ?: 0
 
         var allAccounted = true
         var gateClosed = false
-        var lastCleanBoundary = startIndex
         var index = startIndex
 
         while (index < items.size) {
@@ -142,28 +160,37 @@ class ThreadsBackfillRunner @Inject constructor(
             index = batchEnd
             // allAccounted is never reset back to true once a batch fails
             // it, so requiring it here (not just this batch's OWN
-            // batchClean) pins the boundary at the last batch that was
+            // batchClean) pins the watermark at the last batch that was
             // clean AND every batch before it was too — a later clean
             // batch must never advance the checkpoint past an EARLIER
             // batch's still-unaccounted-for item, or a retry would resume
             // past the failure and this sweep's own eventual completion
             // stamp would be recorded without it.
-            if (batchClean && allAccounted) lastCleanBoundary = index
-            preferences.setBackfillCheckpoint(BackfillCheckpoint(lastCleanBoundary, startGeneration, TranscriptContext.ANALYSIS_VERSION))
+            if (batchClean && allAccounted) watermark = items[index - 1].uuid
+            preferences.setBackfillCheckpoint(BackfillCheckpoint(watermark, startGeneration, TranscriptContext.ANALYSIS_VERSION))
             yield()
         }
 
         val staleGeneration = preferences.importGeneration.value != startGeneration
-        return when {
+        val outcome = when {
             gateClosed -> ThreadsBackfillOutcome.GateClosed
             staleGeneration -> ThreadsBackfillOutcome.Stale
             allAccounted -> {
-                preferences.setBackfillCompleted(TranscriptContext.ANALYSIS_VERSION, startGeneration)
+                // Checkpoint first: a kill between these two writes must
+                // leave "incomplete + resumable", never "complete + full
+                // checkpoint" — that shape survives a D2D transfer and
+                // makes the distrust re-sweep above resume past everything
+                // and re-stamp with zero contexts.
                 preferences.clearBackfillCheckpoint()
+                preferences.setBackfillCompleted(TranscriptContext.ANALYSIS_VERSION, startGeneration)
                 ThreadsBackfillOutcome.Completed
             }
             else -> ThreadsBackfillOutcome.Incomplete
         }
+        // First-activation QA signal — outcome + counts only, never uuids
+        // or transcript data. Failures already log in the worker.
+        Log.i(TAG, "sweep finished: $outcome (${items.size} snapshot items, resumed at $startIndex, stopped at $index)")
+        return outcome
     }
 
     /**
@@ -182,11 +209,24 @@ class ThreadsBackfillRunner @Inject constructor(
      * complete. Same duplicate-detection trade [TranscriptionRunner]
      * already accepts (a fast, local, no-network ML Kit call) — see
      * [TranscriptContextAnalyzer]'s own KDoc.
+     *
+     * A collaborator throw is caught here and reported as that same
+     * per-item `false` — letting it propagate would turn one poison item
+     * into a whole-sweep WorkManager retry that re-hits the same throw
+     * forever, stalling every item behind it.
      */
     private suspend fun accountFor(item: TranscribedRecordingSnapshot): Boolean {
-        val language = analyzer.detectLanguage(item.transcription)
-        if (language != ENGLISH) return true
-        return analyzer.analyzeAndStore(item.uuid, item.transcription) != null
+        return try {
+            val language = analyzer.detectLanguage(item.transcription)
+            if (language != ENGLISH) return true
+            analyzer.analyzeAndStore(item.uuid, item.transcription) != null
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // uuid only — never the transcript or detected language.
+            Log.w(TAG, "analysis failed for recording ${item.uuid}", t)
+            false
+        }
     }
 
     /**
@@ -233,6 +273,7 @@ class ThreadsBackfillRunner @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "ThreadsBackfill"
         const val BATCH_SIZE = 25
         const val ENGLISH = "en"
     }

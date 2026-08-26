@@ -127,6 +127,7 @@ fun VoiceCard(
             description = stringResource(R.string.settings_threads_description),
             checked = state.threadsEnabled,
             onCheckedChange = onSetThreadsEnabled,
+            testTag = THREADS_TOGGLE_TAG,
         )
 
         ModelDownloadRow(
@@ -143,6 +144,8 @@ fun VoiceCard(
         )
     }
 }
+
+internal const val THREADS_TOGGLE_TAG = "VoiceCard.threadsToggle"
 
 /**
  * iOS Settings-row shape (`VoiceCard.swift@9a418e4`): linear progress

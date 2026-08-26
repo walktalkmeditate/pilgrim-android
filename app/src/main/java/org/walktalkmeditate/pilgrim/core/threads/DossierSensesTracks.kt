@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.threads
 
-import java.time.Duration
 import java.time.Instant
 import kotlin.math.floor
 
@@ -629,25 +628,5 @@ internal object DossierSensesTracks {
             text = "All the words came in the first third; the last $minutes minutes were wordless.",
             lemma = null,
         )
-    }
-
-    // ------------------------------------------------------------------
-    // shared time-arithmetic helpers
-    // ------------------------------------------------------------------
-
-    /** Fractional-second duration between two instants (Swift
-     * `timeIntervalSince` semantics — a signed Double, never truncated
-     * to milliseconds). */
-    private fun secondsBetween(start: Instant, end: Instant): Double {
-        val duration = Duration.between(start, end)
-        return duration.seconds.toDouble() + duration.nano / 1_000_000_000.0
-    }
-
-    /** Adds a (possibly negative, possibly fractional) second offset
-     * without precision loss. */
-    private fun Instant.plusSecondsPrecise(seconds: Double): Instant {
-        val wholeSeconds = floor(seconds).toLong()
-        val fractionalNanos = kotlin.math.round((seconds - floor(seconds)) * 1_000_000_000.0).toLong()
-        return this.plusSeconds(wholeSeconds).plusNanos(fractionalNanos)
     }
 }

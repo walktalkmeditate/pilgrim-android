@@ -63,4 +63,16 @@ data class VoiceRecording(
                 "(${endTimestamp - startTimestamp}) for walk $walkId, recording $uuid"
         }
     }
+
+    companion object {
+        /**
+         * Sentinel committed to [transcription] when the engine heard no
+         * speech. Lives with the column it is stored in — the write path
+         * (the transcription runner), the display path (the recordings
+         * UI), and every spoken-content predicate (Thought Threads
+         * backfill/dossier filters) must agree on this one value, and
+         * none of those packages may import each other.
+         */
+        const val NO_SPEECH_PLACEHOLDER = "(no speech detected)"
+    }
 }

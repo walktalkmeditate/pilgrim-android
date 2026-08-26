@@ -104,6 +104,9 @@ fun SettingToggle(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    /** Applied to the Switch itself so tests can target one toggle
+     * without positional `onAllNodes(isToggleable())[n]` indexing. */
+    testTag: String? = null,
 ) {
     Row(
         modifier = modifier,
@@ -129,6 +132,7 @@ fun SettingToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,
+            modifier = if (testTag != null) Modifier.testTag(testTag) else Modifier,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = pilgrimColors.parchment,
                 checkedTrackColor = pilgrimColors.stone,

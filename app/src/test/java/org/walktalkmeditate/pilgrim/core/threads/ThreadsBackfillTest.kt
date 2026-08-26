@@ -17,6 +17,7 @@ import org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess
 import org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway
 import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
 import org.walktalkmeditate.pilgrim.data.dao.TranscribedRecordingSnapshot
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
 /**
  * [ThreadsBackfillRunner.sweep] state machine — U6 pinned semantics from
@@ -147,7 +148,7 @@ class ThreadsBackfillTest {
         var calls = 0
         val gate: suspend () -> Boolean = { calls++; calls <= 2 }
         runner.sweep(snapshotProvider = { items }, gate = gate)
-        assertEquals(25, preferences.backfillCheckpoint().processedCount)
+        assertEquals("u-024", preferences.backfillCheckpoint().watermark)
 
         // Simulate a process kill: a brand-new runner instance (fresh
         // in-memory state), same persisted preferences + on-disk store.
@@ -159,12 +160,12 @@ class ThreadsBackfillTest {
     }
 
     @Test
-    fun `a same-version checkpoint still resumes from the persisted processedCount instead of restarting`() = runTest {
+    fun `a same-version checkpoint still resumes from the persisted watermark instead of restarting`() = runTest {
         val items = snapshotOf(30)
         var calls = 0
         val gate: suspend () -> Boolean = { calls++; calls <= 2 }
         runner.sweep(snapshotProvider = { items }, gate = gate)
-        assertEquals(25, preferences.backfillCheckpoint().processedCount)
+        assertEquals("u-024", preferences.backfillCheckpoint().watermark)
 
         // A resume from index 25 has exactly one remaining batch
         // (25-29), so the per-batch gate is consulted once, plus the
@@ -194,7 +195,7 @@ class ThreadsBackfillTest {
         // Reproduces the reviewer-proven gap: a sweep interrupted
         // mid-run persists a checkpoint, an ANALYSIS_VERSION bump lands,
         // and a naive resume that only checks forImportGeneration would
-        // trust the stale processedCount — leaving the already-processed
+        // trust the stale watermark — leaving the already-processed
         // prefix permanently stuck on stale-version contexts, even though
         // completion later records the NEW version.
         val items = snapshotOf(30)
@@ -202,7 +203,7 @@ class ThreadsBackfillTest {
         val gate: suspend () -> Boolean = { calls++; calls <= 2 }
         runner.sweep(snapshotProvider = { items }, gate = gate)
         val staleCheckpoint = preferences.backfillCheckpoint()
-        assertEquals(25, staleCheckpoint.processedCount)
+        assertEquals("u-024", staleCheckpoint.watermark)
 
         // TranscriptContext.ANALYSIS_VERSION is a compile-time constant,
         // so a real version bump can't happen mid-test — simulate its
@@ -305,6 +306,46 @@ class ThreadsBackfillTest {
         )
     }
 
+    // ---- no-speech placeholder rows are accounted for by definition ----
+
+    @Test
+    fun `a placeholder row produces no context write and never blocks completion`() = runTest {
+        val spoken = snapshotOf(1)
+        val placeholder = TranscribedRecordingSnapshot(
+            uuid = "u-silent",
+            transcription = VoiceRecording.NO_SPEECH_PLACEHOLDER,
+        )
+
+        val outcome = runner.sweep(snapshotProvider = { spoken + placeholder }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        assertTrue(store.hasCurrentContext(spoken.single().uuid))
+        assertFalse(
+            "placeholder text must never be analyzed into a context",
+            store.hasContext("u-silent"),
+        )
+    }
+
+    @Test
+    fun `a placeholder-only history completes and stays completed instead of looping through distrust`() = runTest {
+        val placeholderOnly = listOf(
+            TranscribedRecordingSnapshot(uuid = "u-silent", transcription = VoiceRecording.NO_SPEECH_PLACEHOLDER),
+        )
+        assertEquals(
+            ThreadsBackfillOutcome.Completed,
+            runner.sweep(snapshotProvider = { placeholderOnly }, gate = allowGate),
+        )
+
+        // Zero contexts + a snapshot of only placeholders must read as a
+        // legitimately empty world, not as the D2D "flag without contexts"
+        // distrust shape — otherwise every later call re-sweeps forever.
+        val second = runner.sweep(
+            snapshotProvider = { placeholderOnly },
+            gate = { error("a placeholder-only completion must short-circuit — gate must not be consulted") },
+        )
+        assertEquals(ThreadsBackfillOutcome.Completed, second)
+    }
+
     // ---- prune stale-version orphans before the sweep ----
 
     @Test
@@ -354,6 +395,35 @@ class ThreadsBackfillTest {
         assertTrue(store.hasCurrentContext(savedUuid))
     }
 
+    // ---- a poison item is a per-item failure, never a sweep abort ----
+
+    @Test
+    fun `one item's analyzer throw is a per-item failure that leaves the rest of the batch processed`() = runTest {
+        val items = snapshotOf(3).toMutableList()
+        items[1] = items[1].copy(transcription = "poison " + items[1].transcription)
+        val throwingClient = MlKitLanguageIdClient(
+            object : LanguageIdentifierGateway {
+                override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> {
+                    check(!text.startsWith("poison")) { "language id blew up" }
+                    return listOf(LanguageGuess("en", 0.99f))
+                }
+            },
+        )
+        val throwingAnalyzer = TranscriptContextAnalyzer(store, environment, throwingClient, preferences)
+        val throwingRunner = ThreadsBackfillRunner(store, throwingAnalyzer, preferences)
+
+        val outcome = throwingRunner.sweep(snapshotProvider = { items }, gate = allowGate)
+
+        assertEquals(
+            "a throw must behave exactly like accountFor's documented per-item false",
+            ThreadsBackfillOutcome.Incomplete,
+            outcome,
+        )
+        assertTrue(store.hasCurrentContext(items[0].uuid))
+        assertFalse("the poison item stays unaccounted for this sweep", store.hasContext(items[1].uuid))
+        assertTrue("items after the poison item must still be processed", store.hasCurrentContext(items[2].uuid))
+    }
+
     // ---- I1: a later clean batch must not advance the checkpoint past an earlier failure ----
 
     @Test
@@ -377,10 +447,10 @@ class ThreadsBackfillTest {
 
         assertEquals(ThreadsBackfillOutcome.Incomplete, outcome)
         assertFalse("the failed item must not be accounted for", store.hasCurrentContext(failingUuid))
-        val checkpointAfterFailure = preferences.backfillCheckpoint().processedCount
+        val watermarkAfterFailure = preferences.backfillCheckpoint().watermark
         assertTrue(
-            "checkpoint must not advance past the batch containing the still-failing item — was $checkpointAfterFailure",
-            checkpointAfterFailure <= 10,
+            "watermark must not advance to/past the batch containing the still-failing item — was $watermarkAfterFailure",
+            watermarkAfterFailure == null || watermarkAfterFailure < failingUuid,
         )
 
         // Retry: the blocker is already gone (writeAtomically's own catch
@@ -393,6 +463,108 @@ class ThreadsBackfillTest {
         assertEquals(ThreadsBackfillOutcome.Completed, retryOutcome)
         for (item in items) {
             assertTrue("item ${item.uuid} must be accounted for after the retry", store.hasCurrentContext(item.uuid))
+        }
+    }
+
+    // ---- I2: deletions between checkpointed attempts reshape the snapshot ----
+
+    @Test
+    fun `deletions between checkpointed attempts never skip a not-yet-analyzed item`() = runTest {
+        val items = snapshotOf(30)
+        var calls = 0
+        val gate: suspend () -> Boolean = { calls++; calls <= 2 }
+        runner.sweep(snapshotProvider = { items }, gate = gate)
+        assertEquals("u-024", preferences.backfillCheckpoint().watermark)
+        assertFalse("precondition: u-025 was never reached before the gate closed", store.hasContext("u-025"))
+
+        // One PROCESSED recording and one NEVER-ANALYZED recording are
+        // deleted before the retry. The 28-item list reshapes under any
+        // index-based resume (a prefix length of 25 would land past
+        // "u-025" and stamp completion without ever analyzing it); the
+        // uuid watermark resumes at exactly the first uuid past "u-024".
+        val afterDeletions = items.filterNot { it.uuid == "u-005" || it.uuid == "u-027" }
+        val outcome = runner.sweep(snapshotProvider = { afterDeletions }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        for (item in afterDeletions) {
+            assertTrue(
+                "item ${item.uuid} must be accounted for before completion is stamped",
+                store.hasCurrentContext(item.uuid),
+            )
+        }
+    }
+
+    // ---- I4: completion stamp ordering + distrust self-heal ----
+
+    @Test
+    fun `completion is stamped only after the checkpoint is cleared`() = runTest {
+        val delegate = preferences
+        val orderChecking = object : ThreadsPreferencesRepository by delegate {
+            override suspend fun setBackfillCompleted(version: Int, atImportGeneration: Int) {
+                assertEquals(
+                    "a kill between the two completion writes must leave incomplete+resumable, " +
+                        "never complete+full-checkpoint (that shape defeats the distrust re-sweep)",
+                    BackfillCheckpoint.EMPTY,
+                    delegate.backfillCheckpoint(),
+                )
+                delegate.setBackfillCompleted(version, atImportGeneration)
+            }
+        }
+        val orderedRunner = ThreadsBackfillRunner(store, analyzer, orderChecking)
+
+        val outcome = orderedRunner.sweep(snapshotProvider = { snapshotOf(1) }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        assertEquals(TranscriptContext.ANALYSIS_VERSION, preferences.backfillCompletedAtVersion())
+    }
+
+    @Test
+    fun `the distrust branch clears a stale checkpoint even when the gate then closes`() = runTest {
+        val items = snapshotOf(2)
+        preferences.setBackfillCompleted(TranscriptContext.ANALYSIS_VERSION, preferences.importGeneration.value)
+        preferences.setBackfillCheckpoint(
+            BackfillCheckpoint(
+                watermark = items.last().uuid,
+                forImportGeneration = preferences.importGeneration.value,
+                atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION,
+            ),
+        )
+
+        val outcome = runner.sweep(snapshotProvider = { items }, gate = { false })
+
+        assertEquals(ThreadsBackfillOutcome.GateClosed, outcome)
+        assertEquals(null, preferences.backfillCompletedAtVersion())
+        assertEquals(
+            "the distrust branch itself must clear the checkpoint, not leave it for the sweep",
+            BackfillCheckpoint.EMPTY,
+            preferences.backfillCheckpoint(),
+        )
+    }
+
+    @Test
+    fun `the legacy completed-plus-full-checkpoint state performs a genuine full re-sweep`() = runTest {
+        val items = snapshotOf(2)
+        // The pre-fix cancellation window's shape, as a D2D transfer
+        // delivers it: completion stamped, full-length checkpoint never
+        // cleared, zero contexts on disk.
+        preferences.setBackfillCompleted(TranscriptContext.ANALYSIS_VERSION, preferences.importGeneration.value)
+        preferences.setBackfillCheckpoint(
+            BackfillCheckpoint(
+                watermark = items.last().uuid,
+                forImportGeneration = preferences.importGeneration.value,
+                atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION,
+            ),
+        )
+        assertEquals(emptyList<String>(), store.allUuids())
+
+        val outcome = runner.sweep(snapshotProvider = { items }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        for (item in items) {
+            assertTrue(
+                "the distrusted completion must re-analyze every item, not resume past the stale watermark and re-stamp",
+                store.hasCurrentContext(item.uuid),
+            )
         }
     }
 

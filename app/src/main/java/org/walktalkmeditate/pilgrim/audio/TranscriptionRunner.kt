@@ -88,7 +88,7 @@ class TranscriptionRunner @Inject constructor(
                 outcome.fold(
                     onSuccess = { result ->
                         val noSpeech = result.text.isBlank()
-                        val text = if (noSpeech) NO_SPEECH_PLACEHOLDER else result.text
+                        val text = if (noSpeech) VoiceRecording.NO_SPEECH_PLACEHOLDER else result.text
                         val wpm = if (noSpeech) null else computeWpm(text, recording.durationMillis)
                         val persisted = persistWithRetry(recording, text, wpm)
                         if (persisted) count++
@@ -187,7 +187,9 @@ class TranscriptionRunner @Inject constructor(
                 .filter { it.isNotEmpty() }
             val flaggedRanges = TranscriptContextAnalyzer.flaggedRanges(result.text, flaggedFragments)
             val language = threadsAnalyzer.detectLanguage(result.text)
-            Log.d(TAG, "recording $recordingId: threads detected language=$language")
+            // Decision only — never the language code or transcript text.
+            val decision = if (language == ENGLISH) "proceeding" else "skipped (non-English)"
+            Log.d(TAG, "recording $recordingId: threads analysis $decision")
             threadsAnalyzer.analyzeAndStore(uuid, result.text, flaggedRanges)
         } catch (ce: CancellationException) {
             throw ce
@@ -212,13 +214,14 @@ class TranscriptionRunner @Inject constructor(
     }
 
     companion object {
-        const val NO_SPEECH_PLACEHOLDER = "(no speech detected)"
         private const val TAG = "TranscriptionRunner"
         private val WORD_SPLIT = Regex("\\s+")
 
         // U2/BEH-56 segment flag thresholds, verbatim from iOS.
         private const val COMPRESSION_RATIO_THRESHOLD = 2.4
         private const val NO_SPEECH_PROB_THRESHOLD = 0.6
+
+        private const val ENGLISH = "en"
 
         // U2/BEH-58: exactly one retry, two total attempts, no backoff.
         private const val PERSIST_ATTEMPTS = 2

@@ -392,4 +392,12 @@ class ThreadStoreTest {
 
         assertEquals(setOf("river"), threads.firstTimeLemmas)
     }
+
+    // ThreadsDossierFormatter (and ThreadsDossierFormatterTest) hardcode
+    // the phrase "in the last 30 days" — a window retune must change the
+    // string and this constant together.
+    @Test
+    fun `recurrence window is 30 days, matching the formatter's hardcoded phrase`() {
+        assertEquals(java.time.Duration.ofDays(30), ThreadStore.RECURRENCE_WINDOW)
+    }
 }

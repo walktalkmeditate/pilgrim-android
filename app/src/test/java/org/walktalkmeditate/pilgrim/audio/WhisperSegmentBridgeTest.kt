@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -174,6 +175,24 @@ class WhisperSegmentBridgeTest {
             "ensureLoaded must recognize the already-loaded path across both entry points",
             listOf(basePathString),
             native.initPaths,
+        )
+    }
+
+    // whisper-jni.cpp resolves this exact constructor by raw descriptor
+    // `(Ljava/lang/String;JJF)V` (nativeTranscribeSegments), and
+    // proguard-rules.pro keeps it by the same signature — neither gets a
+    // compile error if WhisperSegment's parameters change, so this pins
+    // the shape where a refactor WILL fail a JVM test instead of
+    // returning null jclass/jmethodID on-device.
+    @Test
+    fun `WhisperSegment keeps the constructor shape the JNI descriptor resolves`() {
+        assertNotNull(
+            WhisperSegment::class.java.getConstructor(
+                String::class.java,
+                Long::class.javaPrimitiveType,
+                Long::class.javaPrimitiveType,
+                Float::class.javaPrimitiveType,
+            ),
         )
     }
 

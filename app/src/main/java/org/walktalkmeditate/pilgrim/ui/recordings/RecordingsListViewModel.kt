@@ -372,7 +372,24 @@ class RecordingsListViewModel @Inject constructor(
             val recording = walkRepository.getVoiceRecording(recordingId) ?: return@launch
             walkRepository.updateVoiceRecording(recording.copy(transcription = newText))
             editingRecordingId.value = null
-            withContext(Dispatchers.IO) { threadsAnalyzer.analyzeOrForget(recording.uuid, newText) }
+            analyzeOrForgetSafely(recording.uuid, newText)
+        }
+    }
+
+    /**
+     * Analysis is strictly best-effort once the transcription write has
+     * landed: an unwrapped throw here would escape `viewModelScope.launch`
+     * and crash the process (mirrors
+     * [org.walktalkmeditate.pilgrim.audio.TranscriptionRunner]'s
+     * `analyzeThreadsSafely`).
+     */
+    private suspend fun analyzeOrForgetSafely(uuid: String, transcription: String?) {
+        try {
+            withContext(Dispatchers.IO) { threadsAnalyzer.analyzeOrForget(uuid, transcription) }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "threads analyzeOrForget failed for recording $uuid", t)
         }
     }
 
@@ -489,7 +506,7 @@ class RecordingsListViewModel @Inject constructor(
             // id against a stale still-transcribed emission.
             _manualTranscribing.update { it + recordingId }
             transcriptionScheduler.scheduleForWalk(recording.walkId)
-            withContext(Dispatchers.IO) { threadsAnalyzer.analyzeOrForget(recording.uuid, null) }
+            analyzeOrForgetSafely(recording.uuid, null)
         }
     }
 

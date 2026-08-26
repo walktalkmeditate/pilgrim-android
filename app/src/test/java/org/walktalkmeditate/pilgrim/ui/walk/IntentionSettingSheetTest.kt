@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -274,6 +275,22 @@ class IntentionSettingSheetTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Recurring").assertIsDisplayed()
         composeRule.onNodeWithText("walk with 'river'").assertIsDisplayed()
+        composeRule.onNodeWithTag(INTENTION_RECURRING_CHIPS_TAG).assertExists()
+    }
+
+    @Test
+    fun `a throwing suggestion loader leaves the sheet interactive with no Recurring section`() {
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null, recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { throw IllegalStateException("suggestion load failed") },
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Recurring").assertDoesNotExist()
+        composeRule.onNodeWithTag(INTENTION_RECURRING_CHIPS_TAG).assertDoesNotExist()
+        composeRule.onNodeWithText("0/140").assertIsDisplayed()
     }
 
     @Test

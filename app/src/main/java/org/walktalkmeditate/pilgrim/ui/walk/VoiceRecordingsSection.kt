@@ -53,7 +53,6 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.audio.TranscriptionRunner
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionPlaceholder
@@ -462,7 +461,7 @@ private fun VoiceRecordingRow(
                     )
                 }
             }
-            TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
+            VoiceRecording.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
                 text = transcription,
             )
             else -> EditableTranscription(
@@ -504,6 +503,7 @@ private fun PendingTranscriptionRow(
                 text = stringResource(R.string.transcription_action_transcribe),
                 onClick = onManualTranscribe,
                 enabled = substate.transcribeEnabled,
+                contentDescription = stringResource(R.string.transcription_action_transcribe_cd),
             )
         }
 
@@ -523,6 +523,7 @@ private fun PendingTranscriptionRow(
                 text = stringResource(R.string.transcription_action_transcribe),
                 onClick = onManualTranscribe,
                 enabled = substate.transcribeEnabled,
+                contentDescription = stringResource(R.string.transcription_action_transcribe_cd),
             )
         }
 

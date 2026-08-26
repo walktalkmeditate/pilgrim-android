@@ -17,7 +17,8 @@ See ThreadsFieldReport.kt (src/debug/kotlin) for the harness itself.
     <application>
         <receiver
             android:name="org.walktalkmeditate.pilgrim.core.threads.ThreadsFieldReportReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="org.walktalkmeditate.pilgrim.debug.RUN_SENSES_FIELD_REPORT" />
             </intent-filter>

@@ -213,7 +213,7 @@ class ThreadsDeletionHygieneTest {
         val preferences = FakeThreadsPreferencesRepository()
         preferences.setBackfillCompleted(version = TranscriptContext.ANALYSIS_VERSION, atImportGeneration = 3)
         preferences.setBackfillCheckpoint(
-            BackfillCheckpoint(processedCount = 40, forImportGeneration = 3, atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION),
+            BackfillCheckpoint(watermark = "u-040", forImportGeneration = 3, atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION),
         )
         val wipe = ThreadsFullWipe(threadsStore, preferences)
 
@@ -231,7 +231,7 @@ class ThreadsDeletionHygieneTest {
         )
         assertEquals(
             "backfillCheckpoint must survive a wipe",
-            BackfillCheckpoint(40, 3, TranscriptContext.ANALYSIS_VERSION),
+            BackfillCheckpoint("u-040", 3, TranscriptContext.ANALYSIS_VERSION),
             preferences.backfillCheckpoint(),
         )
     }

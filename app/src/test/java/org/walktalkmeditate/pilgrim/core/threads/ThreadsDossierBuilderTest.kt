@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -156,6 +157,15 @@ class ThreadsDossierBuilderTest {
     @Test
     fun `build returns null for an unknown walk id`() = runTest {
         assertNull(builder.build(99_999L))
+    }
+
+    @Test
+    fun `a placeholder-only walk is treated as having no transcribed recordings`() = runTest {
+        val walkId = newWalk()
+        newRecording("r1", walkId, VoiceRecording.NO_SPEECH_PLACEHOLDER)
+
+        assertNull(builder.build(walkId))
+        assertFalse("placeholder text must never be analyzed into a context", store.hasContext("r1"))
     }
 
     // --- basic build -------------------------------------------------------------
@@ -468,6 +478,41 @@ class ThreadsDossierBuilderTest {
             "MemoKey.moonState must be part of the cache key",
             voiceRecordingDao.recordingWalkLiteIndexCallCount > countAfterFirst,
         )
+    }
+
+    @Test
+    fun `the memo retains the moon line across the build that just fired it`() = runTest {
+        // Same firing setup as the closed-lunation union test below: a
+        // worded walk inside the closed lunation plus a worded current
+        // walk, moon state never reported.
+        val targetLunation = LunationCalendar.lunation(600)
+        val now = targetLunation.end.plus(15, java.time.temporal.ChronoUnit.DAYS)
+        val walkStart = now.minusSeconds(3_600)
+        val walkId = walkDao.insert(Walk(startTimestamp = walkStart.toEpochMilli()))
+        newRecording("current", walkId, longText, startTimestamp = walkStart.toEpochMilli())
+        val wordedWalkStart = targetLunation.start.plusSeconds(3_600)
+        val wordedWalkId = walkDao.insert(Walk(startTimestamp = wordedWalkStart.toEpochMilli()))
+        newRecording("worded-in-lunation", wordedWalkId, longText, startTimestamp = wordedWalkStart.toEpochMilli())
+        analyzer.analyzeAndStore("worded-in-lunation", longText)
+
+        val first = builder.build(walkId, now = now)
+        assertTrue("setup must actually fire the moon line", first!!.text.contains("has set:"))
+        assertEquals(targetLunation.index, preferences.moonLineLastLunationIndex())
+        val countAfterFirst = voiceRecordingDao.recordingWalkLiteIndexCallCount
+
+        // The build's OWN moon-line write must be part of the memo key it
+        // stores (iOS's postBuildMoonState) — otherwise this second call
+        // misses the memo, rebuilds, and the once-per-lunation budget
+        // being already burned silently drops the line just shown.
+        val second = builder.build(walkId, now = now)
+
+        assertEquals(
+            "an identical second build must memo-hit, not rebuild",
+            countAfterFirst,
+            voiceRecordingDao.recordingWalkLiteIndexCallCount,
+        )
+        assertEquals("the memoized dossier must retain the moon line", first.text, second!!.text)
+        assertTrue(second.text.contains("has set:"))
     }
 
     @Test

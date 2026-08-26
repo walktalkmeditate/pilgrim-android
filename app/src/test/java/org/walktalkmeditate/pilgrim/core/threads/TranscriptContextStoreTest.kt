@@ -207,6 +207,50 @@ class TranscriptContextStoreTest {
         assertTrue(store.hasContext("u1"))
     }
 
+    // ---- orphaned temp-file hygiene (interrupted writeAtomically) ----
+
+    private fun plantTemp(uuid: String): File {
+        val dir = File(context.filesDir, "transcript_contexts")
+        dir.mkdirs()
+        return File(dir, "$uuid.json.gz.tmp").also { it.writeText("interrupted write") }
+    }
+
+    @Test
+    fun `delete removes an orphaned temp alongside the context file`() = runTest {
+        store.save(fixture("u1"))
+        val temp = plantTemp("u1")
+
+        store.delete("u1")
+
+        assertFalse(store.hasContext("u1"))
+        assertFalse("delete must sweep the uuid's orphaned temp too", temp.exists())
+    }
+
+    @Test
+    fun `removeContext removes an orphaned temp alongside the context file`() = runTest {
+        store.save(fixture("u1"))
+        val temp = plantTemp("u1")
+
+        store.removeContext("u1")
+
+        assertFalse(store.hasContext("u1"))
+        assertFalse("removeContext must sweep the uuid's orphaned temp too", temp.exists())
+    }
+
+    @Test
+    fun `a fresh store instance sweeps leftover temp files on first directory access`() = runTest {
+        store.save(fixture("u1"))
+        val temp = plantTemp("orphaned-by-process-kill")
+
+        // A brand-new instance (fresh lazy) — a plain read triggers the
+        // directory initializer and with it the sweep.
+        val revived = TranscriptContextStore(context, json)
+        assertNotNull(revived.readRaw("u1"))
+
+        assertFalse("first directory access must sweep orphaned temps", temp.exists())
+        assertTrue("the real context file must survive the sweep", store.hasContext("u1"))
+    }
+
     // ---- tombstone race: analyzer write racing a delete must not resurrect ----
 
     @Test
@@ -265,6 +309,73 @@ class TranscriptContextStoreTest {
         store.delete(listOf("u1", "u2"))
 
         assertEquals(before + 1, store.changeCount.value)
+    }
+
+    // ---- in-memory decoded cache behind loadAll (P2 #8/#14) ----
+
+    private fun deleteOnDiskBehindTheStore(uuid: String) {
+        val file = File(context.filesDir, "transcript_contexts/$uuid.json.gz")
+        assertTrue("test setup: the on-disk file must exist to be removed out-of-band", file.delete())
+    }
+
+    @Test
+    fun `a second loadAll is served from memory, not a fresh disk scan`() = runTest {
+        store.save(fixture("u1"))
+        assertEquals(listOf("u1"), store.loadAll().map { it.uuid })
+
+        // Out-of-band disk change, bypassing the store (impossible in
+        // production, where this @Singleton is the directory's sole
+        // writer) — a memory-served second call must not observe it.
+        deleteOnDiskBehindTheStore("u1")
+
+        assertEquals(listOf("u1"), store.loadAll().map { it.uuid })
+    }
+
+    @Test
+    fun `a save after the cache is populated is visible without a disk re-scan`() = runTest {
+        assertEquals(emptyList<TranscriptContext>(), store.loadAll())
+
+        store.save(fixture("u1"))
+        deleteOnDiskBehindTheStore("u1")
+
+        assertEquals(listOf("u1"), store.loadAll().map { it.uuid })
+    }
+
+    @Test
+    fun `delete and removeContext evict from the cache`() = runTest {
+        store.save(fixture("u1"))
+        store.save(fixture("u2"))
+        assertEquals(setOf("u1", "u2"), store.loadAll().map { it.uuid }.toSet())
+
+        store.delete("u1")
+        assertEquals(listOf("u2"), store.loadAll().map { it.uuid })
+
+        store.removeContext("u2")
+        assertEquals(emptyList<TranscriptContext>(), store.loadAll())
+    }
+
+    @Test
+    fun `a tombstone-blocked save does not enter the cache`() = runTest {
+        store.delete("u1")
+        assertEquals(emptyList<TranscriptContext>(), store.loadAll())
+
+        assertTrue("blocked save still reports accounted-for", store.save(fixture("u1")))
+
+        assertEquals(
+            "nothing reached disk, so nothing may enter the cache",
+            emptyList<TranscriptContext>(),
+            store.loadAll(),
+        )
+    }
+
+    @Test
+    fun `deleteAll empties the cache`() = runTest {
+        store.save(fixture("u1"))
+        assertEquals(listOf("u1"), store.loadAll().map { it.uuid })
+
+        store.deleteAll()
+
+        assertEquals(emptyList<TranscriptContext>(), store.loadAll())
     }
 
     // ---- corrupt file on disk ----

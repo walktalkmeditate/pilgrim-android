@@ -79,7 +79,7 @@ class ThreadsBackfillWorkRequestTest {
         val preferences = FakeThreadsPreferencesRepository()
         preferences.setBackfillCompleted(version = TranscriptContext.ANALYSIS_VERSION, atImportGeneration = 0)
         preferences.setBackfillCheckpoint(
-            BackfillCheckpoint(processedCount = 10, forImportGeneration = 0, atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION),
+            BackfillCheckpoint(watermark = "u-010", forImportGeneration = 0, atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION),
         )
         val scheduler = WorkManagerThreadsBackfillScheduler(context, preferences)
 

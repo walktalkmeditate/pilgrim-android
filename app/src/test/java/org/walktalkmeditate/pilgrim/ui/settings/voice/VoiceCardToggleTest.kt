@@ -7,8 +7,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
-import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -76,17 +76,14 @@ class VoiceCardToggleTest {
             state = DEFAULT_STATE.copy(voiceGuideEnabled = false, autoTranscribe = false, threadsEnabled = false),
             onSetThreadsEnabled = { lastValue = it },
         )
-        // Voice Guide OFF hides the Guide Packs row, so only two toggles
-        // precede Thought Threads: Voice Guide (0), Auto-transcribe (1),
-        // Thought Threads (2).
-        composeRule.onAllNodes(isToggleable())[2].performClick()
+        composeRule.onNodeWithTag(THREADS_TOGGLE_TAG).performClick()
         composeRule.runOnIdle { assertEquals(true, lastValue) }
     }
 
     @Test
     fun `toggle checked state reflects threadsEnabled`() {
         render(state = DEFAULT_STATE.copy(threadsEnabled = true))
-        composeRule.onAllNodes(isToggleable())[2].assertIsOn()
+        composeRule.onNodeWithTag(THREADS_TOGGLE_TAG).assertIsOn()
     }
 
     @Test

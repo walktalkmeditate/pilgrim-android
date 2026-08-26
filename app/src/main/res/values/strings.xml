@@ -232,6 +232,7 @@
          Copy rule: never promise language auto-detection (U10 L2). -->
     <string name="transcription_not_transcribed">Not yet transcribed</string>
     <string name="transcription_action_transcribe">Transcribe</string>
+    <string name="transcription_action_transcribe_cd">Transcribe this recording</string>
     <string name="transcription_preparing_model">Preparing transcription model\u2026</string>
     <string name="transcription_in_progress">Transcribing\u2026</string>
     <string name="transcription_queued">Queued for transcription\u2026</string>

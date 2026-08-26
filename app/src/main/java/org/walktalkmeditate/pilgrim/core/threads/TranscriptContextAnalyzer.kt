@@ -20,12 +20,12 @@ import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
  * substrate to extract themes from in the first place).
  *
  * [detectLanguage] is exposed separately from [analyzeAndStore] so a
- * caller (the transcription runner) can log the detected language even
- * when it's not English and nothing gets written — this costs one extra
- * ML Kit inference per recording versus threading a single detection
- * result through both, but ML Kit's on-device language-id model is a
- * fast, local, no-network call, so the duplication is a deliberate
- * simplicity trade, not an oversight.
+ * caller (the transcription runner) can log whether analysis proceeds
+ * even when it's not English and nothing gets written — this costs one
+ * extra ML Kit inference per recording versus threading a single
+ * detection result through both, but ML Kit's on-device language-id
+ * model is a fast, local, no-network call, so the duplication is a
+ * deliberate simplicity trade, not an oversight.
  */
 @Singleton
 class TranscriptContextAnalyzer @Inject constructor(

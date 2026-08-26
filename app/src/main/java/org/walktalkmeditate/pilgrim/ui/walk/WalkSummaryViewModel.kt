@@ -1008,7 +1008,25 @@ class WalkSummaryViewModel @Inject constructor(
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, trimmed)
             val uuid = repository.getVoiceRecording(recordingId)?.uuid ?: return@launch
-            threadsAnalyzer.analyzeOrForget(uuid, trimmed)
+            analyzeOrForgetSafely(uuid, trimmed)
+        }
+    }
+
+    /**
+     * Analysis is strictly best-effort once the transcription write has
+     * landed: [persistenceScope] carries no CoroutineExceptionHandler
+     * (WalkModule.providePersistenceScope), so an unwrapped throw here
+     * would reach the default handler and crash the process (mirrors
+     * [org.walktalkmeditate.pilgrim.audio.TranscriptionRunner]'s
+     * `analyzeThreadsSafely`).
+     */
+    private suspend fun analyzeOrForgetSafely(uuid: String, transcription: String?) {
+        try {
+            threadsAnalyzer.analyzeOrForget(uuid, transcription)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "threads analyzeOrForget failed for recording $uuid", t)
         }
     }
 
@@ -1129,7 +1147,7 @@ class WalkSummaryViewModel @Inject constructor(
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
             repository.getVoiceRecording(recordingId)?.uuid?.let { uuid ->
-                threadsAnalyzer.analyzeOrForget(uuid, null)
+                analyzeOrForgetSafely(uuid, null)
             }
             // Marked AFTER the null write so the clearer can't drop the
             // id against a stale still-transcribed emission.

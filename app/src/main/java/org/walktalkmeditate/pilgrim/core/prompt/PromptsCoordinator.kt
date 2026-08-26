@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.core.prompt
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.compose.ui.graphics.vector.ImageVector
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
@@ -305,6 +306,7 @@ open class PromptsCoordinator internal constructor(
     } catch (ce: CancellationException) {
         throw ce
     } catch (e: Exception) {
+        Log.w(TAG, "threads dossier build failed for walk $walkId; prompts continue without it", e)
         null
     }
 
@@ -320,6 +322,8 @@ open class PromptsCoordinator internal constructor(
     } catch (ce: CancellationException) {
         throw ce
     } catch (e: Exception) {
+        // Never log the transcript or any detected-language value here.
+        Log.w(TAG, "language detection failed; prompts continue without a detected language", e)
         null
     }
 
@@ -518,6 +522,7 @@ open class PromptsCoordinator internal constructor(
         resolveCustomPromptIcon(iconKey)
 
     private companion object {
+        const val TAG = "PromptsCoordinator"
         const val RECENT_WALKS_LOOKBACK = 20
         const val MAX_RECENT_SNIPPETS = 3
     }

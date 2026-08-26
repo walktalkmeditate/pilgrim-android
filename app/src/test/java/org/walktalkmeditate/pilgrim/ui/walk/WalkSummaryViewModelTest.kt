@@ -1985,6 +1985,40 @@ class WalkSummaryViewModelTest {
     }
 
     @Test
+    fun `saveTranscription survives an analyzer failure and still commits the edit`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+        repository.updateVoiceRecordingTranscription(recId, "old transcription")
+
+        // A real analyzer whose very first internal read throws — the
+        // class is final, so the throw is injected via its preferences
+        // collaborator. persistenceScope has no CoroutineExceptionHandler
+        // (WalkModule), so pre-wrap this throw crashed the process.
+        var analyzerEntered = 0
+        val throwingPrefs = object :
+            org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
+            by org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository() {
+            override val threadsAfterWalks: kotlinx.coroutines.flow.StateFlow<Boolean>
+                get() {
+                    analyzerEntered++
+                    throw IllegalStateException("threads preferences read failed")
+                }
+        }
+        val throwingAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(
+            context,
+            throwingPrefs,
+        )
+
+        val vm = newViewModel(walkId = walk.id, threadsAnalyzerOverride = throwingAnalyzer)
+        vm.saveTranscription(recId, "edited text that survives")
+        advanceUntilIdle()
+
+        assertTrue("analyzer must have been reached and thrown", analyzerEntered > 0)
+        assertEquals("edited text that survives", repository.getVoiceRecording(recId)?.transcription)
+    }
+
+    @Test
     fun `transcribePendingRecordings no-ops pre-Ready and schedules once ready`() =
         runTest(dispatcher) {
             val walk = repository.startWalk(startTimestamp = 0L)

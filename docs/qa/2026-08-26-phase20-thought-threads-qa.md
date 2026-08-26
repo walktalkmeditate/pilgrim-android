@@ -20,6 +20,7 @@ Device: OnePlus 13. Build: `feat/phase20-thought-threads` debug variant (`org.wa
 - [ ] Battery gate: with battery < 20% and not charging, finish a walk with recordings + auto-transcribe ON → summary shows "Auto-transcription skipped — battery below 20%", the recording row does NOT read "Queued", TalkBack announces the banner; tap Transcribe (all) on charge → banner clears only when something actually transcribed.
 - [ ] Long-walk regression (JNI touched the critical path): one 45+ min walk, screen off, recordings at intervals → transcriptions land, stats intact.
 - [ ] Release-candidate (minified) build: one recording transcribes end-to-end (guards the JNI keep-rule bug class).
+- [ ] Non-ASCII speech on the release candidate: one recording whose transcript includes non-ASCII output (accented name/loanword; the Japanese probe in section D doubles here) transcribes without a crash or garbled characters — guards the JNI Modified-UTF-8 sanitizer, which JVM tests cannot exercise.
 
 ## D. Sovereignty + hygiene
 

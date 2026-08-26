@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -56,6 +57,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import java.util.Locale
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.core.threads.ThreadIntentionSuggestions
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
@@ -227,7 +229,16 @@ internal fun IntentionSheetContent(
     var text by rememberSaveable(initial, resetKey) { mutableStateOf(initial.orEmpty()) }
 
     val threadSuggestions by produceState(initialValue = emptyList<String>(), resetKey) {
-        value = loadThreadSuggestions()
+        // Chips absent beats crashing composition at walk start — the
+        // threads silent-failure discipline. CancellationException must
+        // still propagate so leaving composition cancels normally.
+        value = try {
+            loadThreadSuggestions()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            emptyList()
+        }
     }
 
     // iOS parity `IntentionSettingView.swift:60-63` — a finished
@@ -338,6 +349,7 @@ internal fun IntentionSheetContent(
                     items = threadSuggestions,
                     chipColor = pilgrimColors.moss.copy(alpha = 0.15f),
                     onPick = { text = it },
+                    testTag = INTENTION_RECURRING_CHIPS_TAG,
                 )
             }
             if (suggestions.isNotEmpty()) {
@@ -377,6 +389,8 @@ internal fun IntentionSheetContent(
     }
 }
 
+internal const val INTENTION_RECURRING_CHIPS_TAG = "IntentionSheet.recurringChips"
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChipSection(
@@ -384,6 +398,7 @@ private fun ChipSection(
     items: List<String>,
     chipColor: Color,
     onPick: (String) -> Unit,
+    testTag: String? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
         Text(
@@ -394,6 +409,7 @@ private fun ChipSection(
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
             verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small),
+            modifier = if (testTag != null) Modifier.testTag(testTag) else Modifier,
         ) {
             items.forEach { item ->
                 Text(

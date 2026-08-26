@@ -46,6 +46,17 @@ import kotlinx.serialization.json.Json
  * [allUuids], [hasContext], [hasCurrentContext]) touch the filesystem
  * directly with no lock.
  *
+ * Bulk reads ([loadAll]/[loadAllIncludingStaleVersions]) are served from
+ * an in-memory decoded cache after the first directory scan — the decoded
+ * history stays resident for the process lifetime, bounded by recording
+ * count. Population runs under [mutex] (so a mutation can never land
+ * between the disk scan and the cache install), map access under
+ * [cacheLock] only — a cache-served read never waits on an in-flight
+ * gzip write. Every mutating path keeps the cache coherent with disk; a
+ * tombstone-blocked save never enters it (nothing reached disk). Corrupt
+ * files decode as absent during population, exactly as they always have
+ * on the direct-disk path.
+ *
  * Unlike iOS (which requires callers to already be off-Main), every
  * method here hops to [Dispatchers.IO] itself, matching this project's
  * own established convention (Stage 2-E lesson) rather than trusting
@@ -72,10 +83,28 @@ open class TranscriptContextStore @Inject constructor(
     private val mutex = Mutex()
     private val tombstones = mutableSetOf<String>()
 
+    private val cacheLock = Any()
+
+    /** `null` until the first bulk read's directory scan; uuid-keyed
+     * decoded contexts (all analysis versions) afterwards. Guarded by
+     * [cacheLock]; population ordering guarded by [mutex] — see the
+     * class KDoc's concurrency note. */
+    private var decodedCache: MutableMap<String, TranscriptContext>? = null
+
     private val _changeCount = MutableStateFlow(0L)
     val changeCount: StateFlow<Long> = _changeCount.asStateFlow()
 
-    private val directory: File by lazy { File(context.filesDir, DIR_NAME) }
+    private val directory: File by lazy {
+        File(context.filesDir, DIR_NAME).also { dir ->
+            // A process kill between writeAtomically's stream write and its
+            // atomic rename orphans the temp file; nothing re-reads temps, so
+            // sweep them on first directory access. Files only — a directory
+            // at a temp path is never a write leftover. listFiles() is null
+            // for a never-created directory (fresh install), a no-op.
+            dir.listFiles { f -> f.isFile && f.name.endsWith(TEMP_SUFFIX) }
+                ?.forEach { it.delete() }
+        }
+    }
 
     /**
      * Bare load: decode whatever is on disk for [uuid], no hash or
@@ -124,8 +153,23 @@ open class TranscriptContextStore @Inject constructor(
      * Every stored context regardless of [TranscriptContext.analysisVersion] —
      * exists exclusively for the stale-orphan sweep's visibility (DAT-26).
      */
-    suspend fun loadAllIncludingStaleVersions(): List<TranscriptContext> = withContext(Dispatchers.IO) {
-        contextFiles().mapNotNull { decodeFile(it) }.sortedBy { it.uuid }
+    suspend fun loadAllIncludingStaleVersions(): List<TranscriptContext> {
+        cachedContexts()?.let { return it }
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                cachedContexts() ?: run {
+                    val decoded = contextFiles().mapNotNull { decodeFile(it) }
+                    synchronized(cacheLock) {
+                        decodedCache = decoded.associateByTo(LinkedHashMap()) { it.uuid }
+                    }
+                    decoded.sortedBy { it.uuid }
+                }
+            }
+        }
+    }
+
+    private fun cachedContexts(): List<TranscriptContext>? = synchronized(cacheLock) {
+        decodedCache?.values?.sortedBy { it.uuid }
     }
 
     /**
@@ -156,7 +200,10 @@ open class TranscriptContextStore @Inject constructor(
         mutex.withLock {
             if (context.uuid in tombstones) return@withLock true
             val wrote = writeAtomically(context)
-            if (wrote) bumpChangeCount()
+            if (wrote) {
+                synchronized(cacheLock) { decodedCache?.put(context.uuid, context) }
+                bumpChangeCount()
+            }
             wrote
         }
     }
@@ -175,6 +222,10 @@ open class TranscriptContextStore @Inject constructor(
                 for (uuid in uuids) {
                     tombstones += uuid
                     fileFor(uuid).delete()
+                    tempFor(uuid).delete()
+                }
+                synchronized(cacheLock) {
+                    decodedCache?.let { cache -> for (uuid in uuids) cache.remove(uuid) }
                 }
                 bumpChangeCount()
             }
@@ -220,6 +271,8 @@ open class TranscriptContextStore @Inject constructor(
     suspend fun removeContext(uuid: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             fileFor(uuid).delete()
+            tempFor(uuid).delete()
+            synchronized(cacheLock) { decodedCache?.remove(uuid) }
             bumpChangeCount()
         }
     }
@@ -237,6 +290,9 @@ open class TranscriptContextStore @Inject constructor(
             tombstones += names
             dir.deleteRecursively()
             dir.mkdirs()
+            // The recreated directory is KNOWN empty — an empty, populated
+            // cache is the truth here even if no bulk read ever ran.
+            synchronized(cacheLock) { decodedCache = LinkedHashMap() }
             bumpChangeCount()
         }
     }
@@ -246,6 +302,8 @@ open class TranscriptContextStore @Inject constructor(
     }
 
     private fun fileFor(uuid: String): File = File(directory, "$uuid$FILE_SUFFIX")
+
+    private fun tempFor(uuid: String): File = File(directory, "$uuid$TEMP_SUFFIX")
 
     private fun contextFiles(): List<File> =
         (directory.listFiles { f -> f.name.endsWith(FILE_SUFFIX) } ?: emptyArray()).toList()
@@ -268,7 +326,7 @@ open class TranscriptContextStore @Inject constructor(
         val dir = directory
         dir.mkdirs()
         val target = fileFor(context.uuid)
-        val temp = File(dir, "${context.uuid}$TEMP_SUFFIX")
+        val temp = tempFor(context.uuid)
         return try {
             val text = json.encodeToString(TranscriptContext.serializer(), context)
             GZIPOutputStream(temp.outputStream()).use { it.write(text.toByteArray(Charsets.UTF_8)) }

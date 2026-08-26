@@ -236,7 +236,7 @@ class TranscriptionRunnerTest {
 
         val updated = repository.getVoiceRecording(recording.id)
         assertNotNull(updated)
-        assertEquals(TranscriptionRunner.NO_SPEECH_PLACEHOLDER, updated!!.transcription)
+        assertEquals(VoiceRecording.NO_SPEECH_PLACEHOLDER, updated!!.transcription)
         assertNull("WPM is meaningless for no-speech rows", updated.wordsPerMinute)
     }
 
@@ -529,7 +529,7 @@ class TranscriptionRunnerTest {
         runner.transcribePending(walk.id)
 
         val updated = repository.getVoiceRecording(recording.id)!!
-        assertEquals(TranscriptionRunner.NO_SPEECH_PLACEHOLDER, updated.transcription)
+        assertEquals(VoiceRecording.NO_SPEECH_PLACEHOLDER, updated.transcription)
         assertFalse(
             "no real transcript exists for a no-speech row — nothing should be analyzed",
             threadsStore.hasContext(updated.uuid),

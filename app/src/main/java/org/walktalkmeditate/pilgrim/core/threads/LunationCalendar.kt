@@ -86,22 +86,29 @@ object LunationCalendar {
      */
     fun moonName(lunation: Lunation, zone: ZoneId = ZoneId.systemDefault()): String =
         MONTH_MOON_NAMES[ZonedDateTime.ofInstant(lunation.fullMoon, zone).monthValue - 1]
+}
 
-    /** Fractional-second duration between two instants (Swift `timeIntervalSince`
-     * semantics — a signed Double, never truncated to milliseconds). */
-    private fun secondsBetween(start: Instant, end: Instant): Double {
-        val duration = java.time.Duration.between(start, end)
-        return duration.seconds.toDouble() + duration.nano / 1_000_000_000.0
-    }
+/**
+ * Fractional-second duration between two instants (Swift
+ * `timeIntervalSince` semantics — a signed Double, never truncated to
+ * milliseconds). `internal` alongside [Instant.plusSecondsPrecise]: the
+ * single package-wide copy shared by [LunationCalendar]'s boundary math
+ * and [DossierSensesTracks]' time arithmetic (same promote-don't-duplicate
+ * move as [ThreadStore.RECURRENCE_WINDOW]).
+ */
+internal fun secondsBetween(start: Instant, end: Instant): Double {
+    val duration = java.time.Duration.between(start, end)
+    return duration.seconds.toDouble() + duration.nano / 1_000_000_000.0
 }
 
 /**
  * Adds a (possibly negative, possibly fractional) second offset to this
  * instant without precision loss — the sole legal way to mint a derived
- * instant from [MoonCalc.EPOCH] in this file (see [LunationCalendar]'s
- * "never start + length" invariant).
+ * instant from [MoonCalc.EPOCH] (see [LunationCalendar]'s "never
+ * start + length" invariant), and the shared precise-offset helper for
+ * [DossierSensesTracks]' span math.
  */
-private fun Instant.plusSecondsPrecise(seconds: Double): Instant {
+internal fun Instant.plusSecondsPrecise(seconds: Double): Instant {
     val wholeSeconds = floor(seconds).toLong()
     val fractionalNanos = kotlin.math.round((seconds - floor(seconds)) * 1_000_000_000.0).toLong()
     return this.plusSeconds(wholeSeconds).plusNanos(fractionalNanos)
