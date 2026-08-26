@@ -324,4 +324,72 @@ class ThreadStoreTest {
             is ThreadStatus.FirstTime, is ThreadStatus.Recurring, null -> Unit
         }
     }
+
+    // --- firstTimeLemmas: computed contents (U9 carried obligation — zero coverage before) ---
+
+    @Test
+    fun `firstTimeLemmas contains a lemma whose only appearance is at-or-before anchor, when backfill is complete`() {
+        val walkA = walk(1L, daysAgoFromAnchor = 0)
+        val contexts = listOf(context("r1", listOf(theme("river"))))
+
+        val threads = ThreadStore.build(contexts, mapOf("r1" to walkA), anchor, backfillComplete = true)
+
+        assertEquals(setOf("river"), threads.firstTimeLemmas)
+    }
+
+    @Test
+    fun `firstTimeLemmas excludes a lemma that has an earlier appearance too — it is Recurring, not FirstTime`() {
+        val earlierWalk = walk(1L, daysAgoFromAnchor = 5)
+        val laterWalk = walk(2L, daysAgoFromAnchor = 0)
+        val contexts = listOf(
+            context("r-early", listOf(theme("river"))),
+            context("r-late", listOf(theme("river"))),
+        )
+        val recordingToWalk = mapOf("r-early" to earlierWalk, "r-late" to laterWalk)
+
+        val threads = ThreadStore.build(contexts, recordingToWalk, anchor, backfillComplete = true)
+
+        assertTrue("a lemma with an earlier appearance must not read as first-time", threads.firstTimeLemmas.isEmpty())
+    }
+
+    @Test
+    fun `firstTimeLemmas is empty entirely when backfill is incomplete — origin suppression`() {
+        val walkA = walk(1L, daysAgoFromAnchor = 0)
+        val contexts = listOf(context("r1", listOf(theme("river"))))
+
+        val threads = ThreadStore.build(contexts, mapOf("r1" to walkA), anchor, backfillComplete = false)
+
+        assertTrue(threads.firstTimeLemmas.isEmpty())
+    }
+
+    @Test
+    fun `firstTimeLemmas excludes a lemma whose only appearance is AFTER anchor`() {
+        val futureWalk = walk(1L, daysAgoFromAnchor = -5) // 5 days AFTER anchor
+        val contexts = listOf(context("r1", listOf(theme("river"))))
+
+        val threads = ThreadStore.build(contexts, mapOf("r1" to futureWalk), anchor, backfillComplete = true)
+
+        assertTrue(threads.firstTimeLemmas.isEmpty())
+    }
+
+    @Test
+    fun `firstTimeLemmas is exactly the set of qualifying lemmas across a mixed thread population`() {
+        val walkA = walk(1L, daysAgoFromAnchor = 0) // "river" — only appearance, at anchor: first-time
+        val earlierStoneWalk = walk(2L, daysAgoFromAnchor = 10)
+        val laterStoneWalk = walk(3L, daysAgoFromAnchor = 0) // "stone" — recurring
+        val contexts = listOf(
+            context("r-river", listOf(theme("river"))),
+            context("r-stone-early", listOf(theme("stone"))),
+            context("r-stone-late", listOf(theme("stone"))),
+        )
+        val recordingToWalk = mapOf(
+            "r-river" to walkA,
+            "r-stone-early" to earlierStoneWalk,
+            "r-stone-late" to laterStoneWalk,
+        )
+
+        val threads = ThreadStore.build(contexts, recordingToWalk, anchor, backfillComplete = true)
+
+        assertEquals(setOf("river"), threads.firstTimeLemmas)
+    }
 }

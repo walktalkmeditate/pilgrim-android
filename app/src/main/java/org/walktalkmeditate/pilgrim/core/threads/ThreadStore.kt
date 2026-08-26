@@ -88,11 +88,20 @@ data class Threads(
  */
 object ThreadStore {
 
-    /** 30-day trailing window — iOS redeclares this same constant three
-     * times (ThreadStore, ThreadsDossierFormatter's `absenceWindow`,
-     * ThreadIntentionSuggestions' `recurrenceWindow`, BEH-87); kept
-     * independent here for the same reason. */
-    private val RECURRENCE_WINDOW: Duration = Duration.ofDays(30)
+    /**
+     * 30-day trailing window. iOS redeclares this same NUMBER three times
+     * (ThreadStore, ThreadsDossierFormatter's `absenceWindow`,
+     * ThreadIntentionSuggestions' `recurrenceWindow`, BEH-87) — but the
+     * senses slice (U9) is a DIFFERENT case: iOS's `DossierSensesTracks`/
+     * `ThreadsDossierBuilder` read `ThreadStore.recurrenceWindow` directly
+     * (`Pilgrim/Models/Threads/ThreadStore.swift:30@0172e2b`, cited by 5
+     * call sites in `docs/parity/2026-08-26-threads-senses-port.md` —
+     * placeResonance, intentionLineage, weatherWeave, the senses-bundle
+     * gather step, and route-fix resolution). Promoted from `private` to
+     * `internal` so those five senses call sites share this SAME instance
+     * rather than hand-copying "30 days" a fourth time.
+     */
+    internal val RECURRENCE_WINDOW: Duration = Duration.ofDays(30)
     const val DIRECTION_FLOOR = 3
     const val DIRECTION_THRESHOLD = 0.25
 
