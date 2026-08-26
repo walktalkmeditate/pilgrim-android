@@ -9,6 +9,27 @@ import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 
+/**
+ * U7: [WalkDao.getWalkLite]'s raw Room projection shape — see
+ * [org.walktalkmeditate.pilgrim.data.dao.RecordingWalkLiteRow] (the
+ * recording-joined equivalent) for the `toWalkLite()` conversion this
+ * mirrors.
+ */
+data class WalkLiteRow(
+    val walkId: Long,
+    val startTimestamp: Long,
+    val intention: String?,
+    val weatherCondition: String?,
+) {
+    fun toWalkLite(): org.walktalkmeditate.pilgrim.core.threads.WalkLite =
+        org.walktalkmeditate.pilgrim.core.threads.WalkLite(
+            walkId = walkId,
+            startedAt = java.time.Instant.ofEpochMilli(startTimestamp),
+            intention = intention,
+            weatherCondition = weatherCondition,
+        )
+}
+
 @Dao
 interface WalkDao {
     @Insert
@@ -107,4 +128,18 @@ interface WalkDao {
             "ORDER BY end_timestamp DESC, id DESC LIMIT :limit",
     )
     suspend fun getRecentFinishedBefore(currentStart: Long, limit: Int): List<Walk>
+
+    /**
+     * U7: bounded [WalkLiteRow] projection for one walk — the source of
+     * [ThreadsDossierBuilder][org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder]'s
+     * `MemoKey.intention` field (BEH-36) and the current walk's own
+     * [org.walktalkmeditate.pilgrim.core.threads.WalkLite] when it isn't
+     * otherwise reachable through the recording→walk join (e.g. a walk
+     * with no recordings yet).
+     */
+    @Query(
+        "SELECT id AS walkId, start_timestamp AS startTimestamp, intention, " +
+            "weather_condition AS weatherCondition FROM walks WHERE id = :walkId",
+    )
+    suspend fun getWalkLite(walkId: Long): WalkLiteRow?
 }
