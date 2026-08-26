@@ -44,6 +44,7 @@ class VoiceCardTest {
         modelState: WhisperModelState = WhisperModelState.Ready(WhisperModelVariant.Base),
         onSetVoiceGuideEnabled: (Boolean) -> Unit = {},
         onSetAutoTranscribe: (Boolean) -> Unit = {},
+        onSetThreadsEnabled: (Boolean) -> Unit = {},
         onOpenVoiceGuides: () -> Unit = {},
         onOpenRecordings: () -> Unit = {},
         onOpenModelDownload: () -> Unit = {},
@@ -56,6 +57,7 @@ class VoiceCardTest {
                         modelState = modelState,
                         onSetVoiceGuideEnabled = onSetVoiceGuideEnabled,
                         onSetAutoTranscribe = onSetAutoTranscribe,
+                        onSetThreadsEnabled = onSetThreadsEnabled,
                         onOpenVoiceGuides = onOpenVoiceGuides,
                         onOpenRecordings = onOpenRecordings,
                         onOpenModelDownload = onOpenModelDownload,
@@ -111,10 +113,10 @@ class VoiceCardTest {
             state = DEFAULT_STATE.copy(voiceGuideEnabled = false, autoTranscribe = false),
             onSetAutoTranscribe = { lastValue = it },
         )
-        // With voice guide OFF the Guide Packs row is hidden, so only
-        // two toggles render: Voice Guide (index 0), Auto-transcribe
-        // (index 1).
-        composeRule.onAllNodes(isToggleable()).assertCountEquals(2)
+        // With voice guide OFF the Guide Packs row is hidden, so three
+        // toggles render: Voice Guide (index 0), Auto-transcribe
+        // (index 1), Thought Threads (index 2, U10).
+        composeRule.onAllNodes(isToggleable()).assertCountEquals(3)
         composeRule.onAllNodes(isToggleable())[AUTO_TRANSCRIBE_TOGGLE_INDEX_VG_OFF].performClick()
         composeRule.runOnIdle { assertEquals(true, lastValue) }
     }

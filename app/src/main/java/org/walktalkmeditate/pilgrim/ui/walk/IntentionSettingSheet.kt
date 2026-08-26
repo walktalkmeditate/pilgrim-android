@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -49,8 +50,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.Instant
 import java.util.Locale
+import javax.inject.Inject
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.core.threads.ThreadIntentionSuggestions
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -60,9 +67,10 @@ import org.walktalkmeditate.pilgrim.walk.WalkController
  * Intention-setting surface. iOS parity: a bottom **sheet**
  * (`IntentionSettingView` presented via `.sheet` + medium/large
  * detents) — not a centered dialog. Shows the text field + char
- * counter, plus a "Suggested" (celestial) chip row and a "Recent"
- * chip row, each hidden once the user starts typing. Voice dictation
- * is intentionally deferred on Android (iOS-only `IntentionVoiceRecorder`;
+ * counter, plus three chip rows, each hidden once the user starts
+ * typing: "Recurring" (U10 Thought Threads, loaded async, rendered
+ * first), "Suggested" (celestial), and "Recent". Voice dictation is
+ * intentionally deferred on Android (iOS-only `IntentionVoiceRecorder`;
  * dated re-justify in the parity ledger).
  *
  * The ModalBottomSheet shell is split from [IntentionSheetContent] so
@@ -86,6 +94,15 @@ fun IntentionSettingSheet(
      * out of the sheet.
      */
     allowsSkip: Boolean = true,
+    /**
+     * U10: defaults to the real [ThreadIntentionSuggestionsViewModel]-backed
+     * loader. Exposed as a plain suspend lambda (not the VM itself) so a
+     * caller/test that has no Hilt-enabled Activity in scope (e.g. a
+     * bare [androidx.compose.ui.test.junit4.createComposeRule] harness)
+     * can override it directly without needing to satisfy Hilt at all —
+     * `hiltViewModel()` is only ever reached when this default is used.
+     */
+    loadThreadSuggestions: suspend () -> List<String> = hiltViewModel<ThreadIntentionSuggestionsViewModel>()::current,
 ) {
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
@@ -153,8 +170,25 @@ fun IntentionSettingSheet(
             },
             onStopVoice = controller::stopAndFinalize,
             onVoiceTranscriptConsumed = { transcript = null },
+            loadThreadSuggestions = loadThreadSuggestions,
         )
     }
+}
+
+/**
+ * Thin Hilt conduit for [ThreadIntentionSuggestions] (U10) — mirrors the
+ * [org.walktalkmeditate.pilgrim.ui.walk.ModelDownloadViewModel] pattern of
+ * a narrow sibling ViewModel obtained via [hiltViewModel] purely to reach
+ * a `@Singleton` engine from Compose. [current] does not launch or own
+ * any coroutine itself: the caller's own `produceState`/`LaunchedEffect`
+ * is the execution scope (BEH-78/UI-7 — composable-scoped, cancelled on
+ * sheet dismissal, NOT `viewModelScope.launch`).
+ */
+@HiltViewModel
+class ThreadIntentionSuggestionsViewModel @Inject constructor(
+    private val suggestions: ThreadIntentionSuggestions,
+) : ViewModel() {
+    suspend fun current(): List<String> = suggestions.current(Instant.now())
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -172,6 +206,18 @@ internal fun IntentionSheetContent(
     onStartVoice: () -> Unit = {},
     onStopVoice: () -> Unit = {},
     onVoiceTranscriptConsumed: () -> Unit = {},
+    /**
+     * U10: Thought Threads "Recurring" chips. A plain suspend lambda
+     * (not a ViewModel/StateFlow) so this composable stays a pure,
+     * fully-controlled content view — the caller ([IntentionSettingSheet])
+     * supplies the real [ThreadIntentionSuggestionsViewModel]-backed
+     * implementation. Composable-scoped via [produceState] below, keyed
+     * on [resetKey] like every other per-appearance reset in this file
+     * (BEH-78/UI-7 — cancelled on sheet dismissal, never a
+     * `viewModelScope.launch`); starts empty and populates when ready so
+     * the sheet's appearance never blocks on disk I/O.
+     */
+    loadThreadSuggestions: suspend () -> List<String> = { emptyList() },
 ) {
     // Key on (initial, resetKey): (a) external `initial` change on
     // reopen overrides a stale Saver; (b) parent-bumped resetKey
@@ -179,6 +225,10 @@ internal fun IntentionSheetContent(
     // SaveableStateRegistry outlives the conditional render).
     // Rotation within one open session still round-trips via Bundle.
     var text by rememberSaveable(initial, resetKey) { mutableStateOf(initial.orEmpty()) }
+
+    val threadSuggestions by produceState(initialValue = emptyList<String>(), resetKey) {
+        value = loadThreadSuggestions()
+    }
 
     // iOS parity `IntentionSettingView.swift:60-63` — a finished
     // transcription overwrites the field (already capped upstream).
@@ -273,8 +323,23 @@ internal fun IntentionSheetContent(
             }
         }
 
-        // iOS shows Suggested/Recent only while the field is empty.
+        // iOS shows Recurring/Suggested/Recent only while the field is
+        // empty. Recurring renders FIRST — absent until loaded, never an
+        // empty-state placeholder (UI-5).
         if (text.isEmpty()) {
+            if (threadSuggestions.isNotEmpty()) {
+                // moss@0.15 extends the SAME tier scheme the Suggested
+                // (dawn@0.15) and Recent (parchmentSecondary@0.4) chips
+                // below already use — those two already match iOS's own
+                // per-tier tint values, so Recurring's moss tier is a
+                // continuation, not a new convention.
+                ChipSection(
+                    header = stringResource(R.string.walk_options_intention_recurring),
+                    items = threadSuggestions,
+                    chipColor = pilgrimColors.moss.copy(alpha = 0.15f),
+                    onPick = { text = it },
+                )
+            }
             if (suggestions.isNotEmpty()) {
                 ChipSection(
                     header = stringResource(R.string.walk_options_intention_suggested),

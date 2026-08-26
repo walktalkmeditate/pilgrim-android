@@ -71,6 +71,7 @@ fun VoiceCard(
     modelState: WhisperModelState,
     onSetVoiceGuideEnabled: (Boolean) -> Unit,
     onSetAutoTranscribe: (Boolean) -> Unit,
+    onSetThreadsEnabled: (Boolean) -> Unit,
     onOpenVoiceGuides: () -> Unit,
     onOpenRecordings: () -> Unit,
     onOpenModelDownload: () -> Unit,
@@ -115,6 +116,17 @@ fun VoiceCard(
             description = stringResource(R.string.settings_auto_transcribe_description),
             checked = state.autoTranscribe,
             onCheckedChange = onSetAutoTranscribe,
+        )
+
+        // iOS parity `VoiceCard.swift@0172e2b` UI-17/UI-18/BEH-84: FOURTH
+        // and LAST toggle, immediately after Auto-transcribe, no Divider
+        // between them, no nested disclosure row, no animation (unlike
+        // the Guide Packs row above).
+        SettingToggle(
+            label = stringResource(R.string.settings_threads_label),
+            description = stringResource(R.string.settings_threads_description),
+            checked = state.threadsEnabled,
+            onCheckedChange = onSetThreadsEnabled,
         )
 
         ModelDownloadRow(
@@ -210,6 +222,10 @@ data class VoiceCardState(
     val autoTranscribe: Boolean,
     val recordingsCount: Int,
     val recordingsSizeBytes: Long,
+    /** U10: [org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository.threadsAfterWalks]
+     * passthrough. Defaults `false` so existing call sites that predate
+     * Thought Threads keep compiling unchanged. */
+    val threadsEnabled: Boolean = false,
 )
 
 /**

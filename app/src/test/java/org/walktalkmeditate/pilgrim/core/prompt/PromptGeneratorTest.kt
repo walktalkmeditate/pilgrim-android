@@ -56,6 +56,7 @@ class PromptGeneratorTest {
     private fun fixtureContext(
         recordings: List<RecordingContext> = emptyList(),
         routeSpeeds: List<Double> = emptyList(),
+        threadsDossier: String? = null,
     ): ActivityContext = ActivityContext(
         recordings = recordings,
         meditations = emptyList(),
@@ -77,6 +78,7 @@ class PromptGeneratorTest {
         pauses = emptyList(),
         ascentMeters = null,
         descentMeters = null,
+        threadsDossier = threadsDossier,
     )
 
     @Test
@@ -154,6 +156,45 @@ class PromptGeneratorTest {
         assertEquals("Sit with what emerged from movement", prompt.subtitle)
         assertEquals(Icons.Outlined.Spa, prompt.icon)
         assertTrue(prompt.text.contains(ContemplativeVoice.preamble(hasSpeech = false)))
+    }
+
+    @Test
+    fun generate_hasThreadsDossierFalseWhenContextCarriesNoDossier() {
+        val prompt = generator.generate(
+            style = PromptStyle.Contemplative,
+            activityContext = fixtureContext(threadsDossier = null),
+            imperial = false,
+            zone = nyZone,
+        )
+        assertEquals(false, prompt.hasThreadsDossier)
+    }
+
+    @Test
+    fun generate_hasThreadsDossierTrueWhenContextCarriesADossier() {
+        val prompt = generator.generate(
+            style = PromptStyle.Contemplative,
+            activityContext = fixtureContext(threadsDossier = "walk with 'river' (recurring)"),
+            imperial = false,
+            zone = nyZone,
+        )
+        assertEquals(true, prompt.hasThreadsDossier)
+    }
+
+    @Test
+    fun generateCustom_hasThreadsDossierTrueWhenContextCarriesADossier() {
+        val customStyle = CustomPromptStyle(
+            title = "My Voice",
+            icon = "flame",
+            instruction = "Reply like an old friend.",
+        )
+        val prompt = generator.generateCustom(
+            customStyle = customStyle,
+            activityContext = fixtureContext(threadsDossier = "walk with 'river' (recurring)"),
+            imperial = false,
+            customIconResolver = { Icons.Filled.LocalFireDepartment },
+            zone = nyZone,
+        )
+        assertEquals(true, prompt.hasThreadsDossier)
     }
 
     @Test

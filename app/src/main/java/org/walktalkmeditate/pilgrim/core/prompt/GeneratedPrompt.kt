@@ -25,4 +25,14 @@ data class GeneratedPrompt(
     val subtitle: String,
     val text: String,
     val icon: ImageVector,
+    /**
+     * U10 clipboard hardening: whether [text] was assembled with a
+     * Thought Threads dossier folded in (`ActivityContext.threadsDossier
+     * != null` at generation time — [PromptGenerator] is the single
+     * resolution point). [PromptDetailDialog] marks the clip
+     * `EXTRA_IS_SENSITIVE` on API 33+ when this is `true`. Defaults
+     * `false` so pre-existing construction sites (tests, other callers)
+     * keep compiling unchanged.
+     */
+    val hasThreadsDossier: Boolean = false,
 )

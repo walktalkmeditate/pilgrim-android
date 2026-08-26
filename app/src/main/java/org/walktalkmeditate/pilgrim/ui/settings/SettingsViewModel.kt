@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.BellPlaying
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillScheduler
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.appearance.AppearanceMode
 import org.walktalkmeditate.pilgrim.data.appearance.AppearancePreferencesRepository
@@ -63,6 +65,8 @@ class SettingsViewModel @Inject constructor(
     private val practicePreferences: PracticePreferencesRepository,
     private val unitsPreferences: UnitsPreferencesRepository,
     private val voicePreferences: VoicePreferencesRepository,
+    private val threadsPreferences: ThreadsPreferencesRepository,
+    private val threadsBackfillScheduler: ThreadsBackfillScheduler,
     private val walkRepository: WalkRepository,
     private val voiceRecordingFileSystem: VoiceRecordingFileSystem,
     private val milestoneSurface: MilestoneSurface,
@@ -215,17 +219,22 @@ class SettingsViewModel @Inject constructor(
      * upstream is `Eagerly`-shared so its `.value` reads from
      * background contexts (orchestrator, walk-finalize observer)
      * are unaffected by this VM-side caching policy.
+     *
+     * U10 adds [ThreadsPreferencesRepository.threadsAfterWalks] as a
+     * fourth combined source, surfaced as [VoiceCardState.threadsEnabled].
      */
     val voiceCardState: StateFlow<VoiceCardState> = combine(
         voicePreferences.voiceGuideEnabled,
         voicePreferences.autoTranscribe,
+        threadsPreferences.threadsAfterWalks,
         recordingsAggregate,
-    ) { vge, at, agg ->
+    ) { vge, at, threadsEnabled, agg ->
         VoiceCardState(
             voiceGuideEnabled = vge,
             autoTranscribe = at,
             recordingsCount = agg.count,
             recordingsSizeBytes = agg.sizeBytes,
+            threadsEnabled = threadsEnabled,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -235,6 +244,7 @@ class SettingsViewModel @Inject constructor(
             autoTranscribe = false,
             recordingsCount = 0,
             recordingsSizeBytes = 0L,
+            threadsEnabled = false,
         ),
     )
 
@@ -249,6 +259,19 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { voicePreferences.setAutoTranscribe(enabled) }
                 .onFailure { Log.w(TAG, "failed to persist autoTranscribe", it) }
+        }
+    }
+
+    /**
+     * U10: unlike every sibling toggle above, this NEVER writes
+     * [threadsPreferences] directly — [ThreadsBackfillScheduler.setEnabled]
+     * owns the reset-and-resweep-on-enable side effect, so a toggle
+     * off→on doesn't strand analysis gaps from the off period.
+     */
+    fun setThreadsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { threadsBackfillScheduler.setEnabled(enabled) }
+                .onFailure { Log.w(TAG, "failed to set threadsEnabled", it) }
         }
     }
 

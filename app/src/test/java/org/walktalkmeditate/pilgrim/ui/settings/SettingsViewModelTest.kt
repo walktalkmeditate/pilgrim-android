@@ -96,6 +96,8 @@ class SettingsViewModelTest {
     private lateinit var db: PilgrimDatabase
     private lateinit var walkRepository: CountingWalkRepository
     private lateinit var voicePreferences: FakeVoicePreferencesRepository
+    private lateinit var threadsPreferences: org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+    private lateinit var threadsBackfillScheduler: org.walktalkmeditate.pilgrim.core.threads.FakeThreadsBackfillScheduler
     private lateinit var voiceFs: VoiceRecordingFileSystem
     private lateinit var milestoneSurface: FakeMilestoneSurface
     private lateinit var bellPlayer: RecordingBellPlayer
@@ -131,6 +133,8 @@ class SettingsViewModelTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         voicePreferences = FakeVoicePreferencesRepository()
+        threadsPreferences = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository()
+        threadsBackfillScheduler = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsBackfillScheduler()
         voiceFs = VoiceRecordingFileSystem(context)
         milestoneSurface = FakeMilestoneSurface()
         bellPlayer = RecordingBellPlayer()
@@ -142,6 +146,8 @@ class SettingsViewModelTest {
             practicePreferences = FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             voicePreferences = voicePreferences,
+            threadsPreferences = threadsPreferences,
+            threadsBackfillScheduler = threadsBackfillScheduler,
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = milestoneSurface,
@@ -217,6 +223,16 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `voiceCardState reflects threadsEnabled changes`() = runBlocking {
+        assertTrue(vm.voiceCardState.first().threadsEnabled)
+        threadsPreferences.setThreadsAfterWalks(false)
+        val updated = withTimeout(2_000) {
+            vm.voiceCardState.first { !it.threadsEnabled }
+        }
+        assertFalse(updated.threadsEnabled)
+    }
+
+    @Test
     fun `voiceCardState recordings count and size match aggregator output`() = runBlocking {
         val walkId = walkRepository.startWalk(1_000L).id
         val rec1Path = "recordings/${UUID.randomUUID()}/r1.wav"
@@ -260,6 +276,18 @@ class SettingsViewModelTest {
         assertFalse(voicePreferences.autoTranscribe.first())
         vm.setAutoTranscribe(true)
         assertTrue(voicePreferences.autoTranscribe.first { it })
+    }
+
+    @Test
+    fun `setThreadsEnabled routes through ThreadsBackfillScheduler not the preferences repository directly`() = runBlocking {
+        vm.setThreadsEnabled(false)
+        // The fake scheduler recorded the call...
+        assertEquals(listOf(false), threadsBackfillScheduler.setEnabledCalls)
+        // ...and the VM never separately wrote the preferences fake
+        // itself: the fakes are independent doubles, so a direct
+        // (incorrect) `threadsPreferences.setThreadsAfterWalks` call in
+        // the VM body would show up here as an unexpected flip.
+        assertTrue(threadsPreferences.threadsAfterWalks.first())
     }
 
     @Test
@@ -343,6 +371,8 @@ class SettingsViewModelTest {
             practicePreferences = FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             voicePreferences = voicePreferences,
+            threadsPreferences = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(),
+            threadsBackfillScheduler = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsBackfillScheduler(),
             walkRepository = walkRepository,
             voiceRecordingFileSystem = voiceFs,
             milestoneSurface = FakeMilestoneSurface(),

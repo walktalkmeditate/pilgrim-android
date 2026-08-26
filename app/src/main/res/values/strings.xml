@@ -345,6 +345,8 @@
     <string name="settings_voice_guide_packs_row">Guide Packs</string>
     <string name="settings_auto_transcribe_label">Auto-transcribe</string>
     <string name="settings_auto_transcribe_description">Convert recordings to text after each walk</string>
+    <string name="settings_threads_label">Thought Threads</string>
+    <string name="settings_threads_description">Weave recurring themes from your recordings into AI prompts. English recordings for now.</string>
     <string name="settings_recordings_row">Recordings</string>
     <string name="settings_recordings_detail_zero">0 recordings • 0.0 MB</string>
     <string name="settings_recordings_detail_one">1 recording • %1$s MB</string>
@@ -631,6 +633,7 @@
     <string name="walk_options_intention_placeholder">What purpose guides this walk?</string>
     <string name="walk_options_intention_save">Set</string>
     <string name="walk_options_intention_cancel">Cancel</string>
+    <string name="walk_options_intention_recurring">Recurring</string>
     <string name="walk_options_intention_suggested">Suggested</string>
     <string name="walk_options_intention_recent">Recent</string>
     <string name="walk_options_intention_voice">Voice</string>

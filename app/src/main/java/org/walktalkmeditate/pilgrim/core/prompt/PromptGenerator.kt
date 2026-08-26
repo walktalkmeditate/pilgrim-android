@@ -82,6 +82,7 @@ class PromptGenerator @Inject constructor(
             subtitle = context.getString(style.descRes),
             text = text,
             icon = style.icon,
+            hasThreadsDossier = activityContext.threadsDossier != null,
         )
     }
 
@@ -113,6 +114,7 @@ class PromptGenerator @Inject constructor(
             subtitle = customStyle.instruction,
             text = text,
             icon = customIconResolver(customStyle.icon),
+            hasThreadsDossier = activityContext.threadsDossier != null,
         )
     }
 
