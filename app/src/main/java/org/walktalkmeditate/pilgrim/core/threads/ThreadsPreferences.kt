@@ -14,9 +14,30 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.walktalkmeditate.pilgrim.di.ThreadsPreferencesDataStore
+
+/**
+ * U6 backfill progress marker: how far [ThreadsBackfillRunner] got through
+ * the current sweep attempt, so a mid-run WorkManager kill resumes rather
+ * than restarts. [processedCount] is a prefix length into the snapshot
+ * sorted by uuid ascending (matching [TranscriptContextStore.loadAll]'s
+ * own determinism convention) — it only ever advances past a batch whose
+ * every item was confirmed accounted for, so a resume never skips a
+ * still-failing item. [forImportGeneration] pins the checkpoint to the
+ * import epoch it was computed against: a mismatch against the CURRENT
+ * [ThreadsPreferencesRepository.importGeneration] means an import landed
+ * since, and the checkpoint must be discarded rather than trusted (a
+ * fresh, differently-shaped snapshot may not agree on what "the first N
+ * items" means).
+ */
+data class BackfillCheckpoint(val processedCount: Int, val forImportGeneration: Int) {
+    companion object {
+        val EMPTY = BackfillCheckpoint(processedCount = 0, forImportGeneration = 0)
+    }
+}
 
 /**
  * Thought Threads preferences (R12 toggle sovereignty + import/backfill
@@ -48,6 +69,41 @@ interface ThreadsPreferencesRepository {
      * three-step order — see [ThreadsFullWipe].
      */
     suspend fun clearMoonLineIndex()
+
+    /**
+     * U6: the [TranscriptContext.ANALYSIS_VERSION] the backfill sweep last
+     * completed at, or `null` if it never has — the single-key analogue of
+     * iOS's `threadsBackfillCompletedV6`-style rename ladder (no legacy
+     * keys ever existed on Android, so there is nothing to migrate). A
+     * version bump makes this stale automatically: the runner compares it
+     * against the CURRENT [TranscriptContext.ANALYSIS_VERSION] rather than
+     * trusting a bare boolean.
+     */
+    suspend fun backfillCompletedAtVersion(): Int?
+
+    /**
+     * U6: the [importGeneration] value as of the last completed sweep.
+     * Paired with [backfillCompletedAtVersion] — completion is trusted
+     * only when BOTH match the current version AND the current
+     * generation; either mismatch re-arms the sweep. This is the
+     * mechanism by which a `.pilgrim` import (which bumps
+     * [importGeneration] but never analyzes on write — U5) re-arms the
+     * backfill without needing iOS's in-memory `generation` counter,
+     * which cannot survive the WorkManager process-death boundary.
+     */
+    suspend fun backfillCompletedAtImportGeneration(): Int
+
+    suspend fun setBackfillCompleted(version: Int, atImportGeneration: Int)
+
+    /** Re-arms the sweep: called by `setEnabled(true)` on toggle re-enable. */
+    suspend fun clearBackfillCompleted()
+
+    /** See [BackfillCheckpoint]. */
+    suspend fun backfillCheckpoint(): BackfillCheckpoint
+
+    suspend fun setBackfillCheckpoint(checkpoint: BackfillCheckpoint)
+
+    suspend fun clearBackfillCheckpoint()
 }
 
 @Singleton
@@ -78,6 +134,51 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         dataStore.edit { it.remove(MOON_LINE_LAST_LUNATION_INDEX) }
     }
 
+    override suspend fun backfillCompletedAtVersion(): Int? =
+        dataStore.data.first()[BACKFILL_COMPLETED_AT_VERSION]
+
+    override suspend fun backfillCompletedAtImportGeneration(): Int =
+        dataStore.data.first()[BACKFILL_COMPLETED_AT_IMPORT_GENERATION] ?: 0
+
+    override suspend fun setBackfillCompleted(version: Int, atImportGeneration: Int) {
+        dataStore.edit { prefs ->
+            prefs[BACKFILL_COMPLETED_AT_VERSION] = version
+            prefs[BACKFILL_COMPLETED_AT_IMPORT_GENERATION] = atImportGeneration
+        }
+    }
+
+    override suspend fun clearBackfillCompleted() {
+        dataStore.edit { prefs ->
+            prefs.remove(BACKFILL_COMPLETED_AT_VERSION)
+            prefs.remove(BACKFILL_COMPLETED_AT_IMPORT_GENERATION)
+        }
+    }
+
+    override suspend fun backfillCheckpoint(): BackfillCheckpoint {
+        val prefs = dataStore.data.first()
+        val processedCount = prefs[BACKFILL_CHECKPOINT_PROCESSED_COUNT]
+        val forImportGeneration = prefs[BACKFILL_CHECKPOINT_IMPORT_GENERATION]
+        return if (processedCount == null || forImportGeneration == null) {
+            BackfillCheckpoint.EMPTY
+        } else {
+            BackfillCheckpoint(processedCount, forImportGeneration)
+        }
+    }
+
+    override suspend fun setBackfillCheckpoint(checkpoint: BackfillCheckpoint) {
+        dataStore.edit { prefs ->
+            prefs[BACKFILL_CHECKPOINT_PROCESSED_COUNT] = checkpoint.processedCount
+            prefs[BACKFILL_CHECKPOINT_IMPORT_GENERATION] = checkpoint.forImportGeneration
+        }
+    }
+
+    override suspend fun clearBackfillCheckpoint() {
+        dataStore.edit { prefs ->
+            prefs.remove(BACKFILL_CHECKPOINT_PROCESSED_COUNT)
+            prefs.remove(BACKFILL_CHECKPOINT_IMPORT_GENERATION)
+        }
+    }
+
     private companion object {
         // Verbatim iOS UserDefaults key name (UserPreferences.swift) —
         // naming discipline only; DataStore and UserDefaults never
@@ -93,6 +194,15 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         // DAT-52) — reserved here (U5) so the full-wipe hygiene sweep has
         // a name to clear; U9 owns the read/write touch points.
         val MOON_LINE_LAST_LUNATION_INDEX = intPreferencesKey("threadsMoonLineLastLunationIndex")
+
+        // U6: Android-original key names — no iOS UserDefaults counterpart
+        // to mirror (iOS's completed-flag ladder and generation counter
+        // don't survive the WorkManager process-death boundary Android's
+        // backfill runs across).
+        val BACKFILL_COMPLETED_AT_VERSION = intPreferencesKey("backfillCompletedAtVersion")
+        val BACKFILL_COMPLETED_AT_IMPORT_GENERATION = intPreferencesKey("backfillCompletedAtImportGeneration")
+        val BACKFILL_CHECKPOINT_PROCESSED_COUNT = intPreferencesKey("backfillCheckpointProcessedCount")
+        val BACKFILL_CHECKPOINT_IMPORT_GENERATION = intPreferencesKey("backfillCheckpointImportGeneration")
 
         const val DEFAULT_THREADS_AFTER_WALKS = true
     }

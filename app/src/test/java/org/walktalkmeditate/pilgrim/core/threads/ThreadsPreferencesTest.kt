@@ -97,4 +97,63 @@ class ThreadsPreferencesTest {
         assertEquals(null, dataStore.data.first()[moonKey])
         assertFalse("unrelated prefs must survive the clear", repo.threadsAfterWalks.value)
     }
+
+    // ---- U6: backfill completion + checkpoint keys ----
+
+    @Test
+    fun `backfillCompletedAtVersion is null on a fresh install`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo.backfillCompletedAtVersion())
+    }
+
+    @Test
+    fun `backfillCompletedAtImportGeneration defaults to zero on a fresh install`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        assertEquals(0, repo.backfillCompletedAtImportGeneration())
+    }
+
+    @Test
+    fun `setBackfillCompleted persists both the version and the import generation`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        repo.setBackfillCompleted(version = 3, atImportGeneration = 5)
+
+        assertEquals(3, repo.backfillCompletedAtVersion())
+        assertEquals(5, repo.backfillCompletedAtImportGeneration())
+    }
+
+    @Test
+    fun `clearBackfillCompleted resets the version to null without touching unrelated prefs`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        repo.setBackfillCompleted(version = 3, atImportGeneration = 5)
+        repo.setThreadsAfterWalks(false)
+
+        repo.clearBackfillCompleted()
+
+        assertEquals(null, repo.backfillCompletedAtVersion())
+        assertFalse("unrelated prefs must survive the clear", repo.threadsAfterWalks.value)
+    }
+
+    @Test
+    fun `backfillCheckpoint is empty on a fresh install`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        assertEquals(BackfillCheckpoint.EMPTY, repo.backfillCheckpoint())
+    }
+
+    @Test
+    fun `setBackfillCheckpoint persists processedCount and forImportGeneration`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        repo.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 50, forImportGeneration = 2))
+
+        assertEquals(BackfillCheckpoint(50, 2), repo.backfillCheckpoint())
+    }
+
+    @Test
+    fun `clearBackfillCheckpoint resets to EMPTY`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        repo.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 50, forImportGeneration = 2))
+
+        repo.clearBackfillCheckpoint()
+
+        assertEquals(BackfillCheckpoint.EMPTY, repo.backfillCheckpoint())
+    }
 }
