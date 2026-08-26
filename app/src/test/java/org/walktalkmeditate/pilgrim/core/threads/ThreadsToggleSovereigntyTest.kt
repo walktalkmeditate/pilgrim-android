@@ -82,12 +82,6 @@ class ThreadsToggleSovereigntyTest {
             .build()
         threadsContextsDir.deleteRecursively()
         threadsStore = TranscriptContextStore(context, json)
-        // PromptGenerator.generate -> AttentionDirectives.detect always calls
-        // TranscriptNlp.contentLemmaMentions, independent of the threads
-        // toggle (the recurring-word/intention-echo directives are a
-        // separate, always-on feature) — install the same real lexicon
-        // PromptGeneratorTest uses.
-        TranscriptNlp.install(WordNetLexicon(context, json))
         repository = WalkRepository(
             database = db,
             walkDao = db.walkDao(),
@@ -150,6 +144,20 @@ class ThreadsToggleSovereigntyTest {
         val generator = PromptGenerator(context)
         val lunarPhase = MoonCalc.moonPhase(Instant.ofEpochMilli(walk.startTimestamp))
 
+        // Built FIRST, deliberately: unlike production — where
+        // PromptsCoordinator.buildContext now installs TranscriptNlp
+        // itself before any directive ever runs (the C2 fix) — this test
+        // calls PromptGenerator.generate directly below, bypassing that
+        // entry point entirely. A real toggle-on analysis
+        // (TranscriptContextAnalyzer.analyzeAndStore's own self-heal
+        // install, exercised for real here, not faked) installs the same
+        // lexicon as a side effect of genuine production code, so this
+        // test never needs a manual TranscriptNlp.install shortcut of its
+        // own — the way an earlier version of this file did.
+        val onPreferences = FakeThreadsPreferencesRepository(initialThreadsAfterWalks = true)
+        val onDossier = realBuilder(onPreferences).build(walk.id)
+        assertNotNull("the identical walk must produce a dossier once the toggle is on", onDossier)
+
         val offPreferences = FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false)
         val offDossier = realBuilder(offPreferences).build(walk.id)
         assertNull("the toggle-off builder must never produce a dossier", offDossier)
@@ -180,9 +188,6 @@ class ThreadsToggleSovereigntyTest {
         // Non-vacuous: the SAME walk, toggled on, really does qualify —
         // proving the off-result above is the toggle's doing, not an
         // artifact of a corpus too thin to ever produce a dossier.
-        val onPreferences = FakeThreadsPreferencesRepository(initialThreadsAfterWalks = true)
-        val onDossier = realBuilder(onPreferences).build(walk.id)
-        assertNotNull("the identical walk must produce a dossier once the toggle is on", onDossier)
         val onContext = offContext.copy(threadsDossier = onDossier!!.text)
         val onPrompt = generator.generate(PromptStyle.Contemplative, onContext, imperial = false)
         assertTrue(

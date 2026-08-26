@@ -122,6 +122,17 @@ class PromptsCoordinatorTest {
                 org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
             ),
         mlKitLanguageIdClient: MlKitLanguageIdClient = neverDetectsLanguageClient(),
+        // A FRESH instance per call (never shared/reused across tests) so
+        // each test's own install state starts from that instance's own
+        // `installed = false` — see `generateAll installs TranscriptNlp
+        // itself...` below, which additionally resets the underlying
+        // static TranscriptNlp/VaderSentiment singletons to prove this
+        // isn't just riding a previous test's incidental global install.
+        threadsAnalysisEnvironment: org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment =
+            org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+                context,
+                org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(context, json),
+            ),
     ): PromptsCoordinator = PromptsCoordinator(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -133,6 +144,7 @@ class PromptsCoordinatorTest {
         appContext = context,
         threadsDossierBuilder = threadsDossierBuilder,
         mlKitLanguageIdClient = mlKitLanguageIdClient,
+        threadsAnalysisEnvironment = threadsAnalysisEnvironment,
         defaultDispatcher = dispatcher,
     )
 
@@ -697,6 +709,46 @@ class PromptsCoordinatorTest {
         val custom = prompts.first { it.customStyle != null }
         assertTrue("built-in prompt must carry the resolved language name", builtin.text.contains("**Detected language:** Japanese"))
         assertTrue("custom prompt must carry the SAME resolved language name — not recomputed as null", custom.text.contains("**Detected language:** Japanese"))
+    }
+
+    // --- C2 fix: buildContext installs TranscriptNlp itself ---------------
+
+    /**
+     * [org.walktalkmeditate.pilgrim.core.threads.AttentionDirectives.detect]
+     * is deliberately toggle-independent — it calls
+     * [org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp.contentLemmaMentions]
+     * regardless of `threadsAfterWalks`, so `newCoordinator()`'s default
+     * toggle-OFF [org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder]
+     * (which never touches the analyzer, and so never installs anything)
+     * must not be the only thing standing between this call and a crash.
+     * [resetTranscriptNlpInstall] forces the SAME "nothing has installed
+     * it yet" precondition a fresh process has — without it, an earlier
+     * test in this same JVM run (e.g. the U9 toggle-on tests above) could
+     * make this test pass vacuously regardless of whether the fix is
+     * actually wired up.
+     */
+    private fun resetTranscriptNlpInstall() {
+        val field = org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp::class.java.getDeclaredField("lexicon")
+        field.isAccessible = true
+        field.set(org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp, null)
+    }
+
+    @Test
+    fun `generateAll installs TranscriptNlp itself, without any manual install anywhere in the test`() = runTest(dispatcher) {
+        resetTranscriptNlpInstall()
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        val coordinator = newCoordinator()
+
+        val prompts = coordinator.generateAll(walkId = walk.id, zone = nyZone)
+
+        assertTrue("must produce prompts without a pre-existing manual install", prompts.isNotEmpty())
+        assertTrue(
+            "AttentionDirectives' recurring-word directive needs TranscriptNlp installed to even run " +
+                "(it lemmatizes every spoken word) — finding its exact template text proves the coordinator " +
+                "installed the lexicon itself rather than merely not crashing",
+            prompts.any { it.text.contains("times across the recordings") },
+        )
     }
 
     /**

@@ -652,6 +652,7 @@ private class FakePromptsCoordinator(
     appContext = ApplicationProvider.getApplicationContext<Application>(),
     threadsDossierBuilder = ThrowingThreadsDossierBuilder,
     mlKitLanguageIdClient = ThrowingMlKitLanguageIdClient,
+    threadsAnalysisEnvironment = ThrowingThreadsAnalysisEnvironment,
 ) {
     val buildContextCalls = AtomicInteger(0)
     val generateAllCalls = AtomicInteger(0)
@@ -776,6 +777,15 @@ private val ThrowingThreadsDossierBuilder: org.walktalkmeditate.pilgrim.core.thr
             PilgrimDatabase::class.java,
         ).build(),
         org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+    )
+
+private val ThrowingThreadsAnalysisEnvironment: org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment =
+    org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+        ApplicationProvider.getApplicationContext<Application>(),
+        org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(
+            ApplicationProvider.getApplicationContext<Application>(),
+            kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+        ),
     )
 
 private val ThrowingMlKitLanguageIdClient: org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient =

@@ -208,6 +208,7 @@ class ThreadsEndToEndTest {
                     listOf(LanguageGuess("en", 0.99f))
             },
         ),
+        threadsAnalysisEnvironment = ThreadsAnalysisEnvironment(context, WordNetLexicon(context, json)),
     )
 
     private val wordyText = "I was walking and I have to say I think about music because I can think about " +

@@ -400,6 +400,13 @@ class WalkSummaryViewModelTest {
                         emptyList<org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess>()
                 },
             ),
+            threadsAnalysisEnvironment = org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+                ctxApp,
+                org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(
+                    ctxApp,
+                    kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+                ),
+            ),
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =

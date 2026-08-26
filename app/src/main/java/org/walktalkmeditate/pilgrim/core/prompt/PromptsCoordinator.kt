@@ -21,6 +21,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
 import org.walktalkmeditate.pilgrim.core.celestial.Planet
 import org.walktalkmeditate.pilgrim.core.prompt.voices.CustomPromptStyleVoice
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
@@ -97,6 +98,20 @@ open class PromptsCoordinator internal constructor(
      */
     private val mlKitLanguageIdClient: MlKitLanguageIdClient,
     /**
+     * Installs [org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp] /
+     * [org.walktalkmeditate.pilgrim.core.threads.VaderSentiment] before
+     * [buildContext] hands back a context [generateAll] will run
+     * [AttentionDirectives.detect] against. That detector is deliberately
+     * toggle-independent (the recurring-word / intention-echo directives
+     * fire regardless of [org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository.threadsAfterWalks]),
+     * so it cannot rely on [threadsDossierBuilder]'s own internal install —
+     * that one only runs on a toggle-ON, cache-miss, English recording,
+     * leaving three real gaps this call closes: toggle OFF, an
+     * all-cache-hit walk after a process restart, and an all-non-English
+     * history.
+     */
+    private val threadsAnalysisEnvironment: ThreadsAnalysisEnvironment,
+    /**
      * CPU-bound dispatcher for the [buildContext] orchestration. The body
      * does CPU work (per-sample haversine for `routeSpeeds`, celestial /
      * lunar math, recent-walk snippet truncation) that would otherwise
@@ -132,6 +147,7 @@ open class PromptsCoordinator internal constructor(
         @ApplicationContext appContext: Context,
         threadsDossierBuilder: ThreadsDossierBuilder,
         mlKitLanguageIdClient: MlKitLanguageIdClient,
+        threadsAnalysisEnvironment: ThreadsAnalysisEnvironment,
     ) : this(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -143,6 +159,7 @@ open class PromptsCoordinator internal constructor(
         appContext = appContext,
         threadsDossierBuilder = threadsDossierBuilder,
         mlKitLanguageIdClient = mlKitLanguageIdClient,
+        threadsAnalysisEnvironment = threadsAnalysisEnvironment,
         defaultDispatcher = Dispatchers.Default,
     )
 
@@ -161,6 +178,11 @@ open class PromptsCoordinator internal constructor(
         walkId: Long,
         zone: ZoneId = ZoneId.systemDefault(),
     ): ActivityContext? = withContext(defaultDispatcher) {
+        // Unconditional, ahead of everything else in this function: see
+        // threadsAnalysisEnvironment's KDoc above for the three gaps this
+        // closes (toggle off, warm-cache-after-restart, all-non-English).
+        threadsAnalysisEnvironment.ensureInstalled()
+
         val walk = repository.getWalk(walkId) ?: return@withContext null
 
         val fetches = coroutineScope {
