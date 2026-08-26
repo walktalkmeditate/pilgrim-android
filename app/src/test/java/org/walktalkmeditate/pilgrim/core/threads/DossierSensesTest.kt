@@ -566,6 +566,35 @@ class DossierSensesTest {
         assertTrue("expected a line, got null", line != null)
     }
 
+    @Test fun `markerLine's ratio is EXACTLY 2point75, truncating to twice — a round-half-up bug would say three times`() {
+        // Precisely engineered so the discriminating value is unambiguous:
+        // mention at token index 0 forces the ±15 window to clip to
+        // EXACTLY 16 tokens (indices 0-15, radius clipped at the left
+        // edge); 3 of those are absolutist (the floor, exactly met).
+        // 28 more non-absolutist "rest" tokens follow (restAbsolutist=0,
+        // so the displayed ratio takes the vs-overall fallback):
+        //   windowDensity = 3/16 = 0.1875, overallDensity = 3/44 ≈ 0.0682
+        //   gate: 0.1875 >= 2 * 0.0682 — passes
+        //   ratio = windowDensity / overallDensity = (16+28)/16 = 2.75
+        // Int(2.75) truncates to 2 ("twice"); round(2.75) would give 3
+        // ("three times") — this test fails under a naive roundToInt().
+        val windowTokens = listOf("focus", "always", "never", "everyone") + List(12) { "quiet" }
+        val restTokens = List(28) { "calm" }
+        val text = (windowTokens + restTokens).joinToString(" ")
+        val tokens = TranscriptNlp.wordTokenOffsets(text)
+        assertEquals(44, tokens.size)
+        val focusToken = tokens.first { it.token == "focus" }
+        assertEquals(0, focusToken.start)
+        val theme = theme("focus", mentions = listOf(mention("focus", focusToken.start)))
+
+        val line = markerLineViaRecording(theme, "focus", text)
+
+        assertEquals(
+            "Absolutist words cluster around 'focus' — twice the density of the rest of the walk's speech.",
+            line,
+        )
+    }
+
     private fun markerLineViaRecording(theme: Theme, lemma: String, text: String): String? {
         val rec = recording("r1", base, base.plusSeconds(30), text = text, themes = listOf(theme))
         val thread = thread(lemma, appearances = listOf(appearance("r1", 1L, base)))
