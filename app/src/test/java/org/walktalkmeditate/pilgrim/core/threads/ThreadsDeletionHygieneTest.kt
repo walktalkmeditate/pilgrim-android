@@ -203,6 +203,38 @@ class ThreadsDeletionHygieneTest {
     }
 
     @Test
+    fun `wipe leaves the U6 backfill completion and checkpoint keys untouched`() = runBlocking {
+        // U6/DAT-56: a wipe is not a preference reset — the completed
+        // flag surviving is WHY recordings added after a wipe never
+        // trigger a fresh sweep until an import or a toggle off/on calls
+        // reset(). ThreadsFullWipe never touches these keys at all; this
+        // pins that as a regression guard, not just an absence-of-code
+        // observation.
+        val preferences = FakeThreadsPreferencesRepository()
+        preferences.setBackfillCompleted(version = TranscriptContext.ANALYSIS_VERSION, atImportGeneration = 3)
+        preferences.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 40, forImportGeneration = 3))
+        val wipe = ThreadsFullWipe(threadsStore, preferences)
+
+        wipe.wipe(listOf("some-uuid"))
+
+        assertEquals(
+            "backfillCompletedAtVersion must survive a wipe",
+            TranscriptContext.ANALYSIS_VERSION,
+            preferences.backfillCompletedAtVersion(),
+        )
+        assertEquals(
+            "backfillCompletedAtImportGeneration must survive a wipe",
+            3,
+            preferences.backfillCompletedAtImportGeneration(),
+        )
+        assertEquals(
+            "backfillCheckpoint must survive a wipe",
+            BackfillCheckpoint(40, 3),
+            preferences.backfillCheckpoint(),
+        )
+    }
+
+    @Test
     fun `wipe with no recording uuids still sweeps whatever is already on disk`() = runBlocking {
         val preferences = FakeThreadsPreferencesRepository()
         val wipe = ThreadsFullWipe(threadsStore, preferences)
