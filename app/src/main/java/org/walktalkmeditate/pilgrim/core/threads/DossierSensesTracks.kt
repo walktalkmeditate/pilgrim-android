@@ -9,13 +9,39 @@ import kotlin.math.floor
  * [DossierSensesTracks.bestCluster]. */
 private data class PlaceCluster(val mentionCount: Int, val walkCount: Int, val spread: Double)
 
+/** One placeResonance cluster candidate member: a qualifying recording's
+ * uuid/walk id/coordinate, carrying its OWN appearance's within-recording
+ * mention count through to [DossierSensesTracks.bestCluster] — a
+ * cluster's mentionCount is the SUM of its members' own counts (iOS
+ * `DossierSensesTracks.swift:81@0172e2b`: `near.reduce(0) { $0 +
+ * $1.appearance.mentionCount }`), never the number of qualifying
+ * recordings. */
+private data class PlaceMember(
+    val recordingUuid: String,
+    val walkId: Long,
+    val coordinate: Coordinate,
+    val mentionCount: Int,
+)
+
 /** One steepest-run candidate — winner selection happens in
  * [DossierSensesTracks.steepestSustainedAscent]. */
 private data class AscentRun(val start: Instant, val end: Instant, val gain: Double, val averageRate: Double)
 
 /** One rate-bearing gap between two consecutive (already-smoothed)
- * elevation samples; `dt <= 0` pairs never become a segment at all. */
-private data class ClimbSegment(val start: Instant, val end: Instant, val altitudeDelta: Double, val rate: Double)
+ * elevation samples; `dt <= 0` pairs never become a segment at all.
+ * [startAltitude]/[endAltitude] are the SMOOTHED altitudes at each
+ * endpoint (not a delta) so a multi-segment run's gain can telescope to
+ * `endAltitude - startAltitude` across its own first and last segment —
+ * summing every segment's own delta instead silently drops whatever a
+ * `dt <= 0` excluded gap inside the run would otherwise have
+ * contributed. */
+private data class ClimbSegment(
+    val start: Instant,
+    val end: Instant,
+    val startAltitude: Double,
+    val endAltitude: Double,
+    val rate: Double,
+)
 
 /** The app's stored `Walk.weatherCondition` vocabulary, collapsed into
  * the 7 buckets weatherWeave reasons about. `UNKNOWN` is a first-class
@@ -94,7 +120,7 @@ internal object DossierSensesTracks {
                 .filter { inWindow(it.recordingUuid) }
                 .mapNotNull { appearance ->
                     qualifiedCoordinate(appearance.recordingUuid)?.let { coordinate ->
-                        Triple(appearance.recordingUuid, appearance.walkId, coordinate)
+                        PlaceMember(appearance.recordingUuid, appearance.walkId, coordinate, appearance.mentionCount)
                     }
                 }
             val cluster = bestCluster(members) ?: continue
@@ -117,22 +143,26 @@ internal object DossierSensesTracks {
     /**
      * Deterministic seed-centered clustering. For each member in
      * uuid-string order as seed, the candidate cluster is everything
-     * within [DossierSenses.PLACE_CLUSTER_RADIUS_METERS] (inclusive);
-     * winner by highest mentionCount, then smallest spread, then
-     * earliest seed in iteration order — STRICT inequalities only, so
-     * the first winner is kept on exact ties.
+     * within [DossierSenses.PLACE_CLUSTER_RADIUS_METERS] (inclusive).
+     * The cluster's mentionCount is the SUM of each near member's own
+     * appearance mentionCount — NOT the number of qualifying
+     * recordings; a single recording mentioning a lemma 3 times
+     * outweighs three recordings mentioning it once each. Winner by
+     * highest mentionCount, then smallest spread, then earliest seed in
+     * iteration order — STRICT inequalities only, so the first winner
+     * is kept on exact ties.
      */
-    private fun bestCluster(members: List<Triple<String, Long, Coordinate>>): PlaceCluster? {
+    private fun bestCluster(members: List<PlaceMember>): PlaceCluster? {
         var best: PlaceCluster? = null
-        for (seed in members.sortedBy { it.first }) {
-            val near = members.filter { DossierSenses.distanceMeters(seed.third, it.third) <= DossierSenses.PLACE_CLUSTER_RADIUS_METERS }
-            val mentionCount = near.size
-            val walkCount = near.map { it.second }.distinct().size
+        for (seed in members.sortedBy { it.recordingUuid }) {
+            val near = members.filter { DossierSenses.distanceMeters(seed.coordinate, it.coordinate) <= DossierSenses.PLACE_CLUSTER_RADIUS_METERS }
+            val mentionCount = near.sumOf { it.mentionCount }
+            val walkCount = near.map { it.walkId }.distinct().size
             if (mentionCount < 2 || walkCount < 2) continue
             var spread = 0.0
             for (i in near.indices) {
                 for (j in (i + 1) until near.size) {
-                    spread = maxOf(spread, DossierSenses.distanceMeters(near[i].third, near[j].third))
+                    spread = maxOf(spread, DossierSenses.distanceMeters(near[i].coordinate, near[j].coordinate))
                 }
             }
             val current = best
@@ -358,7 +388,8 @@ internal object DossierSensesTracks {
             segments += ClimbSegment(
                 start = a.timestamp,
                 end = b.timestamp,
-                altitudeDelta = b.altitude - a.altitude,
+                startAltitude = a.altitude,
+                endAltitude = b.altitude,
                 rate = (b.altitude - a.altitude) / dtSeconds,
             )
         }
@@ -371,7 +402,14 @@ internal object DossierSensesTracks {
      * — truncated nearest-rank-down, never interpolated or rounded. The
      * in-progress-run force-close at series end is load-bearing: dropping
      * it silently discards the steepest run whenever the walk ends
-     * mid-climb.
+     * mid-climb. A run's gain is the smoothed END altitude minus the
+     * smoothed START altitude (iOS `DossierSensesTracks.swift:313@0172e2b`:
+     * `smoothed[endSampleIndex].altitude - smoothed[startSampleIndex].altitude`)
+     * — NOT a sum of each surviving segment's own delta. The
+     * run-continuation loop below is array-position-based over
+     * [ClimbSegment]s, blind to any `dt <= 0` sample excluded from that
+     * array; a sum would silently omit an excluded gap's real altitude
+     * change, while the endpoint difference telescopes straight across it.
      */
     private fun steepestSustainedAscent(series: List<ElevationSample>): AscentRun? {
         val segments = buildSegments(smoothedAltitudes(series))
@@ -387,7 +425,7 @@ internal object DossierSensesTracks {
             runStartIndex = null
             val startSegment = segments[startIndex]
             val endSegment = segments[endingAtIndex]
-            val gain = segments.subList(startIndex, endingAtIndex + 1).sumOf { it.altitudeDelta }
+            val gain = endSegment.endAltitude - startSegment.startAltitude
             val duration = secondsBetween(startSegment.start, endSegment.end)
             if (gain < DossierSenses.CLIMB_MIN_RUN_GAIN_METERS || duration <= 0.0) return
             val averageRate = gain / duration

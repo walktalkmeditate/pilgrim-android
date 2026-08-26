@@ -57,8 +57,8 @@ class DossierSensesTest {
         moon = null,
     )
 
-    private fun appearance(recordingUuid: String, walkId: Long, date: Instant) =
-        ThreadAppearance(recordingUuid = recordingUuid, walkId = walkId, date = date, mentionCount = 1, salience = 0.1)
+    private fun appearance(recordingUuid: String, walkId: Long, date: Instant, mentionCount: Int = 1) =
+        ThreadAppearance(recordingUuid = recordingUuid, walkId = walkId, date = date, mentionCount = mentionCount, salience = 0.1)
 
     private fun thread(lemma: String, displayTerm: String = lemma, appearances: List<ThreadAppearance>) =
         ActiveThread(lemma = lemma, displayTerm = displayTerm, appearances = appearances)
@@ -313,6 +313,51 @@ class DossierSensesTest {
         val input = placeResonanceFixture(backfillComplete = true, hub = hub, extraSameSpotMention = true)
         val line = DossierSensesTracks.placeResonance(input, emptySet())
         assertEquals("'river' has surfaced on 2 walks — 3 times near the same stretch of ground.", line?.text)
+    }
+
+    @Test fun `bestCluster's mentionCount is the SUM of each appearance's own mentionCount, not the recording count — count and sum disagree on both the emitted number and the winning cluster`() {
+        // Two geographically disjoint candidate clusters for the same
+        // thread, deliberately shaped so recording-COUNT and
+        // mentionCount-SUM pick DIFFERENT winners: north = 2 recordings x
+        // 1 mention each (count=2, sum=2, tight ~10m spread); south = 2
+        // recordings x (3,1) mentions (count=2 — a TIE with north's count
+        // — sum=4, wider ~50m spread). Under recording-count semantics,
+        // north wins the count/spread tie-break (smaller spread) and the
+        // line reports "twice". Under iOS's own sum-of-
+        // appearance.mentionCount semantics, south's sum (4) strictly
+        // beats north's (2) regardless of spread, and the line reports
+        // "4 times" — a count-based implementation can never produce
+        // this string.
+        val hubNorth = Coordinate(35.0, 139.0)
+        val hubSouth = northOf(hubNorth, 100_000.0)
+        val pastWalkDate = base.minus(5, ChronoUnit.DAYS)
+        val river = thread(
+            "river",
+            appearances = listOf(
+                appearance("r1", 90L, pastWalkDate, mentionCount = 1),
+                appearance("r2", 1L, base, mentionCount = 1),
+                appearance("r3", 91L, pastWalkDate, mentionCount = 3),
+                appearance("r4", 92L, pastWalkDate, mentionCount = 1),
+            ),
+        )
+        val input = minimalInput().copy(
+            currentWalkId = 1L,
+            walkStart = base,
+            walkEnd = base.plusSeconds(60),
+            backfillComplete = true,
+            threads = listOf(river),
+            recordingTimestamps = mapOf(
+                "r1" to pastWalkDate, "r2" to base, "r3" to pastWalkDate, "r4" to pastWalkDate,
+            ),
+            fixes = mapOf(
+                "r1" to RouteFix(hubNorth, 1.0, 1.0),
+                "r2" to RouteFix(northOf(hubNorth, 10.0), 1.0, 1.0),
+                "r3" to RouteFix(hubSouth, 1.0, 1.0),
+                "r4" to RouteFix(northOf(hubSouth, 50.0), 1.0, 1.0),
+            ),
+        )
+        val line = DossierSensesTracks.placeResonance(input, emptySet())
+        assertEquals("'river' has surfaced on 4 walks — 4 times near the same stretch of ground.", line?.text)
     }
 
     @Test fun `placeResonance suppresses a zero baseline — a one-spot walker is never more specific than routine`() {
@@ -744,6 +789,36 @@ class DossierSensesTest {
             threads = listOf(thread), currentRecordings = listOf(rec),
         )
         assertTrue(DossierSensesTracks.climbAnchoring(input, emptySet()) != null)
+    }
+
+    @Test fun `climbAnchoring gain telescopes across a dt=0 excluded gap instead of summing only the surviving segments`() {
+        // A duplicate-timestamp sample (dt=0 against its immediate
+        // predecessor) sits INSIDE what is otherwise one contiguous
+        // steepest run, so that ONE (start,end) pair never becomes a
+        // segment at all — the run-continuation loop is array-position-
+        // based over the SURVIVING segments and is blind to the gap.
+        // Summing only the surviving segments' own deltas silently drops
+        // the excluded pair's real altitude contribution: 15.2m, under
+        // the 20m per-run floor. iOS's endpoint-difference gain (smoothed
+        // end altitude minus smoothed start altitude, telescoping straight
+        // across the gap) is 24.8m — clears the floor. This is the only
+        // run the series produces, so the fixture is a direct fire/
+        // no-fire discriminator between the two gain formulas.
+        val series = listOf(
+            elevation(0, 0.0), elevation(10, 0.0), elevation(20, 0.0), elevation(30, 0.0), elevation(40, 0.0),
+            elevation(50, 10.0), elevation(60, 20.0),
+            elevation(60, 28.0),
+            elevation(70, 38.0), elevation(80, 48.0),
+            elevation(90, 48.0), elevation(100, 48.0), elevation(110, 48.0), elevation(120, 48.0),
+        )
+        val thread = thread("focus", appearances = listOf(appearance("r1", 1L, base)))
+        val rec = recording("r1", base.plusSeconds(45), base.plusSeconds(85), themes = listOf(theme("focus")))
+        val input = minimalInput().copy(
+            currentWalkId = 1L, totalAscent = 80.0, elevationSeries = series,
+            threads = listOf(thread), currentRecordings = listOf(rec),
+        )
+        val line = DossierSensesTracks.climbAnchoring(input, emptySet())
+        assertEquals("'focus' was spoken on the day's steepest climb.", line?.text)
     }
 
     @Test fun `climbAnchoring picks the lemma-alphabetically first of two overlapping themes`() {
