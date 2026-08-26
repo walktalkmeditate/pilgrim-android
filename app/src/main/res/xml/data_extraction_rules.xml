@@ -4,6 +4,11 @@
         <exclude domain="file" path="."/>
         <exclude domain="database" path="."/>
         <exclude domain="sharedpref" path="."/>
+        <!-- Redundant with the blanket file-domain exclude above, but
+             explicit on purpose: derived psychological/linguistic data
+             (Thought Threads) must never leave the device even if a
+             future edit narrows the blanket exclude to specific paths. -->
+        <exclude domain="file" path="transcript_contexts/"/>
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="."/>
@@ -15,5 +20,10 @@
              fairness). Exclude it so the new device re-mints a fresh token.
              (exclude takes precedence over the include above.) -->
         <exclude domain="file" path="datastore/share_device_token.preferences_pb"/>
+        <!-- Derived Thought Threads analysis is recomputable from the
+             recording's own transcript (hash+version validated) — never
+             worth carrying to a new device, and it is invalidated by an
+             analysisVersion bump anyway. -->
+        <exclude domain="file" path="transcript_contexts/"/>
     </device-transfer>
 </data-extraction-rules>
