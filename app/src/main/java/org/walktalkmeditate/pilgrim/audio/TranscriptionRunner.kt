@@ -13,6 +13,7 @@ import org.walktalkmeditate.pilgrim.core.threads.CompressionRatio
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
 /**
  * Best-effort batch orchestrator. Reads pending recordings for a walk,
@@ -89,18 +90,8 @@ class TranscriptionRunner @Inject constructor(
                         val noSpeech = result.text.isBlank()
                         val text = if (noSpeech) NO_SPEECH_PLACEHOLDER else result.text
                         val wpm = if (noSpeech) null else computeWpm(text, recording.durationMillis)
-                        val persisted = try {
-                            repository.updateVoiceRecording(
-                                recording.copy(transcription = text, wordsPerMinute = wpm),
-                            )
-                            count++
-                            true
-                        } catch (ce: CancellationException) {
-                            throw ce
-                        } catch (t: Throwable) {
-                            Log.w(TAG, "DB update failed for recording ${recording.id}", t)
-                            false
-                        }
+                        val persisted = persistWithRetry(recording, text, wpm)
+                        if (persisted) count++
                         // Analysis triggers after a successful persist only, and never
                         // for the no-speech placeholder (there is no real transcript to
                         // analyze). Toggle-gated here to skip the segment-flag/language
@@ -155,6 +146,28 @@ class TranscriptionRunner @Inject constructor(
     }
 
     /**
+     * Exactly one retry (two total attempts), no backoff — U2/BEH-58's
+     * persistence-retry shape. iOS retries its transcription-text write
+     * and its WPM write SEPARATELY, two attempts each; Android's
+     * [WalkRepository.updateVoiceRecording] writes both fields in one
+     * `@Update`, so one retried call covers both rather than needing two
+     * independent retry loops.
+     */
+    private suspend fun persistWithRetry(recording: VoiceRecording, text: String, wordsPerMinute: Double?): Boolean {
+        repeat(PERSIST_ATTEMPTS) { attempt ->
+            try {
+                repository.updateVoiceRecording(recording.copy(transcription = text, wordsPerMinute = wordsPerMinute))
+                return true
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "DB update failed for recording ${recording.id} (attempt ${attempt + 1}/$PERSIST_ATTEMPTS)", t)
+            }
+        }
+        return false
+    }
+
+    /**
      * Never blocks transcription persist: any failure here (language
      * detection, theme/marker computation, the store write) is logged
      * and swallowed, `CancellationException` re-thrown. The recording's
@@ -197,6 +210,9 @@ class TranscriptionRunner @Inject constructor(
         // U2/BEH-56 segment flag thresholds, verbatim from iOS.
         private const val COMPRESSION_RATIO_THRESHOLD = 2.4
         private const val NO_SPEECH_PROB_THRESHOLD = 0.6
+
+        // U2/BEH-58: exactly one retry, two total attempts, no backoff.
+        private const val PERSIST_ATTEMPTS = 2
     }
 }
 

@@ -45,6 +45,14 @@ import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
+import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
+import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
@@ -128,7 +136,7 @@ class TranscriptionRunnerTest {
         db.close()
     }
 
-    private fun buildRunner(engine: WhisperEngine) = TranscriptionRunner(
+    private fun buildRunner(engine: WhisperEngine, repository: WalkRepository = this.repository) = TranscriptionRunner(
         context,
         repository,
         engine,
@@ -569,6 +577,81 @@ class TranscriptionRunnerTest {
             "the thrown error must not have left a context behind",
             threadsStore.hasContext(updated.uuid),
         )
+    }
+
+    // ---- U2/BEH-58: persistence retries exactly once (two total attempts) ----
+
+    private fun flakyRepository(failuresBeforeSuccess: Int) = FlakyWalkRepository(
+        database = db,
+        walkDao = db.walkDao(),
+        routeDao = db.routeDataSampleDao(),
+        altitudeDao = db.altitudeSampleDao(),
+        walkEventDao = db.walkEventDao(),
+        activityIntervalDao = db.activityIntervalDao(),
+        waypointDao = db.waypointDao(),
+        voiceRecordingDao = db.voiceRecordingDao(),
+        walkPhotoDao = db.walkPhotoDao(),
+        failuresBeforeSuccess = failuresBeforeSuccess,
+    )
+
+    @Test
+    fun `a transient DB failure on the first attempt succeeds on the retry`() = runBlocking {
+        val flaky = flakyRepository(failuresBeforeSuccess = 1)
+        val flakyRunner = buildRunner(engine, repository = flaky)
+        val walk = flaky.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultText = "persisted on retry"
+
+        val outcome = flakyRunner.transcribePending(walk.id)
+
+        assertEquals(Result.success(1), outcome)
+        assertEquals(2, flaky.updateAttempts)
+        assertEquals("persisted on retry", flaky.getVoiceRecording(recording.id)!!.transcription)
+    }
+
+    @Test
+    fun `two consecutive DB failures give up — not persisted, not counted`() = runBlocking {
+        val flaky = flakyRepository(failuresBeforeSuccess = 2)
+        val flakyRunner = buildRunner(engine, repository = flaky)
+        val walk = flaky.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+
+        val outcome = flakyRunner.transcribePending(walk.id)
+
+        assertTrue("expected failure (all attempted recordings failed), was $outcome", outcome.isFailure)
+        assertEquals(2, flaky.updateAttempts)
+        assertNull(
+            "no more than 2 attempts — no backoff loop, no third try",
+            flaky.getVoiceRecording(recording.id)!!.transcription,
+        )
+    }
+
+    private class FlakyWalkRepository(
+        database: PilgrimDatabase,
+        walkDao: WalkDao,
+        routeDao: RouteDataSampleDao,
+        altitudeDao: AltitudeSampleDao,
+        walkEventDao: WalkEventDao,
+        activityIntervalDao: ActivityIntervalDao,
+        waypointDao: WaypointDao,
+        voiceRecordingDao: VoiceRecordingDao,
+        walkPhotoDao: WalkPhotoDao,
+        private var failuresBeforeSuccess: Int,
+    ) : WalkRepository(
+        database, walkDao, routeDao, altitudeDao, walkEventDao,
+        activityIntervalDao, waypointDao, voiceRecordingDao, walkPhotoDao,
+    ) {
+        var updateAttempts = 0
+            private set
+
+        override suspend fun updateVoiceRecording(recording: VoiceRecording) {
+            updateAttempts++
+            if (failuresBeforeSuccess > 0) {
+                failuresBeforeSuccess--
+                throw IOException("simulated transient DB failure")
+            }
+            super.updateVoiceRecording(recording)
+        }
     }
 
     // ---- flagged-segment quality signal (compressionRatio / noSpeechProb) ----

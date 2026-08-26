@@ -278,7 +278,9 @@ open class WalkRepository @Inject constructor(
     suspend fun recordVoice(recording: VoiceRecording): Long =
         voiceRecordingDao.insert(recording)
 
-    suspend fun updateVoiceRecording(recording: VoiceRecording) =
+    /** `open` so tests can inject controlled failures (TranscriptionRunner's
+     * two-attempt persistence retry, U5/BEH-58). */
+    open suspend fun updateVoiceRecording(recording: VoiceRecording) =
         voiceRecordingDao.update(recording)
 
     /**
