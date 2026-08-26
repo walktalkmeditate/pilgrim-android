@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.threads
 
-/** One recurring topic surfaced from a transcript's noun-class content words. */
-data class Theme(val lemma: String, val displayTerm: String, val salience: Int, val mentions: List<LemmaMention>)
+/**
+ * One recurring topic surfaced from a transcript's noun-class content
+ * words. [salience] = [mentionCount] / the transcript's total word count
+ * (via [TranscriptNlp.wordCount]), computed once at extraction time —
+ * normalizing by transcript length so a short and a long transcript
+ * sharing the same raw mention count don't read as equally salient.
+ */
+data class Theme(
+    val lemma: String,
+    val displayTerm: String,
+    val mentionCount: Int,
+    val salience: Double,
+    val mentions: List<LemmaMention>,
+)
 
 /**
  * Noun-only theme extraction, ported from
@@ -20,6 +32,19 @@ data class Theme(val lemma: String, val displayTerm: String, val salience: Int, 
  * admits a scaffold verb ("think", "have", "will", ...) as a noun in the
  * first place; this substrate's dictionary POS does, since WordNet lists
  * real noun senses for those exact surface forms.
+ *
+ * A second, narrower Android-original filter,
+ * [SpokenStoplist.androidGerundExtension], suppresses a handful of gerunds
+ * ("going", "getting", "saying", "coming", "telling") that WordNet also
+ * lists as themselves rather than folding to a verb lemma — the same
+ * substrate gap, applied to a different word class; iOS's contextual
+ * tagger would resolve these as verbs in ordinary spoken narration and so
+ * never needed this list either. The wider ambiguous class ("thinking",
+ * "feeling", "being", "looking", "seeing", "talking", "asking") is
+ * deliberately left unsuppressed pending a real-transcript field read
+ * (U12); "living" and "working" are deliberately admitted as themes
+ * outright — both read as plausible real topics, not scaffolding (cf.
+ * iOS's own canonical "the move" suggestion).
  */
 object ThemeExtractor {
 
@@ -43,17 +68,19 @@ object ThemeExtractor {
      * formation only; [MarkerAnalyzer.compute] has no such floor.
      */
     fun themes(text: String): List<Theme> {
-        if (TranscriptNlp.wordCount(text) < MINIMUM_WORDS) return emptyList()
+        val wordCount = TranscriptNlp.wordCount(text)
+        if (wordCount < MINIMUM_WORDS) return emptyList()
 
         val candidates = TranscriptNlp.contentLemmaMentions(text, classes = setOf(PosClass.NOUN))
             .filterNot { mention ->
                 mention.lemma in walkingDomain ||
                     mention.lemma in SpokenStoplist.lightNouns ||
-                    mention.lemma in SpokenStoplist.scaffoldLemmas
+                    mention.lemma in SpokenStoplist.scaffoldLemmas ||
+                    mention.lemma in SpokenStoplist.androidGerundExtension
             }
 
         val eligible = candidates.groupBy { it.lemma }.filterValues { it.size >= MINIMUM_MENTIONS }
-        val themes = eligible.map { (lemma, mentions) -> toTheme(lemma, mentions) }
+        val themes = eligible.map { (lemma, mentions) -> toTheme(lemma, mentions, wordCount) }
 
         return themes
             .sortedWith(compareByDescending<Theme> { it.salience }.thenBy { it.lemma })
@@ -70,12 +97,18 @@ object ThemeExtractor {
      * relies on — an empty group reaching this function is a caller bug,
      * not a case to degrade gracefully from.
      */
-    private fun toTheme(lemma: String, mentions: List<LemmaMention>): Theme {
+    private fun toTheme(lemma: String, mentions: List<LemmaMention>, wordCount: Int): Theme {
         val surfaceCounts = mentions.groupingBy { it.surface }.eachCount()
         val displayTerm = surfaceCounts.entries
             .minWithOrNull(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
             ?.key
             ?: error("toTheme called with an empty mention list for lemma \"$lemma\"")
-        return Theme(lemma = lemma, displayTerm = displayTerm, salience = mentions.size, mentions = mentions)
+        return Theme(
+            lemma = lemma,
+            displayTerm = displayTerm,
+            mentionCount = mentions.size,
+            salience = mentions.size.toDouble() / wordCount,
+            mentions = mentions,
+        )
     }
 }

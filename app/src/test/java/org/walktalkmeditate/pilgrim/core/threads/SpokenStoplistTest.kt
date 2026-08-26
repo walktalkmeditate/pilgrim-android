@@ -48,6 +48,15 @@ class SpokenStoplistTest {
     }
 
     @Test
+    fun `androidGerundExtension is the exact 5-word verbatim set`() {
+        assertEquals(
+            setOf("going", "getting", "saying", "coming", "telling"),
+            SpokenStoplist.androidGerundExtension,
+        )
+        assertEquals(5, SpokenStoplist.androidGerundExtension.size)
+    }
+
+    @Test
     fun `lightNouns and scaffoldLemmas are distinct lists sharing some entries`() {
         // Deliberately overlapping (kind, thing, stuff, way, lot, bit) — see SpokenStoplist's
         // KDoc: they are two different consumers' lists, not one list under two names.

@@ -2,20 +2,24 @@
 package org.walktalkmeditate.pilgrim.core.threads
 
 /**
- * Two separate stoplists for two separate consumers, ported verbatim from
- * `Pilgrim/Models/Threads/TranscriptNLP.swift` at the frozen iOS pin
- * (`0172e2b`). Collapsing them into one list over- or under-suppresses
+ * Two stoplists ported verbatim from `Pilgrim/Models/Threads/TranscriptNLP.swift`
+ * at the frozen iOS pin (`0172e2b`), plus one Android-original addition.
+ * Collapsing the two ported lists into one over- or under-suppresses
  * depending on the caller: [lightNouns] feeds noun-only theme extraction;
  * [scaffoldLemmas] feeds the verb-inclusive recurring-word attention
  * directive (a later unit) and — Android-original compensation, since this
  * substrate's dictionary POS has no contextual disambiguation — the
  * noun-only theme path as well, in [ThemeExtractor].
  *
- * Both lists exist because spoken-English scaffolding a tagger can admit
- * as a content word is reached for out of habit, not meaning: a
+ * Both ported lists exist because spoken-English scaffolding a tagger can
+ * admit as a content word is reached for out of habit, not meaning: a
  * field-confirmed bug once let "was", "have", "can", "think", and "will"
  * surface as real-device themes. Omitting either list here reintroduces
  * that exact bug.
+ *
+ * [androidGerundExtension] is the one Android-original list with no iOS
+ * counterpart at all — see its own KDoc for why the theme path needs it
+ * and why its neighboring gerunds deliberately do not join it.
  */
 object SpokenStoplist {
 
@@ -37,4 +41,23 @@ object SpokenStoplist {
         "keep", "kind", "thing", "stuff", "way", "lot", "bit",
         "can", "could", "should", "would", "must", "might", "may", "will", "ought", "wish",
     )
+
+    /**
+     * Android-only, theme path only: these five gerund surface forms are
+     * noun-listed in WordNet in their own right (Morphy's own-form-first
+     * lookup keeps them as themselves — see [ThemeExtractor]'s KDoc), where
+     * iOS's contextual tagger would tag the same words verbs in ordinary
+     * spoken narration and so never needed to suppress them. Suppressing
+     * them here is the same class of Android-original compensation that
+     * already made [scaffoldLemmas] mandatory on the theme path.
+     *
+     * The wider ambiguous class — "thinking", "feeling", "being",
+     * "looking", "seeing", "talking", "asking" — is deliberately NOT
+     * suppressed here, pending the U12 real-transcript field read.
+     * "living" and "working" are deliberately admitted, not suppressed:
+     * both read as plausible real themes in their own right (cf. iOS's own
+     * canonical "the move" suggestion, itself built from a gerund-shaped
+     * lemma).
+     */
+    val androidGerundExtension: Set<String> = setOf("going", "getting", "saying", "coming", "telling")
 }

@@ -57,7 +57,8 @@ class ThemeExtractorTest {
         assertEquals(1, themes.size)
         assertEquals("music", themes.single().lemma)
         assertEquals("music", themes.single().displayTerm)
-        assertEquals(3, themes.single().salience)
+        assertEquals(3, themes.single().mentionCount)
+        assertEquals(3.0 / TranscriptNlp.wordCount(text), themes.single().salience, 0.0)
     }
 
     @Test
@@ -67,6 +68,33 @@ class ThemeExtractorTest {
         val text = "I love music so much and I think about music every single day of my life"
         assertTrue(TranscriptNlp.wordCount(text) < ThemeExtractor.MINIMUM_WORDS)
         assertEquals(emptyList<Theme>(), ThemeExtractor.themes(text))
+    }
+
+    // --- androidGerundExtension: Android-only gerund suppression (U4 review, Fix 3) ---
+
+    @Test
+    fun `going spoken three times amid scaffolding yields zero themes`() {
+        // "going" is WordNet-noun-listed in its own right (Morphy keeps it as itself) and is
+        // NOT covered by scaffoldLemmas (which only lists "go") — this is non-vacuous only
+        // because of SpokenStoplist.androidGerundExtension.
+        val text = "I was walking and I have to say I think about going because I can think about " +
+            "going too and I will think about going again since I have so many things I want and need"
+        assertTrue(TranscriptNlp.wordCount(text) >= ThemeExtractor.MINIMUM_WORDS)
+        assertEquals(emptyList<Theme>(), ThemeExtractor.themes(text))
+    }
+
+    @Test
+    fun `living spoken three times amid the same scaffolding is deliberately admitted as a theme`() {
+        val text = "I was walking and I have to say I think about living because I can think about " +
+            "living too and I will think about living again since I have so many things I want and need"
+        assertTrue(TranscriptNlp.wordCount(text) >= ThemeExtractor.MINIMUM_WORDS)
+
+        val themes = ThemeExtractor.themes(text)
+
+        assertEquals(1, themes.size)
+        assertEquals("living", themes.single().lemma)
+        assertEquals(3, themes.single().mentionCount)
+        assertEquals(3.0 / TranscriptNlp.wordCount(text), themes.single().salience, 0.0)
     }
 
     // --- minimumWords: exact boundary ---
@@ -98,9 +126,32 @@ class ThemeExtractorTest {
 
     @Test
     fun `a lemma with exactly minimumMentions mentions becomes a theme`() {
-        val themes = ThemeExtractor.themes(pad(repeatedWords("harvest", ThemeExtractor.MINIMUM_MENTIONS)))
+        val text = pad(repeatedWords("harvest", ThemeExtractor.MINIMUM_MENTIONS))
+        val themes = ThemeExtractor.themes(text)
         assertEquals(1, themes.size)
-        assertEquals(ThemeExtractor.MINIMUM_MENTIONS, themes.single().salience)
+        assertEquals(ThemeExtractor.MINIMUM_MENTIONS, themes.single().mentionCount)
+        assertEquals(
+            ThemeExtractor.MINIMUM_MENTIONS.toDouble() / TranscriptNlp.wordCount(text),
+            themes.single().salience,
+            0.0,
+        )
+    }
+
+    // --- salience: normalized by transcript wordCount, not a raw count ---
+
+    @Test
+    fun `salience normalizes by transcript wordCount so identical mention counts diverge across lengths`() {
+        val shortText = wordsOfLength(ThemeExtractor.MINIMUM_WORDS, listOf("harvest", "harvest"))
+        val longText = wordsOfLength(ThemeExtractor.MINIMUM_WORDS * 2, listOf("harvest", "harvest"))
+
+        val shortTheme = ThemeExtractor.themes(shortText).single()
+        val longTheme = ThemeExtractor.themes(longText).single()
+
+        assertEquals(2, shortTheme.mentionCount)
+        assertEquals(2, longTheme.mentionCount)
+        assertEquals(2.0 / TranscriptNlp.wordCount(shortText), shortTheme.salience, 0.0)
+        assertEquals(2.0 / TranscriptNlp.wordCount(longText), longTheme.salience, 0.0)
+        assertTrue(shortTheme.salience > longTheme.salience)
     }
 
     // --- walkingDomain suppression ---
@@ -113,7 +164,8 @@ class ThemeExtractorTest {
 
         assertEquals(1, themes.size)
         assertEquals("music", themes.single().lemma)
-        assertEquals(2, themes.single().salience)
+        assertEquals(2, themes.single().mentionCount)
+        assertEquals(2.0 / TranscriptNlp.wordCount(text), themes.single().salience, 0.0)
     }
 
     // --- display-term selection: max count, tie-broken by smallest surface string ---
@@ -126,7 +178,8 @@ class ThemeExtractorTest {
 
         assertEquals("mountain", theme.lemma)
         assertEquals("mountains", theme.displayTerm)
-        assertEquals(3, theme.salience)
+        assertEquals(3, theme.mentionCount)
+        assertEquals(3.0 / TranscriptNlp.wordCount(text), theme.salience, 0.0)
     }
 
     @Test
@@ -137,7 +190,8 @@ class ThemeExtractorTest {
 
         assertEquals("mountain", theme.lemma)
         assertEquals("mountain", theme.displayTerm)
-        assertEquals(2, theme.salience)
+        assertEquals(2, theme.mentionCount)
+        assertEquals(2.0 / TranscriptNlp.wordCount(text), theme.salience, 0.0)
     }
 
     // --- maxThemes cap + final ranking tie-break (salience desc, lemma asc) ---
