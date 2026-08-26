@@ -9,6 +9,13 @@ import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
+/**
+ * U6: narrow two-column projection for [ThreadsBackfillRunner][org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillRunner]'s
+ * snapshot — mirrors iOS `DataManager.transcribedRecordingsSnapshot()`'s
+ * `(uuid, transcript)` tuple (BEH-61).
+ */
+data class TranscribedRecordingSnapshot(val uuid: String, val transcription: String)
+
 @Dao
 interface VoiceRecordingDao {
     @Insert
@@ -65,4 +72,14 @@ interface VoiceRecordingDao {
      */
     @Query("SELECT DISTINCT walk_id FROM voice_recordings WHERE transcription IS NULL")
     suspend fun walkIdsWithNullTranscription(): List<Long>
+
+    /**
+     * U6: every already-transcribed recording, across all walks — the
+     * one-time backfill's own raw material. No `ORDER BY`: the runner
+     * sorts by uuid itself so the sort discipline lives with the
+     * consumer that depends on it for checkpoint determinism, not
+     * silently in the query.
+     */
+    @Query("SELECT uuid, transcription FROM voice_recordings WHERE transcription IS NOT NULL")
+    suspend fun transcribedSnapshot(): List<TranscribedRecordingSnapshot>
 }

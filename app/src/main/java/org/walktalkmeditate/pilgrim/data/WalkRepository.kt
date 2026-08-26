@@ -305,6 +305,11 @@ open class WalkRepository @Inject constructor(
     open suspend fun walkIdsWithPendingTranscriptions(): List<Long> =
         voiceRecordingDao.walkIdsWithNullTranscription()
 
+    /** U6: [ThreadsBackfillRunner][org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillRunner]'s
+     * default snapshot source — every already-transcribed recording. */
+    open suspend fun transcribedRecordingsSnapshot(): List<org.walktalkmeditate.pilgrim.data.dao.TranscribedRecordingSnapshot> =
+        voiceRecordingDao.transcribedSnapshot()
+
     fun observeVoiceRecordings(walkId: Long): Flow<List<VoiceRecording>> =
         voiceRecordingDao.observeForWalk(walkId)
 
