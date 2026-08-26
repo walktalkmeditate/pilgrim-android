@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -283,6 +284,8 @@ class WalkSummaryViewModel @Inject constructor(
     routeCatalogService: CollectiveRouteCatalogService,
     private val contributionLedger: ContributionLedger,
     @PersistenceScope private val persistenceScope: CoroutineScope,
+    private val autoTranscriptionSkipState:
+        org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -1005,13 +1008,32 @@ class WalkSummaryViewModel @Inject constructor(
     private val _manualTranscribing = MutableStateFlow<Set<Long>>(emptySet())
     val manualTranscribing: StateFlow<Set<Long>> = _manualTranscribing.asStateFlow()
 
+    /**
+     * U6/UI-25: ids marked pending by [transcribePendingRecordings]
+     * SPECIFICALLY — a strict subset of [_manualTranscribing], which
+     * [retranscribeRecording] (single-file retry) also populates.
+     * [retranscribeRecording] never touches
+     * [AutoTranscriptionSkipState] — iOS's `retranscribeSingle` doesn't
+     * either — only a batch "transcribe all pending" retry earning at
+     * least one real result clears the skip flag (iOS
+     * `WalkSummaryRecordingsSection.transcribeAll`).
+     */
+    private val _transcribeAllPendingIds = MutableStateFlow<Set<Long>>(emptySet())
+
     @Suppress("unused")
     private val manualTranscribingClearer: Job = viewModelScope.launch {
         try {
             repository.observeVoiceRecordings(walkId).collect { recs ->
-                val landed = recs.filter { it.transcription != null }.map { it.id }
-                if (landed.isNotEmpty()) {
-                    _manualTranscribing.update { it - landed.toSet() }
+                val landed = recs.filter { it.transcription != null }.map { it.id }.toSet()
+                if (landed.isEmpty()) return@collect
+                _manualTranscribing.update { it - landed }
+                val landedFromTranscribeAll = _transcribeAllPendingIds.value intersect landed
+                if (landedFromTranscribeAll.isNotEmpty()) {
+                    // Non-empty results only — an all-failed retry must
+                    // leave the banner up so the user knows the skip
+                    // condition (or a fresh failure) is still unresolved.
+                    autoTranscriptionSkipState.clear()
+                    _transcribeAllPendingIds.update { it - landedFromTranscribeAll }
                 }
             }
         } catch (ce: CancellationException) {
@@ -1024,6 +1046,36 @@ class WalkSummaryViewModel @Inject constructor(
             android.util.Log.e(TAG, "manualTranscribingClearer collect failed", t)
         }
     }
+
+    /**
+     * U6: whether a transcription batch is CURRENTLY in flight for this
+     * walk, derived from WorkManager's own record (not a VM-local flag —
+     * [_manualTranscribing] only reflects ids THIS VM instance marked,
+     * which would miss a batch another screen — or the post-walk
+     * auto-transcription trigger — started). Drives the transcribe-all
+     * affordance's visibility: it must disappear (not merely disable)
+     * while ANY batch for this walk is running, regardless of who
+     * started it.
+     *
+     * Wrapped in a cold `flow {}` builder so `WorkManager.getInstance`
+     * is called on first REAL subscription, not at VM construction —
+     * most WalkSummaryViewModel unit tests never touch this flow, and
+     * eagerly calling `getInstance` in a property initializer would
+     * require every one of them to also initialize a test WorkManager.
+     */
+    val isTranscribingBatch: StateFlow<Boolean> = kotlinx.coroutines.flow.flow {
+        emitAll(
+            androidx.work.WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWorkFlow(
+                    org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler.uniqueWorkName(walkId),
+                )
+                .map { infos -> infos.any { !it.state.isFinished } },
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+        initialValue = false,
+    )
 
     /**
      * Walk Summary retranscribe-single action. Clears the existing
@@ -1076,6 +1128,7 @@ class WalkSummaryViewModel @Inject constructor(
             }
             if (pendingIds.isNotEmpty()) {
                 _manualTranscribing.update { it + pendingIds }
+                _transcribeAllPendingIds.update { it + pendingIds }
             }
         }
     }
@@ -1623,6 +1676,14 @@ class WalkSummaryViewModel @Inject constructor(
         // posted to the same main looper. Stop just halts current
         // playback; the next VM finds the player ready to use.
         playback.stop()
+        // U6: the fourth AutoTranscriptionSkipState clear-site (iOS
+        // MainCoordinator.handleSummaryDismiss) — this VM is scoped to
+        // the summary's NavBackStackEntry, so onCleared fires exactly
+        // when the summary is dismissed (Done tap or back/scrim), by
+        // either path. iOS pairs this clear with `homeViewModel.loadWalks()`;
+        // Android's walk list is a live Room Flow with no manual reload
+        // to mirror.
+        autoTranscriptionSkipState.clear()
         super.onCleared()
     }
 

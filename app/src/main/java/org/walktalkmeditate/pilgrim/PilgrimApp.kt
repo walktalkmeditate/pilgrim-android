@@ -174,6 +174,16 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var walkLifecycleObserverProvider: Provider<WalkLifecycleObserver>
 
     /**
+     * U6: two of the [org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState]'s
+     * five clear-sites (walk start, walk cancel/discard) — see that
+     * observer's KDoc for the full five-site mapping. Same eager-
+     * instantiation reasoning as [walkLifecycleObserverProvider]: without
+     * this reference the `init { scope.launch { ... } }` block never runs.
+     */
+    @Inject lateinit var autoTranscriptionSkipClearObserverProvider:
+        Provider<org.walktalkmeditate.pilgrim.walk.AutoTranscriptionSkipClearObserver>
+
+    /**
      * Cold-launch recovery: any Walk row whose `end_timestamp IS NULL`
      * is a walk the OS killed (swipe-from-recents, force-stop, low-mem
      * kill) without going through the normal `finishWalk` path.
@@ -334,6 +344,11 @@ class PilgrimApp : Application(), Configuration.Provider {
         // controller state flow. Without this, voice auto-stop on the
         // discardWalk path (Active → Idle) silently fails.
         walkLifecycleObserverProvider.get()
+
+        // U6: force Hilt to instantiate the skip-clear observer so its
+        // `init { scope.launch { ... } }` block subscribes to the
+        // controller state flow for the whole process.
+        autoTranscriptionSkipClearObserverProvider.get()
 
         // Stage 11-A: arm the cache backfill coordinator. Idempotent
         // start() — re-invocation is a no-op via AtomicBoolean.

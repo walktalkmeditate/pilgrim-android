@@ -22,6 +22,16 @@ interface TranscriptionScheduler {
      * existing work rather than KEEP-deferring to it.
      */
     fun rescheduleForWalk(walkId: Long)
+
+    companion object {
+        /**
+         * The one place this literal is spelled out — [WalkSummaryViewModel][org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel]'s
+         * U6 transcribe-all-in-flight observer reads the SAME name the
+         * scheduler enqueues under; a second, independently-typed copy
+         * would silently desync the moment either side changed.
+         */
+        fun uniqueWorkName(walkId: Long): String = "transcribe-walk-$walkId"
+    }
 }
 
 @Singleton
@@ -57,7 +67,7 @@ class WorkManagerTranscriptionScheduler @Inject constructor(
             .build()
 
         WorkManager.getInstance(context).enqueueUniqueWork(
-            "transcribe-walk-$walkId",
+            TranscriptionScheduler.uniqueWorkName(walkId),
             policy,
             request,
         )

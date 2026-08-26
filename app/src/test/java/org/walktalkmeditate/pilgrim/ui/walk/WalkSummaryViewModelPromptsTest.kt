@@ -217,6 +217,7 @@ class WalkSummaryViewModelPromptsTest {
             contributionLedger =
                 org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger(),
             persistenceScope = persistenceScope,
+            autoTranscriptionSkipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
         createdViewModels += vm

@@ -228,6 +228,8 @@ class WalkSummaryViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
                 initialCelestialAwarenessEnabled = true,
             ),
+        autoTranscriptionSkipStateOverride: org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState =
+            org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
     ): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
         val json = kotlinx.serialization.json.Json {
@@ -293,6 +295,7 @@ class WalkSummaryViewModelTest {
             routeCatalogService = routeCatalogServiceOverride,
             contributionLedger = contributionLedger,
             persistenceScope = persistenceScope,
+            autoTranscriptionSkipState = autoTranscriptionSkipStateOverride,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
         createdViewModels += vm
@@ -1921,6 +1924,96 @@ class WalkSummaryViewModelTest {
 
             repository.updateVoiceRecordingTranscription(pendingId, "fresh transcript")
             awaitManualTranscribing(vm, emptySet())
+        }
+
+    // --- U6: transcribe-all clears the skip flag only on non-empty results ---
+
+    @Test
+    fun `transcribePendingRecordings landing a result clears the skip flag`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val pendingId =
+                insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            val skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
+            skipState.setSkipped()
+
+            val vm = newViewModel(
+                walkId = walk.id,
+                transcriptionSchedulerOverride = scheduler,
+                autoTranscriptionSkipStateOverride = skipState,
+            )
+            awaitRetranscribeEnabled(vm)
+
+            vm.transcribePendingRecordings()
+            awaitManualTranscribing(vm, setOf(pendingId))
+
+            repository.updateVoiceRecordingTranscription(pendingId, "fresh transcript")
+            awaitManualTranscribing(vm, emptySet())
+
+            assertNull(
+                "a non-empty transcribe-all result must clear the skip flag",
+                skipState.skipReason.value,
+            )
+        }
+
+    @Test
+    fun `transcribePendingRecordings with no landed results leaves the skip flag up`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            val skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
+            skipState.setSkipped()
+
+            val vm = newViewModel(
+                walkId = walk.id,
+                transcriptionSchedulerOverride = scheduler,
+                autoTranscriptionSkipStateOverride = skipState,
+            )
+            awaitRetranscribeEnabled(vm)
+
+            vm.transcribePendingRecordings()
+            advanceUntilIdle()
+            // No landed transcription simulated — an all-failed retry.
+
+            assertEquals(
+                "an all-failed retry must leave the banner up",
+                org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipReason.LowBattery,
+                skipState.skipReason.value,
+            )
+        }
+
+    @Test
+    fun `retranscribeRecording (single) landing a result does NOT clear the skip flag`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            repository.updateVoiceRecordingTranscription(recId, "old transcription")
+            val skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
+            skipState.setSkipped()
+
+            val vm = newViewModel(
+                walkId = walk.id,
+                transcriptionSchedulerOverride = scheduler,
+                autoTranscriptionSkipStateOverride = skipState,
+            )
+            awaitRetranscribeEnabled(vm)
+            vm.retranscribeRecording(recId)
+            awaitManualTranscribing(vm, setOf(recId))
+
+            repository.updateVoiceRecordingTranscription(recId, "fresh transcript")
+            awaitManualTranscribing(vm, emptySet())
+
+            assertEquals(
+                "a single-file retry must never touch the skip flag — only transcribe-all does (iOS parity)",
+                org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipReason.LowBattery,
+                skipState.skipReason.value,
+            )
         }
 
     @Test
