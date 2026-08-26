@@ -62,6 +62,8 @@ class PromptGenerator @Inject constructor(
         imperial: Boolean,
         weatherLabel: (WeatherCondition) -> String = { context.getString(it.labelRes) },
         zone: ZoneId = ZoneId.systemDefault(),
+        directives: List<String>? = null,
+        detectedLanguageName: String? = null,
     ): GeneratedPrompt {
         val voice = style.voiceFor()
         val text = PromptAssembler.assemble(
@@ -70,6 +72,8 @@ class PromptGenerator @Inject constructor(
             imperial = imperial,
             weatherLabel = weatherLabel,
             zone = zone,
+            directives = directives,
+            detectedLanguageName = detectedLanguageName,
         )
         return GeneratedPrompt(
             style = style,
@@ -89,6 +93,8 @@ class PromptGenerator @Inject constructor(
         customIconResolver: (String) -> ImageVector,
         weatherLabel: (WeatherCondition) -> String = { context.getString(it.labelRes) },
         zone: ZoneId = ZoneId.systemDefault(),
+        directives: List<String>? = null,
+        detectedLanguageName: String? = null,
     ): GeneratedPrompt {
         val voice = CustomPromptStyleVoice(customStyle)
         val text = PromptAssembler.assemble(
@@ -97,6 +103,8 @@ class PromptGenerator @Inject constructor(
             imperial = imperial,
             weatherLabel = weatherLabel,
             zone = zone,
+            directives = directives,
+            detectedLanguageName = detectedLanguageName,
         )
         return GeneratedPrompt(
             style = null,
@@ -109,28 +117,70 @@ class PromptGenerator @Inject constructor(
     }
 
     /**
+     * The single resolution point for the derivations a prompt-list build
+     * needs: one language detection feeds both the display name and the
+     * [AttentionDirectives] echo detector (which then skips its own
+     * detection), and one directives pass serves every style —
+     * [generateAll] computes this ONCE and fans it out rather than
+     * re-running the lemmatization pass per style (U7/BEH-77).
+     *
+     * @param detectedLanguageCode The transcript's detected ISO language
+     *   code, or `null` when nothing has detected it yet (today's only
+     *   production case — Android has no synchronous on-device detector
+     *   to call inline here the way iOS's `PromptAssembler.detectedLanguageCode`
+     *   does; a future async-aware caller that already ran ML Kit
+     *   detection can pass its result through this parameter).
+     */
+    fun resolvedDerivations(
+        activityContext: ActivityContext,
+        detectedLanguageCode: String? = null,
+    ): ResolvedPromptDerivations = ResolvedPromptDerivations(
+        directives = AttentionDirectives.detect(activityContext, detectedLanguageCode),
+        languageName = detectedLanguageCode?.let { PromptAssembler.languageName(it) },
+    )
+
+    /**
      * Generate one [GeneratedPrompt] per built-in [PromptStyle], in
      * `PromptStyle.entries` declaration order — Contemplative,
      * Reflective, Creative, Gratitude, Philosophical, Journaling.
      * Custom styles are NOT included here; Task 10 iterates the
      * [CustomPromptStyleStore] separately and calls [generateCustom]
      * for each.
+     *
+     * @param directives Precomputed directives shared across every style,
+     *   or `null` to compute via [resolvedDerivations] once here. Passing
+     *   directives without [detectedLanguageName] is a valid override
+     *   (e.g. a caller that only wants to skip directive recomputation).
      */
     fun generateAll(
         activityContext: ActivityContext,
         imperial: Boolean,
         weatherLabel: (WeatherCondition) -> String = { context.getString(it.labelRes) },
         zone: ZoneId = ZoneId.systemDefault(),
-    ): List<GeneratedPrompt> = PromptStyle.entries.map { style ->
-        generate(
-            style = style,
-            activityContext = activityContext,
-            imperial = imperial,
-            weatherLabel = weatherLabel,
-            zone = zone,
-        )
+        directives: List<String>? = null,
+        detectedLanguageName: String? = null,
+    ): List<GeneratedPrompt> {
+        val resolved = if (directives != null) {
+            ResolvedPromptDerivations(directives, detectedLanguageName)
+        } else {
+            resolvedDerivations(activityContext)
+        }
+        return PromptStyle.entries.map { style ->
+            generate(
+                style = style,
+                activityContext = activityContext,
+                imperial = imperial,
+                weatherLabel = weatherLabel,
+                zone = zone,
+                directives = resolved.directives,
+                detectedLanguageName = resolved.languageName,
+            )
+        }
     }
 }
+
+/** [PromptGenerator.resolvedDerivations]'s result — see that function's KDoc. */
+data class ResolvedPromptDerivations(val directives: List<String>, val languageName: String?)
 
 private fun PromptStyle.voiceFor(): WalkPromptVoice = when (this) {
     PromptStyle.Contemplative -> ContemplativeVoice

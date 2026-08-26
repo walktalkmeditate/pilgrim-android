@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.core.prompt
 
 import java.time.ZoneId
+import java.util.Locale
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
@@ -110,6 +111,18 @@ object PromptAssembler {
      * @param zone Time zone used for every wall-clock formatting call.
      *   Defaults to system default; tests pin a fixed zone for
      *   determinism.
+     * @param directives Precomputed attention directives, or `null` to
+     *   compute here. `null` is the right default for single-style
+     *   callers; [PromptGenerator.generateAll] computes this once via
+     *   [PromptGenerator.resolvedDerivations] and fans it out across
+     *   every style so a screen-open pays for one NLP pass, not one per
+     *   style (U7/BEH-77).
+     * @param detectedLanguageName Precomputed English display name of
+     *   the transcript's dominant language (U7), or `null` to omit the
+     *   "Detected language" line entirely — Android has no synchronous
+     *   on-device detector to fall back to inline the way iOS's
+     *   `TranscriptNLP.detectLanguage` does, so unlike [directives] there
+     *   is no "compute here" default; see [PromptGenerator.resolvedDerivations].
      */
     fun assemble(
         context: ActivityContext,
@@ -117,6 +130,8 @@ object PromptAssembler {
         imperial: Boolean,
         weatherLabel: (WeatherCondition) -> String = { it.name },
         zone: ZoneId = ZoneId.systemDefault(),
+        directives: List<String>? = null,
+        detectedLanguageName: String? = null,
     ): String {
         val lunarPhase = requireNotNull(context.lunarPhase) {
             "ActivityContext.lunarPhase must be non-null when assembling a prompt — " +
@@ -205,6 +220,10 @@ object PromptAssembler {
             sections.append("\n\n**Walking Transcription:**\n\n").append(transcription)
         }
 
+        if (transcription.isNotEmpty() && detectedLanguageName != null) {
+            sections.append("\n\n**Detected language:** ").append(detectedLanguageName)
+        }
+
         meditationsBlock?.let { block ->
             sections.append("\n\n**Meditation Sessions:**\n\n").append(block)
         }
@@ -213,10 +232,14 @@ object PromptAssembler {
             sections.append("\n\n").append(block)
         }
 
-        val directives = AttentionDirectives.detect(context)
-        if (directives.isNotEmpty()) {
+        context.threadsDossier?.let { dossier ->
+            sections.append("\n\n").append(dossier)
+        }
+
+        val resolvedDirectives = directives ?: AttentionDirectives.detect(context)
+        if (resolvedDirectives.isNotEmpty()) {
             sections.append("\n\n**Attend to:**\n")
-                .append(directives.joinToString(separator = "\n") { "- $it" })
+                .append(resolvedDirectives.joinToString(separator = "\n") { "- $it" })
         }
 
         val fullInstruction = StringBuilder(instruction)
@@ -228,9 +251,25 @@ object PromptAssembler {
         }
 
         sections.append("\n\n---\n\n").append(fullInstruction)
-        sections.append("\n\n").append(responseContract(voice, context.hasSpeech))
+        sections.append("\n\n").append(
+            responseContract(voice, context.hasSpeech, hasThreadsDossier = context.threadsDossier != null),
+        )
         return sections.toString()
     }
+
+    /**
+     * English display name for a detected language [code] (BEH-77/EDG-87)
+     * — ALWAYS resolved against a fixed English locale, never the
+     * device's default, so the LLM (whose surrounding instructions are
+     * themselves in English) never receives a self-localized name like
+     * "français" for a French transcript. `null` for a blank/unrecognized
+     * result — Java's [Locale] API has no failable initializer the way
+     * iOS's `Locale(identifier:)` + `localizedString(forLanguageCode:)`
+     * pairing does, so an empty display name is the closest analogue to
+     * iOS's `nil`.
+     */
+    fun languageName(code: String): String? =
+        Locale.forLanguageTag(code).getDisplayLanguage(Locale.ENGLISH).takeIf { it.isNotBlank() }
 
     /**
      * Teaches the downstream model the walk's ritual grammar in Pilgrim's
@@ -278,8 +317,14 @@ object PromptAssembler {
      * do (invent, flatten, switch language) plus the voice's own form
      * constraints. This shapes the *reply's* quality — the part of the
      * feature the walker actually experiences.
+     *
+     * @param hasThreadsDossier Gates the thought-thread safety line on the
+     *   ARTIFACT ([ActivityContext.threadsDossier] != null), never the raw
+     *   `threadsAfterWalks` preference (BEH-75) — the preference can be on
+     *   with nothing yet analyzed, which must not show a caveat about data
+     *   that isn't there.
      */
-    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean): String {
+    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean, hasThreadsDossier: Boolean): String {
         val lines = voice.responseConstraints(hasSpeech).toMutableList()
         if (hasSpeech) {
             lines.add("Respond in the language the walker speaks in the transcription.")
@@ -287,6 +332,13 @@ object PromptAssembler {
                 "If more than one voice appears in the transcription, honor it as a " +
                     "conversation — attend to what happened between the speakers, and never " +
                     "guess at names.",
+            )
+        }
+        if (hasThreadsDossier) {
+            lines.add(
+                "The thought-thread marker profiles are descriptive on-device linguistic signals, " +
+                    "not assessments — interpret them gently, never produce clinical or diagnostic " +
+                    "language, and never treat a single walk's numbers as meaningful on their own.",
             )
         }
         lines.add(

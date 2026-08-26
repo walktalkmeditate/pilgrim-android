@@ -1,23 +1,46 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.prompt
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import java.time.LocalDateTime
 import java.time.ZoneId
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ReflectiveVoice
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 
 /**
  * The assembler injects a dossier of context; attention directives turn
  * it into pursuit — deterministic pattern detection that tells the
  * downstream model what is remarkable about *this* walk. Each detector
  * must fire only when its pattern is genuinely present. Mirrors iOS
- * `AttentionDirectivesTests.swift@9a418e4`.
+ * `AttentionDirectivesTests.swift@0172e2b` (v2, lemma-based — parity spec
+ * `docs/parity/2026-08-25-threads-engine-port.md` BEH-71..73). Robolectric
+ * + a real installed [WordNetLexicon] are required from v2 on: every
+ * detector call with non-empty recordings routes through
+ * [TranscriptNlp.contentLemmaMentions], which throws if no lexicon has
+ * been installed for the process.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class AttentionDirectivesTest {
+
+    @Before
+    fun setUp() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        TranscriptNlp.install(WordNetLexicon(context, json))
+    }
 
     private val nyZone: ZoneId = ZoneId.of("America/New_York")
 
@@ -186,6 +209,46 @@ class AttentionDirectivesTest {
         assertFalse("no echo: $directives", directives.contains("surfaces again"))
     }
 
+    @Test
+    fun `intention echo lemma match (an inflection, not the exact surface) omits again`() {
+        // "grieving" -> lemma "grieve" (confirmed lemmatization, TranscriptNlpTest);
+        // spoken uses the bare "grieve" surface — same lemma, different surface.
+        val directives = joined(
+            context(
+                recordings = listOf(recording("I grieve every single day now")),
+                intention = "grieving quietly by the water",
+            ),
+        )
+        assertTrue(
+            "lemma-tier phrasing without again: $directives",
+            directives.contains(
+                "The walker's intention spoke of 'grieving', and 'grieve' surfaces " +
+                    "in their spoken words — trace how it traveled.",
+            ),
+        )
+        assertFalse("lemma tier must never say again: $directives", directives.contains("surfaces again"))
+    }
+
+    @Test
+    fun `intention echo related-word match (shared WordNet synset) omits again`() {
+        // "grief" and "sorrow" share a synset (confirmed, TranscriptNlpTest)
+        // but are neither the same surface nor the same lemma.
+        val directives = joined(
+            context(
+                recordings = listOf(recording("There is so much sorrow in this quiet place")),
+                intention = "processing my grief",
+            ),
+        )
+        assertTrue(
+            "related-tier phrasing without again: $directives",
+            directives.contains(
+                "The walker's intention spoke of 'grief', and 'sorrow' surfaces " +
+                    "in their spoken words — trace how it traveled.",
+            ),
+        )
+        assertFalse("related tier must never say again: $directives", directives.contains("surfaces again"))
+    }
+
     // --- Recurring word ------------------------------------------------------
 
     @Test
@@ -228,6 +291,48 @@ class AttentionDirectivesTest {
         assertTrue(
             "tie resolves to 'stone': $directives",
             directives.contains("The word 'stone' returns 4 times"),
+        )
+    }
+
+    @Test
+    fun `recurring word excludes the spoken-scaffold lemma, promoting the next real candidate`() {
+        // "think" appears 4 times (well above the floor of 3) but is a
+        // SpokenStoplist.scaffoldLemmas entry; excluding it must redirect
+        // to "river" (3 times), never silence the directive entirely.
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording("I think the river is peaceful today"),
+                    recording("I think the river moves slowly now", offsetSeconds = 900L),
+                    recording("I think the river remembers everything", offsetSeconds = 1_800L),
+                    recording("I think winter is coming soon", offsetSeconds = 2_700L),
+                ),
+            ),
+        )
+        assertFalse("scaffold lemma 'think' must never win: $directives", directives.contains("'think'"))
+        assertTrue(
+            "excluding a scaffold lemma redirects to the next candidate, never silences: $directives",
+            directives.contains("The word 'river' returns 3 times across the recordings — it may be doing quiet work."),
+        )
+    }
+
+    @Test
+    fun `recurring word tuple-swap tie-break applies twice — winning lemma, then its display surface`() {
+        // "moved"x2 + "moving"x2 share lemma "move" (count 4, above the
+        // floor) — first tuple-swap picks "move" as the winning lemma;
+        // second tuple-swap breaks the moved/moving surface tie to the
+        // alphabetically smaller "moved".
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording("I moved forward and moved again"),
+                    recording("The light kept moving and moving", offsetSeconds = 900L),
+                ),
+            ),
+        )
+        assertTrue(
+            "surface tie-break picks the alphabetically smaller 'moved': $directives",
+            directives.contains("The word 'moved' returns 4 times across the recordings — it may be doing quiet work."),
         )
     }
 
@@ -275,6 +380,42 @@ class AttentionDirectivesTest {
             ),
         )
         assertTrue("cap of four: $detected", detected.size <= 4)
+    }
+
+    @Test
+    fun `when all five detectors fire, the array order drops firstVersusLast (the last entry)`() {
+        // 30 moving + 30 still + 30 faster-moving samples: fires BOTH
+        // stillness (the middle run) and paceShift (quickened final
+        // third) at once.
+        val speeds = List(30) { 1.0 } + List(30) { 0.0 } + List(30) { 1.5 }
+        val detected = AttentionDirectives.detect(
+            context(
+                recordings = listOf(
+                    recording("I feel the mountain calling me today"),
+                    recording("The mountain never lets go of my thoughts", offsetSeconds = 900L),
+                    recording("Every mountain reminds me why I release my grip", offsetSeconds = 1_800L),
+                ),
+                durationSeconds = 3_600L,
+                routeSpeeds = speeds,
+                intention = "release tension",
+            ),
+        )
+
+        assertEquals("all five detectors fire; the cap keeps only the first four: $detected", 4, detected.size)
+        assertFalse(
+            "firstVersusLast is last in the fixed array — it must be the one dropped: $detected",
+            detected.any { it.contains("Compare the first recording with the last") },
+        )
+        assertTrue("stillness must survive the cap: $detected", detected.any { it.contains("stillness") })
+        assertTrue("paceShift must survive the cap: $detected", detected.any { it.contains("quickened") })
+        assertTrue(
+            "intentionEcho must survive the cap: $detected",
+            detected.any { it.contains("surfaces again") },
+        )
+        assertTrue(
+            "recurringWord must survive the cap: $detected",
+            detected.any { it.contains("'mountain' returns 3 times") },
+        )
     }
 
     @Test

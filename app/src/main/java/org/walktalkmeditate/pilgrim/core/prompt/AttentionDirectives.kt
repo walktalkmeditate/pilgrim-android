@@ -1,30 +1,64 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.prompt
 
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import org.walktalkmeditate.pilgrim.core.threads.LemmaMention
+import org.walktalkmeditate.pilgrim.core.threads.SpokenStoplist
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
 
 /**
- * Deterministic pattern detection over a walk's context (verbatim port
- * of iOS `AttentionDirectives@9a418e4`). The assembler hands the
- * downstream model a dossier; these directives tell it what is
- * remarkable about *this* walk — the difference between handing someone
- * documents and handing them documents plus "compare page 3 to page 9".
+ * Deterministic pattern detection over a walk's context — v2, lemma-based
+ * (verbatim port of iOS `AttentionDirectives@0172e2b`; parity spec
+ * `docs/parity/2026-08-25-threads-engine-port.md` BEH-71..73/EDG-82..86).
+ * The assembler hands the downstream model a dossier; these directives
+ * tell it what is remarkable about *this* walk — the difference between
+ * handing someone documents and handing them documents plus "compare
+ * page 3 to page 9".
  */
 object AttentionDirectives {
 
     private const val MOVING_THRESHOLD = 0.3
     private const val MAX_DIRECTIVES = 4
+    private const val RECURRING_WORD_FLOOR = 3
 
-    fun detect(context: ActivityContext): List<String> =
-        listOfNotNull(
+    /**
+     * Android has no synchronous on-device language detector (ML Kit's
+     * identifier is async) to mirror iOS's own inline
+     * `TranscriptNLP.detectLanguage(spokenText) ?? "en"` fallback — so
+     * when [detectedLanguageCode] isn't supplied, [intentionEcho]'s
+     * `related()` tier assumes English rather than attempting a detection
+     * pass this function structurally cannot perform. Callers that need
+     * `related()` evaluated in the walker's ACTUAL detected language must
+     * supply [detectedLanguageCode] themselves (e.g. via
+     * [PromptGenerator.resolvedDerivations], which already ran that
+     * detection once for the whole prompt-list build).
+     */
+    private const val DEFAULT_LANGUAGE_CODE = "en"
+
+    /**
+     * `detectedLanguageCode` defaults to null ("assume English — see this
+     * object's KDoc") so direct callers stay unchanged;
+     * `PromptGenerator.resolvedDerivations` passes its precomputed code so
+     * the echo detector's `related()` tier reflects the walker's real
+     * detected language when one is available.
+     */
+    fun detect(context: ActivityContext, detectedLanguageCode: String? = null): List<String> {
+        // Lemmatizing the full transcript is the expensive step; do it
+        // once here and share it between the two detectors that need it.
+        val spokenMentions = if (context.hasSpeech) {
+            TranscriptNlp.contentLemmaMentions(context.recordings.joinToString(separator = " ") { it.text })
+        } else {
+            emptyList()
+        }
+        return listOfNotNull(
             stillness(context),
             paceShift(context),
-            intentionEcho(context),
-            recurringWord(context),
+            intentionEcho(context, spokenMentions, detectedLanguageCode),
+            recurringWord(context, spokenMentions),
             firstVersusLast(context),
         ).take(MAX_DIRECTIVES)
+    }
 
     /**
      * A sustained still stretch that neither a logged meditation nor a
@@ -80,58 +114,87 @@ object AttentionDirectives {
 
     /**
      * A word from the stated intention resurfacing in the walker's own
-     * spoken words.
+     * spoken words — by exact surface first (searched across ALL spoken
+     * mentions, so "worrying ... worry" still earns "again"), by shared
+     * lemma second, by [TranscriptNlp.related] nearness third. Intention
+     * words are tried in TEXT order, all three tiers for EACH word before
+     * moving to the next — the two shapes return DIFFERENT echoed words
+     * whenever an earlier word matches only at a later tier. "Again" is
+     * only honest when the walker repeated the exact surface; an
+     * inflection ("worrying" for "worry") or a related word quotes what
+     * was actually said instead.
      */
-    private fun intentionEcho(context: ActivityContext): String? {
+    private fun intentionEcho(
+        context: ActivityContext,
+        spoken: List<LemmaMention>,
+        detectedLanguageCode: String?,
+    ): String? {
         val intention = context.intention ?: return null
-        if (!context.hasSpeech) return null
-        val spoken = contentWords(context.recordings.joinToString(separator = " ") { it.text })
-        val echoed = contentWords(intention).firstOrNull { spoken.contains(it) } ?: return null
-        return "The walker's intention spoke of '$echoed', and '$echoed' surfaces again " +
-            "in their spoken words — trace how it traveled."
+        if (!context.hasSpeech || spoken.isEmpty()) return null
+        val language = detectedLanguageCode ?: DEFAULT_LANGUAGE_CODE
+
+        for (word in TranscriptNlp.contentLemmaMentions(intention)) {
+            if (spoken.any { it.lemma == word.lemma && it.surface == word.surface }) {
+                return "The walker's intention spoke of '${word.surface}', and '${word.surface}' surfaces again " +
+                    "in their spoken words — trace how it traveled."
+            }
+            val lemmaMatch = spoken.firstOrNull { it.lemma == word.lemma }
+            if (lemmaMatch != null) {
+                return "The walker's intention spoke of '${word.surface}', and '${lemmaMatch.surface}' surfaces " +
+                    "in their spoken words — trace how it traveled."
+            }
+            val relatedMatch = spoken.firstOrNull { TranscriptNlp.related(word.lemma, it.lemma, language) }
+            if (relatedMatch != null) {
+                return "The walker's intention spoke of '${word.surface}', and '${relatedMatch.surface}' surfaces " +
+                    "in their spoken words — trace how it traveled."
+            }
+        }
+        return null
     }
 
     /**
-     * The most-repeated content word across all recordings, excluding
-     * any word the intention-echo directive already claimed. Ties break
-     * to the lexicographically smallest word (spec P5's decoding of the
-     * Swift tuple comparator).
+     * The most-repeated content LEMMA across all recordings, excluding
+     * any lemma the intention already claimed and any spoken-scaffolding
+     * lemma ([SpokenStoplist.scaffoldLemmas] — light verbs like "think"
+     * that dominate raw-frequency counts without carrying meaning) — the
+     * next-ranked candidate is promoted, so excluding a lemma never
+     * silences the directive, only redirects it. Shown as its most
+     * frequent surface form so the walker's own inflection is echoed
+     * back; the tuple-swap tie-break (max count, alphabetically-smallest
+     * key) is applied TWICE — once choosing the winning lemma, again
+     * choosing that lemma's display surface.
      */
-    private fun recurringWord(context: ActivityContext): String? {
+    private fun recurringWord(context: ActivityContext, mentions: List<LemmaMention>): String? {
         if (!context.hasSpeech) return null
-        val intentionWords = context.intention?.let { contentWords(it).toSet() } ?: emptySet()
+        val intentionLemmas = context.intention
+            ?.let { TranscriptNlp.contentLemmaMentions(it).map { mention -> mention.lemma }.toSet() }
+            ?: emptySet()
 
-        val counts = mutableMapOf<String, Int>()
-        for (word in contentWords(context.recordings.joinToString(separator = " ") { it.text })) {
-            if (word in intentionWords) continue
-            counts[word] = (counts[word] ?: 0) + 1
+        val counts = HashMap<String, Int>()
+        val surfaces = HashMap<String, MutableMap<String, Int>>()
+        for (mention in mentions) {
+            if (mention.lemma in intentionLemmas || mention.lemma in SpokenStoplist.scaffoldLemmas) continue
+            counts[mention.lemma] = (counts[mention.lemma] ?: 0) + 1
+            val surfaceCounts = surfaces.getOrPut(mention.lemma) { mutableMapOf() }
+            surfaceCounts[mention.surface] = (surfaceCounts[mention.surface] ?: 0) + 1
         }
 
-        val (word, count) = counts.entries
-            .filter { it.value >= 3 }
-            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-            .firstOrNull() ?: return null
+        val (lemma, count) = counts.entries
+            .filter { it.value >= RECURRING_WORD_FLOOR }
+            .minWithOrNull(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            ?.toPair()
+            ?: return null
+        val display = surfaces[lemma]
+            ?.entries
+            ?.minWithOrNull(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            ?.key
+            ?: lemma
 
-        return "The word '$word' returns $count times across the recordings — it may be doing quiet work."
+        return "The word '$display' returns $count times across the recordings — it may be doing quiet work."
     }
 
     private fun firstVersusLast(context: ActivityContext): String? {
         if (context.recordings.size < 2) return null
         return "Compare the first recording with the last — measure what changed in the walker between them."
     }
-
-    private val stopwords: Set<String> = setOf(
-        "the", "and", "that", "this", "with", "from", "have", "what", "your",
-        "them", "they", "been", "were", "will", "would", "could", "should",
-        "about", "into", "just", "like", "know", "then", "there", "when",
-        "where", "which", "while", "because", "again", "back", "keep",
-        "still", "very", "really", "today", "cannot", "something",
-    )
-
-    private val nonLetters = Regex("\\P{L}+")
-
-    private fun contentWords(text: String): List<String> =
-        text.lowercase(Locale.ROOT)
-            .split(nonLetters)
-            .filter { it.length > 3 && it !in stopwords }
 }

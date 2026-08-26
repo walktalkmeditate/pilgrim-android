@@ -72,6 +72,18 @@ data class ActivityContext(
     val pauses: List<PauseContext>,
     val ascentMeters: Double?,
     val descentMeters: Double?,
+    /**
+     * U7: the pre-rendered Thought Threads dossier text for this walk
+     * (`ThreadsDossierBuilder.build(walkId)?.text`), or `null` when the
+     * toggle is off or nothing has been analyzed yet. [PromptAssembler]
+     * inserts it verbatim after the recent-walks block and before the
+     * attention directives (BEH-74); its mere presence also gates the
+     * response contract's thought-thread safety line (BEH-75) —
+     * deliberately the ARTIFACT, not the raw preference, so a walk with
+     * the toggle on but nothing analyzed never shows a caveat about data
+     * that isn't there.
+     */
+    val threadsDossier: String? = null,
 ) {
     val hasSpeech: Boolean get() = recordings.isNotEmpty()
 }

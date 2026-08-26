@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.prompt
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import java.time.LocalDateTime
 import java.time.ZoneId
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ContemplativeVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.CreativeVoice
@@ -15,15 +22,29 @@ import org.walktalkmeditate.pilgrim.core.prompt.voices.GratitudeVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.JournalingVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.PhilosophicalVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ReflectiveVoice
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 
 /**
  * Every generated prompt must end with a response contract: the
  * downstream LLM is told how to answer (voice-specific form constraints)
  * and what it may never do (invent details, ignore the walker's
  * language, flatten a two-voice recording into a monologue). Mirrors iOS
- * `PromptResponseContractTests.swift@9a418e4`.
+ * `PromptResponseContractTests.swift@0172e2b`. Robolectric-backed since
+ * v2 (U7): [spokenContext] has non-empty recordings, so
+ * [PromptAssembler.assemble] routes through [AttentionDirectives.detect],
+ * which requires an installed [WordNetLexicon] (see [setUp]).
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class PromptResponseContractTest {
+
+    @Before
+    fun setUp() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        TranscriptNlp.install(WordNetLexicon(context, json))
+    }
 
     private val nyZone: ZoneId = ZoneId.of("America/New_York")
 
@@ -163,7 +184,7 @@ class PromptResponseContractTest {
                 "guess at names.\n" +
                 "- Draw only on what this walk actually holds — never invent details, " +
                 "events, or memories that are not in the context above.",
-            PromptAssembler.responseContract(ContemplativeVoice, hasSpeech = true),
+            PromptAssembler.responseContract(ContemplativeVoice, hasSpeech = true, hasThreadsDossier = false),
         )
     }
 
@@ -173,8 +194,38 @@ class PromptResponseContractTest {
             "**How to respond:**\n" +
                 "- Draw only on what this walk actually holds — never invent details, " +
                 "events, or memories that are not in the context above.",
-            PromptAssembler.responseContract(customVoice, hasSpeech = false),
+            PromptAssembler.responseContract(customVoice, hasSpeech = false, hasThreadsDossier = false),
         )
+    }
+
+    // --- U7: thought-thread safety line, gated on the dossier ARTIFACT --------
+
+    @Test
+    fun `thought-thread safety line present only when hasThreadsDossier is true`() {
+        val withDossier = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = false, hasThreadsDossier = true)
+        assertTrue(
+            "verbatim safety line: $withDossier",
+            withDossier.contains(
+                "The thought-thread marker profiles are descriptive on-device linguistic signals, not " +
+                    "assessments — interpret them gently, never produce clinical or diagnostic language, " +
+                    "and never treat a single walk's numbers as meaningful on their own.",
+            ),
+        )
+        val withoutDossier = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = false, hasThreadsDossier = false)
+        assertFalse(
+            "no safety line without a dossier: $withoutDossier",
+            withoutDossier.contains("thought-thread marker profiles"),
+        )
+    }
+
+    @Test
+    fun `thought-thread safety line sits between the multi-voice line and the anti-fabrication line`() {
+        val text = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, hasThreadsDossier = true)
+        val multiVoiceIdx = text.indexOf("more than one voice")
+        val safetyIdx = text.indexOf("thought-thread marker profiles")
+        val antiFabricationIdx = text.indexOf("Draw only on what this walk actually holds")
+        assertTrue("order: $text", multiVoiceIdx in 0 until safetyIdx)
+        assertTrue("order: $text", safetyIdx in 0 until antiFabricationIdx)
     }
 
     @Test
