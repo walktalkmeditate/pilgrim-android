@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.core.threads
 
 import android.content.Context
+import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -16,6 +17,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.yield
+import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.dao.TranscribedRecordingSnapshot
 
 /**
@@ -184,5 +186,110 @@ class ThreadsBackfillRunner @Inject constructor(
     private companion object {
         const val BATCH_SIZE = 25
         const val ENGLISH = "en"
+    }
+}
+
+/**
+ * The activation surface: [ensureScheduled] is the "schedule/run entry
+ * point" the app-launch seam calls unconditionally on every process
+ * start (iOS parity `MainCoordinator.init()`'s `Task { @MainActor in
+ * ThreadsBackfill.runIfNeeded() }`) — this class's OWN internal guards
+ * (via [ThreadsBackfillRunner.sweep]'s toggle/completion/gate checks
+ * inside [ThreadsBackfillWorker]) decide whether real work happens, not
+ * the caller. [setEnabled] is the Settings-toggle entry point (VoiceCard
+ * routes through it — U10): unlike every sibling toggle, it owns the
+ * reset-and-resweep-on-enable side effect so a toggle off→on doesn't
+ * strand analysis gaps from the off period.
+ */
+interface ThreadsBackfillScheduler {
+    fun ensureScheduled()
+    suspend fun setEnabled(enabled: Boolean)
+}
+
+@Singleton
+class WorkManagerThreadsBackfillScheduler @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val preferences: ThreadsPreferencesRepository,
+) : ThreadsBackfillScheduler {
+
+    /**
+     * Plain (not expedited) `OneTimeWorkRequest` + `BatteryNotLow` +
+     * KEEP policy — Stage 2-F's crash class is Expedited+BatteryNotLow;
+     * this request is deliberately the other shape. KEEP is
+     * [ThreadsBackfillRunner]'s single-flight mechanism: a redundant
+     * launch-time call while a sweep is already enqueued/running is a
+     * no-op rather than restarting it.
+     */
+    override fun ensureScheduled() {
+        val request = OneTimeWorkRequestBuilder<ThreadsBackfillWorker>()
+            .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+    }
+
+    /**
+     * iOS parity `ThreadsBackfill.setEnabled` — the resweep-on-enable
+     * side effect belongs with the preference flip, not left for a
+     * caller to remember. Disabling only writes the preference: the
+     * completed flag survives (matching iOS's `reset()` never being
+     * called on the disable path), and there is no periodic re-schedule
+     * to suppress — [ensureScheduled] is only ever called from app
+     * launch or from this same re-enable branch, so "toggle-off stops
+     * future scheduling" holds without an explicit cancel.
+     */
+    override suspend fun setEnabled(enabled: Boolean) {
+        preferences.setThreadsAfterWalks(enabled)
+        if (enabled) {
+            preferences.clearBackfillCompleted()
+            preferences.clearBackfillCheckpoint()
+            ensureScheduled()
+        }
+    }
+
+    companion object {
+        const val UNIQUE_WORK_NAME = "threads-backfill"
+    }
+}
+
+/**
+ * Maps [ThreadsBackfillRunner.sweep]'s outcome to a WorkManager
+ * [androidx.work.ListenableWorker.Result]. [ThreadsBackfillOutcome.GateClosed]
+ * covers BOTH the worker run-start battery re-check (below 20% returns
+ * `Result.retry()` immediately, before any batch runs) and a mid-sweep
+ * closure — `BatteryNotLow`'s system floor (~15%) admits runs the 20%
+ * gate refuses, so the 15-20% band is a real path this mapping exercises
+ * in production, not just in tests.
+ */
+@HiltWorker
+class ThreadsBackfillWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted params: WorkerParameters,
+    private val runner: ThreadsBackfillRunner,
+    private val repository: WalkRepository,
+) : CoroutineWorker(appContext, params) {
+
+    override suspend fun doWork(): Result {
+        val outcome = try {
+            runner.sweep(
+                snapshotProvider = { repository.transcribedRecordingsSnapshot() },
+                gate = { BatteryGate.allowsBackgroundWork(applicationContext) },
+            )
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "sweep failed", t)
+            return Result.retry()
+        }
+        return when (outcome) {
+            ThreadsBackfillOutcome.Completed, ThreadsBackfillOutcome.ToggleOff -> Result.success()
+            ThreadsBackfillOutcome.GateClosed,
+            ThreadsBackfillOutcome.Incomplete,
+            ThreadsBackfillOutcome.Stale,
+            -> Result.retry()
+        }
+    }
+
+    private companion object {
+        const val TAG = "ThreadsBackfillWorker"
     }
 }
