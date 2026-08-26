@@ -158,6 +158,81 @@ class ThreadsBackfillTest {
         for (item in items) assertTrue(store.hasCurrentContext(item.uuid))
     }
 
+    @Test
+    fun `a same-version checkpoint still resumes from the persisted processedCount instead of restarting`() = runTest {
+        val items = snapshotOf(30)
+        var calls = 0
+        val gate: suspend () -> Boolean = { calls++; calls <= 2 }
+        runner.sweep(snapshotProvider = { items }, gate = gate)
+        assertEquals(25, preferences.backfillCheckpoint().processedCount)
+
+        // A resume from index 25 has exactly one remaining batch
+        // (25-29), so the per-batch gate is consulted once, plus the
+        // sweep's unconditional entry check = 2 total. A restart from 0
+        // would instead visit two batches (0-24, then 25-29), for 3 —
+        // this count is what actually distinguishes "resumed" from
+        // "restarted" here, since every item ends up accounted for
+        // either way.
+        val revivedRunner = ThreadsBackfillRunner(store, analyzer, preferences)
+        var resumeGateCalls = 0
+        val countingGate: suspend () -> Boolean = { resumeGateCalls++; true }
+        val outcome = revivedRunner.sweep(snapshotProvider = { items }, gate = countingGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        assertEquals(
+            "a same-version resume must process only the remaining batch, not restart from 0",
+            2,
+            resumeGateCalls,
+        )
+        for (item in items) assertTrue(store.hasCurrentContext(item.uuid))
+    }
+
+    // ---- checkpoint invalidated by an analysis-version bump ----
+
+    @Test
+    fun `a checkpoint whose analysis version predates a bump restarts from zero instead of resuming`() = runTest {
+        // Reproduces the reviewer-proven gap: a sweep interrupted
+        // mid-run persists a checkpoint, an ANALYSIS_VERSION bump lands,
+        // and a naive resume that only checks forImportGeneration would
+        // trust the stale processedCount — leaving the already-processed
+        // prefix permanently stuck on stale-version contexts, even though
+        // completion later records the NEW version.
+        val items = snapshotOf(30)
+        var calls = 0
+        val gate: suspend () -> Boolean = { calls++; calls <= 2 }
+        runner.sweep(snapshotProvider = { items }, gate = gate)
+        val staleCheckpoint = preferences.backfillCheckpoint()
+        assertEquals(25, staleCheckpoint.processedCount)
+
+        // TranscriptContext.ANALYSIS_VERSION is a compile-time constant,
+        // so a real version bump can't happen mid-test — simulate its
+        // effect directly (the same "poke the persisted/stored state"
+        // mechanism the version-stale-completion test below uses):
+        // rewrite the already-processed items' stored contexts down to a
+        // stale version, as a real bump would leave them, and rewrite the
+        // checkpoint itself down to that same stale version, as it would
+        // have been written before the (simulated) bump.
+        for (item in items.take(25)) {
+            val stored = store.readRaw(item.uuid)!!
+            store.save(stored.copy(analysisVersion = TranscriptContext.ANALYSIS_VERSION - 1))
+        }
+        preferences.setBackfillCheckpoint(staleCheckpoint.copy(atAnalysisVersion = TranscriptContext.ANALYSIS_VERSION - 1))
+        for (item in items.take(25)) assertFalse(store.hasCurrentContext(item.uuid))
+
+        val revivedRunner = ThreadsBackfillRunner(store, analyzer, preferences)
+        val outcome = revivedRunner.sweep(snapshotProvider = { items }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        for (item in items) {
+            assertTrue(
+                "every item must end up at the current analysis version, including the first 25 a stale checkpoint would have skipped",
+                store.hasCurrentContext(item.uuid),
+            )
+        }
+        assertEquals(TranscriptContext.ANALYSIS_VERSION, preferences.backfillCompletedAtVersion())
+        assertEquals(0, preferences.backfillCompletedAtImportGeneration())
+    }
+
     // ---- version-stale re-sweep ----
 
     @Test

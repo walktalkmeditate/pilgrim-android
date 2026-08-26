@@ -31,11 +31,22 @@ import org.walktalkmeditate.pilgrim.di.ThreadsPreferencesDataStore
  * [ThreadsPreferencesRepository.importGeneration] means an import landed
  * since, and the checkpoint must be discarded rather than trusted (a
  * fresh, differently-shaped snapshot may not agree on what "the first N
- * items" means).
+ * items" means). [atAnalysisVersion] pins it the same way to the
+ * [TranscriptContext.ANALYSIS_VERSION] it was computed against: a mismatch
+ * means the accounting rules themselves changed since this checkpoint was
+ * written, so the prefix it counts as "already accounted for" may still
+ * hold stale-version contexts that a resume would otherwise never
+ * revisit — this must invalidate the checkpoint exactly like an
+ * import-generation mismatch does, not be trusted just because the
+ * generation still matches.
  */
-data class BackfillCheckpoint(val processedCount: Int, val forImportGeneration: Int) {
+data class BackfillCheckpoint(
+    val processedCount: Int,
+    val forImportGeneration: Int,
+    val atAnalysisVersion: Int,
+) {
     companion object {
-        val EMPTY = BackfillCheckpoint(processedCount = 0, forImportGeneration = 0)
+        val EMPTY = BackfillCheckpoint(processedCount = 0, forImportGeneration = 0, atAnalysisVersion = 0)
     }
 }
 
@@ -161,7 +172,13 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         return if (processedCount == null || forImportGeneration == null) {
             BackfillCheckpoint.EMPTY
         } else {
-            BackfillCheckpoint(processedCount, forImportGeneration)
+            // A checkpoint persisted before this key existed decodes with
+            // no recorded version at all; NO_STORED_ANALYSIS_VERSION is
+            // guaranteed to mismatch the current ANALYSIS_VERSION so an
+            // old-shape checkpoint is treated as stale rather than
+            // trusted.
+            val atAnalysisVersion = prefs[BACKFILL_CHECKPOINT_ANALYSIS_VERSION] ?: NO_STORED_ANALYSIS_VERSION
+            BackfillCheckpoint(processedCount, forImportGeneration, atAnalysisVersion)
         }
     }
 
@@ -169,6 +186,7 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         dataStore.edit { prefs ->
             prefs[BACKFILL_CHECKPOINT_PROCESSED_COUNT] = checkpoint.processedCount
             prefs[BACKFILL_CHECKPOINT_IMPORT_GENERATION] = checkpoint.forImportGeneration
+            prefs[BACKFILL_CHECKPOINT_ANALYSIS_VERSION] = checkpoint.atAnalysisVersion
         }
     }
 
@@ -176,6 +194,7 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         dataStore.edit { prefs ->
             prefs.remove(BACKFILL_CHECKPOINT_PROCESSED_COUNT)
             prefs.remove(BACKFILL_CHECKPOINT_IMPORT_GENERATION)
+            prefs.remove(BACKFILL_CHECKPOINT_ANALYSIS_VERSION)
         }
     }
 
@@ -203,8 +222,15 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
         val BACKFILL_COMPLETED_AT_IMPORT_GENERATION = intPreferencesKey("backfillCompletedAtImportGeneration")
         val BACKFILL_CHECKPOINT_PROCESSED_COUNT = intPreferencesKey("backfillCheckpointProcessedCount")
         val BACKFILL_CHECKPOINT_IMPORT_GENERATION = intPreferencesKey("backfillCheckpointImportGeneration")
+        val BACKFILL_CHECKPOINT_ANALYSIS_VERSION = intPreferencesKey("backfillCheckpointAnalysisVersion")
 
         const val DEFAULT_THREADS_AFTER_WALKS = true
+
+        // TranscriptContext.ANALYSIS_VERSION starts at 1 and only ever
+        // increases, so -1 can never coincide with a real version — a
+        // safe "always stale" default for a checkpoint stored before
+        // BACKFILL_CHECKPOINT_ANALYSIS_VERSION existed.
+        const val NO_STORED_ANALYSIS_VERSION = -1
     }
 }
 

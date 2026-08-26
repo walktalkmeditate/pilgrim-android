@@ -140,20 +140,46 @@ class ThreadsPreferencesTest {
     }
 
     @Test
-    fun `setBackfillCheckpoint persists processedCount and forImportGeneration`() = runTest {
+    fun `setBackfillCheckpoint persists processedCount, forImportGeneration, and atAnalysisVersion`() = runTest {
         val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
-        repo.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 50, forImportGeneration = 2))
+        repo.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 50, forImportGeneration = 2, atAnalysisVersion = 7))
 
-        assertEquals(BackfillCheckpoint(50, 2), repo.backfillCheckpoint())
+        assertEquals(BackfillCheckpoint(50, 2, 7), repo.backfillCheckpoint())
     }
 
     @Test
     fun `clearBackfillCheckpoint resets to EMPTY`() = runTest {
         val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
-        repo.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 50, forImportGeneration = 2))
+        repo.setBackfillCheckpoint(BackfillCheckpoint(processedCount = 50, forImportGeneration = 2, atAnalysisVersion = 7))
 
         repo.clearBackfillCheckpoint()
 
         assertEquals(BackfillCheckpoint.EMPTY, repo.backfillCheckpoint())
+    }
+
+    @Test
+    fun `a checkpoint persisted before atAnalysisVersion existed decodes as a version mismatch`() = runTest {
+        // Simulates a checkpoint written by a pre-fix build: only the two
+        // original keys exist on disk, matching this repository's own
+        // key names (ThreadsPreferencesTest's established pattern of
+        // duplicating verbatim key literals locally rather than reaching
+        // into the production class's private companion object — see
+        // `clearMoonLineIndex removes the key...` above).
+        val processedCountKey = intPreferencesKey("backfillCheckpointProcessedCount")
+        val importGenerationKey = intPreferencesKey("backfillCheckpointImportGeneration")
+        dataStore.edit { prefs ->
+            prefs[processedCountKey] = 25
+            prefs[importGenerationKey] = 0
+        }
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+
+        val decoded = repo.backfillCheckpoint()
+
+        assertEquals(25, decoded.processedCount)
+        assertEquals(0, decoded.forImportGeneration)
+        assertTrue(
+            "a checkpoint with no recorded version must never coincide with a real ANALYSIS_VERSION",
+            decoded.atAnalysisVersion != TranscriptContext.ANALYSIS_VERSION,
+        )
     }
 }

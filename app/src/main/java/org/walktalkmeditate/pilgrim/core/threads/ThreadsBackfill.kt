@@ -101,7 +101,13 @@ class ThreadsBackfillRunner @Inject constructor(
         pruneStaleOrphans(items.map { it.uuid }.toSet())
 
         val checkpoint = preferences.backfillCheckpoint()
-        val startIndex = if (checkpoint.forImportGeneration == startGeneration) checkpoint.processedCount else 0
+        val startIndex = if (checkpoint.forImportGeneration == startGeneration &&
+            checkpoint.atAnalysisVersion == TranscriptContext.ANALYSIS_VERSION
+        ) {
+            checkpoint.processedCount
+        } else {
+            0
+        }
 
         var allAccounted = true
         var gateClosed = false
@@ -124,7 +130,7 @@ class ThreadsBackfillRunner @Inject constructor(
             }
             index = batchEnd
             if (batchClean) lastCleanBoundary = index
-            preferences.setBackfillCheckpoint(BackfillCheckpoint(lastCleanBoundary, startGeneration))
+            preferences.setBackfillCheckpoint(BackfillCheckpoint(lastCleanBoundary, startGeneration, TranscriptContext.ANALYSIS_VERSION))
             yield()
         }
 
