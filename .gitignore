@@ -37,6 +37,10 @@ play-service-account.json
 # Kotlin
 .kotlin/
 
+# Python (tools/threads/derive_nlp_assets.py and friends)
+__pycache__/
+*.pyc
+
 # macOS
 .DS_Store
 

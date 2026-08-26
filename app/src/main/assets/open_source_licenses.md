@@ -62,6 +62,40 @@ folder).
   copyright and license) keep using that file until the base model's
   download verifies, after which it is deleted.
 
+## NLP corpora (Thought Threads)
+
+### WordNet 3.1
+
+- **Copyright:** © 2011 Princeton University. All rights reserved.
+- **License:** WordNet License (Princeton's own permissive license; full
+  text below)
+- **Source:** https://wordnetcode.princeton.edu/wn3.1.dict.tar.gz
+- **Usage:** Not vendored verbatim. `tools/threads/derive_nlp_assets.py`
+  downloads the archive, verifies it against a pinned, independently
+  corroborated SHA-256, and derives small gzip'd flat files (noun/verb/
+  adjective lemma lists, Morphy irregular-form exception lists, and a
+  lemma-to-synset-offset map) into `app/src/main/assets/threads/`. Loaded
+  lazily by `WordNetLexicon` for on-device lemmatization and synonym-
+  relatedness lookups — no WordNet data leaves the device, and no
+  abbreviation/initialism-only noun entries are included (see the script's
+  module docstring for the exact exclusion rule).
+
+### VADER Sentiment lexicon
+
+- **Copyright:** © 2016 C.J. Hutto
+- **License:** MIT
+- **Source:** https://github.com/cjhutto/vaderSentiment, lexicon file
+  pinned at commit `0b8040fd23e0ba0a68ebf043697f087cd4c4d6c6`
+- **Usage:** Derived into `vader-lexicon.txt.gz` (token + mean sentiment
+  value only — canonical VADER's own scoring code doesn't read the raw
+  per-annotator scores or standard-deviation columns either, so dropping
+  them changes nothing about what gets scored). `VaderSentiment.score`
+  implements a documented, simplified subset of VADER's rule-based
+  scoring (lexicon lookup, negation within 3 tokens, booster/dampener
+  words within 3 tokens, alpha=15 compound normalization); see its KDoc
+  for the exact subset and omissions. The full upstream license text is
+  vendored unmodified at `app/src/main/assets/threads/vader-license.txt`.
+
 ## Proprietary / SDK dependencies
 
 Runtime dependencies pulled via Gradle — see `gradle/libs.versions.toml`
@@ -170,3 +204,37 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+---
+
+## WordNet License
+
+This software and database is being provided to you, the LICENSEE, by
+Princeton University under the following license. By obtaining, using
+and/or copying this software and database, you agree that you have
+read, understood, and will comply with these terms and conditions.:
+
+Permission to use, copy, modify and distribute this software and
+database and its documentation for any purpose and without fee or
+royalty is hereby granted, provided that you agree to comply with
+the following copyright notice and statements, including the disclaimer,
+and that the same appear on ALL copies of the software, database and
+documentation, including modifications that you make for internal
+use or for distribution.
+
+WordNet 3.1 Copyright 2011 by Princeton University. All rights reserved.
+
+THIS SOFTWARE AND DATABASE IS PROVIDED "AS IS" AND PRINCETON
+UNIVERSITY MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+IMPLIED. BY WAY OF EXAMPLE, BUT NOT LIMITATION, PRINCETON
+UNIVERSITY MAKES NO REPRESENTATIONS OR WARRANTIES OF MERCHANT-
+ABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE USE
+OF THE LICENSED SOFTWARE, DATABASE OR DOCUMENTATION WILL NOT
+INFRINGE ANY THIRD PARTY PATENTS, COPYRIGHTS, TRADEMARKS OR
+OTHER RIGHTS.
+
+The name of Princeton University or Princeton may not be used in
+advertising or publicity pertaining to distribution of the software
+and/or database. Title to copyright in this software, database and
+any associated documentation shall at all times remain with
+Princeton University and LICENSEE agrees to preserve same.
