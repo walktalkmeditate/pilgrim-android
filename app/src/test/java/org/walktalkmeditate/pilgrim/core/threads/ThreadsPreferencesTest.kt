@@ -98,6 +98,32 @@ class ThreadsPreferencesTest {
         assertFalse("unrelated prefs must survive the clear", repo.threadsAfterWalks.value)
     }
 
+    // ---- U9: moon-line last-reported lunation index ----
+
+    @Test
+    fun `moonLineLastLunationIndex is null (never shown) on a fresh install, not zero-defaulted`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        assertEquals(null, repo.moonLineLastLunationIndex())
+    }
+
+    @Test
+    fun `setMoonLineLastLunationIndex persists and is read fresh, not cached`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        repo.setMoonLineLastLunationIndex(0)
+        assertEquals("a real index of 0 must read back as 0, not null", 0, repo.moonLineLastLunationIndex())
+
+        repo.setMoonLineLastLunationIndex(42)
+        assertEquals(42, repo.moonLineLastLunationIndex())
+    }
+
+    @Test
+    fun `clearMoonLineIndex makes moonLineLastLunationIndex read null again`() = runTest {
+        val repo = DataStoreThreadsPreferencesRepository(dataStore, scope)
+        repo.setMoonLineLastLunationIndex(9)
+        repo.clearMoonLineIndex()
+        assertEquals(null, repo.moonLineLastLunationIndex())
+    }
+
     // ---- U6: backfill completion + checkpoint keys ----
 
     @Test

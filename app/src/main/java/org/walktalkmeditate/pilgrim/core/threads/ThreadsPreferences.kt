@@ -82,6 +82,24 @@ interface ThreadsPreferencesRepository {
     suspend fun clearMoonLineIndex()
 
     /**
+     * U9: the last lunation index the moon line was actually SHOWN for —
+     * `null` means "never shown". Absent must read as `null`, never
+     * 0-defaulted (a real lunationIndex of 0 would otherwise collide
+     * with "never reported"). [ThreadsDossierBuilder] reads this fresh
+     * on every build and folds it into the memo key as `moonState`.
+     */
+    suspend fun moonLineLastLunationIndex(): Int?
+
+    /**
+     * Written ONLY when [DossierSenses.lines]'s `reportedLunationIndex`
+     * is non-null — strictly when the moon line fired AND survived
+     * cap/dedup into the emitted block. Writing on mere eligibility
+     * would burn the once-per-lunation budget on a line that never
+     * actually shipped.
+     */
+    suspend fun setMoonLineLastLunationIndex(index: Int)
+
+    /**
      * U6: the [TranscriptContext.ANALYSIS_VERSION] the backfill sweep last
      * completed at, or `null` if it never has — the single-key analogue of
      * iOS's `threadsBackfillCompletedV6`-style rename ladder (no legacy
@@ -143,6 +161,13 @@ class DataStoreThreadsPreferencesRepository @Inject constructor(
 
     override suspend fun clearMoonLineIndex() {
         dataStore.edit { it.remove(MOON_LINE_LAST_LUNATION_INDEX) }
+    }
+
+    override suspend fun moonLineLastLunationIndex(): Int? =
+        dataStore.data.first()[MOON_LINE_LAST_LUNATION_INDEX]
+
+    override suspend fun setMoonLineLastLunationIndex(index: Int) {
+        dataStore.edit { it[MOON_LINE_LAST_LUNATION_INDEX] = index }
     }
 
     override suspend fun backfillCompletedAtVersion(): Int? =

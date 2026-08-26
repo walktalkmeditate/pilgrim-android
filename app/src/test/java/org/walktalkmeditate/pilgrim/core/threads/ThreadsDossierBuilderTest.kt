@@ -21,9 +21,12 @@ import org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess
 import org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway
 import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.RecordingWalkLiteRow
+import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
 import org.walktalkmeditate.pilgrim.data.dao.WalkDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 
@@ -42,6 +45,9 @@ class ThreadsDossierBuilderTest {
     private lateinit var realVoiceRecordingDao: VoiceRecordingDao
     private lateinit var voiceRecordingDao: CountingVoiceRecordingDao
     private lateinit var walkDao: WalkDao
+    private lateinit var routeDataSampleDao: RouteDataSampleDao
+    private lateinit var walkPhotoDao: WalkPhotoDao
+    private lateinit var altitudeSampleDao: AltitudeSampleDao
     private lateinit var store: TranscriptContextStore
     private lateinit var analyzer: TranscriptContextAnalyzer
     private lateinit var preferences: FakeThreadsPreferencesRepository
@@ -86,8 +92,14 @@ class ThreadsDossierBuilderTest {
         realVoiceRecordingDao = db.voiceRecordingDao()
         voiceRecordingDao = CountingVoiceRecordingDao(realVoiceRecordingDao)
         walkDao = db.walkDao()
+        routeDataSampleDao = db.routeDataSampleDao()
+        walkPhotoDao = db.walkPhotoDao()
+        altitudeSampleDao = db.altitudeSampleDao()
 
-        builder = ThreadsDossierBuilder(store, analyzer, preferences, voiceRecordingDao, walkDao)
+        builder = ThreadsDossierBuilder(
+            store, analyzer, preferences, voiceRecordingDao, walkDao,
+            routeDataSampleDao, walkPhotoDao, altitudeSampleDao,
+        )
     }
 
     @After
@@ -264,7 +276,10 @@ class ThreadsDossierBuilderTest {
         // genuine cache MISS. A fresh builder instance (same on-disk
         // store, no shared memo) isolates "does self-heal work" from
         // "does the memo invalidate correctly" (covered separately above).
-        val freshBuilder = ThreadsDossierBuilder(store, analyzer, preferences, voiceRecordingDao, walkDao)
+        val freshBuilder = ThreadsDossierBuilder(
+            store, analyzer, preferences, voiceRecordingDao, walkDao,
+            routeDataSampleDao, walkPhotoDao, altitudeSampleDao,
+        )
         val block = freshBuilder.build(walkId)
 
         val healedContext = store.readRaw("r1")!!
@@ -357,7 +372,10 @@ class ThreadsDossierBuilderTest {
         val lyingDao = object : VoiceRecordingDao by voiceRecordingDao {
             override suspend fun recordingWalkLiteIndex(): List<RecordingWalkLiteRow> = emptyList()
         }
-        val guardedBuilder = ThreadsDossierBuilder(store, analyzer, preferences, lyingDao, walkDao)
+        val guardedBuilder = ThreadsDossierBuilder(
+            store, analyzer, preferences, lyingDao, walkDao,
+            routeDataSampleDao, walkPhotoDao, altitudeSampleDao,
+        )
 
         guardedBuilder.build(walkId)
 
@@ -366,5 +384,126 @@ class ThreadsDossierBuilderTest {
             store.hasContext("orphan-uuid"),
         )
         assertTrue(store.hasContext("r1"))
+    }
+
+    // --- U9: senses assembly ---------------------------------------------------
+
+    @Test
+    fun `the Noticed block is absent entirely when zero senses fire`() = runTest {
+        // A short, sane walk span (both endpoints explicit) so
+        // speechShape's "wordless remainder" gate — which a bare
+        // startTimestamp-only walk would trivially satisfy via the
+        // now-fallback's huge implied span — stays correctly silent.
+        val walkStart = 1_000L
+        val walkId = walkDao.insert(Walk(startTimestamp = walkStart, endTimestamp = walkStart + 60_000L))
+        newRecording("r1", walkId, longText, startTimestamp = walkStart)
+        val now = java.time.Instant.ofEpochMilli(walkStart + 60_000L)
+        // Pre-mark the current lunation as already reported so moonLine's
+        // own once-per-lunation precondition suppresses it too — this
+        // test isolates "every sense stays silent on a plain, sparse
+        // walk", not moonLine's own separately-tested firing rules.
+        preferences.setMoonLineLastLunationIndex(LunationCalendar.mostRecentClosed(asOf = now).index)
+
+        val block = builder.build(walkId, now = now)
+
+        assertTrue(!block!!.text.contains("**Noticed:**"))
+    }
+
+    @Test
+    fun `the Noticed block appears with a sense's line when one fires`() = runTest {
+        // speechShape needs no threads/backfill/moon setup: all the
+        // walk's words land in the first third, and the wordless
+        // remainder clears 30 minutes.
+        val walkStart = 0L
+        val walkId = walkDao.insert(Walk(startTimestamp = walkStart, endTimestamp = walkStart + 3600_000L))
+        newRecording("r1", walkId, longText, startTimestamp = walkStart)
+
+        val block = builder.build(walkId, now = java.time.Instant.ofEpochMilli(walkStart + 3600_000L))
+
+        assertTrue(block!!.text.contains("\n\n**Noticed:**\n"))
+        assertTrue(block.text.contains("All the words came in the first third"))
+    }
+
+    @Test
+    fun `a photo with no captured coordinates never participates — nullable, not a sentinel`() = runTest {
+        // Android's WalkPhoto stores nullable lat/lng directly; unlike
+        // iOS there is no (-1,-1) sentinel to translate. A photo with
+        // both null must behave exactly like "no photo at all", never
+        // like a plottable coordinate near null island.
+        val walkStart = 0L
+        val walkId = walkDao.insert(Walk(startTimestamp = walkStart, endTimestamp = walkStart + 3600_000L))
+        newRecording("r1", walkId, longText, startTimestamp = walkStart)
+        walkPhotoDao.insert(
+            org.walktalkmeditate.pilgrim.data.entity.WalkPhoto(
+                walkId = walkId,
+                photoUri = "content://fake",
+                pinnedAt = 1L,
+                capturedLat = null,
+                capturedLng = null,
+            ),
+        )
+
+        // Must not throw, and photoAdjacency (needing a coordinate) must
+        // not be the reason speechShape's line is missing — both may
+        // coexist; the assertion is simply "the build completes cleanly".
+        val block = builder.build(walkId, now = java.time.Instant.ofEpochMilli(walkStart + 3600_000L))
+        assertNotNull(block)
+    }
+
+    @Test
+    fun `an external write to the moon-line preference invalidates the memo even with an unchanged changeCount`() = runTest {
+        val walkId = newWalk()
+        newRecording("r1", walkId, longText)
+        builder.build(walkId)
+        val countAfterFirst = voiceRecordingDao.recordingWalkLiteIndexCallCount
+
+        // Simulate a write from an entirely different build/actor landing
+        // between two calls — MemoKey.moonState must be part of the key,
+        // not just changeCount.
+        preferences.setMoonLineLastLunationIndex(3)
+
+        builder.build(walkId)
+
+        assertTrue(
+            "MemoKey.moonState must be part of the cache key",
+            voiceRecordingDao.recordingWalkLiteIndexCallCount > countAfterFirst,
+        )
+    }
+
+    @Test
+    fun `moonLine reaches back beyond the 30-day recurrence window via the closed-lunation union`() = runTest {
+        // Pick a lunation far from the epoch's own edge cases, then place
+        // "now" comfortably inside the NEXT lunation (not right at the
+        // boundary) so the closed lunation reaches back with a healthy
+        // margin past the 30-day mark — verified by the check() below
+        // rather than assumed.
+        val targetLunation = LunationCalendar.lunation(600)
+        val now = targetLunation.end.plus(15, java.time.temporal.ChronoUnit.DAYS)
+        check(LunationCalendar.mostRecentClosed(asOf = now).index == targetLunation.index) {
+            "test setup assumption broken: now must resolve mostRecentClosed to targetLunation"
+        }
+        val walkStart = now.minusSeconds(3_600)
+        check(targetLunation.start.isBefore(walkStart.minus(ThreadStore.RECURRENCE_WINDOW))) {
+            "test setup assumption broken: targetLunation must start more than 30 days before walkStart"
+        }
+
+        val walkId = walkDao.insert(Walk(startTimestamp = walkStart.toEpochMilli()))
+        newRecording("current", walkId, longText, startTimestamp = walkStart.toEpochMilli())
+
+        // A walk with a worded recording INSIDE the closed lunation but
+        // OUTSIDE the raw 30-day window — reachable only via the union.
+        // Its context must be explicitly analyzed/stored: `build()` only
+        // auto-resolves contexts for the CURRENT walk's own recordings
+        // (`resolveCurrentContexts`) — a different walk's context has to
+        // already exist in the store, exactly as a prior build (or the
+        // backfill sweep) would have left it.
+        val wordedWalkStart = targetLunation.start.plusSeconds(3_600)
+        val wordedWalkId = walkDao.insert(Walk(startTimestamp = wordedWalkStart.toEpochMilli()))
+        newRecording("worded-in-lunation", wordedWalkId, longText, startTimestamp = wordedWalkStart.toEpochMilli())
+        analyzer.analyzeAndStore("worded-in-lunation", longText)
+
+        val block = builder.build(walkId, now = now)
+
+        assertTrue(block!!.text.contains("has set: 1 walk, 1 with recorded words"))
     }
 }

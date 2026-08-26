@@ -30,6 +30,27 @@ data class WalkLiteRow(
         )
 }
 
+/**
+ * U9: one row of [WalkDao.walkSensesSnapshot] — the Android equivalent
+ * of iOS `walkSensesSnapshot` (parity spec
+ * `docs/parity/2026-08-26-threads-senses-port.md`). Android divergence:
+ * a suspend query, not `@MainActor` — Room forbids main-thread reads.
+ */
+data class WalkSnapshotProjectionRow(
+    val walkId: Long,
+    val startTimestamp: Long,
+    val intention: String?,
+    val weatherCondition: String?,
+) {
+    fun toWalkSnapshotRow(): org.walktalkmeditate.pilgrim.core.threads.WalkSnapshotRow =
+        org.walktalkmeditate.pilgrim.core.threads.WalkSnapshotRow(
+            walkId = walkId,
+            startDate = java.time.Instant.ofEpochMilli(startTimestamp),
+            intention = intention,
+            weatherCondition = weatherCondition,
+        )
+}
+
 @Dao
 interface WalkDao {
     @Insert
@@ -142,4 +163,20 @@ interface WalkDao {
             "weather_condition AS weatherCondition FROM walks WHERE id = :walkId",
     )
     suspend fun getWalkLite(walkId: Long): WalkLiteRow?
+
+    /**
+     * U9: one row per walk in `[from, to]` (both inclusive), ascending by
+     * start timestamp — serves placeResonance's baseline, intentionLineage,
+     * weatherWeave, AND moonLine's walk counts from one bounded query
+     * (parity spec: iOS's `walkSensesSnapshot` explicitly serves all
+     * three). Callers pass the window-UNION bound (30-day recurrence
+     * window ∪ the closed lunation), computed by the caller — never a
+     * constant baked into this query.
+     */
+    @Query(
+        "SELECT id AS walkId, start_timestamp AS startTimestamp, intention, " +
+            "weather_condition AS weatherCondition FROM walks " +
+            "WHERE start_timestamp BETWEEN :from AND :to ORDER BY start_timestamp ASC",
+    )
+    suspend fun walkSensesSnapshot(from: Long, to: Long): List<WalkSnapshotProjectionRow>
 }

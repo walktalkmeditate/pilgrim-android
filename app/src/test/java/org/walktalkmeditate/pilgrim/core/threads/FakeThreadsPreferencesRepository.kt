@@ -26,6 +26,7 @@ class FakeThreadsPreferencesRepository(
     private var completedAtVersion: Int? = null
     private var completedAtImportGeneration: Int = 0
     private var checkpoint: BackfillCheckpoint = BackfillCheckpoint.EMPTY
+    private var moonLineLastLunationIndexValue: Int? = null
 
     override suspend fun setThreadsAfterWalks(enabled: Boolean) {
         _threadsAfterWalks.value = enabled
@@ -37,6 +38,13 @@ class FakeThreadsPreferencesRepository(
 
     override suspend fun clearMoonLineIndex() {
         moonLineClearedCalls++
+        moonLineLastLunationIndexValue = null
+    }
+
+    override suspend fun moonLineLastLunationIndex(): Int? = moonLineLastLunationIndexValue
+
+    override suspend fun setMoonLineLastLunationIndex(index: Int) {
+        moonLineLastLunationIndexValue = index
     }
 
     override suspend fun backfillCompletedAtVersion(): Int? = completedAtVersion
