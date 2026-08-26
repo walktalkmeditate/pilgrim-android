@@ -58,6 +58,24 @@ this script's checksum verification will fail loudly rather than silently
 ingest different data.
 
 --------------------------------------------------------------------------
+WHY THE DERIVED FILES END IN ".gzip", NOT ".gz"
+--------------------------------------------------------------------------
+
+Android's asset merge step (AGP's `mergeDebugAssets`/`mergeReleaseAssets`)
+auto-decompresses any `assets/` file whose name ends in exactly `.gz` and
+re-emits it under the same name MINUS that suffix — confirmed empirically
+against this project's AGP version (a probe file merged as `probe.gz` came
+out the other side as plain-text `probe`; the identical bytes named
+`probe.gzip` or `probe.bin` survived untouched). A real `.gz`-suffixed
+asset here would silently decompress into a differently-named file at
+build time, and `WordNetLexicon`'s `GZIPInputStream` reads would then
+throw `ZipException: Not in GZIP format` against a name that no longer
+even matches what this script wrote. `.gzip` is not a magic string beyond
+"not `.gz`" — any other extension would do — but this file, the Kotlin
+readers, and every test that opens these assets by name must all agree on
+it.
+
+--------------------------------------------------------------------------
 EXCLUSION RULES — why the derived asset counts are smaller than the source
 --------------------------------------------------------------------------
 
@@ -95,7 +113,7 @@ EXCLUSION RULES — why the derived asset counts are smaller than the source
    every consumer this map has (see the U3 spec / TranscriptNlp.related).
 
 --------------------------------------------------------------------------
-OFFSET ENCODING — why synsets.txt.gz stores biased integers
+OFFSET ENCODING — why synsets.txt.gzip stores biased integers
 --------------------------------------------------------------------------
 
 WordNet's noun and verb synset offsets are two SEPARATE numbering spaces
@@ -427,38 +445,38 @@ def main() -> None:
             assets[name] = {"entries": entries, "bytes": size, "sha256": digest}
             print(f"  {name}: {entries:,} entries, {size:,} bytes gzip'd", file=sys.stderr)
 
-        emit_lines("nouns.txt.gz", sorted(noun_offsets))
-        emit_lines("verbs.txt.gz", sorted(verb_offsets))
-        emit_lines("adjectives.txt.gz", sorted(adj_offsets))
+        emit_lines("nouns.txt.gzip", sorted(noun_offsets))
+        emit_lines("verbs.txt.gzip", sorted(verb_offsets))
+        emit_lines("adjectives.txt.gzip", sorted(adj_offsets))
 
         emit_lines(
-            "noun-exceptions.txt.gz",
+            "noun-exceptions.txt.gzip",
             [f"{k}\t{','.join(v)}" for k, v in sorted(noun_exceptions.items())],
         )
         emit_lines(
-            "verb-exceptions.txt.gz",
+            "verb-exceptions.txt.gzip",
             [f"{k}\t{','.join(v)}" for k, v in sorted(verb_exceptions.items())],
         )
         emit_lines(
-            "adjective-exceptions.txt.gz",
+            "adjective-exceptions.txt.gzip",
             [f"{k}\t{','.join(v)}" for k, v in sorted(adj_exceptions.items())],
         )
 
         emit_lines(
-            "synsets.txt.gz",
+            "synsets.txt.gzip",
             [f"{lemma}\t{','.join(str(o) for o in offsets)}" for lemma, offsets in sorted(synset_map.items())],
         )
 
         emit_lines(
-            "vader-lexicon.txt.gz",
+            "vader-lexicon.txt.gzip",
             [f"{token}\t{value}" for token, value in sorted(vader_lexicon.items())],
         )
 
         rule_count = sum(len(v) for v in MORPHOLOGY_RULES.values())
         morphology_json = json.dumps(MORPHOLOGY_RULES, sort_keys=True, separators=(",", ":"))
-        size, digest = _write_gzip(ASSETS_DIR / "morphology-rules.json.gz", morphology_json.encode("utf-8"))
-        assets["morphology-rules.json.gz"] = {"entries": rule_count, "bytes": size, "sha256": digest}
-        print(f"  morphology-rules.json.gz: {rule_count} entries, {size:,} bytes gzip'd", file=sys.stderr)
+        size, digest = _write_gzip(ASSETS_DIR / "morphology-rules.json.gzip", morphology_json.encode("utf-8"))
+        assets["morphology-rules.json.gzip"] = {"entries": rule_count, "bytes": size, "sha256": digest}
+        print(f"  morphology-rules.json.gzip: {rule_count} entries, {size:,} bytes gzip'd", file=sys.stderr)
 
         vader_license_path = ASSETS_DIR / "vader-license.txt"
         vader_license_path.write_bytes(vader_license_bytes)

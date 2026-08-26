@@ -282,6 +282,10 @@ dependencies {
     // goshuin labeler's 0.6).
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.face.detection)
+    // Phase 20 U3: on-device language detection gating theme/marker
+    // analysis to English (R5) — mirrors iOS's NLLanguageRecognizer via
+    // MlKitLanguageIdClient.
+    implementation(libs.mlkit.language.id)
     implementation(libs.kotlinx.coroutines.play.services)
 
     testImplementation(libs.junit)

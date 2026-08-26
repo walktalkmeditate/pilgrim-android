@@ -86,7 +86,7 @@ folder).
 - **License:** MIT
 - **Source:** https://github.com/cjhutto/vaderSentiment, lexicon file
   pinned at commit `0b8040fd23e0ba0a68ebf043697f087cd4c4d6c6`
-- **Usage:** Derived into `vader-lexicon.txt.gz` (token + mean sentiment
+- **Usage:** Derived into `vader-lexicon.txt.gzip` (token + mean sentiment
   value only — canonical VADER's own scoring code doesn't read the raw
   per-annotator scores or standard-deviation columns either, so dropping
   them changes nothing about what gets scored). `VaderSentiment.score`
