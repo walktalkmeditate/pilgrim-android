@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.threads
 
+import kotlinx.serialization.Serializable
+
 /**
  * How a transcript's future- vs past-tense word density leans — see
  * [MarkerAnalyzer.compute] for the exact floor-and-dominance rule. The
@@ -8,6 +10,7 @@ package org.walktalkmeditate.pilgrim.core.threads
  * has no "present" marker word list and calls this third state "balanced";
  * [PRESENT] is this port's name for that same state, not a new signal.
  */
+@Serializable
 enum class TemporalLean { PAST, PRESENT, FUTURE }
 
 /**
@@ -17,7 +20,14 @@ enum class TemporalLean { PAST, PRESENT, FUTURE }
  * [MarkerAnalyzer.compute]'s `languageCode` isn't English. Every other
  * field is a plain lexicon-membership count, computed the same way
  * regardless of language or transcript length.
+ *
+ * [modalCounts] and [sentiment] carry default values so a future field
+ * addition (or a pre-existing stored file missing a field this version
+ * added) decodes leniently instead of throwing (BEH-11/EDG-32) — the
+ * stale-orphan sweep must be able to decode every schema version it
+ * cleans up, not just the current one.
  */
+@Serializable
 data class TranscriptMarkers(
     val wordCount: Int,
     val absolutistCount: Int,
@@ -26,8 +36,8 @@ data class TranscriptMarkers(
     val causationCount: Int,
     val discrepancyCount: Int,
     val temporalLean: TemporalLean?,
-    val modalCounts: Map<String, Int>,
-    val sentiment: Double?,
+    val modalCounts: Map<String, Int> = emptyMap(),
+    val sentiment: Double? = null,
 )
 
 /**

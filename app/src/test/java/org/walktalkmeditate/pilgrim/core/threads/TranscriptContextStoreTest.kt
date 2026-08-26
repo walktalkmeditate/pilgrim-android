@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package org.walktalkmeditate.pilgrim.core.threads
+
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import java.io.File
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class TranscriptContextStoreTest {
+
+    private lateinit var context: Application
+    private lateinit var store: TranscriptContextStore
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        File(context.filesDir, "transcript_contexts").deleteRecursively()
+        store = TranscriptContextStore(context, json)
+    }
+
+    @After
+    fun tearDown() {
+        File(context.filesDir, "transcript_contexts").deleteRecursively()
+    }
+
+    private fun fixture(uuid: String, hash: String = "hash-$uuid", version: Int = TranscriptContext.ANALYSIS_VERSION) =
+        TranscriptContext(
+            uuid = uuid,
+            languageCode = "en",
+            wordCount = 30,
+            themes = emptyList(),
+            markers = TranscriptMarkers(
+                wordCount = 30,
+                absolutistCount = 0,
+                firstPersonCount = 0,
+                insightCount = 0,
+                causationCount = 0,
+                discrepancyCount = 0,
+                temporalLean = TemporalLean.PRESENT,
+            ),
+            transcriptHash = hash,
+            analysisVersion = version,
+        )
+
+    // ---- round trip ----
+
+    @Test
+    fun `save then read round-trips all fields`() = runTest {
+        val ctx = fixture("u1").copy(
+            themes = listOf(Theme("river", "river", 2, 0.1, listOf(LemmaMention("river", "river", 0, 5)))),
+        )
+
+        assertTrue(store.save(ctx))
+        val loaded = store.read("u1", "hash-u1")
+
+        assertEquals(ctx, loaded)
+    }
+
+    @Test
+    fun `readRaw returns the stored context without hash or version gating`() = runTest {
+        store.save(fixture("u1", hash = "original-hash"))
+
+        val loaded = store.readRaw("u1")
+
+        assertNotNull(loaded)
+        assertEquals("original-hash", loaded!!.transcriptHash)
+    }
+
+    @Test
+    fun `readRaw returns null for a uuid never saved`() = runTest {
+        assertNull(store.readRaw("never-saved"))
+    }
+
+    // ---- hash / version mismatch (AE2) ----
+
+    @Test
+    fun `read returns null on hash mismatch`() = runTest {
+        store.save(fixture("u1", hash = "correct-hash"))
+
+        assertNull(store.read("u1", "wrong-hash"))
+    }
+
+    @Test
+    fun `read returns null on version mismatch even with matching hash`() = runTest {
+        store.save(fixture("u1", hash = "h", version = TranscriptContext.ANALYSIS_VERSION + 1))
+
+        assertNull(store.read("u1", "h"))
+    }
+
+    @Test
+    fun `read succeeds when both hash and version match`() = runTest {
+        store.save(fixture("u1", hash = "h"))
+
+        assertNotNull(store.read("u1", "h"))
+    }
+
+    @Test
+    fun `hasContext is true regardless of version, hasCurrentContext is not`() = runTest {
+        store.save(fixture("u1", version = TranscriptContext.ANALYSIS_VERSION + 1))
+
+        assertTrue(store.hasContext("u1"))
+        assertFalse(store.hasCurrentContext("u1"))
+    }
+
+    @Test
+    fun `hasCurrentContext is true for a current-version file`() = runTest {
+        store.save(fixture("u1"))
+
+        assertTrue(store.hasCurrentContext("u1"))
+    }
+
+    // ---- unreadable-dir signal must not read as empty ----
+
+    @Test
+    fun `allUuids is empty list before anything is ever saved`() = runTest {
+        assertEquals(emptyList<String>(), store.allUuids())
+    }
+
+    @Test
+    fun `allUuids lists every saved uuid`() = runTest {
+        store.save(fixture("u1"))
+        store.save(fixture("u2"))
+
+        assertEquals(setOf("u1", "u2"), store.allUuids()?.toSet())
+    }
+
+    @Test
+    fun `allUuids returns null when the directory cannot be listed, distinct from empty`() = runTest {
+        // Occupy the store's directory path with a plain FILE instead of a
+        // directory — File#listFiles() returns null in exactly this case,
+        // simulating a real unreadable-dir failure without needing actual
+        // filesystem permission tricks.
+        val dirPath = File(context.filesDir, "transcript_contexts")
+        dirPath.deleteRecursively()
+        dirPath.parentFile?.mkdirs()
+        dirPath.writeText("not a directory")
+
+        val result = store.allUuids()
+
+        assertNull("an unreadable dir must signal null, never an empty list", result)
+    }
+
+    // ---- three removal primitives, three semantics (BEH-20) ----
+
+    @Test
+    fun `delete tombstones and removes the file`() = runTest {
+        store.save(fixture("u1"))
+
+        store.delete("u1")
+
+        assertFalse(store.hasContext("u1"))
+        // A save attempted after delete must be blocked by the tombstone.
+        assertTrue("tombstone-blocked save still reports true", store.save(fixture("u1")))
+        assertFalse("the tombstone must block the resurrection", store.hasContext("u1"))
+    }
+
+    @Test
+    fun `insertTombstones blocks future saves but does not remove an existing file`() = runTest {
+        store.save(fixture("u1"))
+
+        store.insertTombstones(listOf("u1"))
+
+        assertTrue("insertTombstones must not delete the file itself", store.hasContext("u1"))
+        assertTrue(store.save(fixture("u1", hash = "new-hash")))
+        assertEquals(
+            "the tombstone blocks the new save, so the OLD file must remain unchanged",
+            "hash-u1",
+            store.readRaw("u1")!!.transcriptHash,
+        )
+    }
+
+    @Test
+    fun `removeContext removes the file without tombstoning — a later save succeeds`() = runTest {
+        store.save(fixture("u1", hash = "old-hash"))
+
+        store.removeContext("u1")
+        assertFalse(store.hasContext("u1"))
+
+        assertTrue(store.save(fixture("u1", hash = "new-hash")))
+        assertEquals("new-hash", store.readRaw("u1")!!.transcriptHash)
+    }
+
+    @Test
+    fun `clearTombstones lifts a tombstone so a later save lands`() = runTest {
+        store.insertTombstones(listOf("u1"))
+        assertTrue("tombstoned save reports true but must not write", store.save(fixture("u1")))
+        assertFalse(store.hasContext("u1"))
+
+        store.clearTombstones(listOf("u1"))
+
+        assertTrue(store.save(fixture("u1")))
+        assertTrue(store.hasContext("u1"))
+    }
+
+    // ---- tombstone race: analyzer write racing a delete must not resurrect ----
+
+    @Test
+    fun `a save queued after a delete's tombstone does not resurrect the file`() = runTest {
+        store.save(fixture("u1"))
+        store.delete("u1")
+
+        // Simulates an analysis that was already in flight when the
+        // delete landed — its save() call happens strictly AFTER the
+        // tombstone is in place.
+        val saveResult = store.save(fixture("u1", hash = "late-analysis-hash"))
+
+        assertTrue("save-true-when-tombstoned: accounted for, not a failure", saveResult)
+        assertFalse("the file must stay gone — no resurrection", store.hasContext("u1"))
+    }
+
+    @Test
+    fun `deleteAll tombstones every uuid recovered from filenames`() = runTest {
+        store.save(fixture("u1"))
+        store.save(fixture("u2"))
+
+        store.deleteAll()
+
+        assertEquals(emptyList<String>(), store.allUuids())
+        // Post-wipe saves for either uuid must be blocked by the
+        // filename-derived tombstones deleteAll() inserted.
+        assertTrue(store.save(fixture("u1")))
+        assertFalse(store.hasContext("u1"))
+        assertTrue(store.save(fixture("u2")))
+        assertFalse(store.hasContext("u2"))
+    }
+
+    // ---- changeCount heartbeat ----
+
+    @Test
+    fun `changeCount increments once per save, not on a tombstone-blocked save`() = runTest {
+        val before = store.changeCount.value
+
+        store.save(fixture("u1"))
+        assertEquals(before + 1, store.changeCount.value)
+
+        store.delete("u1")
+        assertEquals(before + 2, store.changeCount.value)
+
+        // Tombstone-blocked: no real state change, no bump.
+        store.save(fixture("u1"))
+        assertEquals(before + 2, store.changeCount.value)
+    }
+
+    @Test
+    fun `changeCount increments exactly once per delete call regardless of batch size`() = runTest {
+        store.save(fixture("u1"))
+        store.save(fixture("u2"))
+        val before = store.changeCount.value
+
+        store.delete(listOf("u1", "u2"))
+
+        assertEquals(before + 1, store.changeCount.value)
+    }
+
+    // ---- corrupt file on disk ----
+
+    @Test
+    fun `a corrupt file on disk decodes as absent rather than throwing`() = runTest {
+        val dir = File(context.filesDir, "transcript_contexts").apply { mkdirs() }
+        File(dir, "corrupt.json.gz").writeBytes(byteArrayOf(1, 2, 3, 4))
+
+        assertNull(store.readRaw("corrupt"))
+        // loadAll must skip it silently rather than propagating a decode
+        // exception up to callers that just want the good contexts.
+        assertEquals(emptyList<TranscriptContext>(), store.loadAll())
+    }
+
+    // ---- loadAll vs loadAllIncludingStaleVersions ----
+
+    @Test
+    fun `loadAll excludes stale-version files that loadAllIncludingStaleVersions still sees`() = runTest {
+        store.save(fixture("current"))
+        store.save(fixture("stale", version = TranscriptContext.ANALYSIS_VERSION - 1))
+
+        assertEquals(listOf("current"), store.loadAll().map { it.uuid })
+        assertEquals(setOf("current", "stale"), store.loadAllIncludingStaleVersions().map { it.uuid }.toSet())
+    }
+}

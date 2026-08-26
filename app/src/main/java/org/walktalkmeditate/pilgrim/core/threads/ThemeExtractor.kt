@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.threads
 
+import kotlinx.serialization.Serializable
+
 /**
  * One recurring topic surfaced from a transcript's noun-class content
  * words. [salience] = [mentionCount] / the transcript's total word count
  * (via [TranscriptNlp.wordCount]), computed once at extraction time —
  * normalizing by transcript length so a short and a long transcript
  * sharing the same raw mention count don't read as equally salient.
+ *
+ * [salience] is FROZEN into [TranscriptContext]'s stored JSON at
+ * extraction time (DAT-4) — a future stoplist/tokenizer change must not
+ * retroactively recompute it from stored fields, or historical dossiers
+ * would silently drift.
  */
+@Serializable
 data class Theme(
     val lemma: String,
     val displayTerm: String,

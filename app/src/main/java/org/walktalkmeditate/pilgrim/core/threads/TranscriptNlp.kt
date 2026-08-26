@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.threads
 
+import kotlinx.serialization.Serializable
+
 /** One occurrence of a content word in a transcript, offsets in UTF-16 code units. */
+@Serializable
 data class LemmaMention(val lemma: String, val surface: String, val start: Int, val length: Int)
 
 /** One tokenizer output, offset in UTF-16 code units (see [TranscriptNlp]). */
