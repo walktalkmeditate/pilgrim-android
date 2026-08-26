@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.walk
 
+import android.content.Context
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Collections
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -10,6 +12,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler
+import org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState
+import org.walktalkmeditate.pilgrim.core.threads.BatteryGate
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveWalkSnapshot
@@ -60,6 +64,7 @@ import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 class WalkFinalizationObserver @Inject constructor(
     @WalkFinalizationObservedState walkState: StateFlow<@JvmSuppressWildcards WalkState>,
     @WalkFinalizationScope private val scope: CoroutineScope,
+    @ApplicationContext private val context: Context,
     private val repository: WalkRepository,
     private val transcriptionScheduler: TranscriptionScheduler,
     private val hemisphereRepository: HemisphereRepository,
@@ -67,6 +72,7 @@ class WalkFinalizationObserver @Inject constructor(
     private val widgetRefreshScheduler: WidgetRefreshScheduler,
     private val voicePreferences: VoicePreferencesRepository,
     private val walkMetricsCache: WalkMetricsCaching,
+    private val autoTranscriptionSkipState: AutoTranscriptionSkipState,
 ) {
     // Set is unbounded by design — one Long per finished walk for the
     // process lifetime. 8 bytes × 100k walks = 800 KB worst case;
@@ -140,9 +146,22 @@ class WalkFinalizationObserver @Inject constructor(
             Log.w(TAG, "autoTranscribe preference read failed; skipping transcription", t)
             false
         }
+        // U6/BEH-82: order is autoTranscribe pref, THEN non-empty
+        // recordings, THEN the battery gate — a walk with the pref off,
+        // or with no voice recordings, was never going to schedule
+        // regardless of battery, so the gate (and the skip-state it can
+        // set) must stay untouched for those cases; only a walk that
+        // would otherwise genuinely schedule can be "skipped".
         if (autoTranscribe) {
             try {
-                transcriptionScheduler.scheduleForWalk(walkId)
+                val recordings = repository.voiceRecordingsFor(walkId)
+                if (recordings.isNotEmpty()) {
+                    if (BatteryGate.allowsBackgroundWork(context)) {
+                        transcriptionScheduler.scheduleForWalk(walkId)
+                    } else {
+                        autoTranscriptionSkipState.setSkipped()
+                    }
+                }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {

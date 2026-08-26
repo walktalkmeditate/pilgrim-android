@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.walk
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.os.BatteryManager
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
@@ -20,28 +22,29 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipReason
 import org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState
+import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
-import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
-import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
-import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterService
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveRepository
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveStats
+import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.MilestoneChecking
 import org.walktalkmeditate.pilgrim.data.collective.PostResult
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
 import org.walktalkmeditate.pilgrim.data.voice.FakeVoicePreferencesRepository
-import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -50,18 +53,17 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.widget.WidgetRefreshScheduler
 
 /**
- * Stage 10-D: tests the autoTranscribe gate added to
- * [WalkFinalizationObserver]. The pref reflects iOS parity (default OFF for
- * fresh installs, ON for upgraders via the migration in Task 1). Each test
- * exercises a different pref state at finalize time.
- *
- * Critical case: `autoTranscribe flip mid-finalize uses value at scheduling
- * time` proves the observer reads `voicePreferences.autoTranscribe.value`
- * LIVE when scheduling, not at construction time.
+ * U6: the auto-transcription enqueue-site gate added to
+ * [WalkFinalizationObserver] — order is autoTranscribe pref, THEN
+ * non-empty recordings, THEN [org.walktalkmeditate.pilgrim.core.threads.BatteryGate]
+ * (parity spec BEH-82/UI-16): a walk with autoTranscribe off, or with no
+ * voice recordings, must never touch the battery gate or the skip-state
+ * at all — only a walk that would otherwise actually schedule can be
+ * "skipped".
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
-class WalkFinalizationObserverAutoTranscribeTest {
+class AutoTranscriptionBatteryGateTest {
 
     private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
@@ -74,9 +76,9 @@ class WalkFinalizationObserverAutoTranscribeTest {
     private lateinit var collectiveDataStore: DataStore<Preferences>
     private lateinit var collectiveCacheStore: CollectiveCacheStore
     private lateinit var collectiveScope: CoroutineScope
-    private lateinit var fakeCollectiveService: FakeCollectiveCounterServiceForAutoTranscribe
+    private lateinit var fakeCollectiveService: FakeCollectiveCounterServiceForBatteryGate
     private lateinit var collectiveRepository: CollectiveRepository
-    private lateinit var widgetRefreshScheduler: NoopWidgetRefreshScheduler
+    private lateinit var widgetRefreshScheduler: NoopWidgetRefreshSchedulerForBatteryGate
     private lateinit var skipState: FakeAutoTranscriptionSkipState
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
@@ -114,34 +116,25 @@ class WalkFinalizationObserverAutoTranscribeTest {
         )
         val collectiveJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
         collectiveCacheStore = CollectiveCacheStore(collectiveDataStore, collectiveJson)
-        fakeCollectiveService = FakeCollectiveCounterServiceForAutoTranscribe(context, collectiveJson)
+        fakeCollectiveService = FakeCollectiveCounterServiceForBatteryGate(context, collectiveJson)
         collectiveScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         collectiveRepository = CollectiveRepository(
             cacheStore = collectiveCacheStore,
             service = fakeCollectiveService,
             scope = collectiveScope,
-            milestoneChecker = NoopMilestoneCheckerForAutoTranscribe,
+            milestoneChecker = NoopMilestoneCheckerForBatteryGate,
             contributionLedger = ContributionLedger(FakePreferencesDataStore(), collectiveJson),
         )
-        widgetRefreshScheduler = NoopWidgetRefreshScheduler()
+        widgetRefreshScheduler = NoopWidgetRefreshSchedulerForBatteryGate()
         skipState = FakeAutoTranscriptionSkipState()
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    }
 
-    /** U6: the enqueue-site gate requires at least one voice recording
-     * before it will schedule transcription (BEH-82). */
-    private suspend fun insertRecording(walkId: Long) {
-        repository.recordVoice(
-            VoiceRecording(
-                walkId = walkId,
-                startTimestamp = 0L,
-                endTimestamp = 1_000L,
-                durationMillis = 1_000L,
-                fileRelativePath = "recordings/w/rec.wav",
-            ),
-        )
+        // Default to a healthy, high battery level so tests opt IN to the
+        // low-battery condition explicitly rather than depending on
+        // whatever the previous test (or no test) left stuck.
+        stickBattery(level = 80, scale = 100)
     }
 
     @After
@@ -154,7 +147,33 @@ class WalkFinalizationObserverAutoTranscribeTest {
         context.preferencesDataStoreFile(HEMISPHERE_STORE_NAME).delete()
     }
 
-    private fun buildObserver(voicePrefs: FakeVoicePreferencesRepository): WalkFinalizationObserver {
+    @Suppress("DEPRECATION")
+    private fun stickBattery(level: Int, scale: Int, status: Int = BatteryManager.BATTERY_STATUS_DISCHARGING) {
+        val intent = Intent(Intent.ACTION_BATTERY_CHANGED).apply {
+            putExtra(BatteryManager.EXTRA_LEVEL, level)
+            putExtra(BatteryManager.EXTRA_SCALE, scale)
+            putExtra(BatteryManager.EXTRA_STATUS, status)
+        }
+        context.sendStickyBroadcast(intent)
+    }
+
+    /** A real Walk row — [VoiceRecording] carries a foreign key to it. */
+    private suspend fun newWalk(): Long = db.walkDao().insert(org.walktalkmeditate.pilgrim.data.entity.Walk(startTimestamp = 0L))
+
+    private suspend fun insertRecording(walkId: Long) {
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = walkId,
+                startTimestamp = 0L,
+                endTimestamp = 1_000L,
+                durationMillis = 1_000L,
+                fileRelativePath = "recordings/w/rec.wav",
+                transcription = null,
+            ),
+        )
+    }
+
+    private fun buildObserver(autoTranscribe: Boolean): WalkFinalizationObserver {
         val observer = WalkFinalizationObserver(
             walkState = stateFlow,
             scope = observerScope,
@@ -164,147 +183,123 @@ class WalkFinalizationObserverAutoTranscribeTest {
             hemisphereRepository = hemisphereRepo,
             collectiveRepository = collectiveRepository,
             widgetRefreshScheduler = widgetRefreshScheduler,
-            voicePreferences = voicePrefs,
-            walkMetricsCache = NoopWalkMetricsCache,
+            voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = autoTranscribe),
+            walkMetricsCache = NoopWalkMetricsCacheForBatteryGate,
             autoTranscriptionSkipState = skipState,
         )
-        // Sleep so the IO-attached collector consumes the initial Idle
-        // before we start mutating stateFlow. Same pattern + value as the
-        // sibling WalkFinalizationObserverTest.
         Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
         return observer
     }
 
+    private fun finishWalk(walkId: Long) {
+        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
+        stateFlow.value = WalkState.Finished(
+            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
+            endedAt = 1_000L,
+        )
+        Thread.sleep(WAIT_FOR_GRACE_MS)
+    }
+
     @Test
-    fun `autoTranscribe = true schedules transcription`() = runBlocking {
-        val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = true)
-        buildObserver(voicePrefs)
-        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+    fun `autoTranscribe off never consults the battery gate or the skip-state`() = runBlocking {
+        stickBattery(level = 1, scale = 100) // pathologically low — must never even be read
+        buildObserver(autoTranscribe = false)
+        val walkId = newWalk()
         insertRecording(walkId)
-        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        stateFlow.value = WalkState.Finished(
-            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
-            endedAt = 1_000L,
-        )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
-        assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
-    }
 
-    @Test
-    fun `autoTranscribe = false skips scheduling`() = runBlocking {
-        val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = false)
-        buildObserver(voicePrefs)
-        val walkId = 22L
-        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        stateFlow.value = WalkState.Finished(
-            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
-            endedAt = 1_000L,
-        )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+        finishWalk(walkId)
+
         assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
+        assertNull(skipState.skipReason.value)
+        assertEquals(0, skipState.setSkippedCalls)
     }
 
     @Test
-    fun `runFinalize awaits autoTranscribe disk value, ignores synchronous seed`() = runBlocking {
-        // Simulates the Eagerly-seed-vs-disk-load race window: the
-        // StateFlow .value reports `false` (the default seed) while
-        // the disk-loaded value is `true` (the user's actual pref).
-        // The observer must read awaitAutoTranscribe(), NOT .value.
-        val voicePrefs = object : VoicePreferencesRepository {
-            override val voiceGuideEnabled = MutableStateFlow(false)
-            override val autoTranscribe = MutableStateFlow(false)
-            override suspend fun setVoiceGuideEnabled(enabled: Boolean) = Unit
-            override suspend fun setAutoTranscribe(enabled: Boolean) = Unit
-            override suspend fun awaitAutoTranscribe(): Boolean = true
+    fun `autoTranscribe on with no recordings never consults the battery gate`() = runBlocking {
+        stickBattery(level = 1, scale = 100) // pathologically low — must never even be read
+        buildObserver(autoTranscribe = true)
+        val walkId = newWalk()
+        // No recordings inserted for this walk.
+
+        finishWalk(walkId)
+
+        assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
+        assertNull(skipState.skipReason.value)
+        assertEquals(0, skipState.setSkippedCalls)
+    }
+
+    @Test
+    fun `autoTranscribe on, recordings present, battery healthy - schedules and never sets the skip reason`() =
+        runBlocking {
+            stickBattery(level = 80, scale = 100)
+            buildObserver(autoTranscribe = true)
+            val walkId = newWalk()
+            insertRecording(walkId)
+
+            finishWalk(walkId)
+
+            assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
+            assertNull(skipState.skipReason.value)
+            assertEquals(0, skipState.setSkippedCalls)
         }
-        val observer = WalkFinalizationObserver(
-            walkState = stateFlow,
-            scope = observerScope,
-            context = context,
-            repository = repository,
-            transcriptionScheduler = transcriptionScheduler,
-            hemisphereRepository = hemisphereRepo,
-            collectiveRepository = collectiveRepository,
-            widgetRefreshScheduler = widgetRefreshScheduler,
-            voicePreferences = voicePrefs,
-            walkMetricsCache = NoopWalkMetricsCache,
-            autoTranscriptionSkipState = skipState,
-        )
-        @Suppress("UNUSED_VARIABLE") val keepAlive = observer
-        Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
-        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
-        insertRecording(walkId)
-        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        stateFlow.value = WalkState.Finished(
-            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
-            endedAt = 1_000L,
-        )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
-        assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
-    }
 
-    /**
-     * The autoTranscribe read is one link in a side-effect chain that also
-     * carries the collective contribution. An unreadable preferences file
-     * must cost the user their transcription, not their walk's place in
-     * the collective — and must not escape to the scope's uncaught handler.
-     */
     @Test
-    fun `autoTranscribe read failure still contributes to the collective`() = runBlocking {
-        collectiveCacheStore.setOptIn(true)
-        val voicePrefs = FakeVoicePreferencesRepository(
-            awaitAutoTranscribeError = IllegalStateException("preferences unreadable"),
-        )
-        buildObserver(voicePrefs)
-        val walkId = 55L
-        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        stateFlow.value = WalkState.Finished(
-            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 2_000.0),
-            endedAt = 1_000L,
-        )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+    fun `autoTranscribe on, recordings present, battery low - skips scheduling and sets lowBattery`() = runBlocking {
+        stickBattery(level = 10, scale = 100)
+        buildObserver(autoTranscribe = true)
+        val walkId = newWalk()
+        insertRecording(walkId)
+
+        finishWalk(walkId)
+
         assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
-        assertEquals(1, fakeCollectiveService.recordedPosts.size)
-        assertEquals(1, fakeCollectiveService.recordedPosts.first().walks)
+        assertEquals(AutoTranscriptionSkipReason.LowBattery, skipState.skipReason.value)
+        assertEquals(1, skipState.setSkippedCalls)
     }
 
     @Test
-    fun `autoTranscribe flip mid-finalize uses value at scheduling time`() = runBlocking {
-        val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = false)
-        buildObserver(voicePrefs)
-        // Flip BEFORE the Finished transition. If the observer captured
-        // the construction-time value, this test fails — the gate must
-        // read .value live at finalize.
-        voicePrefs.setAutoTranscribe(true)
-        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+    fun `exactly 20 percent battery - boundary is exclusive, still skips`() = runBlocking {
+        stickBattery(level = 20, scale = 100)
+        buildObserver(autoTranscribe = true)
+        val walkId = newWalk()
         insertRecording(walkId)
-        stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
-        stateFlow.value = WalkState.Finished(
-            WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
-            endedAt = 1_000L,
-        )
-        Thread.sleep(WAIT_FOR_GRACE_MS)
+
+        finishWalk(walkId)
+
+        assertEquals(emptyList<Long>(), transcriptionScheduler.scheduledWalkIds)
+        assertEquals(AutoTranscriptionSkipReason.LowBattery, skipState.skipReason.value)
+    }
+
+    @Test
+    fun `low battery while charging still schedules - charging always allows`() = runBlocking {
+        stickBattery(level = 5, scale = 100, status = BatteryManager.BATTERY_STATUS_CHARGING)
+        buildObserver(autoTranscribe = true)
+        val walkId = newWalk()
+        insertRecording(walkId)
+
+        finishWalk(walkId)
+
         assertEquals(listOf(walkId), transcriptionScheduler.scheduledWalkIds)
+        assertNull(skipState.skipReason.value)
     }
 
     private companion object {
-        const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize_autotranscribe"
-        // Bumped to 3 s — see WalkFinalizationObserverTest companion comment.
+        const val HEMISPHERE_STORE_NAME = "test_hemisphere_finalize_battery_gate"
         const val WAIT_FOR_GRACE_MS = 3_000L
         const val COLLECTOR_ATTACH_WAIT_MS = 300L
     }
 }
 
-private class NoopWidgetRefreshScheduler : WidgetRefreshScheduler {
+private class NoopWidgetRefreshSchedulerForBatteryGate : WidgetRefreshScheduler {
     override fun scheduleRefresh() = Unit
     override fun scheduleMidnightRefresh() = Unit
 }
 
-private object NoopWalkMetricsCache : WalkMetricsCaching {
+private object NoopWalkMetricsCacheForBatteryGate : WalkMetricsCaching {
     override suspend fun computeAndPersist(walkId: Long) = Unit
 }
 
-private class FakeCollectiveCounterServiceForAutoTranscribe(
+private class FakeCollectiveCounterServiceForBatteryGate(
     context: Context,
     json: Json,
 ) : CollectiveCounterService(
@@ -324,6 +319,6 @@ private class FakeCollectiveCounterServiceForAutoTranscribe(
     }
 }
 
-private object NoopMilestoneCheckerForAutoTranscribe : MilestoneChecking {
+private object NoopMilestoneCheckerForBatteryGate : MilestoneChecking {
     override suspend fun check(totalWalks: Int) = Unit
 }

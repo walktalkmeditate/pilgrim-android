@@ -82,6 +82,7 @@ class WalkFinalizationObserverTest {
     private lateinit var collectiveRepository: CollectiveRepository
     private lateinit var widgetRefreshScheduler: CountingWidgetRefreshScheduler
     private lateinit var walkMetricsCache: RecordingWalkMetricsCache
+    private lateinit var skipState: org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observedFlow: CountingStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
@@ -130,6 +131,7 @@ class WalkFinalizationObserverTest {
         )
         widgetRefreshScheduler = CountingWidgetRefreshScheduler()
         walkMetricsCache = RecordingWalkMetricsCache()
+        skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observedFlow = CountingStateFlow(stateFlow)
@@ -137,6 +139,7 @@ class WalkFinalizationObserverTest {
         observer = WalkFinalizationObserver(
             walkState = observedFlow,
             scope = observerScope,
+            context = context,
             repository = repository,
             transcriptionScheduler = transcriptionScheduler,
             hemisphereRepository = hemisphereRepo,
@@ -144,6 +147,7 @@ class WalkFinalizationObserverTest {
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
             walkMetricsCache = walkMetricsCache,
+            autoTranscriptionSkipState = skipState,
         )
         // Deterministic collector-attach handshake (replaces a blind
         // Thread.sleep that flaked when a saturated runner hadn't
@@ -153,6 +157,23 @@ class WalkFinalizationObserverTest {
         // collector returns from a value, so awaiting >= 1 proves the
         // initial Idle was consumed + the latch is spent.
         awaitCollectorAttached(observedFlow)
+    }
+
+    /**
+     * U6: the enqueue-site gate now requires at least one voice
+     * recording before it will schedule transcription (BEH-82) — tests
+     * that expect scheduling to fire must give the walk one.
+     */
+    private suspend fun insertRecording(walkId: Long) {
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = walkId,
+                startTimestamp = 0L,
+                endTimestamp = 1_000L,
+                durationMillis = 1_000L,
+                fileRelativePath = "recordings/w/rec.wav",
+            ),
+        )
     }
 
     /** Block until [flow]'s downstream collector has consumed its first value. */
@@ -192,7 +213,8 @@ class WalkFinalizationObserverTest {
 
     @Test
     fun `Active to Finished transition fires all four side-effects`() = runBlocking {
-        val walkId = 42L
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        insertRecording(walkId)
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
             WalkAccumulator(
@@ -213,7 +235,8 @@ class WalkFinalizationObserverTest {
 
     @Test
     fun `repeated Finished emission for same walkId only fires side-effects once`() = runBlocking {
-        val walkId = 99L
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        insertRecording(walkId)
         val active = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         val finished = WalkState.Finished(
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
@@ -333,6 +356,7 @@ class WalkFinalizationObserverTest {
         val throwingObserver = WalkFinalizationObserver(
             walkState = throwingObserved,
             scope = observerScope,
+            context = context,
             repository = ThrowingGetWalkRepository(db),
             transcriptionScheduler = transcriptionScheduler,
             hemisphereRepository = hemisphereRepo,
@@ -340,6 +364,7 @@ class WalkFinalizationObserverTest {
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
             walkMetricsCache = walkMetricsCache,
+            autoTranscriptionSkipState = skipState,
         )
         awaitCollectorAttached(throwingObserved)
         collectiveCacheStore.setOptIn(true)
@@ -404,6 +429,7 @@ class WalkFinalizationObserverTest {
         val throwingObserver = WalkFinalizationObserver(
             walkState = throwingObserved,
             scope = observerScope,
+            context = context,
             repository = repository,
             transcriptionScheduler = transcriptionScheduler,
             hemisphereRepository = hemisphereRepo,
@@ -411,6 +437,7 @@ class WalkFinalizationObserverTest {
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = FakeVoicePreferencesRepository(initialAutoTranscribe = true),
             walkMetricsCache = throwingCache,
+            autoTranscriptionSkipState = skipState,
         )
         awaitCollectorAttached(throwingObserved)
         val walkId = 271L
