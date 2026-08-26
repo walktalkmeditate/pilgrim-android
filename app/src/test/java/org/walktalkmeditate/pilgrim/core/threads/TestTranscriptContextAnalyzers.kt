@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess
 import org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway
 import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
+import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 
 /**
  * A real [TranscriptContextAnalyzer] over a real Robolectric-backed
@@ -31,4 +32,33 @@ fun realTranscriptContextAnalyzerForTests(
         },
     )
     return TranscriptContextAnalyzer(store, environment, languageClient, preferences)
+}
+
+/**
+ * A real [ThreadsDossierBuilder] over a real analyzer/store (see
+ * [realTranscriptContextAnalyzerForTests]) plus the Room DAOs [db]
+ * already provides — for call sites that need a working collaborator
+ * (a Hilt-shaped constructor parameter, a genuine end-to-end wiring
+ * test), not a place to fake dossier behavior. [preferences] defaults to
+ * the production default (`threadsAfterWalks` true) — pass a toggled-off
+ * fake for call sites that specifically want the dossier to stay null.
+ */
+fun realThreadsDossierBuilderForTests(
+    context: Context,
+    db: PilgrimDatabase,
+    preferences: ThreadsPreferencesRepository = FakeThreadsPreferencesRepository(),
+): ThreadsDossierBuilder {
+    val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    val store = TranscriptContextStore(context, json)
+    val analyzer = realTranscriptContextAnalyzerForTests(context, preferences)
+    return ThreadsDossierBuilder(
+        store = store,
+        analyzer = analyzer,
+        preferences = preferences,
+        voiceRecordingDao = db.voiceRecordingDao(),
+        walkDao = db.walkDao(),
+        routeDataSampleDao = db.routeDataSampleDao(),
+        walkPhotoDao = db.walkPhotoDao(),
+        altitudeSampleDao = db.altitudeSampleDao(),
+    )
 }

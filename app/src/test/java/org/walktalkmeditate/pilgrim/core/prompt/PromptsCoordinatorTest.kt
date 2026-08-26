@@ -115,6 +115,13 @@ class PromptsCoordinatorTest {
         geocoder: PromptGeocoder = StubGeocoder(),
         practicePrefs: FakePracticePreferencesRepository = FakePracticePreferencesRepository(),
         unitsPrefs: FakeUnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
+        threadsDossierBuilder: org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder =
+            org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+                context,
+                db,
+                org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+            ),
+        mlKitLanguageIdClient: MlKitLanguageIdClient = neverDetectsLanguageClient(),
     ): PromptsCoordinator = PromptsCoordinator(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -124,7 +131,24 @@ class PromptsCoordinatorTest {
         practicePreferences = practicePrefs,
         unitsPreferences = unitsPrefs,
         appContext = context,
+        threadsDossierBuilder = threadsDossierBuilder,
+        mlKitLanguageIdClient = mlKitLanguageIdClient,
         defaultDispatcher = dispatcher,
+    )
+
+    /** A [MlKitLanguageIdClient] that never detects a language — the safe
+     * default for tests that don't care about [ActivityContext.detectedLanguageCode]. */
+    private fun neverDetectsLanguageClient(): MlKitLanguageIdClient = MlKitLanguageIdClient(
+        object : LanguageIdentifierGateway {
+            override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> = emptyList()
+        },
+    )
+
+    private fun fixedLanguageClient(languageTag: String): MlKitLanguageIdClient = MlKitLanguageIdClient(
+        object : LanguageIdentifierGateway {
+            override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> =
+                listOf(LanguageGuess(languageTag, 0.99f))
+        },
     )
 
     /**
@@ -599,6 +623,80 @@ class PromptsCoordinatorTest {
         val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
         assertEquals(30.0, ctx.ascentMeters!!, 1e-9)
         assertEquals(20.0, ctx.descentMeters!!, 1e-9)
+    }
+
+    // --- U9: live threadsDossier + detectedLanguageCode wiring ------------------
+
+    private val threadsWordyText = "I was walking and I have to say I think about music because I can think about " +
+        "music too and I will think about music again since I have so many things I want and need. " +
+        "The river was wide and calm and I noticed the river every single time I walked beside the river " +
+        "today, tracing its edge with my eyes."
+
+    @Test
+    fun `buildContext populates threadsDossier from the real builder when the toggle is on`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        val toggledOnBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+            context,
+            db,
+            org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = true),
+        )
+        val coordinator = newCoordinator(threadsDossierBuilder = toggledOnBuilder)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertNotNull("toggle-gated dossier must be present when threadsAfterWalks is on", ctx.threadsDossier)
+        assertTrue(ctx.threadsDossier!!.startsWith("**Thought threads (on-device linguistic analysis):**"))
+    }
+
+    @Test
+    fun `buildContext leaves threadsDossier null when the toggle is off`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        // newCoordinator()'s default builder is wired with the toggle off.
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertNull(ctx.threadsDossier)
+    }
+
+    @Test
+    fun `buildContext detects the language once over the joined transcript and stores the code`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, "some text")
+        val coordinator = newCoordinator(mlKitLanguageIdClient = fixedLanguageClient("ja"))
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals("ja", ctx.detectedLanguageCode)
+    }
+
+    @Test
+    fun `buildContext leaves detectedLanguageCode null when there is no speech`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        val coordinator = newCoordinator(mlKitLanguageIdClient = fixedLanguageClient("ja"))
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertNull(ctx.detectedLanguageCode)
+    }
+
+    @Test
+    fun `generateAll feeds the detected language name into both a built-in AND a custom prompt`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, "some text")
+        val coordinator = newCoordinator(mlKitLanguageIdClient = fixedLanguageClient("ja"))
+        coordinator.saveCustomStyle(
+            CustomPromptStyle(id = "custom-1", title = "Custom", instruction = "Reflect", icon = "star"),
+        )
+        awaitStylesSize(1)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+        val prompts = coordinator.generateAll(ctx, zone = nyZone)
+
+        val builtin = prompts.first { it.style != null }
+        val custom = prompts.first { it.customStyle != null }
+        assertTrue("built-in prompt must carry the resolved language name", builtin.text.contains("**Detected language:** Japanese"))
+        assertTrue("custom prompt must carry the SAME resolved language name — not recomputed as null", custom.text.contains("**Detected language:** Japanese"))
     }
 
     /**

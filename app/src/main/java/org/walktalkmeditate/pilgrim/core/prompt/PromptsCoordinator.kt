@@ -9,6 +9,7 @@ import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -20,6 +21,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
 import org.walktalkmeditate.pilgrim.core.celestial.Planet
 import org.walktalkmeditate.pilgrim.core.prompt.voices.CustomPromptStyleVoice
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
@@ -78,6 +80,23 @@ open class PromptsCoordinator internal constructor(
     private val unitsPreferences: UnitsPreferencesRepository,
     @ApplicationContext private val appContext: Context,
     /**
+     * U9: the dossier builder consulted once per [buildContext] call.
+     * [ThreadsDossierBuilder.build] already gates itself on the
+     * `threadsAfterWalks` toggle and returns `null` on any content
+     * shortfall — [buildContext] additionally swallows any THROWN
+     * failure (silent-failure, matching iOS's own "a call site that
+     * forgets the bundle ships a dossier-less prompt, never an error").
+     */
+    private val threadsDossierBuilder: ThreadsDossierBuilder,
+    /**
+     * U9: language detection over the joined transcript, feeding
+     * [ActivityContext.detectedLanguageCode] — the single resolution
+     * point [generateAll] threads into every prompt style via
+     * [PromptGenerator.resolvedDerivations] (BEH-77: derived once,
+     * reused across every style).
+     */
+    private val mlKitLanguageIdClient: MlKitLanguageIdClient,
+    /**
      * CPU-bound dispatcher for the [buildContext] orchestration. The body
      * does CPU work (per-sample haversine for `routeSpeeds`, celestial /
      * lunar math, recent-walk snippet truncation) that would otherwise
@@ -111,6 +130,8 @@ open class PromptsCoordinator internal constructor(
         practicePreferences: PracticePreferencesRepository,
         unitsPreferences: UnitsPreferencesRepository,
         @ApplicationContext appContext: Context,
+        threadsDossierBuilder: ThreadsDossierBuilder,
+        mlKitLanguageIdClient: MlKitLanguageIdClient,
     ) : this(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -120,6 +141,8 @@ open class PromptsCoordinator internal constructor(
         practicePreferences = practicePreferences,
         unitsPreferences = unitsPreferences,
         appContext = appContext,
+        threadsDossierBuilder = threadsDossierBuilder,
+        mlKitLanguageIdClient = mlKitLanguageIdClient,
         defaultDispatcher = Dispatchers.Default,
     )
 
@@ -215,6 +238,12 @@ open class PromptsCoordinator internal constructor(
         val practice = WalkPracticeModel.practice(fetches.events)
         val pauses = pauseContexts(walk, fetches.events)
         val (ascent, descent) = AltitudeCalculator.computeAscentDescent(fetches.altitudeSamples)
+        val threadsDossier = buildThreadsDossierSafely(walkId)
+        val detectedLanguageCode = if (recordingContexts.isEmpty()) {
+            null
+        } else {
+            detectLanguageSafely(recordingContexts.joinToString(separator = " ") { it.text })
+        }
 
         return@withContext ActivityContext(
             recordings = recordingContexts,
@@ -237,7 +266,39 @@ open class PromptsCoordinator internal constructor(
             pauses = pauses,
             ascentMeters = ascent,
             descentMeters = descent,
+            threadsDossier = threadsDossier,
+            detectedLanguageCode = detectedLanguageCode,
         )
+    }
+
+    /**
+     * Silent-failure by design (matching [ThreadsDossierBuilder.build]'s
+     * own "no bundle → no error, just no block" shape): any THROWN
+     * failure here must not break the rest of prompt-context assembly —
+     * a walker never sees "prompts are unavailable" because the on-
+     * device linguistic analysis pipeline hiccuped.
+     */
+    private suspend fun buildThreadsDossierSafely(walkId: Long): String? = try {
+        threadsDossierBuilder.build(walkId)?.text
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Detection failure (including "no on-device model yet") reads
+     * identically to "nothing detected" — [AttentionDirectives] and
+     * [PromptGenerator.resolvedDerivations] already treat a `null` code
+     * as "assume English", so there is no separate error state to
+     * surface here.
+     */
+    private suspend fun detectLanguageSafely(joinedTranscript: String): String? = try {
+        mlKitLanguageIdClient.detect(joinedTranscript)
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (e: Exception) {
+        null
     }
 
     /**
@@ -281,11 +342,18 @@ open class PromptsCoordinator internal constructor(
     ): List<GeneratedPrompt> {
         val imperial = unitsPreferences.distanceUnits.value == UnitSystem.Imperial
         val weatherLabel = weatherLabelResolver()
+        // Resolved ONCE here — not per style — so [context.detectedLanguageCode]'s
+        // directives/language-name derivation reaches EVERY style,
+        // built-in AND custom alike (U9: previously only the built-ins'
+        // own internal resolution ran, and only with a null code).
+        val resolved = promptGenerator.resolvedDerivations(context, detectedLanguageCode = context.detectedLanguageCode)
         val builtins = promptGenerator.generateAll(
             activityContext = context,
             imperial = imperial,
             weatherLabel = weatherLabel,
             zone = zone,
+            directives = resolved.directives,
+            detectedLanguageName = resolved.languageName,
         )
         val customs = customStyles.map { custom ->
             promptGenerator.generateCustom(
@@ -295,6 +363,8 @@ open class PromptsCoordinator internal constructor(
                 customIconResolver = ::resolveCustomPromptIconLocal,
                 weatherLabel = weatherLabel,
                 zone = zone,
+                directives = resolved.directives,
+                detectedLanguageName = resolved.languageName,
             )
         }
         return builtins + customs

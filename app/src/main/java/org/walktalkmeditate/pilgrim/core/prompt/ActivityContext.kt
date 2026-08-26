@@ -84,6 +84,17 @@ data class ActivityContext(
      * that isn't there.
      */
     val threadsDossier: String? = null,
+    /**
+     * U9: the transcript's detected ISO language code (e.g. "ja"), from
+     * one [MlKitLanguageIdClient.detect] pass over the joined recording
+     * transcripts — computed once in [PromptsCoordinator.buildContext]
+     * and reused by every prompt style's [PromptGenerator.resolvedDerivations]
+     * call (BEH-77: derived once, reused across every style). `null`
+     * when there's no speech to detect from, or detection itself failed
+     * — both read identically downstream as "assume English" (matches
+     * [AttentionDirectives]'s own `detectedLanguageCode` default).
+     */
+    val detectedLanguageCode: String? = null,
 ) {
     val hasSpeech: Boolean get() = recordings.isNotEmpty()
 }

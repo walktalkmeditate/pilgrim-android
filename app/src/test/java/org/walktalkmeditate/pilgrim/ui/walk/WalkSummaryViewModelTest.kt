@@ -389,6 +389,17 @@ class WalkSummaryViewModelTest {
             practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             appContext = ctxApp,
+            threadsDossierBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+                ctxApp,
+                db,
+                org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+            ),
+            mlKitLanguageIdClient = org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient(
+                object : org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway {
+                    override suspend fun identifyPossibleLanguages(text: String) =
+                        emptyList<org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess>()
+                },
+            ),
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =
