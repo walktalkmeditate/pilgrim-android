@@ -97,6 +97,45 @@ class ThemeExtractorTest {
         assertEquals(3.0 / TranscriptNlp.wordCount(text), themes.single().salience, 0.0)
     }
 
+    // --- androidHomographNounSuppression: Android-only homograph-noun suppression (U11 golden-fixture finding) ---
+
+    @Test
+    fun `felt spoken three times amid scaffolding yields zero themes`() {
+        // "felt" is WordNet-noun-listed in its own right (the fabric) and is NOT covered by
+        // scaffoldLemmas (which only lists "feel") — non-vacuous only because of
+        // SpokenStoplist.androidHomographNounSuppression.
+        val text = "I was walking and I have to say I think about felt because I can think about " +
+            "felt too and I will think about felt again since I have so many things I want and need"
+        assertTrue(TranscriptNlp.wordCount(text) >= ThemeExtractor.MINIMUM_WORDS)
+        assertEquals(emptyList<Theme>(), ThemeExtractor.themes(text))
+    }
+
+    @Test
+    fun `whole spoken three times amid scaffolding yields zero themes`() {
+        // "whole" is WordNet-noun-listed in its own right (the entirety) — suppressing it here
+        // costs nothing downstream: MarkerLexicons.absolutist still counts it in the marker channel.
+        val text = "I was walking and I have to say I think about whole because I can think about " +
+            "whole too and I will think about whole again since I have so many things I want and need"
+        assertTrue(TranscriptNlp.wordCount(text) >= ThemeExtractor.MINIMUM_WORDS)
+        assertEquals(emptyList<Theme>(), ThemeExtractor.themes(text))
+    }
+
+    @Test
+    fun `open spoken three times amid the same scaffolding is deliberately admitted as a theme`() {
+        // Unlike "felt"/"whole", "open" is deliberately left unsuppressed — a poetic-plausible
+        // noun for a walking app, on the U12 real-transcript field-read watchlist instead.
+        val text = "I was walking and I have to say I think about open because I can think about " +
+            "open too and I will think about open again since I have so many things I want and need"
+        assertTrue(TranscriptNlp.wordCount(text) >= ThemeExtractor.MINIMUM_WORDS)
+
+        val themes = ThemeExtractor.themes(text)
+
+        assertEquals(1, themes.size)
+        assertEquals("open", themes.single().lemma)
+        assertEquals(3, themes.single().mentionCount)
+        assertEquals(3.0 / TranscriptNlp.wordCount(text), themes.single().salience, 0.0)
+    }
+
     // --- minimumWords: exact boundary ---
 
     @Test

@@ -53,6 +53,17 @@ data class Theme(
  * (U12); "living" and "working" are deliberately admitted as themes
  * outright — both read as plausible real topics, not scaffolding (cf.
  * iOS's own canonical "the move" suggestion).
+ *
+ * A third Android-original filter,
+ * [SpokenStoplist.androidHomographNounSuppression], suppresses "felt" and
+ * "whole" — surfaced as spurious themes by the U11 golden-fixture capture,
+ * since WordNet noun-lists both (felt the fabric, whole the entirety)
+ * exactly where iOS's contextual tagger tags the same surface forms verb
+ * or adjective in ordinary reflective narration ("I felt..."). "open"
+ * surfaced in that same capture but is deliberately left unsuppressed,
+ * joining the U12 real-transcript field-read watchlist above instead of
+ * the suppression list — see [SpokenStoplist.androidHomographNounSuppression]'s
+ * own KDoc for why.
  */
 object ThemeExtractor {
 
@@ -84,7 +95,8 @@ object ThemeExtractor {
                 mention.lemma in walkingDomain ||
                     mention.lemma in SpokenStoplist.lightNouns ||
                     mention.lemma in SpokenStoplist.scaffoldLemmas ||
-                    mention.lemma in SpokenStoplist.androidGerundExtension
+                    mention.lemma in SpokenStoplist.androidGerundExtension ||
+                    mention.lemma in SpokenStoplist.androidHomographNounSuppression
             }
 
         val eligible = candidates.groupBy { it.lemma }.filterValues { it.size >= MINIMUM_MENTIONS }

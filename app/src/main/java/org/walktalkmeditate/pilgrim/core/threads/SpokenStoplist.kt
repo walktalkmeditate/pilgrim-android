@@ -3,7 +3,7 @@ package org.walktalkmeditate.pilgrim.core.threads
 
 /**
  * Two stoplists ported verbatim from `Pilgrim/Models/Threads/TranscriptNLP.swift`
- * at the frozen iOS pin (`0172e2b`), plus one Android-original addition.
+ * at the frozen iOS pin (`0172e2b`), plus two Android-original additions.
  * Collapsing the two ported lists into one over- or under-suppresses
  * depending on the caller: [lightNouns] feeds noun-only theme extraction;
  * [scaffoldLemmas] feeds the verb-inclusive recurring-word attention
@@ -17,9 +17,10 @@ package org.walktalkmeditate.pilgrim.core.threads
  * surface as real-device themes. Omitting either list here reintroduces
  * that exact bug.
  *
- * [androidGerundExtension] is the one Android-original list with no iOS
- * counterpart at all — see its own KDoc for why the theme path needs it
- * and why its neighboring gerunds deliberately do not join it.
+ * [androidGerundExtension] and [androidHomographNounSuppression] are the
+ * two Android-original lists with no iOS counterpart at all — see each
+ * one's own KDoc for why the theme path needs it and which neighboring
+ * words deliberately do not join it.
  */
 object SpokenStoplist {
 
@@ -60,4 +61,31 @@ object SpokenStoplist {
      * lemma).
      */
     val androidGerundExtension: Set<String> = setOf("going", "getting", "saying", "coming", "telling")
+
+    /**
+     * Android-only, theme path only: WordNet noun-lists both of these
+     * surface forms in their own right — "felt" as the fabric, "whole" as
+     * the entirety — so dictionary POS admits them as noun candidates
+     * exactly where iOS's contextual tagger would tag the same words verb
+     * ("felt", the ordinary past tense of "feel") or adjective ("whole",
+     * modifying a noun) instead. "I felt..." is ubiquitous reflective
+     * speech; twice in one recording is already enough to surface it as a
+     * theme without this suppression.
+     *
+     * [scaffoldLemmas] already lists "feel" as a lemma, but that does not
+     * help here: lemma-string filtering can't see through "felt" as an
+     * independently-listed inflected surface form — the same substrate gap
+     * [androidGerundExtension]'s "going"/"go" pair closes for gerunds, here
+     * for an irregular past tense instead. "whole" loses nothing by
+     * suppression: it is still counted by [MarkerLexicons.absolutist] in
+     * the marker channel, just not named as a theme.
+     *
+     * Discovered via the U11 golden-fixture capture. "open" surfaced
+     * alongside these two in that same capture but is deliberately NOT
+     * suppressed here: it is a poetic-plausible noun in its own right for a
+     * walking app, and — unlike "whole" — no other channel backstops it,
+     * so it stays on the U12 real-transcript field-read watchlist instead
+     * of being suppressed pre-emptively.
+     */
+    val androidHomographNounSuppression: Set<String> = setOf("felt", "whole")
 }

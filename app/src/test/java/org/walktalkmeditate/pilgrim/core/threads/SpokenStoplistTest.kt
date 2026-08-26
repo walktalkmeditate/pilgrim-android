@@ -57,6 +57,15 @@ class SpokenStoplistTest {
     }
 
     @Test
+    fun `androidHomographNounSuppression is the exact 2-word verbatim set`() {
+        assertEquals(
+            setOf("felt", "whole"),
+            SpokenStoplist.androidHomographNounSuppression,
+        )
+        assertEquals(2, SpokenStoplist.androidHomographNounSuppression.size)
+    }
+
+    @Test
     fun `lightNouns and scaffoldLemmas are distinct lists sharing some entries`() {
         // Deliberately overlapping (kind, thing, stuff, way, lot, bit) — see SpokenStoplist's
         // KDoc: they are two different consumers' lists, not one list under two names.
