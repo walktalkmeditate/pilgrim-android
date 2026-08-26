@@ -93,7 +93,18 @@ class ThreadsBackfillRunner @Inject constructor(
         val startGeneration = preferences.importGeneration.value
         val alreadyComplete = preferences.backfillCompletedAtVersion() == TranscriptContext.ANALYSIS_VERSION &&
             preferences.backfillCompletedAtImportGeneration() == startGeneration
-        if (alreadyComplete) return ThreadsBackfillOutcome.Completed
+        if (alreadyComplete) {
+            if (isCompletionTrustworthy(snapshotProvider)) return ThreadsBackfillOutcome.Completed
+            // D2D device-transfer carries this completion flag (a
+            // DataStore file) but the transfer rules exclude
+            // transcript_contexts/ (data_extraction_rules.xml —
+            // recomputable derived data, never worth carrying) — a
+            // migrated device can read "complete" with zero contexts ever
+            // saved. Clear ONLY the completion flag (never the toggle, the
+            // checkpoint already reads as empty from the same transfer)
+            // and fall through into a real, full sweep below.
+            preferences.clearBackfillCompleted()
+        }
 
         if (!gate()) return ThreadsBackfillOutcome.GateClosed
 
@@ -129,7 +140,15 @@ class ThreadsBackfillRunner @Inject constructor(
                 }
             }
             index = batchEnd
-            if (batchClean) lastCleanBoundary = index
+            // allAccounted is never reset back to true once a batch fails
+            // it, so requiring it here (not just this batch's OWN
+            // batchClean) pins the boundary at the last batch that was
+            // clean AND every batch before it was too — a later clean
+            // batch must never advance the checkpoint past an EARLIER
+            // batch's still-unaccounted-for item, or a retry would resume
+            // past the failure and this sweep's own eventual completion
+            // stamp would be recorded without it.
+            if (batchClean && allAccounted) lastCleanBoundary = index
             preferences.setBackfillCheckpoint(BackfillCheckpoint(lastCleanBoundary, startGeneration, TranscriptContext.ANALYSIS_VERSION))
             yield()
         }
@@ -168,6 +187,26 @@ class ThreadsBackfillRunner @Inject constructor(
         val language = analyzer.detectLanguage(item.transcription)
         if (language != ENGLISH) return true
         return analyzer.analyzeAndStore(item.uuid, item.transcription) != null
+    }
+
+    /**
+     * Whether a recorded completion should still be trusted. `false` only
+     * when [store] confidently reports zero saved contexts (an empty list,
+     * not the `null` "couldn't read the directory" signal) WHILE the
+     * snapshot has recordings that ought to have produced some — the D2D
+     * transfer shape (see the [sweep] call site). A `null` from [store]
+     * is a genuine read failure, never proof of anything: mass-distrusting
+     * a real completion on a transient read error would re-run a full
+     * sweep for every user who happens to hit it, matching
+     * [pruneStaleOrphans]'s own "an empty/failed read is not proof of
+     * universal orphanhood" principle.
+     */
+    private suspend fun isCompletionTrustworthy(
+        snapshotProvider: suspend () -> List<TranscribedRecordingSnapshot>,
+    ): Boolean {
+        val storedUuids = store.allUuids()
+        if (storedUuids == null || storedUuids.isNotEmpty()) return true
+        return snapshotProvider().isEmpty()
     }
 
     /**

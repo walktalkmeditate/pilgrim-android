@@ -354,6 +354,107 @@ class ThreadsBackfillTest {
         assertTrue(store.hasCurrentContext(savedUuid))
     }
 
+    // ---- I1: a later clean batch must not advance the checkpoint past an earlier failure ----
+
+    @Test
+    fun `a batch failure does not let a later clean batch advance the checkpoint past it`() = runTest {
+        val items = snapshotOf(60)
+        val failingUuid = items[10].uuid
+        // Occupies the EXACT temp-file path TranscriptContextStore.writeAtomically
+        // uses for this one uuid with a directory instead of a file, so
+        // opening it as a FileOutputStream throws — a real, item-scoped
+        // write failure, not a fake/mock. writeAtomically's own catch block
+        // deletes `temp` (an empty dir deletes cleanly) after the first
+        // failed attempt, so the SAME uuid succeeds on a later retry with
+        // no manual cleanup needed here.
+        val blocker = java.io.File(
+            ApplicationProvider.getApplicationContext<Application>().filesDir,
+            "transcript_contexts/$failingUuid.json.gz.tmp",
+        )
+        blocker.mkdirs()
+
+        val outcome = runner.sweep(snapshotProvider = { items }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Incomplete, outcome)
+        assertFalse("the failed item must not be accounted for", store.hasCurrentContext(failingUuid))
+        val checkpointAfterFailure = preferences.backfillCheckpoint().processedCount
+        assertTrue(
+            "checkpoint must not advance past the batch containing the still-failing item — was $checkpointAfterFailure",
+            checkpointAfterFailure <= 10,
+        )
+
+        // Retry: the blocker is already gone (writeAtomically's own catch
+        // block removed it), so item 10 succeeds this time. The checkpoint
+        // must have stayed at/before the failure so this retry actually
+        // revisits it, rather than a stale "processed everything" prefix
+        // stamping completion without it.
+        val retryOutcome = runner.sweep(snapshotProvider = { items }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, retryOutcome)
+        for (item in items) {
+            assertTrue("item ${item.uuid} must be accounted for after the retry", store.hasCurrentContext(item.uuid))
+        }
+    }
+
+    // ---- I3: D2D transfer restores completion without contexts ----
+
+    @Test
+    fun `stale completion with an empty store and a non-empty snapshot re-sweeps instead of trusting the flag`() = runTest {
+        val items = snapshotOf(2)
+        preferences.setBackfillCompleted(TranscriptContext.ANALYSIS_VERSION, preferences.importGeneration.value)
+        // As if this device just received the completion flag via a device
+        // transfer whose data-extraction rules exclude transcript_contexts/
+        // (data_extraction_rules.xml) — the flag survived, the contexts did not.
+        assertEquals(emptyList<String>(), store.allUuids())
+
+        val outcome = runner.sweep(snapshotProvider = { items }, gate = allowGate)
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+        for (item in items) {
+            assertTrue(
+                "a distrusted completion must actually re-run analysis, not just re-stamp the flag",
+                store.hasCurrentContext(item.uuid),
+            )
+        }
+    }
+
+    @Test
+    fun `stale completion with a populated store still short-circuits (control)`() = runTest {
+        val items = snapshotOf(1)
+        runner.sweep(snapshotProvider = { items }, gate = allowGate)
+        assertTrue("precondition: the store must be genuinely populated", store.allUuids()!!.isNotEmpty())
+
+        val outcome = runner.sweep(
+            snapshotProvider = { items },
+            gate = { error("a legitimately populated store must short-circuit — gate must not be consulted") },
+        )
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+    }
+
+    @Test
+    fun `stale completion short-circuits when the store's read fails, never mass-distrusting on a read error`() = runTest {
+        val items = snapshotOf(2)
+        preferences.setBackfillCompleted(TranscriptContext.ANALYSIS_VERSION, preferences.importGeneration.value)
+        // Force allUuids()'s null "unreadable" signal by occupying the
+        // contexts directory's own path with a plain file instead of a
+        // directory — File.listFiles() returns null in that shape.
+        val contextsPath = java.io.File(
+            ApplicationProvider.getApplicationContext<Application>().filesDir,
+            "transcript_contexts",
+        )
+        contextsPath.deleteRecursively()
+        contextsPath.createNewFile()
+        assertEquals(null, store.allUuids())
+
+        val outcome = runner.sweep(
+            snapshotProvider = { items },
+            gate = { error("a read-error store signal must short-circuit — gate must not be consulted") },
+        )
+
+        assertEquals(ThreadsBackfillOutcome.Completed, outcome)
+    }
+
     @Test
     fun `an empty snapshot is never treated as proof every stale orphan is safe to delete`() = runTest {
         val orphanUuid = "orphan-empty-snapshot"

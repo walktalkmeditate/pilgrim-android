@@ -686,6 +686,55 @@ class TranscriptionRunnerTest {
         )
     }
 
+    // I2: the REAL WhisperCppEngine.transcribeWithSegments joins raw
+    // segment text then trims ONCE at the very ends (see that class) —
+    // FakeWhisperEngine's own join does not replicate that trim, so this
+    // test uses a one-off engine (same pattern as "per-recording engine
+    // failure does not abort the batch" above) that reproduces the real
+    // join-then-trim exactly. A flagged FIRST segment's own leading space
+    // survives in its raw segment.text but is gone from the trimmed
+    // transcript — an untrimmed fragment search would never find it there.
+    @Test
+    fun `a flagged FIRST segment carrying a leading space is still scrubbed from the marker text`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        val segments = listOf(
+            WhisperSegment(" should should should.", 0L, 500L, 0.95f),
+            WhisperSegment(
+                " apple banana cherry date fig grape kiwi lemon mango orange peach quince fruit basket",
+                500L,
+                6000L,
+                0.01f,
+            ),
+        )
+        val joinThenTrimEngine = object : WhisperEngine {
+            override suspend fun transcribe(wavPath: java.nio.file.Path) =
+                Result.success(TranscriptionResult(text = "", wordsPerMinute = null))
+            override suspend fun transcribeWithSegments(wavPath: java.nio.file.Path) = Result.success(
+                TranscriptionResult(
+                    text = segments.joinToString("") { it.text }.trim(),
+                    wordsPerMinute = null,
+                    segments = segments,
+                ),
+            )
+            override fun unloadModel() {}
+        }
+        val customRunner = buildRunner(joinThenTrimEngine)
+
+        customRunner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        val context = threadsStore.readRaw(updated.uuid)
+        assertTrue(context != null)
+        assertEquals(
+            "the flagged FIRST segment's fragment must still be found and scrubbed even though " +
+                "the global transcript trims away its leading space",
+            0,
+            context!!.markers.discrepancyCount,
+        )
+    }
+
     private val timestampCounter = AtomicLong(1_000_000L)
 
     private fun insertRecording(

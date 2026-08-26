@@ -175,10 +175,19 @@ class TranscriptionRunner @Inject constructor(
      */
     private suspend fun analyzeThreadsSafely(recordingId: Long, uuid: String, result: TranscriptionResult) {
         try {
-            val flaggedFragments = result.segments.filter { it.isFlagged() }.map { it.text }
+            // Trimmed to match result.text's own trim (the engine joins
+            // segments raw, then trims ONCE at the very ends) — an
+            // untrimmed fragment from a leading-space FIRST segment would
+            // never be found inside the trimmed transcript, leaving that
+            // segment's flag unscrubbed. Empty-after-trim fragments are
+            // dropped so a whitespace-only flagged segment never becomes a
+            // no-op search that still costs a full transcript scan.
+            val flaggedFragments = result.segments.filter { it.isFlagged() }
+                .map { it.text.trim() }
+                .filter { it.isNotEmpty() }
             val flaggedRanges = TranscriptContextAnalyzer.flaggedRanges(result.text, flaggedFragments)
             val language = threadsAnalyzer.detectLanguage(result.text)
-            Log.i(TAG, "recording $recordingId: threads detected language=$language")
+            Log.d(TAG, "recording $recordingId: threads detected language=$language")
             threadsAnalyzer.analyzeAndStore(uuid, result.text, flaggedRanges)
         } catch (ce: CancellationException) {
             throw ce
