@@ -123,6 +123,7 @@ class RecordingsListViewModel @Inject constructor(
     private val fileSystem: VoiceRecordingFileSystem,
     private val waveformCache: WaveformCache,
     whisperModelStore: WhisperModelStore,
+    private val threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer,
     @Suppress("UNUSED_PARAMETER")
     @ApplicationContext context: Context,
 ) : ViewModel() {
@@ -355,11 +356,23 @@ class RecordingsListViewModel @Inject constructor(
         playbackController.setPlaybackSpeed(nextPlaybackSpeed(current))
     }
 
+    /**
+     * BEH-59 carry: after a successful write, [threadsAnalyzer] either
+     * eagerly (re)analyzes the hand-edited text (toggle on) or removes any
+     * stale stored context (toggle off) — see
+     * [org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer.analyzeOrForget].
+     * Appended AFTER the existing state updates (never reordered ahead of
+     * them) so the edit-mode exit stays synchronously observable; the
+     * analysis itself is explicitly hopped to [Dispatchers.IO] since
+     * `viewModelScope.launch` defaults to Main and analysis does real
+     * CPU/file work (house rule — Stage 2-E lesson).
+     */
     fun onTranscriptionEdit(recordingId: Long, newText: String) {
         viewModelScope.launch {
             val recording = walkRepository.getVoiceRecording(recordingId) ?: return@launch
             walkRepository.updateVoiceRecording(recording.copy(transcription = newText))
             editingRecordingId.value = null
+            withContext(Dispatchers.IO) { threadsAnalyzer.analyzeOrForget(recording.uuid, newText) }
         }
     }
 
@@ -458,6 +471,12 @@ class RecordingsListViewModel @Inject constructor(
      * Fails closed pre-Ready: the swipe is disabled in the UI, and this
      * guard catches a stale-UI dispatch before the destructive null
      * write (U11 spec section 5).
+     *
+     * BEH-59 carry: the null write has nothing worth analyzing yet, so
+     * [threadsAnalyzer] always removes any stale stored context here
+     * (regardless of the toggle) — appended AFTER the existing state
+     * updates and scheduler call so their ordering/timing is unchanged;
+     * see [onTranscriptionEdit]'s KDoc for the off-main rationale.
      */
     fun onRetranscribe(recordingId: Long) {
         if (!retranscribeEnabled.value) return
@@ -470,6 +489,7 @@ class RecordingsListViewModel @Inject constructor(
             // id against a stale still-transcribed emission.
             _manualTranscribing.update { it + recordingId }
             transcriptionScheduler.scheduleForWalk(recording.walkId)
+            withContext(Dispatchers.IO) { threadsAnalyzer.analyzeOrForget(recording.uuid, null) }
         }
     }
 

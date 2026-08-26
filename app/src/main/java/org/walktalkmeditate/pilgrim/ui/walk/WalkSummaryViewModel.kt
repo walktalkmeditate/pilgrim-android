@@ -286,6 +286,7 @@ class WalkSummaryViewModel @Inject constructor(
     @PersistenceScope private val persistenceScope: CoroutineScope,
     private val autoTranscriptionSkipState:
         org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState,
+    private val threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -989,15 +990,25 @@ class WalkSummaryViewModel @Inject constructor(
      * Walk Summary tap-to-edit save action. Trims the user text and
      * commits the updated transcription via [WalkRepository]. No-op on
      * blank input (matches iOS `onTranscriptionSave`).
+     *
+     * BEH-59 carry: after a successful write, [threadsAnalyzer] either
+     * eagerly (re)analyzes the hand-edited text (toggle on) or removes
+     * any stale stored context (toggle off) — see
+     * [org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer.analyzeOrForget].
      */
     fun saveTranscription(recordingId: Long, newText: String) {
         val trimmed = newText.trim()
         if (trimmed.isEmpty()) return
         // persistenceScope (not viewModelScope) — user navigating Back
         // immediately after tapping Done would otherwise cancel the
-        // DB write mid-flight and silently lose the edit.
+        // DB write mid-flight and silently lose the edit. Already IO-
+        // dispatched (WalkModule.providePersistenceScope), so
+        // analyzeOrForget's CPU-bound theme/marker extraction never
+        // lands on Main.
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, trimmed)
+            val uuid = repository.getVoiceRecording(recordingId)?.uuid ?: return@launch
+            threadsAnalyzer.analyzeOrForget(uuid, trimmed)
         }
     }
 
@@ -1103,13 +1114,23 @@ class WalkSummaryViewModel @Inject constructor(
      * Fails closed pre-Ready: the UI disables the affordance, and this
      * guard catches a stale-UI tap before the destructive null write
      * (U11 spec section 5).
+     *
+     * BEH-59 carry: the null write has nothing worth analyzing yet, so
+     * [threadsAnalyzer] always removes any stale stored context here
+     * (regardless of the toggle) rather than leaving it to be read by a
+     * dossier build for a transcript that's about to be replaced — the
+     * real re-transcription this schedules will re-analyze normally via
+     * `TranscriptionRunner`'s own wiring once it lands.
      */
     fun retranscribeRecording(recordingId: Long) {
         if (!retranscribeEnabled.value) return
         // persistenceScope — see [saveTranscription] for the
-        // back-nav-mid-write rationale.
+        // back-nav-mid-write rationale and off-main dispatch.
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
+            repository.getVoiceRecording(recordingId)?.uuid?.let { uuid ->
+                threadsAnalyzer.analyzeOrForget(uuid, null)
+            }
             // Marked AFTER the null write so the clearer can't drop the
             // id against a stale still-transcribed emission.
             _manualTranscribing.update { it + recordingId }

@@ -206,4 +206,54 @@ class TranscriptContextAnalyzerTest {
 
         assertEquals(listOf(0..3, 4..7), ranges)
     }
+
+    // ---- analyzeOrForget: the shared manual-edit / retranscribe-clear path (BEH-59 carry) ----
+
+    @Test
+    fun `analyzeOrForget with the toggle on and real text eagerly analyzes with no flagged fragments`() = runTest {
+        analyzer.analyzeOrForget("u1", musicText)
+
+        val stored = store.readRaw("u1")
+        assertTrue("a hand-edited transcript is trusted verbatim, themes included", stored!!.themes.isNotEmpty())
+        assertEquals(TranscriptContext.hashTranscript(musicText), stored.transcriptHash)
+    }
+
+    @Test
+    fun `analyzeOrForget with the toggle off removes any existing context without a tombstone`() = runTest {
+        analyzer.analyzeAndStore("u1", musicText)
+        assertTrue(store.hasContext("u1"))
+
+        preferences.setThreadsAfterWalks(false)
+        analyzer.analyzeOrForget("u1", "an edit made while the feature is off")
+
+        assertFalse("toggle-off must remove the stale context, not analyze the new text", store.hasContext("u1"))
+
+        // No tombstone: re-enabling and re-analyzing the SAME uuid must
+        // succeed afterward (a tombstone would silently block it — BEH-20).
+        preferences.setThreadsAfterWalks(true)
+        val healed = analyzer.analyzeAndStore("u1", musicText)
+        assertTrue("removeContext must not tombstone this uuid", healed != null && store.hasContext("u1"))
+    }
+
+    @Test
+    fun `analyzeOrForget with a null or blank transcription removes the stale context regardless of toggle`() = runTest {
+        analyzer.analyzeAndStore("u1", musicText)
+        assertTrue(store.hasContext("u1"))
+
+        analyzer.analyzeOrForget("u1", null)
+
+        assertFalse(
+            "a null/blank transcription has nothing worth analyzing — clean up instead of leaving it stale",
+            store.hasContext("u1"),
+        )
+    }
+
+    @Test
+    fun `analyzeOrForget with a blank transcription and toggle on still removes rather than analyzes`() = runTest {
+        analyzer.analyzeAndStore("u1", musicText)
+
+        analyzer.analyzeOrForget("u1", "   ")
+
+        assertFalse(store.hasContext("u1"))
+    }
 }

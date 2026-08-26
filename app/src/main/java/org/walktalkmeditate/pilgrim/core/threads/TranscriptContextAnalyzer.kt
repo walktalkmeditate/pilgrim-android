@@ -78,6 +78,31 @@ class TranscriptContextAnalyzer @Inject constructor(
     }
 
     /**
+     * BEH-59 carry: the shared manual-edit / retranscribe-clear write path
+     * — `WalkSummaryViewModel` (manual edit save, single retranscribe's
+     * null-clearing step) and `RecordingsListViewModel`'s equivalents call
+     * this AFTER a successful transcription-column write, in place of
+     * calling [analyzeAndStore] directly.
+     *
+     * Toggle ON with real, non-blank [transcription]: eagerly (re)analyzes
+     * with EMPTY flagged ranges (BEH-86 — a hand-edited transcript is
+     * trusted verbatim; segment-level ASR-quality flags don't exist for
+     * text the user typed). Anything else — toggle OFF, or a null/blank
+     * [transcription] (the retranscribe-clear step has nothing worth
+     * analyzing yet) — removes the stored context WITHOUT a tombstone
+     * (BEH-20), so a later backfill or the real re-transcription that
+     * follows a retranscribe-clear can still freely re-analyze this
+     * [uuid]; a tombstone here would silently block that.
+     */
+    suspend fun analyzeOrForget(uuid: String, transcription: String?) {
+        if (preferences.threadsAfterWalks.value && !transcription.isNullOrBlank()) {
+            analyzeAndStore(uuid, transcription, emptyList())
+        } else {
+            store.removeContext(uuid)
+        }
+    }
+
+    /**
      * Marker text = [transcript] with each flagged range's own substring
      * replaced EVERYWHERE it occurs, one fragment at a time — not just at
      * its originating range. This deliberately scrubs any coincidentally

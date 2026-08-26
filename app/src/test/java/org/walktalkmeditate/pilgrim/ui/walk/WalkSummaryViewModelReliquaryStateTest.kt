@@ -204,6 +204,7 @@ class WalkSummaryViewModelReliquaryStateTest {
                 org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger(),
             persistenceScope = persistenceScope,
             autoTranscriptionSkipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
+            threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(context),
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
         createdViewModels += vm

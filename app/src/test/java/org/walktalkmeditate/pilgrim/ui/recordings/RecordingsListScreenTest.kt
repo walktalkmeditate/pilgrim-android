@@ -130,6 +130,7 @@ class RecordingsListScreenTest {
             unmeteredProbe = { true },
             scope = modelStoreScope,
         ),
+        threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(context),
     )
 
     private fun seedWalkWithRecording(

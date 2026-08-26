@@ -64,6 +64,9 @@ class RecordingsListViewModelTest {
     private lateinit var waveformCache: WaveformCache
     private lateinit var modelStoreScope: CoroutineScope
     private lateinit var modelStore: WhisperModelStore
+    private lateinit var threadsStore: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
+    private lateinit var threadsPreferences: org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+    private lateinit var threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
     private val downloadWork = MutableStateFlow<ModelDownloadWork?>(null)
     private val dispatcher = UnconfinedTestDispatcher()
 
@@ -112,6 +115,18 @@ class RecordingsListViewModelTest {
         scheduler = FakeTranscriptionScheduler()
         fileSystem = VoiceRecordingFileSystem(context)
         waveformCache = WaveformCache()
+
+        // U7 edit-path wiring (BEH-59 carry): real store + real WordNet/
+        // VADER analysis, matching TranscriptContextAnalyzerTest's
+        // established pattern — only the language client is faked.
+        val threadsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; explicitNulls = false }
+        java.io.File(context.filesDir, "transcript_contexts").deleteRecursively()
+        threadsStore = org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore(context, threadsJson)
+        threadsPreferences = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository()
+        threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(
+            context,
+            threadsPreferences,
+        )
     }
 
     @After
@@ -129,6 +144,7 @@ class RecordingsListViewModelTest {
         fileSystem = fileSystem,
         waveformCache = waveformCache,
         whisperModelStore = modelStore,
+        threadsAnalyzer = threadsAnalyzer,
         context = context,
     )
 
@@ -346,6 +362,63 @@ class RecordingsListViewModelTest {
 
         val state = loaded(vm)
         assertNull(state.editingRecordingId)
+    }
+
+    // --- U7 edit-path wiring (BEH-59 carry) -------------------------------
+
+    @Test
+    fun `onTranscriptionEdit eagerly analyzes when the threads toggle is on`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val rec = insertRecording(walkId = walk.id, startAt = 10_000L, transcription = "old text")
+
+        val vm = newViewModel()
+        vm.onTranscriptionEdit(rec.id, "The quiet mountain trail held a long stillness today")
+
+        withContext(TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (!threadsStore.hasContext(rec.uuid)) delay(25L)
+            }
+        }
+    }
+
+    @Test
+    fun `onTranscriptionEdit removes any stale context when the threads toggle is off`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val rec = insertRecording(walkId = walk.id, startAt = 10_000L, transcription = "old text")
+        threadsAnalyzer.analyzeAndStore(rec.uuid, "prior text analyzed while the toggle was on")
+        assertTrue(threadsStore.hasContext(rec.uuid))
+        threadsPreferences.setThreadsAfterWalks(false)
+
+        val vm = newViewModel()
+        vm.onTranscriptionEdit(rec.id, "an edit made while the feature is off")
+
+        withContext(TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (threadsStore.hasContext(rec.uuid)) delay(25L)
+            }
+        }
+    }
+
+    @Test
+    fun `onRetranscribe removes the stale context after the null write`() = runTest(dispatcher) {
+        installLegacyTiny()
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val rec = insertRecording(walkId = walk.id, startAt = 10_000L, transcription = "old transcription")
+        threadsAnalyzer.analyzeAndStore(rec.uuid, "old transcription")
+        assertTrue(threadsStore.hasContext(rec.uuid))
+
+        val vm = newViewModel()
+        awaitRetranscribeEnabled(vm)
+        vm.onRetranscribe(rec.id)
+
+        withContext(TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (threadsStore.hasContext(rec.uuid)) delay(25L)
+            }
+        }
     }
 
     @Test
