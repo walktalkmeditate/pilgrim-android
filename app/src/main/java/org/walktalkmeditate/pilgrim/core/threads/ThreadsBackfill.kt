@@ -200,6 +200,10 @@ class ThreadsBackfillRunner @Inject constructor(
      * sweep for every user who happens to hit it, matching
      * [pruneStaleOrphans]'s own "an empty/failed read is not proof of
      * universal orphanhood" principle.
+     *
+     * Android-original hardening: iOS at the pin shares this hole (its
+     * completion key migrates with system backup while its context files
+     * are backup-excluded) and ships no equivalent distrust check.
      */
     private suspend fun isCompletionTrustworthy(
         snapshotProvider: suspend () -> List<TranscribedRecordingSnapshot>,
