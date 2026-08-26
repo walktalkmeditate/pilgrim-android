@@ -16,6 +16,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
@@ -54,6 +56,8 @@ class PilgrimPackageImporter @Inject constructor(
     @PilgrimJson private val json: Json,
     @ApplicationContext private val context: Context,
     private val archivedRegistry: ArchivedWalkRegistry,
+    private val transcriptContextStore: TranscriptContextStore,
+    private val threadsPreferences: ThreadsPreferencesRepository,
 ) {
 
     /**
@@ -106,6 +110,20 @@ class PilgrimPackageImporter @Inject constructor(
             val archivedCount = if (archivedEntries.isNotEmpty()) {
                 applyArchivedEntries(archivedEntries)
             } else 0
+            // Success-gated, in that order (BEH-66): clear tombstones for
+            // every recording uuid this import minted — regardless of
+            // whether ITS OWN walk individually failed to insert (the
+            // over-clear iOS's filterLocallyArchived also produces,
+            // faithfully reproduced here even though Android's importer
+            // has no equivalent pre-filter step) — then bump the import
+            // generation unconditionally, re-arming U6's backfill sweep
+            // for anything imports just added. The success check is on
+            // reaching THIS point (the outer Result), not on every
+            // individual walk having landed.
+            if (insertResult.importedRecordingUuids.isNotEmpty()) {
+                transcriptContextStore.clearTombstones(insertResult.importedRecordingUuids)
+            }
+            threadsPreferences.bumpImportGeneration()
             ImportSummary(
                 added = insertResult.added,
                 replaced = insertResult.replaced,
@@ -199,8 +217,23 @@ class PilgrimPackageImporter @Inject constructor(
      * walks that decoded but could not be inserted (a child-entity invariant
      * violation, a degenerate insert id, etc.); surfaced via
      * [ImportSummary.skipped] so they aren't silently dropped.
+     *
+     * [importedRecordingUuids] is every voice-recording uuid this import
+     * MINTED (Android's `.pilgrim` wire format carries no recording
+     * identity of its own — [PilgrimVoiceRecording] has no uuid field —
+     * so, unlike iOS, these are freshly random values [PilgrimPackageConverter]
+     * generated for this import, never a stable cross-device identity).
+     * Captured for every walk that reached conversion, regardless of
+     * whether its own transaction subsequently succeeded — mirroring
+     * iOS's over-clear (BEH-68): the uuid list is fixed before the
+     * insert attempt, not filtered down to what actually landed.
      */
-    private data class InsertResult(val added: Int, val replaced: Int, val failed: Int)
+    private data class InsertResult(
+        val added: Int,
+        val replaced: Int,
+        val failed: Int,
+        val importedRecordingUuids: List<String>,
+    )
 
     /**
      * Each walk is imported in its OWN top-level Room transaction (see the
@@ -218,7 +251,7 @@ class PilgrimPackageImporter @Inject constructor(
      * `failed`; sibling walks already committed are unaffected.
      */
     private suspend fun insertWalks(walks: List<PilgrimWalk>, overwriteByUuid: Boolean): InsertResult {
-        if (walks.isEmpty()) return InsertResult(0, 0, 0)
+        if (walks.isEmpty()) return InsertResult(0, 0, 0, emptyList())
 
         val walkDao = database.walkDao()
         val routeDao = database.routeDataSampleDao()
@@ -233,6 +266,7 @@ class PilgrimPackageImporter @Inject constructor(
         // uuid twice is handled once, not double-replaced).
         val existingUuids = walkDao.getAllUuids().toHashSet()
         val processedInBatch = HashSet<String>()
+        val importedRecordingUuids = mutableListOf<String>()
 
         var added = 0
         var replaced = 0
@@ -271,6 +305,13 @@ class PilgrimPackageImporter @Inject constructor(
                         walkDao.deleteByUuids(listOf(pilgrimWalk.id))
                     }
                     val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+                    // Captured BEFORE the insert attempt below — a local
+                    // var mutation survives even if the transaction throws
+                    // afterward and rolls back (DB rollback undoes writes,
+                    // not JVM-local state), matching iOS's over-clear: the
+                    // uuid list is fixed at conversion time, not filtered
+                    // down to what actually landed.
+                    importedRecordingUuids += pending.voiceRecordings.map { it.uuid }
                     val newWalkId = walkDao.insert(pending.walk)
                     check(newWalkId > 0) {
                         "walkDao.insert returned $newWalkId for uuid=${pilgrimWalk.id}"
@@ -299,7 +340,7 @@ class PilgrimPackageImporter @Inject constructor(
                 failed += 1
             }
         }
-        return InsertResult(added, replaced, failed)
+        return InsertResult(added, replaced, failed, importedRecordingUuids)
     }
 
     /**

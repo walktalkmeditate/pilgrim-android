@@ -65,7 +65,7 @@ import kotlinx.serialization.json.Json
  * required if analysis ever moved to a process-surviving substrate.
  */
 @Singleton
-class TranscriptContextStore @Inject constructor(
+open class TranscriptContextStore @Inject constructor(
     @ApplicationContext private val context: Context,
     private val json: Json,
 ) {
@@ -197,7 +197,9 @@ class TranscriptContextStore @Inject constructor(
         }
     }
 
-    suspend fun clearTombstones(uuids: List<String>) {
+    /** `open` so tests can spy on calls (mirrors [org.walktalkmeditate.pilgrim.data.WalkRepository]'s
+     * own `open` methods used the same way). */
+    open suspend fun clearTombstones(uuids: List<String>) {
         if (uuids.isEmpty()) return
         withContext(Dispatchers.IO) {
             mutex.withLock {
