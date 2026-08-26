@@ -44,7 +44,7 @@ import kotlin.math.sqrt
 object VaderSentiment {
 
     @Volatile
-    private var lexicon: Map<String, Double> = emptyMap()
+    private var lexicon: Map<String, Double>? = null
 
     /** Wires the token -> mean-sentiment lexicon [score] reads from
      * (parsed from `assets/threads/vader-lexicon.txt.gzip` by whichever
@@ -60,19 +60,25 @@ object VaderSentiment {
      * no token the lexicon covers (including empty/blank text).
      */
     fun score(text: String): Double? {
+        val lex = requireLexicon()
         val tokens = TranscriptNlp.wordTokens(text)
         var sum = 0.0
         var covered = false
         for (i in tokens.indices) {
             val token = tokens[i]
             if (token in BOOSTER_WORDS) continue
-            val base = lexicon[token] ?: continue
+            val base = lex[token] ?: continue
             covered = true
             sum += valenceFor(tokens, i, base)
         }
         if (!covered) return null
         return normalize(sum)
     }
+
+    private fun requireLexicon(): Map<String, Double> =
+        lexicon ?: error(
+            "VaderSentiment.install(lexicon) must run before score() is called — see this object's KDoc.",
+        )
 
     private fun valenceFor(tokens: List<String>, index: Int, base: Double): Double {
         val negated = (1..NEGATION_WINDOW).any { distance ->
