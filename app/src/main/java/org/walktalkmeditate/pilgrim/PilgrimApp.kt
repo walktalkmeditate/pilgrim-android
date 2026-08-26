@@ -44,6 +44,18 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var orphanSweeperSchedulerProvider: Provider<OrphanSweeperScheduler>
 
     /**
+     * U6: iOS parity `MainCoordinator.init()`'s unconditional
+     * `Task { @MainActor in ThreadsBackfill.runIfNeeded() }` — called on
+     * every process start regardless of the toggle or battery state;
+     * [org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillScheduler.ensureScheduled]'s
+     * own KEEP-policy enqueue and [org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillWorker]'s
+     * internal guards decide whether real work happens, not this call
+     * site. Without it the backfill never runs at all.
+     */
+    @Inject lateinit var threadsBackfillSchedulerProvider:
+        Provider<org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillScheduler>
+
+    /**
      * E2 cold-start reconcile for the launcher-icon switcher. When the
      * user picks an icon, [IconSwitcher.switchTo] intentionally leaves
      * the previously-running alias enabled so the live MainActivity
@@ -231,6 +243,12 @@ class PilgrimApp : Application(), Configuration.Provider {
         // soundscape DataStore subscriptions, etc.) never instantiates
         // there — that's the rss savings.
         orphanSweeperSchedulerProvider.get().scheduleDaily()
+
+        // U6: unconditional on every process start — the scheduler's KEEP
+        // policy dedupes a redundant call while a sweep is already
+        // enqueued/running, and the worker's own toggle/battery/
+        // completion guards decide whether real work happens.
+        threadsBackfillSchedulerProvider.get().ensureScheduled()
 
         // Seed bell + soundscape selection defaults on first launch
         // so MeditationBellObserver's null-id "None" guard doesn't
