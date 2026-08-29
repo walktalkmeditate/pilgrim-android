@@ -47,8 +47,19 @@ data class TranscriptContext(
         /**
          * Bump in lockstep with any change to theme/marker derivation
          * (stoplists, tokenizer rules, lexicons) — see this class's KDoc.
+         *
+         * v2 (iOS schema v4->v5 fold-in, 2026-08-28): [SpokenStoplist]
+         * gained [SpokenStoplist.filler] plus `time`/`person`/`app` in
+         * [SpokenStoplist.lightNouns], making a v1 file's themes wrong
+         * rather than merely coarse — its stored themes may name filler
+         * ('yeah') or the new light nouns ('time', 'person', 'app'). The
+         * bump forces every stored recording to re-analyze under the
+         * tightened stoplists. (iOS's v5 also covers its letterCore
+         * punctuation repair; this substrate's tokenizer never had that
+         * bug, so only the stoplist half applies here.) No moon-line
+         * re-arm accompanies this bump, same as iOS.
          */
-        const val ANALYSIS_VERSION = 1
+        const val ANALYSIS_VERSION = 2
 
         fun hashTranscript(transcript: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(transcript.toByteArray(Charsets.UTF_8))
