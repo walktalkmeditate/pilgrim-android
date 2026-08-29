@@ -136,6 +136,66 @@ class ThemeExtractorTest {
         assertEquals(3.0 / TranscriptNlp.wordCount(text), themes.single().salience, 0.0)
     }
 
+    // --- SpokenStoplist.filler + time/person/app light nouns (iOS 2026-08-28 field-report fold-in) ---
+
+    @Test
+    fun `yeah spoken three times among real content never threads`() {
+        // On this substrate "yeah" is not WordNet-listed at all, so it can't
+        // even become a candidate — SpokenStoplist.filler is belt on top of
+        // that structural immunity (iOS needed the list to do the whole job:
+        // NLTagger classes 'yeah' as a noun in Whisper's lowercase runs).
+        val text = pad(repeatedWords("yeah", 3) + repeatedWords("music", 2))
+
+        val themes = ThemeExtractor.themes(text)
+
+        assertEquals(listOf("music"), themes.map { it.lemma })
+    }
+
+    @Test
+    fun `time, person, and app repeated enough to qualify never thread`() {
+        val text = pad(
+            repeatedWords("time", 3) + repeatedWords("person", 3) +
+                repeatedWords("app", 3) + repeatedWords("music", 2),
+        )
+
+        val themes = ThemeExtractor.themes(text)
+
+        assertEquals(listOf("music"), themes.map { it.lemma })
+    }
+
+    @Test
+    fun `plural surfaces times and people are load-bearing stoplist members, not documentation`() {
+        // Morphy's own-form-first lookup keeps "times" and "people" as their
+        // own lemmas (both are WordNet noun-listed in their own right) — they
+        // never fold to "time"/"person" the way iOS's NLTagger folds them, so
+        // listing only the singulars would leave both threading.
+        val text = pad(repeatedWords("times", 2) + repeatedWords("people", 2) + repeatedWords("music", 2))
+
+        val themes = ThemeExtractor.themes(text)
+
+        assertEquals(listOf("music"), themes.map { it.lemma })
+    }
+
+    @Test
+    fun `a pure-filler transcript yields zero themes`() {
+        // "okay" is the one filler member WordNet noun-lists in its own
+        // right — without SpokenStoplist.filler it threads here.
+        val text = pad(repeatedWords("okay", 3) + repeatedWords("yeah", 3) + repeatedWords("gonna", 3))
+        assertTrue(TranscriptNlp.wordCount(text) >= ThemeExtractor.MINIMUM_WORDS)
+
+        assertEquals(emptyList<Theme>(), ThemeExtractor.themes(text))
+    }
+
+    @Test
+    fun `a real noun spoken three times amid filler still threads`() {
+        val text = pad(repeatedWords("garden", 3) + repeatedWords("yeah", 2) + repeatedWords("okay", 2))
+
+        val themes = ThemeExtractor.themes(text)
+
+        assertEquals(listOf("garden"), themes.map { it.lemma })
+        assertEquals(3, themes.single().mentionCount)
+    }
+
     // --- minimumWords: exact boundary ---
 
     @Test

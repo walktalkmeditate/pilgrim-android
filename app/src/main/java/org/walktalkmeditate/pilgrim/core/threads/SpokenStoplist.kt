@@ -2,20 +2,22 @@
 package org.walktalkmeditate.pilgrim.core.threads
 
 /**
- * Two stoplists ported verbatim from `Pilgrim/Models/Threads/TranscriptNLP.swift`
- * at the frozen iOS pin (`0172e2b`), plus two Android-original additions.
- * Collapsing the two ported lists into one over- or under-suppresses
- * depending on the caller: [lightNouns] feeds noun-only theme extraction;
- * [scaffoldLemmas] feeds the verb-inclusive recurring-word attention
- * directive (a later unit) and — Android-original compensation, since this
- * substrate's dictionary POS has no contextual disambiguation — the
- * noun-only theme path as well, in [ThemeExtractor].
+ * Three stoplists ported verbatim from `Pilgrim/Models/Threads/TranscriptNLP.swift`
+ * at the frozen iOS pin (`0172e2b`; [filler] and the `time`/`person`/`app`
+ * light nouns fold in the 2026-08-28 iOS field-report delta), plus two
+ * Android-original additions. Collapsing the ported lists into one over-
+ * or under-suppresses depending on the caller: [lightNouns] and [filler]
+ * feed noun-only theme extraction; [scaffoldLemmas] feeds the
+ * verb-inclusive recurring-word attention directive (a later unit) and —
+ * Android-original compensation, since this substrate's dictionary POS has
+ * no contextual disambiguation — the noun-only theme path as well, in
+ * [ThemeExtractor].
  *
- * Both ported lists exist because spoken-English scaffolding a tagger can
+ * The ported lists exist because spoken-English scaffolding a tagger can
  * admit as a content word is reached for out of habit, not meaning: a
  * field-confirmed bug once let "was", "have", "can", "think", and "will"
- * surface as real-device themes. Omitting either list here reintroduces
- * that exact bug.
+ * surface as real-device themes. Omitting a list here reintroduces
+ * that exact bug class.
  *
  * [androidGerundExtension] and [androidHomographNounSuppression] are the
  * two Android-original lists with no iOS counterpart at all — see each
@@ -24,12 +26,55 @@ package org.walktalkmeditate.pilgrim.core.threads
  */
 object SpokenStoplist {
 
-    /** Filed on the noun/theme side only; joined by `day`/`days`/`area` at
-     * the iOS schema v3->v4 ship gate (2026-08-25). */
+    /**
+     * Filed on the noun/theme side only; joined by `day`/`days`/`area` at
+     * the iOS schema v3->v4 ship gate (2026-08-25).
+     *
+     * `time`/`times`, `person`/`people`, `app`/`apps` joined at the iOS
+     * schema v4->v5 gate (2026-08-28), all three observed as live themes on
+     * real-device history. `app` is the walker narrating Pilgrim itself —
+     * meta-noise, never a life theme. On iOS the plurals are documentation
+     * (NLTagger folds `people` -> `person` and `times` -> `time` before the
+     * filter runs); on THIS substrate both forms do real work — Morphy's
+     * own-form-first lookup keeps `people` and `times` as their own lemmas
+     * (each is WordNet noun-listed in its own right), so the plurals here
+     * are load-bearing, not documentation.
+     */
     val lightNouns: Set<String> = setOf(
         "thing", "things", "stuff", "kind", "sort", "lot", "bit", "way", "ways",
         "one", "ones", "something", "anything", "everything", "nothing",
         "day", "days", "area",
+        "time", "times", "person", "people", "app", "apps",
+    )
+
+    /**
+     * Conversational filler filtered out of THEME extraction, joined at the
+     * iOS schema v4->v5 gate (2026-08-28) after a field report found 'yeah'
+     * threading three real walks. On iOS the noun-only restriction does not
+     * stop these (NLTagger classes 'yeah' as a NOUN in Whisper's lowercase
+     * sentence runs); on this substrate dictionary POS admits only `okay`
+     * (WordNet noun-lists it in its own right) — the rest are not in
+     * WordNet's index at all today, listed anyway so the set stays
+     * iOS-verbatim and keeps protecting if the lexicon asset ever widens.
+     *
+     * `ok` sits beside `okay` for the same iOS-verbatim reason (NLTagger
+     * lemmatizes the surface "okay" to "OK" in some positions); here Morphy
+     * keeps "okay" as itself and the two-letter surface "ok" never clears
+     * [TranscriptNlp]'s three-character floor. That same floor is why the
+     * two-letter spellings (`um`, `uh`, `er`, `mm`) are absent on both
+     * platforms — the doubled spellings Whisper actually writes are what
+     * needs listing.
+     *
+     * Deliberately NOT here, because every word added blinds the feature to
+     * that word forever: `right` (a direction on a walk — and already
+     * covered by [ThemeExtractor.walkingDomain]), `sure`, `yes`, `no`,
+     * `well`, `like`, `just`, `anyway`. Each can carry real weight in a
+     * walker's speech; none has been seen misfiring.
+     */
+    val filler: Set<String> = setOf(
+        "yeah", "yep", "yup", "nah", "okay", "ok",
+        "uhh", "umm", "erm", "hmm", "mhm", "mmm", "huh",
+        "gonna", "gotta", "wanna",
     )
 
     /** Verb-inclusive; every single-token modal word from

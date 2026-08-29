@@ -34,12 +34,13 @@ data class Theme(
  * clustering here.
  *
  * Android-original compensation: candidates are also filtered through
- * [SpokenStoplist.scaffoldLemmas], on top of [walkingDomain] and
- * [SpokenStoplist.lightNouns] (iOS's only two theme-side filters). iOS
- * never needs the scaffold filter here because its contextual tagger never
- * admits a scaffold verb ("think", "have", "will", ...) as a noun in the
- * first place; this substrate's dictionary POS does, since WordNet lists
- * real noun senses for those exact surface forms.
+ * [SpokenStoplist.scaffoldLemmas], on top of [walkingDomain],
+ * [SpokenStoplist.lightNouns], and [SpokenStoplist.filler] (iOS's three
+ * theme-side filters). iOS never needs the scaffold filter here because
+ * its contextual tagger never admits a scaffold verb ("think", "have",
+ * "will", ...) as a noun in the first place; this substrate's dictionary
+ * POS does, since WordNet lists real noun senses for those exact surface
+ * forms.
  *
  * A second, narrower Android-original filter,
  * [SpokenStoplist.androidGerundExtension], suppresses a handful of gerunds
@@ -90,10 +91,14 @@ object ThemeExtractor {
         val wordCount = TranscriptNlp.wordCount(text)
         if (wordCount < MINIMUM_WORDS) return emptyList()
 
+        // The noun class is necessary but not sufficient: on iOS NLTagger
+        // also calls 'yeah' a noun, and here WordNet noun-lists 'okay' —
+        // [SpokenStoplist.filler] carries what lexical class cannot.
         val candidates = TranscriptNlp.contentLemmaMentions(text, classes = setOf(PosClass.NOUN))
             .filterNot { mention ->
                 mention.lemma in walkingDomain ||
                     mention.lemma in SpokenStoplist.lightNouns ||
+                    mention.lemma in SpokenStoplist.filler ||
                     mention.lemma in SpokenStoplist.scaffoldLemmas ||
                     mention.lemma in SpokenStoplist.androidGerundExtension ||
                     mention.lemma in SpokenStoplist.androidHomographNounSuppression
