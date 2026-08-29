@@ -87,12 +87,16 @@ class AttentionDirectivesTest {
         "gate", "wall", "roof", "door", "window", "cellar", "chimney",
     )
 
-    private fun subjectLemmaCount(text: String): Int =
+    private fun subjectLemmas(text: String): Set<String> =
         TranscriptNlp.contentLemmaMentions(text)
             .map { it.lemma }
             .toSet()
             .minus(SpokenStoplist.scaffoldLemmas)
-            .size
+
+    private fun subjectLemmaCount(text: String): Int = subjectLemmas(text).size
+
+    private fun sharedLemmaCount(first: String, second: String): Int =
+        subjectLemmas(first).intersect(subjectLemmas(second)).size
 
     private fun context(
         recordings: List<RecordingContext> = emptyList(),
@@ -569,6 +573,60 @@ class AttentionDirectivesTest {
             ),
         )
         assertFalse("a contained vocabulary never changed subject: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `subject shift at an overlap of exactly the ceiling fires`() {
+        // The ceiling is exclusive. The disjoint and subset cases pin
+        // overlap 0.0 and 1.0; anywhere between them a retuned constant or
+        // a `>=` comparison passes unnoticed, so this fixture lands ON
+        // 0.20 — three shared lemmas against a 15-lemma smaller side.
+        val shared = extraSubjectWords.take(3)
+        val opening = (openingSubjectWords + shared).joinToString(separator = " ")
+        val closing = (closingSubjectWords + shared).joinToString(separator = " ")
+        assertEquals(15, subjectLemmaCount(opening))
+        assertEquals(15, subjectLemmaCount(closing))
+        assertEquals(3, sharedLemmaCount(opening, closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertTrue(
+            "an overlap of exactly 0.20 is still little enough vocabulary to speak on: $directives",
+            directives.contains("shares little vocabulary with the first"),
+        )
+    }
+
+    @Test
+    fun `subject shift at an overlap one lemma above the ceiling stays silent`() {
+        // The same three shared lemmas against a 12-lemma smaller side reads
+        // 0.25 — a quarter of the closing recording is the opening's own
+        // vocabulary, which is a walk that wandered, not one that changed
+        // subject.
+        val shared = extraSubjectWords.take(3)
+        val opening = (openingSubjectWords.dropLast(3) + shared).joinToString(separator = " ")
+        val closing = (closingSubjectWords.dropLast(3) + shared).joinToString(separator = " ")
+        assertEquals(12, subjectLemmaCount(opening))
+        assertEquals(12, subjectLemmaCount(closing))
+        assertEquals(3, sharedLemmaCount(opening, closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertFalse(
+            "an overlap of 0.25 is past the ceiling: $directives",
+            directives.contains("attend to what moved"),
+        )
     }
 
     @Test

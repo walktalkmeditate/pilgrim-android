@@ -153,6 +153,12 @@ class ThemeExtractorTest {
 
     @Test
     fun `time, person, and app repeated enough to qualify never thread`() {
+        // "time" and "person" are WordNet noun-listed, so lightNouns earns
+        // its keep on both. "app" is not in the committed index at all and
+        // so could never have threaded here with or without the list — its
+        // membership is pinned verbatim by SpokenStoplistTest; it stays in
+        // this fixture to carry the iOS field report's intent, not as live
+        // coverage.
         val text = pad(
             repeatedWords("time", 3) + repeatedWords("person", 3) +
                 repeatedWords("app", 3) + repeatedWords("music", 2),
