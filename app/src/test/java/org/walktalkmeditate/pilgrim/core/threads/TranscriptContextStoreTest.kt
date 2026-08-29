@@ -4,6 +4,8 @@ package org.walktalkmeditate.pilgrim.core.threads
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.After
@@ -139,6 +141,51 @@ class TranscriptContextStoreTest {
 
         assertFalse(store.hasCurrentContext("v1-era"))
         assertNull(store.read("v1-era", "hash-v1-era"))
+    }
+
+    /**
+     * A pre-fold-in file as it was ACTUALLY written: the key absent
+     * entirely, because the property defaulted to the then-current
+     * version and `encodeDefaults = false` dropped it. Hand-written
+     * rather than round-tripped — round-tripping a `copy(analysisVersion
+     * = 1)` produces a file that carries the key, which is precisely the
+     * shape this test must not stand in for.
+     */
+    private fun plantKeylessFile(uuid: String, hash: String = "hash-$uuid") {
+        val dir = File(context.filesDir, "transcript_contexts").apply { mkdirs() }
+        val body = """
+            {"uuid":"$uuid","languageCode":"en","wordCount":30,"themes":[],
+            "markers":{"wordCount":30,"absolutistCount":0,"firstPersonCount":0,
+            "insightCount":0,"causationCount":0,"discrepancyCount":0,
+            "temporalLean":"PRESENT"},"transcriptHash":"$hash"}
+        """.trimIndent().replace("\n", "")
+        GZIPOutputStream(File(dir, "$uuid.json.gz").outputStream()).use {
+            it.write(body.toByteArray(Charsets.UTF_8))
+        }
+    }
+
+    @Test
+    fun `a file written without an analysisVersion key reads as stale, never as current`() = runTest {
+        plantKeylessFile("keyless")
+
+        assertNull("a keyless file must not satisfy a current-version read", store.read("keyless", "hash-keyless"))
+        assertFalse("a keyless file must not read as current", store.hasCurrentContext("keyless"))
+        assertEquals(emptyList<String>(), store.loadAll().map { it.uuid })
+        // The sweep still has to see it, or the stale file is never cleaned up.
+        assertEquals(listOf("keyless"), store.loadAllIncludingStaleVersions().map { it.uuid })
+    }
+
+    @Test
+    fun `a saved file carries the analysisVersion key on disk, not only in memory`() = runTest {
+        store.save(fixture("written"))
+
+        val body = GZIPInputStream(File(context.filesDir, "transcript_contexts/written.json.gz").inputStream())
+            .use { it.bufferedReader(Charsets.UTF_8).readText() }
+
+        assertTrue(
+            "the version must reach disk or every future bump is inert: $body",
+            body.contains("\"analysisVersion\":${TranscriptContext.ANALYSIS_VERSION}"),
+        )
     }
 
     // ---- unreadable-dir signal must not read as empty ----

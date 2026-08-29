@@ -86,6 +86,10 @@ class ThreadIntentionSuggestionsTest {
         themes = themes.toList(),
         markers = markers(),
         transcriptHash = "hash-$uuid",
+        // Explicit, as at the production write site: the property defaults
+        // to the stale sentinel, so an omission here would seed history
+        // this engine correctly refuses to read.
+        analysisVersion = TranscriptContext.ANALYSIS_VERSION,
     )
 
     /** Saves [uuid] -> [theme] on its own walk [daysAgo] days before [now], returns the (uuid, WalkLite) pair. */

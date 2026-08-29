@@ -93,6 +93,7 @@ class ThreadsDeletionHygieneTest {
             temporalLean = TemporalLean.PRESENT,
         ),
         transcriptHash = "hash-$uuid",
+        analysisVersion = TranscriptContext.ANALYSIS_VERSION,
     )
 
     private var timestampCounter = 1_000L

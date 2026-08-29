@@ -24,6 +24,17 @@ import kotlinx.serialization.Serializable
  * from iOS (project convention) — but the three visibility rules above are
  * pinned parity regardless of the number.
  *
+ * [analysisVersion] defaults to the [UNVERSIONED] sentinel, NOT to
+ * [ANALYSIS_VERSION], and every write site passes the current version
+ * explicitly. The store's `Json` runs with `encodeDefaults = false`, so a
+ * property whose value equals its declared default is dropped from the
+ * encoded file — defaulting to the current version would mean the key
+ * never reaches disk at all, and every file already on disk would then
+ * decode as whatever version is current at read time. That defeats every
+ * future bump silently: nothing looks stale, so nothing re-analyzes. A
+ * sentinel no real version equals keeps both halves honest — the key is
+ * always encoded, and a file that genuinely lacks it reads as stale.
+ *
  * [transcriptHash] is SHA-256 over the transcript's UTF-8 bytes, lowercase
  * hex, no separator or prefix (EDG-39) — computed via [hashTranscript].
  * [markers] is never null for a WRITTEN context: the English-only gate
@@ -41,9 +52,18 @@ data class TranscriptContext(
     val themes: List<Theme>,
     val markers: TranscriptMarkers,
     val transcriptHash: String,
-    val analysisVersion: Int = ANALYSIS_VERSION,
+    val analysisVersion: Int = UNVERSIONED,
 ) {
     companion object {
+        /**
+         * Stands for "this file predates versioned analysis, or was
+         * written by a build that failed to record its version" — see
+         * this class's KDoc for why the default is a sentinel. Never a
+         * value [ANALYSIS_VERSION] may take, so a sentinel-versioned
+         * context can only ever read as stale.
+         */
+        const val UNVERSIONED = 0
+
         /**
          * Bump in lockstep with any change to theme/marker derivation
          * (stoplists, tokenizer rules, lexicons) — see this class's KDoc.

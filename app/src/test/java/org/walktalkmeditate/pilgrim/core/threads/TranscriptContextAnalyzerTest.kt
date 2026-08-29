@@ -120,6 +120,17 @@ class TranscriptContextAnalyzerTest {
         assertTrue(store.hasContext("u1"))
     }
 
+    @Test
+    fun `a written context is stamped with the current analysis version, never the sentinel`() = runTest {
+        analyzer.analyzeAndStore("u1", musicText)
+
+        // hasCurrentContext is the discriminant the backfill sweeps on: an
+        // unstamped write would leave every recording permanently stale and
+        // the sweep permanently incomplete.
+        assertTrue(store.hasCurrentContext("u1"))
+        assertEquals(TranscriptContext.ANALYSIS_VERSION, store.readRaw("u1")!!.analysisVersion)
+    }
+
     // ---- flagged-range theme survival polarity ----
 
     @Test

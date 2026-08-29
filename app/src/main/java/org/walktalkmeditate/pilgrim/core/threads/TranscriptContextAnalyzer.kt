@@ -73,6 +73,7 @@ class TranscriptContextAnalyzer @Inject constructor(
             themes = themes,
             markers = markers,
             transcriptHash = TranscriptContext.hashTranscript(transcript),
+            analysisVersion = TranscriptContext.ANALYSIS_VERSION,
         )
         return context.takeIf { store.save(context) }
     }
