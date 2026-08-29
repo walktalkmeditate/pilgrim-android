@@ -13,16 +13,38 @@ import org.junit.Test
 class SpokenStoplistTest {
 
     @Test
-    fun `lightNouns is the exact 18-word verbatim set, including the day, days, area additions`() {
+    fun `lightNouns is the exact 24-word verbatim set, including the time, person, app additions`() {
         assertEquals(
             setOf(
                 "thing", "things", "stuff", "kind", "sort", "lot", "bit", "way", "ways",
                 "one", "ones", "something", "anything", "everything", "nothing",
                 "day", "days", "area",
+                "time", "times", "person", "people", "app", "apps",
             ),
             SpokenStoplist.lightNouns,
         )
-        assertEquals(18, SpokenStoplist.lightNouns.size)
+        assertEquals(24, SpokenStoplist.lightNouns.size)
+    }
+
+    @Test
+    fun `filler is the exact 16-word verbatim set`() {
+        assertEquals(
+            setOf(
+                "yeah", "yep", "yup", "nah", "okay", "ok",
+                "uhh", "umm", "erm", "hmm", "mhm", "mmm", "huh",
+                "gonna", "gotta", "wanna",
+            ),
+            SpokenStoplist.filler,
+        )
+        assertEquals(16, SpokenStoplist.filler.size)
+    }
+
+    @Test
+    fun `filler deliberately excludes the words that can carry real weight`() {
+        // right/sure/yes/no/well/like/just/anyway — every word added blinds
+        // the feature to that word forever; see SpokenStoplist.filler's KDoc.
+        val deliberatelyAbsent = setOf("right", "sure", "yes", "no", "well", "like", "just", "anyway")
+        assertTrue(SpokenStoplist.filler.intersect(deliberatelyAbsent).isEmpty())
     }
 
     @Test
