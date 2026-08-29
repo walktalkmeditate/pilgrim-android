@@ -123,6 +123,38 @@ class TranscriptNlpTest {
         assertEquals(listOf("was" to "be", "grieving" to "grieve"), mentions.map { it.surface to it.lemma })
     }
 
+    // --- Structural immunity to the iOS letterCore bug class (2026-08-28 field report) ---
+    // iOS's NLTagger `.word` tokens can swallow a sentence-final period when
+    // a lowercase word follows — the shape Whisper writes — so "yeah." and
+    // "garden.the" reached lemma identity with punctuation inside them
+    // (field-confirmed: a Recurring chip printing "yeah."). This tokenizer
+    // splits on non-letter RUNS before any lemma lookup, so that bug class
+    // is structurally impossible here; these tests PIN the property.
+
+    @Test
+    fun `punctuation-glued 'yeah' yields the bare token — pins structural immunity to the iOS letterCore bug class`() {
+        assertEquals(listOf("yeah"), TranscriptNlp.wordTokens("yeah."))
+        assertEquals(
+            listOf("yeah", "yeah", "i", "think", "so", "yeah"),
+            TranscriptNlp.wordTokens("Yeah. Yeah. I think so, yeah."),
+        )
+    }
+
+    @Test
+    fun `no-space glue 'garden,the' splits and extracts garden — pins structural immunity to the iOS letterCore bug class`() {
+        assertEquals(listOf("garden", "the"), TranscriptNlp.wordTokens("garden.the"))
+
+        val mentions = TranscriptNlp.contentLemmaMentions("I keep circling the garden.the garden holds it")
+
+        assertEquals(2, mentions.count { it.lemma == "garden" })
+        assertTrue(
+            "no lemma identity may carry punctuation: $mentions",
+            mentions.none { mention ->
+                mention.lemma.any { !it.isLetter() } || mention.surface.any { !it.isLetter() }
+            },
+        )
+    }
+
     @Test
     fun `related is true for identical strings regardless of language`() {
         assertTrue(TranscriptNlp.related("marche", "marche", "fr"))
