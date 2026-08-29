@@ -1004,6 +1004,8 @@ All strings in this component are pasted directly into an AI prompt — wording,
 
 - **[EDG-86] First-vs-last: ≥2 recordings, fixed non-parameterized template.** `guard context.recordings.count >= 2 else { return nil }; return "Compare the first recording with the last — measure what changed in the walker between them."` > `Pilgrim/Models/Prompt/AttentionDirectives.swift:24-31,143-144@0172e2b`.
 
+  > **SUPERSEDED at `e7051bc` (fold-in, 2026-08-29).** iOS PR #72 replaced this unconditional line — it fired on every walk with two recordings and presupposed its own conclusion. The shipped detector now measures before it speaks: a speaking-rate branch (both recordings ≥ 25 words, relative change ≥ ±0.15) tried first, then a subject branch (content lemmas minus scaffolding, smaller set ≥ 12, length ratio ≤ 3.0, overlap coefficient ≤ 0.20), both failing closed. Three parameterized strings replace the one template. The quote above remains accurate for the `0172e2b` pin this spec was written against; Android ships the superseding behavior in `AttentionDirectives.firstVersusLast`.
+
 - **[BEH-73] No actor/dispatcher annotations anywhere in the type.** `detect` runs CPU-bound NLTagger work over the full joined transcript wherever the caller invokes it (`let spokenMentions = context.hasSpeech ? TranscriptNLP.contentLemmaMentions(in: context.recordings.map(\.text).joined(separator: " ")) : []`). > `Pilgrim/Models/Prompt/AttentionDirectives.swift:15-23@0172e2b` — on Android this is exactly the CPU-on-Main trap from project memory (Stages 2-E/5-C/5-D): the prompt-assembly call needs an explicit `withContext(Dispatchers.Default)`.
 
 ### Prompt assembly — `PromptAssembler.swift`, `PromptGenerator.swift`, `PromptContextTypes.swift`
