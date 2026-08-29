@@ -252,7 +252,7 @@ object PromptAssembler {
 
         sections.append("\n\n---\n\n").append(fullInstruction)
         sections.append("\n\n").append(
-            responseContract(voice, context.hasSpeech, hasThreadsDossier = context.threadsDossier != null),
+            responseContract(voice, context.hasSpeech, threadsDossier = context.threadsDossier),
         )
         return sections.toString()
     }
@@ -318,13 +318,15 @@ object PromptAssembler {
      * constraints. This shapes the *reply's* quality — the part of the
      * feature the walker actually experiences.
      *
-     * @param hasThreadsDossier Gates the thought-thread safety line on the
+     * @param threadsDossier The dossier TEXT when the walk carries one,
+     *   null otherwise. Gates the thought-thread safety line on the
      *   ARTIFACT ([ActivityContext.threadsDossier] != null), never the raw
      *   `threadsAfterWalks` preference (BEH-75) — the preference can be on
      *   with nothing yet analyzed, which must not show a caveat about data
-     *   that isn't there.
+     *   that isn't there. The text itself feeds [interpretiveKey], which
+     *   teaches only the marker signals this dossier actually printed.
      */
-    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean, hasThreadsDossier: Boolean): String {
+    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean, threadsDossier: String?): String {
         val lines = voice.responseConstraints(hasSpeech).toMutableList()
         if (hasSpeech) {
             lines.add("Respond in the language the walker speaks in the transcription.")
@@ -334,18 +336,65 @@ object PromptAssembler {
                     "guess at names.",
             )
         }
-        if (hasThreadsDossier) {
+        if (threadsDossier != null) {
             lines.add(
                 "The thought-thread marker profiles are descriptive on-device linguistic signals, " +
                     "not assessments — interpret them gently, never produce clinical or diagnostic " +
                     "language, and never treat a single walk's numbers as meaningful on their own.",
             )
+            interpretiveKey(threadsDossier)?.let { lines.add(it) }
         }
         lines.add(
             "Draw only on what this walk actually holds — never invent details, events, or " +
                 "memories that are not in the context above.",
         )
         return "**How to respond:**\n" + lines.joinToString(separator = "\n") { "- $it" }
+    }
+
+    /**
+     * How to read the marker signals — but only the ones this dossier
+     * actually printed. `ThreadsDossierFormatter.markerLine` prints
+     * "Markers unavailable" for a non-English recording and raw counts
+     * rather than shares below `DENSITY_FLOOR_WORDS`, and the modal-lean
+     * clause sits behind three thresholds and is usually silent. Teaching
+     * a taxonomy the dossier withheld hands the model vocabulary with no
+     * referent, and it will find something to attach it to.
+     *
+     * The probes match the formatter's own phrasings. That coupling is
+     * the point — it is pinned by the "against real formatter output"
+     * tests in PromptResponseContractTest, which run the real formatter,
+     * so a phrasing change fails a test rather than silently suppressing
+     * the key on every walk.
+     *
+     * At most one line either way: the contract's accretion budget does
+     * not grow to pay for this.
+     */
+    private fun interpretiveKey(dossier: String): String? {
+        val clauses = mutableListOf<String>()
+        if (dossier.contains("absolutist words")) {
+            clauses.add(
+                "Read the absolutist-word share as how fixed the walker's framing was, and " +
+                    "self-focus as how far they placed themselves at the centre of it.",
+            )
+        } else if (dossier.contains("raw counts only")) {
+            clauses.add(
+                "Read the absolutist and self-focus counts as a bare tally of how fixed the " +
+                    "walker's framing was and how far they placed themselves at the centre of it — " +
+                    "too few words to read as a rate, so do not weigh them.",
+            )
+        }
+        if (dossier.contains("modal lean:")) {
+            clauses.add(
+                "Read the modal lean as the frame the walker was working inside — obligation " +
+                    "means the frame constrained them, counterfactual means they were already " +
+                    "replaying alternatives, possibility and tentative mean it was still open, " +
+                    "intention means they had settled on a course, and desire means they were " +
+                    "naming a want rather than a plan.",
+            )
+        }
+        if (clauses.isEmpty()) return null
+        return (clauses + "None of these has a fixed meaning; read each through this walk's intention and practice.")
+            .joinToString(separator = " ")
     }
 
     private fun formatPhotoSection(
