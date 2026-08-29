@@ -16,6 +16,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ReflectiveVoice
+import org.walktalkmeditate.pilgrim.core.threads.SpokenStoplist
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
 import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 
@@ -49,15 +50,49 @@ class AttentionDirectivesTest {
         .toInstant()
         .toEpochMilli()
 
-    private fun recording(text: String, offsetSeconds: Long = 300L): RecordingContext =
+    private fun recording(
+        text: String,
+        offsetSeconds: Long = 300L,
+        wordsPerMinute: Double? = null,
+    ): RecordingContext =
         RecordingContext(
             uuid = "r-$offsetSeconds",
             timestamp = start + offsetSeconds * 1000L,
             startCoordinate = null,
             endCoordinate = null,
-            wordsPerMinute = null,
+            wordsPerMinute = wordsPerMinute,
             text = text,
         )
+
+    /** [count] filler tokens that are never WordNet content words — clears
+     * [TranscriptNlp.wordCount] floors without adding a single subject lemma. */
+    private fun paddedWords(count: Int): String = List(count) { "and" }.joinToString(separator = " ")
+
+    // Distinct WordNet-noun-listed base forms (verified against the committed
+    // asset), none in SpokenStoplist.scaffoldLemmas — each contributes exactly
+    // one subject lemma, so set sizes below are exact and auditable.
+    private val openingSubjectWords = listOf(
+        "river", "bridge", "mountain", "music", "harvest", "temple",
+        "candle", "lantern", "forest", "garden", "stone", "water",
+    )
+
+    private val closingSubjectWords = listOf(
+        "winter", "valley", "meadow", "shadow", "silence", "prayer",
+        "breath", "autumn", "ember", "orchard", "harbor", "lake",
+    )
+
+    private val extraSubjectWords = listOf(
+        "cloud", "island", "desert", "castle", "village", "bell", "rain", "snow",
+        "wind", "fire", "star", "moon", "tree", "bird", "fish", "horse", "tower",
+        "gate", "wall", "roof", "door", "window", "cellar", "chimney",
+    )
+
+    private fun subjectLemmaCount(text: String): Int =
+        TranscriptNlp.contentLemmaMentions(text)
+            .map { it.lemma }
+            .toSet()
+            .minus(SpokenStoplist.scaffoldLemmas)
+            .size
 
     private fun context(
         recordings: List<RecordingContext> = emptyList(),
@@ -336,10 +371,12 @@ class AttentionDirectivesTest {
         )
     }
 
-    // --- First vs last recording ---------------------------------------------
+    // --- First vs last recording (fires only on a measured shift) ------------
 
     @Test
-    fun `first versus last two recordings fires`() {
+    fun `first versus last two short recordings with nothing measurable contributes nothing`() {
+        // The old version fired unconditionally on every two-recording walk,
+        // presupposing its own conclusion — that line is gone.
         val directives = joined(
             context(
                 recordings = listOf(
@@ -348,18 +385,282 @@ class AttentionDirectivesTest {
                 ),
             ),
         )
-        assertTrue(
-            "exact compare phrasing: $directives",
-            directives.contains(
-                "Compare the first recording with the last — measure what changed in the walker between them.",
-            ),
+        assertFalse(
+            "the old unconditional line is gone: $directives",
+            directives.contains("Compare the first recording with the last"),
+        )
+        assertFalse(
+            "no shift claim without a measured shift: $directives",
+            directives.contains("attend to what moved between them"),
         )
     }
 
     @Test
     fun `first versus last single recording does not fire`() {
         val directives = joined(context(recordings = listOf(recording("Just one thought today"))))
-        assertFalse("no compare: $directives", directives.contains("first recording"))
+        assertFalse("no compare: $directives", directives.contains("attend to what moved between them"))
+    }
+
+    @Test
+    fun `speaking rate shift of exactly plus 15 percent at the 25-word floor fires the faster line`() {
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 115.0),
+                ),
+            ),
+        )
+        assertTrue(
+            "exact faster phrasing: $directives",
+            directives.contains(
+                "The walker spoke faster by the last recording than the first — attend to what moved between them.",
+            ),
+        )
+    }
+
+    @Test
+    fun `speaking rate shift of exactly minus 15 percent at the 25-word floor fires the more-slowly line`() {
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 85.0),
+                ),
+            ),
+        )
+        assertTrue(
+            "exact more-slowly phrasing: $directives",
+            directives.contains(
+                "The walker spoke more slowly by the last recording than the first — attend to what moved between them.",
+            ),
+        )
+    }
+
+    @Test
+    fun `speaking rate shift below the 15 percent threshold stays silent`() {
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 114.0),
+                ),
+            ),
+        )
+        assertFalse("under-threshold pace is silent: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `speaking rate shift with a 24-word side stays silent regardless of which side is short`() {
+        val shortFirst = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(24), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 130.0),
+                ),
+            ),
+        )
+        assertFalse("24-word first recording is noise, not a rate: $shortFirst", shortFirst.contains("attend to what moved"))
+
+        val shortLast = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(24), offsetSeconds = 3000L, wordsPerMinute = 130.0),
+                ),
+            ),
+        )
+        assertFalse("24-word last recording is noise, not a rate: $shortLast", shortLast.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `speaking rate shift with missing wordsPerMinute stays silent regardless of which side is missing`() {
+        val missingLast = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = null),
+                ),
+            ),
+        )
+        assertFalse("missing last pace is silent: $missingLast", missingLast.contains("attend to what moved"))
+
+        val missingFirst = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = null),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 130.0),
+                ),
+            ),
+        )
+        assertFalse("missing first pace is silent: $missingFirst", missingFirst.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `speaking rate shift with a zero first pace stays silent`() {
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 0.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 100.0),
+                ),
+            ),
+        )
+        assertFalse("zero first pace has no relative change: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `subject shift with disjoint 12-lemma vocabularies fires the shares-little line`() {
+        val opening = openingSubjectWords.joinToString(separator = " ")
+        val closing = closingSubjectWords.joinToString(separator = " ")
+        assertEquals(12, subjectLemmaCount(opening))
+        assertEquals(12, subjectLemmaCount(closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertTrue(
+            "exact shares-little phrasing: $directives",
+            directives.contains(
+                "The walker's last recording shares little vocabulary with the first — attend to what moved between them.",
+            ),
+        )
+    }
+
+    @Test
+    fun `subject shift with an 11-lemma smaller side stays silent`() {
+        val opening = openingSubjectWords.dropLast(1).joinToString(separator = " ")
+        assertEquals(11, subjectLemmaCount(opening))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closingSubjectWords.joinToString(separator = " "), offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertFalse("11 lemmas is below the judgment floor: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `subject shift subset vocabulary stays silent — the Jaccard regression`() {
+        // A long opening followed by a short closing note drawn entirely from
+        // the same vocabulary: the overlap coefficient reads 1.0 (correctly
+        // silent), where Jaccard would collapse to |smaller| / |larger| and
+        // penalize the short recording for being short, firing "shares little
+        // vocabulary" on a walk that never left its subject.
+        val opening = (openingSubjectWords + closingSubjectWords).joinToString(separator = " ")
+        val closing = openingSubjectWords.joinToString(separator = " ")
+        assertEquals(24, subjectLemmaCount(opening))
+        assertEquals(12, subjectLemmaCount(closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertFalse("a contained vocabulary never changed subject: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `subject shift with a length ratio above 3 stays silent at otherwise-firing vocabularies`() {
+        val opening = openingSubjectWords.joinToString(separator = " ")
+        val closing = (closingSubjectWords + extraSubjectWords + "morning").joinToString(separator = " ")
+        assertEquals(12, subjectLemmaCount(opening))
+        assertEquals(37, subjectLemmaCount(closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertFalse("a thin sample against 37 lemmas is silent: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
+    fun `subject shift at a length ratio of exactly 3 fires`() {
+        val opening = openingSubjectWords.joinToString(separator = " ")
+        val closing = (closingSubjectWords + extraSubjectWords).joinToString(separator = " ")
+        assertEquals(12, subjectLemmaCount(opening))
+        assertEquals(36, subjectLemmaCount(closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertTrue(
+            "ratio of exactly 3.0 is within the ceiling: $directives",
+            directives.contains("shares little vocabulary with the first"),
+        )
+    }
+
+    @Test
+    fun `subject shift stays silent for a non-English walk`() {
+        val detected = AttentionDirectives.detect(
+            context(
+                recordings = listOf(
+                    recording(openingSubjectWords.joinToString(separator = " ")),
+                    recording(closingSubjectWords.joinToString(separator = " "), offsetSeconds = 3000L),
+                ),
+            ),
+            detectedLanguageCode = "es",
+        )
+        assertFalse(
+            "the lemma substrate is English-only; a Spanish walk must not read as divergence: $detected",
+            detected.any { it.contains("attend to what moved") },
+        )
+    }
+
+    @Test
+    fun `speaking rate shift still fires for a non-English walk`() {
+        val detected = AttentionDirectives.detect(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 120.0),
+                ),
+            ),
+            detectedLanguageCode = "es",
+        )
+        assertTrue(
+            "the language gate belongs to the subject branch only: $detected",
+            detected.any { it.contains("The walker spoke faster by the last recording than the first") },
+        )
+    }
+
+    @Test
+    fun `pace branch wins when both pace and subject would fire`() {
+        val opening = openingSubjectWords.joinToString(separator = " ") + " " + paddedWords(13)
+        val closing = closingSubjectWords.joinToString(separator = " ") + " " + paddedWords(13)
+        assertTrue(TranscriptNlp.wordCount(opening) >= 25)
+        assertEquals(12, subjectLemmaCount(opening))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening, offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(closing, offsetSeconds = 3000L, wordsPerMinute = 120.0),
+                ),
+            ),
+        )
+        assertTrue("pace is declared first: $directives", directives.contains("The walker spoke faster"))
+        assertFalse("only one first-versus-last line may speak: $directives", directives.contains("shares little vocabulary"))
     }
 
     // --- Cap and assembly ----------------------------------------------------
@@ -386,14 +687,22 @@ class AttentionDirectivesTest {
     fun `when all five detectors fire, the array order drops firstVersusLast (the last entry)`() {
         // 30 moving + 30 still + 30 faster-moving samples: fires BOTH
         // stillness (the middle run) and paceShift (quickened final
-        // third) at once.
+        // third) at once. First and last recordings carry 25+ words and a
+        // +20% wordsPerMinute shift so firstVersusLast genuinely fires too.
         val speeds = List(30) { 1.0 } + List(30) { 0.0 } + List(30) { 1.5 }
         val detected = AttentionDirectives.detect(
             context(
                 recordings = listOf(
-                    recording("I feel the mountain calling me today"),
+                    recording(
+                        "I feel the mountain calling me today " + paddedWords(18),
+                        wordsPerMinute = 100.0,
+                    ),
                     recording("The mountain never lets go of my thoughts", offsetSeconds = 900L),
-                    recording("Every mountain reminds me why I release my grip", offsetSeconds = 1_800L),
+                    recording(
+                        "Every mountain reminds me why I release my grip " + paddedWords(16),
+                        offsetSeconds = 1_800L,
+                        wordsPerMinute = 120.0,
+                    ),
                 ),
                 durationSeconds = 3_600L,
                 routeSpeeds = speeds,
@@ -404,7 +713,7 @@ class AttentionDirectivesTest {
         assertEquals("all five detectors fire; the cap keeps only the first four: $detected", 4, detected.size)
         assertFalse(
             "firstVersusLast is last in the fixed array — it must be the one dropped: $detected",
-            detected.any { it.contains("Compare the first recording with the last") },
+            detected.any { it.contains("attend to what moved between them") },
         )
         assertTrue("stillness must survive the cap: $detected", detected.any { it.contains("stillness") })
         assertTrue("paceShift must survive the cap: $detected", detected.any { it.contains("quickened") })
@@ -431,8 +740,8 @@ class AttentionDirectivesTest {
         val telling = PromptAssembler.assemble(
             context = context(
                 recordings = listOf(
-                    recording("Setting out"),
-                    recording("Returning", offsetSeconds = 3000L),
+                    recording(paddedWords(25), wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 120.0),
                 ),
             ),
             voice = ReflectiveVoice,
@@ -442,8 +751,8 @@ class AttentionDirectivesTest {
         assertTrue(
             "telling walk renders bullets: $telling",
             telling.contains(
-                "\n\n**Attend to:**\n- Compare the first recording with the last — " +
-                    "measure what changed in the walker between them.",
+                "\n\n**Attend to:**\n- The walker spoke faster by the last recording than the first — " +
+                    "attend to what moved between them.",
             ),
         )
     }

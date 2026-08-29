@@ -21,6 +21,38 @@ object AttentionDirectives {
     private const val MOVING_THRESHOLD = 0.3
     private const val MAX_DIRECTIVES = 4
     private const val RECURRING_WORD_FLOOR = 3
+    private const val PACE_SHIFT_THRESHOLD = 0.15
+
+    /**
+     * `wordsPerMinute` over a handful of words is noise, not a speaking
+     * rate: a five-word note clears a 15% relative delta on the rounding
+     * of its own start and end timestamps. At any plausible speaking rate
+     * this floor means at least ten seconds of continuous speech on each
+     * side — the pace branch's answer to the subject branch's lemma floor.
+     */
+    private const val MINIMUM_WORDS_TO_JUDGE_PACE = 25
+    private const val SUBJECT_OVERLAP_CEILING = 0.20
+
+    /**
+     * Content lemmas, after [SpokenStoplist.scaffoldLemmas] is removed. A
+     * floor of 5 would sit far below where a lexical-overlap judgment
+     * carries any information: a sign-off ("heading back down the hill,
+     * tired but glad") clears 5 comfortably and shares nothing with a
+     * long opening, so the overlap coefficient reads zero and the
+     * directive fires on a walk that never changed subject. A genuinely
+     * divergent long pair measures around 0.06, so there is ample
+     * headroom above this floor.
+     */
+    private const val MINIMUM_LEMMAS_TO_JUDGE_SUBJECT = 12
+
+    /**
+     * Two recordings are only comparable as subjects when both carry
+     * comparable amounts of it. Past this ratio the smaller recording is
+     * a thin sample of the walk rather than its second half, and its
+     * overlap against a much longer transcript says more about its
+     * length than about what the walker was talking about.
+     */
+    private const val SUBJECT_LENGTH_RATIO_CEILING = 3.0
 
     /**
      * Android has no synchronous on-device language detector (ML Kit's
@@ -56,7 +88,7 @@ object AttentionDirectives {
             paceShift(context),
             intentionEcho(context, spokenMentions, detectedLanguageCode),
             recurringWord(context, spokenMentions),
-            firstVersusLast(context),
+            firstVersusLast(context, detectedLanguageCode),
         ).take(MAX_DIRECTIVES)
     }
 
@@ -193,8 +225,106 @@ object AttentionDirectives {
         return "The word '$display' returns $count times across the recordings — it may be doing quiet work."
     }
 
-    private fun firstVersusLast(context: ActivityContext): String? {
+    /**
+     * Fires only when something measurably moved between the first
+     * recording and the last. The previous version fired on every walk
+     * with two recordings and presupposed its own conclusion — told to
+     * measure what changed, the model finds change, including on walks
+     * where nothing did (the `questionDensity` failure mode, quieter).
+     *
+     * Marker and sentiment deltas are deliberately NOT used: they are
+     * unreachable from [ActivityContext], and computing them here would
+     * mean a fresh analyzer pass per recording. Pace is free
+     * ([RecordingContext.wordsPerMinute] is already populated); subject
+     * costs exactly two lemma passes, never N.
+     *
+     * Both branches fail closed. Each carries a floor sized so the signal
+     * it reads is measurable at all — words for a speaking rate, content
+     * lemmas for a subject — and the subject branch additionally refuses
+     * non-English walks. Silence hands the [MAX_DIRECTIVES] budget to a
+     * detector with something to say.
+     */
+    private fun firstVersusLast(context: ActivityContext, detectedLanguageCode: String?): String? {
+        val first = context.recordings.firstOrNull() ?: return null
+        val last = context.recordings.lastOrNull() ?: return null
         if (context.recordings.size < 2) return null
-        return "Compare the first recording with the last — measure what changed in the walker between them."
+
+        return speakingRateShift(first, last) ?: subjectShift(first, last, detectedLanguageCode)
     }
+
+    /** Speaking rate, not ground speed — [paceShift] above reads GPS. */
+    private fun speakingRateShift(first: RecordingContext, last: RecordingContext): String? {
+        val firstPace = first.wordsPerMinute ?: return null
+        val lastPace = last.wordsPerMinute ?: return null
+        if (firstPace <= 0.0) return null
+        if (TranscriptNlp.wordCount(first.text) < MINIMUM_WORDS_TO_JUDGE_PACE) return null
+        if (TranscriptNlp.wordCount(last.text) < MINIMUM_WORDS_TO_JUDGE_PACE) return null
+
+        val change = (lastPace - firstPace) / firstPace
+        return when {
+            change >= PACE_SHIFT_THRESHOLD ->
+                "The walker spoke faster by the last recording than the first — attend to what moved between them."
+            change <= -PACE_SHIFT_THRESHOLD ->
+                "The walker spoke more slowly by the last recording than the first — attend to what moved between them."
+            else -> null
+        }
+    }
+
+    /**
+     * Whether the walker's vocabulary moved between the two recordings.
+     *
+     * Language gate — accepted divergence from iOS: there, each
+     * recording's own text is language-identified and both must resolve
+     * to a language the OS ships a lemma model for. This substrate's
+     * lemma path is English-only (R5) and language identification is
+     * walk-level, so a mid-walk language switch is not separately
+     * detectable here; the walk's resolved code gates instead, using
+     * [intentionEcho]'s exact null convention (assume English — see this
+     * object's KDoc). The stakes match iOS's: without a lemma model an
+     * inflected language yields a distinct "lemma" per inflection and
+     * depresses overlap systematically — every Camino walk in Spanish,
+     * French, German, Italian, or Portuguese would read as total
+     * divergence. The pace branch is deliberately not gated.
+     */
+    private fun subjectShift(
+        first: RecordingContext,
+        last: RecordingContext,
+        detectedLanguageCode: String?,
+    ): String? {
+        val resolvedLanguage = detectedLanguageCode ?: DEFAULT_LANGUAGE_CODE
+        if (resolvedLanguage != DEFAULT_LANGUAGE_CODE) return null
+
+        val firstLemmas = subjectLemmas(first.text)
+        val lastLemmas = subjectLemmas(last.text)
+        val smallerCount = minOf(firstLemmas.size, lastLemmas.size)
+        val largerCount = maxOf(firstLemmas.size, lastLemmas.size)
+        if (smallerCount < MINIMUM_LEMMAS_TO_JUDGE_SUBJECT) return null
+        if (largerCount.toDouble() / smallerCount > SUBJECT_LENGTH_RATIO_CEILING) return null
+
+        // Overlap coefficient (intersection / smaller set), not Jaccard
+        // (intersection / union). Jaccard collapses to |smaller| / |larger|
+        // whenever one lemma set is a subset of the other — a long opening
+        // reflection (~30+ unique lemmas) followed by a short closing note
+        // on the SAME subject (all repeats) can then cross the ceiling on
+        // length alone, firing "shares little vocabulary" on a walk that
+        // never left its subject. The overlap coefficient is 1.0 for that
+        // same subset case (correctly silent) and still near 0 for
+        // genuinely divergent subjects, because it measures how much of
+        // the SMALLER recording is accounted for by the larger one rather
+        // than penalizing a short recording for being short.
+        val overlap = firstLemmas.intersect(lastLemmas).size.toDouble() / smallerCount
+        if (overlap > SUBJECT_OVERLAP_CEILING) return null
+
+        return "The walker's last recording shares little vocabulary with the first — attend to what moved between them."
+    }
+
+    /**
+     * The same [SpokenStoplist.scaffoldLemmas] filter [recurringWord]
+     * applies: dictionary POS admits "think", "know", "want", "keep" as
+     * content, but a speaker reaches for them out of habit. Left in, a
+     * closing recording made entirely of scaffolding clears the lemma
+     * floor on words that carry no subject at all.
+     */
+    private fun subjectLemmas(text: String): Set<String> =
+        TranscriptNlp.contentLemmaMentions(text).map { it.lemma }.toSet() - SpokenStoplist.scaffoldLemmas
 }

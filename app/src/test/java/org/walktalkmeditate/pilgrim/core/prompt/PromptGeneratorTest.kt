@@ -294,10 +294,12 @@ class PromptGeneratorTest {
 
     @Test
     fun `generateAll applies the SAME resolved directives to every style`() {
+        // "river" x3 fires the recurringWord directive so the Attend block
+        // is non-empty for every style.
         val ctx = fixtureContext(
             recordings = listOf(
-                recordingContext("Setting out"),
-                recordingContext("Coming home"),
+                recordingContext("The river was high near the river bend"),
+                recordingContext("Still thinking about the river"),
             ),
         )
         val prompts = generator.generateAll(activityContext = ctx, imperial = false, zone = nyZone)

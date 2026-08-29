@@ -641,10 +641,13 @@ class PromptAssemblerTest {
         val meditationEnd = nyTimestamp(2026, 5, 4, 10, 5)
         val waypointTime = nyTimestamp(2026, 5, 4, 9, 45)
         val photoTime = nyTimestamp(2026, 5, 4, 9, 47)
+        // 25-word texts + a +20% wordsPerMinute shift fire the
+        // firstVersusLast pace branch so the Attend marker renders.
+        val paceQualifiedText = List(25) { "and" }.joinToString(separator = " ")
         val context = fixtureContext(
             recordings = listOf(
-                RecordingContext("r1", recordingTime, null, null, null, "first"),
-                RecordingContext("r2", recordingTime + 60_000L, null, null, null, "last"),
+                RecordingContext("r1", recordingTime, null, null, 100.0, paceQualifiedText),
+                RecordingContext("r2", recordingTime + 60_000L, null, null, 120.0, paceQualifiedText),
             ),
             meditations = listOf(
                 MeditationContext(meditationStart, meditationEnd, 300L),
@@ -824,10 +827,13 @@ class PromptAssemblerTest {
 
     @Test
     fun `assemble dossier renders after recent-walks and before directives, when present`() {
+        // Pace-qualified recordings (25 words, +20% wordsPerMinute) so the
+        // Attend block renders and its position can be asserted.
+        val paceQualifiedText = List(25) { "and" }.joinToString(separator = " ")
         val context = fixtureContext(
             recordings = listOf(
-                RecordingContext("r1", testStartTimestamp, null, null, null, "Setting out"),
-                RecordingContext("r2", testStartTimestamp + 60_000L, null, null, null, "Returning"),
+                RecordingContext("r1", testStartTimestamp, null, null, 100.0, paceQualifiedText),
+                RecordingContext("r2", testStartTimestamp + 60_000L, null, null, 120.0, paceQualifiedText),
             ),
             recentWalkSnippets = listOf(
                 WalkSnippet(
