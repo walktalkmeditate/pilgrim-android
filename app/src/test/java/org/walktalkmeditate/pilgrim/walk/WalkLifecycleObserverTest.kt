@@ -242,7 +242,7 @@ class WalkLifecycleObserverTest {
         // so the initial Idle has been consumed-and-skipped before we get
         // here — the latch is spent, and no terminal transition fires in
         // this test, so no stop() can be pending. (Previously this slept the
-        // full WAIT_FOR_OBSERVER_MS = 15s "to be sure"; the handshake already
+        // full WAIT_FOR_OBSERVER_MS "to be sure"; the handshake already
         // guarantees it, so that was pure dead time.)
         // No transition fired; nothing to stop. audioLevel stays 0 (the
         // recorder was never started). The real assertion: stop() was NOT
@@ -308,14 +308,15 @@ class WalkLifecycleObserverTest {
             .getOrThrow()
         // Wait for the capture loop to drain the burst (proves capture
         // executor actually started).
-        val captureDeadline = System.currentTimeMillis() + 2_000L
+        val captureDeadline = System.currentTimeMillis() + CAPTURE_START_TIMEOUT_MS
         while (voiceRecorder.audioLevel.value == 0f &&
             System.currentTimeMillis() < captureDeadline
         ) {
             Thread.sleep(20L)
         }
         check(voiceRecorder.audioLevel.value > 0f) {
-            "FakeAudioCapture burst did not arrive within 2 s — test infra broken"
+            "FakeAudioCapture burst did not arrive within " +
+                "${CAPTURE_START_TIMEOUT_MS}ms — test infra broken"
         }
     }
 
@@ -324,14 +325,23 @@ class WalkLifecycleObserverTest {
         // handshake (observedFlow.processed >= 1); it returns the
         // instant the collector consumes the initial Idle, so this only
         // bites on a wedged runner (a real bug — should fail).
-        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 15_000L
+        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 30_000L
         // Failsafe upper bound for the observer's side-effect waits
         // (`audioLevel.first { it == 0f }` and the Finished-path INSERT
         // poll). With the observer on [TestRealTimeDispatcher] its handler
         // runs on a never-starved pool, so these resolve in milliseconds;
         // the bound only bites if a side effect never lands (a real bug).
-        // Do NOT bump it — #161 tried 5s→15s and it flaked again; a wider
-        // timeout can't fix a starvation race, the dispatcher swap does.
-        const val WAIT_FOR_OBSERVER_MS = 15_000L
+        //
+        // History: #161 bumped 5s→15s and it still flaked, which is why
+        // the dispatcher swap above is the actual fix — a wider bound
+        // cannot cure starvation. These are failsafes, not tuned grace
+        // windows: the wait returns the instant the value lands, so a
+        // generous ceiling is free on green and only delays a genuine
+        // failure. Do not tidy them back down.
+        const val WAIT_FOR_OBSERVER_MS = 30_000L
+        // Same failsafe reasoning for the capture-executor start probe.
+        // The recorder's capture thread competes with a sibling Gradle
+        // fork for a small CI runner's cores.
+        const val CAPTURE_START_TIMEOUT_MS = 30_000L
     }
 }

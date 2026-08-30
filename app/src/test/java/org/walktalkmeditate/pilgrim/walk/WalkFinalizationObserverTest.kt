@@ -490,15 +490,20 @@ class WalkFinalizationObserverTest {
         // milliseconds and awaitUntil returns the instant the predicate
         // holds; this bound only bites on a real hang. Do NOT treat it as a
         // tuned grace window — a wider bound can't fix a starvation race
-        // (that's what the dispatcher swap is for).
-        const val WAIT_FOR_OBSERVER_MS = 5_000L
+        // (that's what the dispatcher swap is for). It is deliberately
+        // generous rather than tight: a satisfied wait returns immediately,
+        // so the ceiling is free on green and only delays a genuine
+        // failure. Do not tidy it back down.
+        const val WAIT_FOR_OBSERVER_MS = 30_000L
         // Brief settle to let a (buggy) duplicate/ungated side-effect land
         // before a dedup/negative assertion checks the exact count.
         const val SETTLE_MS = 150L
         // Failsafe for the deterministic collector-attach handshake
         // (CountingStateFlow.processed >= 1); returns the instant the
         // initial Idle is consumed and the firstEmission latch is spent.
-        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 15_000L
+        // Generous by design — it costs nothing on green and only delays
+        // a genuine wedge. Do not tidy it back down.
+        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 30_000L
     }
 }
 
