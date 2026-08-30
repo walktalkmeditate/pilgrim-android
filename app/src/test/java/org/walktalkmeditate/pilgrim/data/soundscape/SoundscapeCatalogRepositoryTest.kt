@@ -254,7 +254,12 @@ class SoundscapeCatalogRepositoryTest {
 
     private companion object {
         const val DATASTORE_NAME = "soundscape-catalog-test"
-        const val AWAIT_TIMEOUT_MS = 10_000L
+        // Ceiling on waiting for an async signal, not a budget for the
+        // test: a satisfied await returns the instant the value lands,
+        // so a generous bound costs nothing on green and only delays a
+        // genuine failure. Two Robolectric forks on a small CI runner
+        // starve the producer past tighter bounds. Do not tidy it down.
+        const val AWAIT_TIMEOUT_MS = 30_000L
     }
 
     private class FakeScheduler : SoundscapeDownloadScheduler {

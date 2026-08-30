@@ -138,6 +138,13 @@ class VoiceGuideSelectionRepositoryTest {
 
     private companion object {
         const val DATASTORE_NAME = "voice-guide-selection-test"
-        const val AWAIT_TIMEOUT_MS = 10_000L
+        // Ceiling on waiting for an async signal, not a budget for the
+        // test: a satisfied await returns the instant the value lands,
+        // so a generous bound costs nothing on green and only delays a
+        // genuine failure. The awaiter sits on [TestRealTimeDispatcher],
+        // but the DataStore flow it awaits still runs on Dispatchers.Default,
+        // which two Robolectric forks on a small CI runner do starve.
+        // Do not tidy this back down.
+        const val AWAIT_TIMEOUT_MS = 30_000L
     }
 }

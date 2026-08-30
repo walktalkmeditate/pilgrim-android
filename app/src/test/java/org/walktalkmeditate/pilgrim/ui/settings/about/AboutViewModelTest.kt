@@ -54,7 +54,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(emptyList()))
         val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
-        vm.stats.test(timeout = 10.seconds) {
+        vm.stats.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current.hasWalks) current = awaitItem()
             assertFalse(current.hasWalks)
@@ -74,7 +74,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(walks))
         val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
-        vm.stats.test(timeout = 10.seconds) {
+        vm.stats.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current.walkCount != 2) current = awaitItem()
             assertEquals(2, current.walkCount)
@@ -94,7 +94,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(walks))
         val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
-        vm.stats.test(timeout = 10.seconds) {
+        vm.stats.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current.walkCount != 1) current = awaitItem()
             assertEquals(1, current.walkCount)
@@ -118,7 +118,7 @@ class AboutViewModelTest {
         val source = FakeWalkSource(flowOf(walks))
         val vm = AboutViewModel(source, FakeUnits(), FakeIconSwitcher())
 
-        vm.stats.test(timeout = 10.seconds) {
+        vm.stats.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current.walkCount != 2) current = awaitItem()
             assertEquals(2, current.walkCount)
@@ -135,7 +135,7 @@ class AboutViewModelTest {
 
         vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
 
-        vm.iconVariant.test(timeout = 5.seconds) {
+        vm.iconVariant.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
                 current = awaitItem()
@@ -160,7 +160,7 @@ class AboutViewModelTest {
 
         vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
 
-        vm.iconVariant.test(timeout = 5.seconds) {
+        vm.iconVariant.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
                 current = awaitItem()
@@ -182,7 +182,7 @@ class AboutViewModelTest {
 
         vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage)
 
-        vm.iconVariant.test(timeout = 5.seconds) {
+        vm.iconVariant.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
                 current = awaitItem()
@@ -211,7 +211,7 @@ class AboutViewModelTest {
 
         vm.refreshIconVariant()
 
-        vm.iconVariant.test(timeout = 5.seconds) {
+        vm.iconVariant.test(timeout = AWAIT_TIMEOUT) {
             var current = awaitItem()
             while (current != org.walktalkmeditate.pilgrim.data.launcher.IconVariant.Sage) {
                 current = awaitItem()
@@ -232,7 +232,7 @@ class AboutViewModelTest {
 
         vm.setIconVariant(org.walktalkmeditate.pilgrim.data.launcher.IconVariant.River)
 
-        vm.iconVariant.test(timeout = 5.seconds) {
+        vm.iconVariant.test(timeout = AWAIT_TIMEOUT) {
             // Initial value is Default; ThrowingIconSwitcher.switchTo throws;
             // catch re-reads currentVariant() which returns Dark.
             var current = awaitItem()
@@ -253,6 +253,16 @@ class AboutViewModelTest {
         endTimestamp = start + 60_000,
         distanceMeters = distanceMeters,
     )
+
+    private companion object {
+        // Ceiling on waiting for an emission, not a budget for the test:
+        // awaitItem returns the instant the value lands, so a generous
+        // bound costs nothing on green and only delays a genuine failure.
+        // The icon-variant tests await IO-dispatched continuations, and
+        // two Robolectric forks on a small CI runner deschedule those
+        // past the 5 s these used to allow. Do not tidy it back down.
+        val AWAIT_TIMEOUT = 30.seconds
+    }
 }
 
 private class FakeWalkSource(

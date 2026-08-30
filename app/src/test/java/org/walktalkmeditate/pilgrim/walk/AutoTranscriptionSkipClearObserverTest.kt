@@ -158,6 +158,11 @@ class AutoTranscriptionSkipClearObserverTest {
     }
 
     private companion object {
-        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 15_000L
+        // Failsafe for the deterministic collector handshake; it returns
+        // the instant `processed` reaches the awaited count, so a generous
+        // ceiling costs nothing on green and only delays a genuine wedge.
+        // Two Robolectric forks on a small CI runner make tighter bounds
+        // fire on a healthy-but-descheduled collector. Do not tidy it down.
+        const val COLLECTOR_SUBSCRIBE_TIMEOUT_MS = 30_000L
     }
 }

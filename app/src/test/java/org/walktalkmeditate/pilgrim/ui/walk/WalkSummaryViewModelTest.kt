@@ -1920,6 +1920,10 @@ class WalkSummaryViewModelTest {
                 }
             }
             assertNull(cleared?.transcription)
+            // The schedule call is the press coroutine's last step, so
+            // it lands strictly after the null write the poll above
+            // observed — wait for it rather than racing it.
+            awaitScheduledCount(1)
             assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
         }
 
@@ -2193,6 +2197,17 @@ class WalkSummaryViewModelTest {
             repository.updateVoiceRecordingTranscription(recId, "fresh transcript")
             awaitManualTranscribing(vm, emptySet())
         }
+
+    /** Same real-clock polling bridge as [awaitRetranscribeEnabled]. */
+    private suspend fun awaitScheduledCount(expected: Int) {
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (scheduler.scheduledWalkIds.size < expected) {
+                    delay(25L)
+                }
+            }
+        }
+    }
 
     /** Same real-clock polling bridge as [awaitRetranscribeEnabled]. */
     private suspend fun awaitManualTranscribing(vm: WalkSummaryViewModel, expected: Set<Long>) {
