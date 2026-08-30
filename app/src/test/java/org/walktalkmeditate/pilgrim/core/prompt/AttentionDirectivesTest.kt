@@ -455,6 +455,22 @@ class AttentionDirectivesTest {
     }
 
     @Test
+    fun `speaking rate shift above the minus 15 percent threshold stays silent`() {
+        // The negative edge is compared against its own literal, so without
+        // this the positive edge alone leaves a hardcoded slowdown threshold
+        // free to drift past the whole suite.
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(paddedWords(25), offsetSeconds = 300L, wordsPerMinute = 100.0),
+                    recording(paddedWords(25), offsetSeconds = 3000L, wordsPerMinute = 86.0),
+                ),
+            ),
+        )
+        assertFalse("under-threshold slowdown is silent: $directives", directives.contains("attend to what moved"))
+    }
+
+    @Test
     fun `speaking rate shift with a 24-word side stays silent regardless of which side is short`() {
         val shortFirst = joined(
             context(

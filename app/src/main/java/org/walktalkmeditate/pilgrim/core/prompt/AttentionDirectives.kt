@@ -9,8 +9,9 @@ import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
 
 /**
  * Deterministic pattern detection over a walk's context — v2, lemma-based
- * (verbatim port of iOS `AttentionDirectives@0172e2b`; parity spec
- * `docs/parity/2026-08-25-threads-engine-port.md` BEH-71..73/EDG-82..86).
+ * (verbatim port of iOS `AttentionDirectives@0172e2b`; [firstVersusLast]
+ * folds in the iOS PR #72 rewrite shipped at `e7051bc`, 2026-08-29; parity
+ * spec `docs/parity/2026-08-25-threads-engine-port.md` BEH-71..73/EDG-82..86).
  * The assembler hands the downstream model a dossier; these directives
  * tell it what is remarkable about *this* walk — the difference between
  * handing someone documents and handing them documents plus "compare

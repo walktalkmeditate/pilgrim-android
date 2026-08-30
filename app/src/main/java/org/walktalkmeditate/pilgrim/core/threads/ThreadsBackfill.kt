@@ -89,7 +89,17 @@ class ThreadsBackfillRunner @Inject constructor(
         snapshotProvider: suspend () -> List<TranscribedRecordingSnapshot>,
         gate: suspend () -> Boolean,
     ): ThreadsBackfillOutcome {
-        if (!preferences.threadsAfterWalks.value) return ThreadsBackfillOutcome.ToggleOff
+        // Paired with the outcome line at the end, and with the same
+        // outcome-and-counts-only discipline: without an entry signal both
+        // early returns below leave logcat indistinguishable from a sweep
+        // that was never scheduled at all — the hardest thing to verify on
+        // the device-QA checklist.
+        Log.i(TAG, "sweep starting")
+
+        if (!preferences.threadsAfterWalks.value) {
+            Log.i(TAG, "sweep skipped: toggle off")
+            return ThreadsBackfillOutcome.ToggleOff
+        }
 
         // The no-speech placeholder is display text the transcription
         // runner commits for silent recordings and deliberately never
@@ -121,7 +131,10 @@ class ThreadsBackfillRunner @Inject constructor(
             preferences.clearBackfillCheckpoint()
         }
 
-        if (!gate()) return ThreadsBackfillOutcome.GateClosed
+        if (!gate()) {
+            Log.i(TAG, "sweep skipped: battery gate closed before any batch")
+            return ThreadsBackfillOutcome.GateClosed
+        }
 
         val items = spokenSnapshot().sortedBy { it.uuid }
         pruneStaleOrphans(items.map { it.uuid }.toSet())

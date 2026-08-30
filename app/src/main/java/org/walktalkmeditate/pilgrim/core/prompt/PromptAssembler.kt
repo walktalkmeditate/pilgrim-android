@@ -366,6 +366,15 @@ object PromptAssembler {
      * so a phrasing change fails a test rather than silently suppressing
      * the key on every walk.
      *
+     * Those tests pin the FORMATTER half only. In production [dossier] is
+     * wider: `ThreadsDossierBuilder` appends its `**Noticed:**` senses
+     * block to the same string, and
+     * `DossierSensesTracks.markerColoring` writes "Absolutist words
+     * cluster around …" into it — which misses the `"absolutist words"`
+     * probe on capitalization alone. Lowercasing either side would let a
+     * sense line teach a density reading the dossier never printed, so
+     * the senses half carries its own pinning test beside them.
+     *
      * At most one line either way: the contract's accretion budget does
      * not grow to pay for this.
      */

@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.core.prompt
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import kotlinx.serialization.json.Json
@@ -22,7 +23,14 @@ import org.walktalkmeditate.pilgrim.core.prompt.voices.GratitudeVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.JournalingVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.PhilosophicalVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ReflectiveVoice
+import org.walktalkmeditate.pilgrim.core.threads.ActiveThread
+import org.walktalkmeditate.pilgrim.core.threads.CurrentRecording
+import org.walktalkmeditate.pilgrim.core.threads.DossierSenses
+import org.walktalkmeditate.pilgrim.core.threads.LemmaMention
+import org.walktalkmeditate.pilgrim.core.threads.SenseInput
 import org.walktalkmeditate.pilgrim.core.threads.TemporalLean
+import org.walktalkmeditate.pilgrim.core.threads.Theme
+import org.walktalkmeditate.pilgrim.core.threads.ThreadAppearance
 import org.walktalkmeditate.pilgrim.core.threads.Threads
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierFormatter
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContext
@@ -353,6 +361,82 @@ class PromptResponseContractTest {
         assertFalse("no tally clause: $contract", contract.contains(tallyClause))
         assertFalse("no modal clause: $contract", contract.contains(modalClause))
         assertFalse("no trailer without clauses: $contract", contract.contains(keyTrailer))
+    }
+
+    /**
+     * The `**Noticed:**` block `ThreadsDossierBuilder` appends after the
+     * formatter's own text, assembled from the real [DossierSenses]
+     * dispatcher and joined the way that builder joins it — so the
+     * interpretive key's probes see the whole production string rather
+     * than the formatter half the tests above cover.
+     */
+    private fun withSensesBlock(baseDossier: String): String {
+        val walkStart = Instant.parse("2026-06-15T09:00:00Z")
+        // 100 filler tokens keep markerColoring's ±15-token window a small
+        // fraction of the transcript, which is what clears its 2x-density gate.
+        val text = ("absolutely always never nothing totally " + "filler ".repeat(100)).trim()
+        val mentions = TranscriptNlp.wordTokenOffsets(text).take(1).map {
+            LemmaMention(lemma = it.token, surface = it.token, start = it.start, length = it.token.length)
+        }
+        val theme = Theme(lemma = "focus", displayTerm = "focus", mentionCount = 1, salience = 0.1, mentions = mentions)
+        val input = SenseInput(
+            currentWalkId = 1L,
+            walkStart = walkStart,
+            walkEnd = walkStart.plusSeconds(3600),
+            totalAscent = 0.0,
+            elevationSeries = emptyList(),
+            photos = emptyList(),
+            currentRecordings = listOf(
+                CurrentRecording(
+                    uuid = "r1",
+                    start = walkStart,
+                    end = walkStart.plusSeconds(30),
+                    text = text,
+                    wordCount = 0,
+                    themes = listOf(theme),
+                ),
+            ),
+            threads = listOf(
+                ActiveThread(
+                    lemma = "focus",
+                    displayTerm = "focus",
+                    appearances = listOf(
+                        ThreadAppearance(
+                            recordingUuid = "r1",
+                            walkId = 1L,
+                            date = walkStart,
+                            mentionCount = 1,
+                            salience = 0.1,
+                        ),
+                    ),
+                ),
+            ),
+            backfillComplete = false,
+            walkSnapshots = emptyList(),
+            recordingTimestamps = emptyMap(),
+            fixes = emptyMap(),
+            moon = null,
+        )
+        val lines = DossierSenses.lines(input).lines
+        check(lines.isNotEmpty()) { "the senses fixture must fire at least one line" }
+        return baseDossier + "\n\n**Noticed:**\n" + lines.joinToString("\n")
+    }
+
+    @Test
+    fun `the senses block does not widen the interpretive key's probes past the formatter's output`() {
+        val withheld = realDossier(threadsContext("r1", wordCount = 150, languageCode = "es"))
+        assertTrue("fixture must withhold every marker probe: $withheld", withheld.contains("Markers unavailable"))
+        val dossier = withSensesBlock(withheld)
+        assertTrue(
+            "fixture must carry a firing marker-coloring sense: $dossier",
+            dossier.contains("Absolutist words cluster around"),
+        )
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertFalse("a senses line must not teach a density reading: $contract", contract.contains(shareClause))
+        assertFalse("nor a bare-tally reading: $contract", contract.contains(tallyClause))
+        assertFalse("no clauses, no trailer: $contract", contract.contains(keyTrailer))
     }
 
     @Test
