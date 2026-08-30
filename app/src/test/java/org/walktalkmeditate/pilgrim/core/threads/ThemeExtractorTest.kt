@@ -213,6 +213,10 @@ class ThemeExtractorTest {
         // lineage. A sixth stoplist added to ThemeExtractor.sharedStoplists
         // without joining a SpokenStoplist.nonContentLemmas constituent
         // fails here rather than shipping the same bug again.
+        // Emptying sharedStoplists would satisfy the subset check below
+        // vacuously. The schema-pin test would also catch that, but this
+        // assertion keeps the invariant meaningful on its own.
+        assertTrue(ThemeExtractor.sharedStoplists.isNotEmpty())
         assertEquals(
             "these reach theme extraction but not recurringWord/subjectShift/intentionLineage",
             emptySet<String>(),
