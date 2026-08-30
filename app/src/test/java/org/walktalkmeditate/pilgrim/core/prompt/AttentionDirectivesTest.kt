@@ -87,11 +87,14 @@ class AttentionDirectivesTest {
         "gate", "wall", "roof", "door", "window", "cellar", "chimney",
     )
 
+    /** Mirrors `AttentionDirectives.subjectLemmas` — the fixture word lists
+     * above are chosen so every entry survives this filter, making the set
+     * sizes asserted below exact. */
     private fun subjectLemmas(text: String): Set<String> =
         TranscriptNlp.contentLemmaMentions(text)
             .map { it.lemma }
             .toSet()
-            .minus(SpokenStoplist.scaffoldLemmas)
+            .minus(SpokenStoplist.nonContentLemmas)
 
     private fun subjectLemmaCount(text: String): Int = subjectLemmas(text).size
 
@@ -356,6 +359,50 @@ class AttentionDirectivesTest {
     }
 
     @Test
+    fun `recurring word excludes filler, promoting the next real candidate`() {
+        // pilgrim-ios#78: 'okay' is exactly the word a speaker repeats
+        // most, and this substrate's dictionary POS noun-lists it, so at
+        // x6 it beat 'river' x3 outright before the shared content-word
+        // definition reached this directive.
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording("okay okay river"),
+                    recording("okay okay river", offsetSeconds = 900L),
+                    recording("okay okay river", offsetSeconds = 1_800L),
+                ),
+            ),
+        )
+        assertFalse("filler must never win the directive: $directives", directives.contains("'okay'"))
+        assertTrue(
+            "excluding filler redirects to the next candidate, never silences: $directives",
+            directives.contains("The word 'river' returns 3 times across the recordings — it may be doing quiet work."),
+        )
+    }
+
+    @Test
+    fun `recurring word excludes the Android-original gerund, promoting the next real candidate`() {
+        // The Android-only half of the same class: 'going' is
+        // WordNet-noun-listed in its own right, which is why the theme
+        // layer already discards it — so it must not be able to win here
+        // either.
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording("going going garden"),
+                    recording("going going garden", offsetSeconds = 900L),
+                    recording("going garden", offsetSeconds = 1_800L),
+                ),
+            ),
+        )
+        assertFalse("an Android-original stoplist word must never win: $directives", directives.contains("'going'"))
+        assertTrue(
+            "excluding it redirects to the next candidate, never silences: $directives",
+            directives.contains("The word 'garden' returns 3 times across the recordings — it may be doing quiet work."),
+        )
+    }
+
+    @Test
     fun `recurring word tuple-swap tie-break applies twice — winning lemma, then its display surface`() {
         // "moved"x2 + "moving"x2 share lemma "move" (count 4, above the
         // floor) — first tuple-swap picks "move" as the winning lemma;
@@ -549,6 +596,44 @@ class AttentionDirectivesTest {
             directives.contains(
                 "The walker's last recording shares little vocabulary with the first — attend to what moved between them.",
             ),
+        )
+    }
+
+    /** The pre-fold-in filter, kept only to prove the padded-closing
+     * fixture below genuinely used to clear the 12-lemma subject floor. */
+    private fun scaffoldOnlyLemmaCount(text: String): Int =
+        TranscriptNlp.contentLemmaMentions(text)
+            .map { it.lemma }
+            .toSet()
+            .minus(SpokenStoplist.scaffoldLemmas)
+            .size
+
+    @Test
+    fun `subject shift stays silent when a closing note only clears the floor on non-content words`() {
+        // pilgrim-ios#76: six real subjects padded with one filler word,
+        // three light nouns, and the two Android-original classes reads as
+        // twelve lemmas to a scaffold-only filter and fires the branch on a
+        // closing note carrying six subjects. The floor is deliberately NOT
+        // lowered to compensate — twelve REAL content lemmas is the bar.
+        val opening = openingSubjectWords.joinToString(separator = " ")
+        val closing = (closingSubjectWords.take(6) + listOf("okay", "people", "day", "time", "going", "felt"))
+            .joinToString(separator = " ")
+        assertEquals(12, scaffoldOnlyLemmaCount(opening))
+        assertEquals("the fixture must clear the old floor to be non-vacuous", 12, scaffoldOnlyLemmaCount(closing))
+        assertEquals("the opening is unaffected — none of its words is a stoplist member", 12, subjectLemmaCount(opening))
+        assertEquals("six of the closing's twelve carried no subject at all", 6, subjectLemmaCount(closing))
+
+        val directives = joined(
+            context(
+                recordings = listOf(
+                    recording(opening),
+                    recording(closing, offsetSeconds = 3000L),
+                ),
+            ),
+        )
+        assertFalse(
+            "six real subjects padded with non-content words is below the judgment floor: $directives",
+            directives.contains("attend to what moved"),
         )
     }
 

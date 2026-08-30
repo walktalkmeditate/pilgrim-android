@@ -35,14 +35,20 @@ object AttentionDirectives {
     private const val SUBJECT_OVERLAP_CEILING = 0.20
 
     /**
-     * Content lemmas, after [SpokenStoplist.scaffoldLemmas] is removed. A
-     * floor of 5 would sit far below where a lexical-overlap judgment
+     * Content lemmas, after [SpokenStoplist.nonContentLemmas] is removed.
+     * A floor of 5 would sit far below where a lexical-overlap judgment
      * carries any information: a sign-off ("heading back down the hill,
      * tired but glad") clears 5 comfortably and shares nothing with a
      * long opening, so the overlap coefficient reads zero and the
      * directive fires on a walk that never changed subject. A genuinely
      * divergent long pair measures around 0.06, so there is ample
      * headroom above this floor.
+     *
+     * Since the shared content-word definition reached [subjectLemmas],
+     * this counts twelve REAL content lemmas rather than twelve tokens the
+     * lexicon happened to admit as content. The floor is deliberately not
+     * lowered to compensate — the branch failing closed on a thin closing
+     * note is the behaviour the floor was introduced for.
      */
     private const val MINIMUM_LEMMAS_TO_JUDGE_SUBJECT = 12
 
@@ -187,10 +193,13 @@ object AttentionDirectives {
 
     /**
      * The most-repeated content LEMMA across all recordings, excluding
-     * any lemma the intention already claimed and any spoken-scaffolding
-     * lemma ([SpokenStoplist.scaffoldLemmas] — light verbs like "think"
-     * that dominate raw-frequency counts without carrying meaning) — the
-     * next-ranked candidate is promoted, so excluding a lemma never
+     * any lemma the intention already claimed and any lemma that carries
+     * no content ([SpokenStoplist.nonContentLemmas] — light verbs like
+     * "think" that dominate raw-frequency counts without carrying
+     * meaning, plus the filler, light nouns, and Android-original classes
+     * the theme layer discards; 'okay' is exactly the word a speaker
+     * repeats most, and this substrate's dictionary POS noun-lists it) —
+     * the next-ranked candidate is promoted, so excluding a lemma never
      * silences the directive, only redirects it. Shown as its most
      * frequent surface form so the walker's own inflection is echoed
      * back; the tuple-swap tie-break (max count, alphabetically-smallest
@@ -206,7 +215,7 @@ object AttentionDirectives {
         val counts = HashMap<String, Int>()
         val surfaces = HashMap<String, MutableMap<String, Int>>()
         for (mention in mentions) {
-            if (mention.lemma in intentionLemmas || mention.lemma in SpokenStoplist.scaffoldLemmas) continue
+            if (mention.lemma in intentionLemmas || mention.lemma in SpokenStoplist.nonContentLemmas) continue
             counts[mention.lemma] = (counts[mention.lemma] ?: 0) + 1
             val surfaceCounts = surfaces.getOrPut(mention.lemma) { mutableMapOf() }
             surfaceCounts[mention.surface] = (surfaceCounts[mention.surface] ?: 0) + 1
@@ -320,12 +329,17 @@ object AttentionDirectives {
     }
 
     /**
-     * The same [SpokenStoplist.scaffoldLemmas] filter [recurringWord]
+     * The same [SpokenStoplist.nonContentLemmas] filter [recurringWord]
      * applies: dictionary POS admits "think", "know", "want", "keep" as
-     * content, but a speaker reaches for them out of habit. Left in, a
-     * closing recording made entirely of scaffolding clears the lemma
-     * floor on words that carry no subject at all.
+     * content, but a speaker reaches for them out of habit — and so are
+     * 'okay', 'people', 'day', 'going' and 'felt'. Left in, a closing
+     * recording made entirely of scaffolding and filler clears the lemma
+     * floor on words that carry no subject at all, and pads the overlap
+     * coefficient's denominator with them.
+     *
+     * See [MINIMUM_LEMMAS_TO_JUDGE_SUBJECT] for why the floor is not
+     * lowered to compensate for the lemmas this now removes.
      */
     private fun subjectLemmas(text: String): Set<String> =
-        TranscriptNlp.contentLemmaMentions(text).map { it.lemma }.toSet() - SpokenStoplist.scaffoldLemmas
+        TranscriptNlp.contentLemmaMentions(text).map { it.lemma }.toSet() - SpokenStoplist.nonContentLemmas
 }

@@ -684,6 +684,22 @@ class DossierSensesTest {
         assertEquals("presence", line?.lemma)
     }
 
+    @Test fun `intentionLineage never claims lineage on a word the theme layer discards`() {
+        // Four walks whose intention's only content lemma is 'day', a
+        // SpokenStoplist.lightNouns member the theme layer already throws
+        // away. "Fourth walk in the last 30 days carrying some form of
+        // 'day'." is a sentence about nothing.
+        val day1 = WalkSnapshotRow(1L, base.minus(3, ChronoUnit.DAYS), "day by day", null)
+        val day2 = WalkSnapshotRow(2L, base.minus(2, ChronoUnit.DAYS), "day by day", null)
+        val day3 = WalkSnapshotRow(3L, base.minus(1, ChronoUnit.DAYS), "day by day", null)
+        val today = WalkSnapshotRow(4L, base, "day by day", null)
+        val input = minimalInput().copy(
+            currentWalkId = 4L, walkStart = base, walkEnd = base,
+            walkSnapshots = listOf(day1, day2, day3, today),
+        )
+        assertNull(DossierSensesTracks.intentionLineage(input, emptySet()))
+    }
+
     @Test fun `intentionLineage requires at least 3 distinct walks — 2 is not enough`() {
         val presence1 = WalkSnapshotRow(1L, base.minus(1, ChronoUnit.DAYS), "presence", null)
         val today = WalkSnapshotRow(2L, base, "presence", null)

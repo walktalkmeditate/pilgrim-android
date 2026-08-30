@@ -286,11 +286,18 @@ internal object DossierSensesTracks {
     // 4/8 — intentionLineage (cross-walk)
     // ------------------------------------------------------------------
 
-    /** `nil` and empty-string intentions are identically silence; the
-     * scaffold stoplist applies symmetrically to today's AND every
-     * historical intention. */
+    /**
+     * `nil` and empty-string intentions are identically silence; the
+     * stoplist applies symmetrically to today's AND every historical
+     * intention.
+     *
+     * [SpokenStoplist.nonContentLemmas] is the shared content-word
+     * definition, so a lineage claim cannot rest on a word the theme
+     * layer already discards — "fourth walk carrying some form of 'day'"
+     * is a sentence about nothing.
+     */
     private fun intentionLemmas(intention: String): Set<String> =
-        TranscriptNlp.contentLemmaMentions(intention).map { it.lemma }.toSet() - SpokenStoplist.scaffoldLemmas
+        TranscriptNlp.contentLemmaMentions(intention).map { it.lemma }.toSet() - SpokenStoplist.nonContentLemmas
 
     /**
      * Lemmas shared with today, on ≥ [DossierSenses.LINEAGE_MIN_WALKS]
