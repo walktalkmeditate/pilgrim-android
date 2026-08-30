@@ -362,6 +362,17 @@ class WorkManagerThreadsBackfillScheduler @Inject constructor(
  * closure — `BatteryNotLow`'s system floor (~15%) admits runs the 20%
  * gate refuses, so the 15-20% band is a real path this mapping exercises
  * in production, not just in tests.
+ *
+ * Known limitation (accepted, not a release blocker): there is no per-item
+ * attempt cap. `allAccounted` never resets once false, and `Incomplete` maps
+ * to `Result.retry()` unconditionally, so a recording that throws on every
+ * analysis attempt keeps its device's sweep un-completable indefinitely at
+ * WorkManager's exponential backoff. Bounded and battery-gated rather than a
+ * retry storm, and `accountFor`'s per-item guard keeps one bad recording from
+ * failing its batch — but origin-claiming labels stay suppressed for that
+ * walker until it clears. A durable fix would persist a per-uuid attempt
+ * count and demote a chronic failure to a permanent, logged skip that still
+ * counts as accounted-for.
  */
 @HiltWorker
 class ThreadsBackfillWorker @AssistedInject constructor(
