@@ -23,6 +23,10 @@ package org.walktalkmeditate.pilgrim.core.threads
  * two Android-original lists with no iOS counterpart at all — see each
  * one's own KDoc for why the theme path needs it and which neighboring
  * words deliberately do not join it.
+ *
+ * [nonContentLemmas] unions all five for the prompt-time consumers that
+ * read every lexical class. New stoplists belong inside one of the five,
+ * never beside them.
  */
 object SpokenStoplist {
 
@@ -133,4 +137,46 @@ object SpokenStoplist {
      * of being suppressed pre-emptively.
      */
     val androidHomographNounSuppression: Set<String> = setOf("felt", "whole")
+
+    /**
+     * The one definition of "not a content word" for every consumer of
+     * [TranscriptNlp.contentLemmaMentions] that reads all three lexical
+     * classes — the recurring-word directive, the subject-shift lemma
+     * sets, and intention lineage.
+     *
+     * It exists because the five lists above were each wired into whichever
+     * consumer motivated them, and the halves then disagreed about what a
+     * content word is: everything except [scaffoldLemmas] reached theme
+     * extraction alone, so 'okay' could still win the recurring-word
+     * directive, a closing note padded with 'people', 'day' and 'going'
+     * could still clear the subject branch's lemma floor, and a lineage
+     * claim could still rest on 'day'. Adding a word to any of the five
+     * now reaches every one of those consumers at once. Add new stoplists
+     * to one of the five above rather than beside them, or the same drift
+     * returns.
+     *
+     * Five sets where iOS unions three ([scaffoldLemmas], [lightNouns],
+     * [filler]). [androidGerundExtension] and
+     * [androidHomographNounSuppression] exist for exactly the reason
+     * [filler] does — this substrate's dictionary POS admits them as
+     * content where iOS's contextual tagger resolves them to a verb or an
+     * adjective — so a word the theme layer already discards as substrate
+     * noise must not be able to win the recurring-word directive or pad
+     * the subject floor either. The divergence from iOS's three-set union
+     * follows from the lemma engine, not from a different idea of what a
+     * content word is.
+     *
+     * [ThemeExtractor] deliberately does NOT read this union — see
+     * [ThemeExtractor.sharedStoplists]. On this substrate the two hold the
+     * same words today, since the theme filter needs all five; they stay
+     * two declarations because that filter additionally suppresses its own
+     * [ThemeExtractor.walkingDomain], reads the noun class only, and feeds
+     * a persisted derived cache pinned to
+     * [TranscriptContext.ANALYSIS_VERSION], where changing what is
+     * discarded is a schema change requiring a version bump and a
+     * re-analysis sweep on every device. The consumers here compute live
+     * per prompt and cache nothing.
+     */
+    val nonContentLemmas: Set<String> =
+        scaffoldLemmas + lightNouns + filler + androidGerundExtension + androidHomographNounSuppression
 }

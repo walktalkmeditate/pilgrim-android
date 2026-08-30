@@ -202,6 +202,74 @@ class ThemeExtractorTest {
         assertEquals(3, themes.single().mentionCount)
     }
 
+    // --- sharedStoplists: the invariant that stops this drift class recurring ---
+
+    @Test
+    fun `every stoplist the theme filter applies also reaches the prompt-time consumers`() {
+        // The drift this pins: SpokenStoplist.filler and both
+        // Android-original lists reached theme extraction alone, so 'okay'
+        // could win the recurring-word directive, 'going' and 'felt' could
+        // pad the subject floor, and 'day' could carry an intention
+        // lineage. A sixth stoplist added to ThemeExtractor.sharedStoplists
+        // without joining a SpokenStoplist.nonContentLemmas constituent
+        // fails here rather than shipping the same bug again.
+        assertEquals(
+            "these reach theme extraction but not recurringWord/subjectShift/intentionLineage",
+            emptySet<String>(),
+            ThemeExtractor.sharedStoplists - SpokenStoplist.nonContentLemmas,
+        )
+    }
+
+    @Test
+    fun `walkingDomain deliberately stays out of the shared set`() {
+        // It is this feature's own vocabulary, meaningless to a prompt-time
+        // consumer — "the walker's word 'path' returns 4 times" is a real
+        // observation about a walk, unlike "the word 'okay' returns 6 times".
+        assertTrue(ThemeExtractor.walkingDomain.intersect(ThemeExtractor.sharedStoplists).isEmpty())
+        assertTrue(ThemeExtractor.walkingDomain.intersect(SpokenStoplist.nonContentLemmas).isEmpty())
+    }
+
+    /**
+     * SCHEMA PIN. Stored themes are pinned to
+     * [TranscriptContext.ANALYSIS_VERSION]; changing what this filter
+     * discards is a schema change requiring a version bump and a
+     * re-analysis sweep on every device. The literal enumeration is the
+     * point — deriving the expectation from the same five sets the
+     * production code unions would pin nothing.
+     */
+    @Test
+    fun `the theme filter's effective suppression set is exactly what it was before sharedStoplists`() {
+        val effective = ThemeExtractor.walkingDomain + ThemeExtractor.sharedStoplists
+        assertEquals(
+            setOf(
+                // walkingDomain
+                "walk", "walking", "path", "trail", "hill", "uphill", "downhill",
+                "road", "street", "step", "steps", "route", "mile", "kilometer",
+                "minute", "left", "right",
+                // lightNouns
+                "thing", "things", "stuff", "kind", "sort", "lot", "bit", "way", "ways",
+                "one", "ones", "something", "anything", "everything", "nothing",
+                "day", "days", "area",
+                "time", "times", "person", "people", "app", "apps",
+                // filler
+                "yeah", "yep", "yup", "nah", "okay", "ok",
+                "uhh", "umm", "erm", "hmm", "mhm", "mmm", "huh",
+                "gonna", "gotta", "wanna",
+                // scaffoldLemmas
+                "be", "have", "do", "get", "go", "come", "make", "take", "know",
+                "think", "say", "see", "want", "mean", "feel", "need", "let", "put",
+                "keep", "can", "could", "should", "would", "must", "might", "may",
+                "will", "ought", "wish",
+                // androidGerundExtension
+                "going", "getting", "saying", "coming", "telling",
+                // androidHomographNounSuppression
+                "felt", "whole",
+            ),
+            effective,
+        )
+        assertEquals(93, effective.size)
+    }
+
     // --- minimumWords: exact boundary ---
 
     @Test

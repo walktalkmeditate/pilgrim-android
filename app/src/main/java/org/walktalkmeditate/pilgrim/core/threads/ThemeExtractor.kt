@@ -65,6 +65,9 @@ data class Theme(
  * joining the U12 real-transcript field-read watchlist above instead of
  * the suppression list — see [SpokenStoplist.androidHomographNounSuppression]'s
  * own KDoc for why.
+ *
+ * All five general-purpose lists are collected into [sharedStoplists];
+ * [walkingDomain] stays separate, being this extractor's alone.
  */
 object ThemeExtractor {
 
@@ -81,6 +84,25 @@ object ThemeExtractor {
     )
 
     /**
+     * The general-purpose stoplists this extractor discards, named so the
+     * relationship to [SpokenStoplist.nonContentLemmas] can be asserted
+     * rather than trusted: [ThemeExtractorTest] pins that everything here
+     * also reaches that union, so a sixth stoplist added to this filter
+     * cannot silently stop short of the recurring-word directive, the
+     * subject-shift lemma sets, and intention lineage the way
+     * [SpokenStoplist.filler] and the two Android-original lists did.
+     *
+     * [walkingDomain] is deliberately absent: it is this feature's own
+     * vocabulary ("path", "trail"), meaningless to a prompt-time consumer,
+     * and belongs to the extractor alone.
+     */
+    val sharedStoplists: Set<String> = SpokenStoplist.lightNouns +
+        SpokenStoplist.filler +
+        SpokenStoplist.scaffoldLemmas +
+        SpokenStoplist.androidGerundExtension +
+        SpokenStoplist.androidHomographNounSuppression
+
+    /**
      * A transcript under [MINIMUM_WORDS] total words (by
      * [TranscriptNlp.wordCount], the single tokenizer every word-count and
      * density in this feature shares) yields zero themes, silently — never
@@ -94,15 +116,14 @@ object ThemeExtractor {
         // The noun class is necessary but not sufficient: on iOS NLTagger
         // also calls 'yeah' a noun, and here WordNet noun-lists 'okay' —
         // [SpokenStoplist.filler] carries what lexical class cannot.
+        //
+        // Deliberately not [SpokenStoplist.nonContentLemmas], the union the
+        // live prompt-time consumers share. Themes are persisted and pinned
+        // to [TranscriptContext.ANALYSIS_VERSION], so what this filter
+        // discards is schema: reading the union would ship a version bump's
+        // worth of change the first time the two sets diverge, without one.
         val candidates = TranscriptNlp.contentLemmaMentions(text, classes = setOf(PosClass.NOUN))
-            .filterNot { mention ->
-                mention.lemma in walkingDomain ||
-                    mention.lemma in SpokenStoplist.lightNouns ||
-                    mention.lemma in SpokenStoplist.filler ||
-                    mention.lemma in SpokenStoplist.scaffoldLemmas ||
-                    mention.lemma in SpokenStoplist.androidGerundExtension ||
-                    mention.lemma in SpokenStoplist.androidHomographNounSuppression
-            }
+            .filterNot { it.lemma in walkingDomain || it.lemma in sharedStoplists }
 
         val eligible = candidates.groupBy { it.lemma }.filterValues { it.size >= MINIMUM_MENTIONS }
         val themes = eligible.map { (lemma, mentions) -> toTheme(lemma, mentions, wordCount) }

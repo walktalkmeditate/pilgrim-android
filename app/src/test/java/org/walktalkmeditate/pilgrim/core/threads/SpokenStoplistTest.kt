@@ -6,9 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Verbatim fidelity for both spoken stoplists — see [SpokenStoplist]'s KDoc
- * for why the two lists must stay separate and why omitting either
- * reintroduces a field-confirmed bug.
+ * Verbatim fidelity for all five spoken stoplists — see [SpokenStoplist]'s
+ * KDoc for why the lists must stay separate and why omitting any one
+ * reintroduces a field-confirmed bug — plus the composition of the
+ * [SpokenStoplist.nonContentLemmas] union they feed.
  */
 class SpokenStoplistTest {
 
@@ -85,6 +86,30 @@ class SpokenStoplistTest {
             SpokenStoplist.androidHomographNounSuppression,
         )
         assertEquals(2, SpokenStoplist.androidHomographNounSuppression.size)
+    }
+
+    @Test
+    fun `nonContentLemmas unions all five lists and nothing else`() {
+        val constituents = listOf(
+            "lightNouns" to SpokenStoplist.lightNouns,
+            "filler" to SpokenStoplist.filler,
+            "scaffoldLemmas" to SpokenStoplist.scaffoldLemmas,
+            "androidGerundExtension" to SpokenStoplist.androidGerundExtension,
+            "androidHomographNounSuppression" to SpokenStoplist.androidHomographNounSuppression,
+        )
+        for ((name, set) in constituents) {
+            assertTrue(
+                "$name must reach every prompt-time consumer through nonContentLemmas",
+                SpokenStoplist.nonContentLemmas.containsAll(set),
+            )
+        }
+        // Nothing is declared beside the five: a word that appears only in
+        // the union is a word no single list owns, and the "add to one of
+        // the five" instruction has already been ignored.
+        assertEquals(
+            emptySet<String>(),
+            SpokenStoplist.nonContentLemmas - constituents.flatMap { it.second }.toSet(),
+        )
     }
 
     @Test
