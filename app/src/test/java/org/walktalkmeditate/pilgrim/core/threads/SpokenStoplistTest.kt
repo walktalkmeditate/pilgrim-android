@@ -80,12 +80,12 @@ class SpokenStoplistTest {
     }
 
     @Test
-    fun `androidHomographNounSuppression is the exact 2-word verbatim set`() {
+    fun `androidHomographNounSuppression is the exact 5-word verbatim set`() {
         assertEquals(
-            setOf("felt", "whole"),
+            setOf("felt", "whole", "over", "out", "here"),
             SpokenStoplist.androidHomographNounSuppression,
         )
-        assertEquals(2, SpokenStoplist.androidHomographNounSuppression.size)
+        assertEquals(5, SpokenStoplist.androidHomographNounSuppression.size)
     }
 
     @Test

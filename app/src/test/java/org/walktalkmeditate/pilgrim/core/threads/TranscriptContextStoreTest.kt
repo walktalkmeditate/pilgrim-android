@@ -129,18 +129,22 @@ class TranscriptContextStoreTest {
     // ---- ANALYSIS_VERSION pin (2026-08-28 iOS stoplist fold-in) ----
 
     @Test
-    fun `ANALYSIS_VERSION is 2 so version-1 files read as stale and re-arm the backfill`() = runTest {
+    fun `ANALYSIS_VERSION is 3 so older files read as stale and re-arm the backfill`() = runTest {
         // The mechanism tests above and in ThreadsBackfillTest use versions
-        // RELATIVE to the constant; this pin proves the real bump landed —
-        // a v1 file's themes may name filler ('yeah') or the new light
-        // nouns ('time', 'person', 'app'), so it must re-analyze under
-        // the tightened stoplists.
-        assertEquals(2, TranscriptContext.ANALYSIS_VERSION)
+        // RELATIVE to the constant; this pin proves the real bump landed.
+        // A v1 file's themes may name filler ('yeah') or the light nouns
+        // ('time', 'person', 'app'); a v2 file's may name the homographs
+        // the U12 field read caught ('over', 'out', 'here'). Both must
+        // re-analyze under the tightened stoplists.
+        assertEquals(3, TranscriptContext.ANALYSIS_VERSION)
 
         store.save(fixture("v1-era", version = 1))
+        store.save(fixture("v2-era", version = 2))
 
         assertFalse(store.hasCurrentContext("v1-era"))
         assertNull(store.read("v1-era", "hash-v1-era"))
+        assertFalse(store.hasCurrentContext("v2-era"))
+        assertNull(store.read("v2-era", "hash-v2-era"))
     }
 
     /**

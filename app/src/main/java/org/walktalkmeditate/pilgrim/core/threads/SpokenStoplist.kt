@@ -135,8 +135,19 @@ object SpokenStoplist {
      * walking app, and — unlike "whole" — no other channel backstops it,
      * so it stays on the U12 real-transcript field-read watchlist instead
      * of being suppressed pre-emptively.
+     *
+     * "over", "out" and "here" joined on 2026-08-30 from the U12 device
+     * field read, where each threaded as a theme on the first corpus that
+     * exercised ordinary reflective phrasing: "turning it over and over",
+     * "needed to get out", "it was here before and it will be here after".
+     * WordNet noun-lists all three — the cricket "over", the baseball
+     * "out", "here" as a place — so dictionary POS admits them where a
+     * contextual tagger reads adverb or particle. They carry no subject at
+     * any frequency, and the phrasings that produce them are too common in
+     * spoken reflection to leave to chance.
      */
-    val androidHomographNounSuppression: Set<String> = setOf("felt", "whole")
+    val androidHomographNounSuppression: Set<String> =
+        setOf("felt", "whole", "over", "out", "here")
 
     /**
      * The one definition of "not a content word" for every consumer of

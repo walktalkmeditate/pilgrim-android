@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -98,6 +99,26 @@ class ThemeExtractorTest {
     }
 
     // --- androidHomographNounSuppression: Android-only homograph-noun suppression (U11 golden-fixture finding) ---
+
+    @Test
+    fun `the phrasings that surfaced over, out and here on device yield no theme for them`() {
+        // Verbatim shapes from the U12 field read, where each of these
+        // threaded on a corpus of ordinary reflective speech. WordNet
+        // noun-lists all three, so only the suppression list stops them.
+        val turningOver = "I keep circling the same worry about the move, turning it over " +
+            "and over, and the river just keeps going past it without me every single time"
+        val gettingOut = "The noise in my head needed somewhere to go so I had to get out, " +
+            "and coming back out again today felt like the only honest thing I have done"
+        val beingHere = "The river is just the river. It was here before my story and it " +
+            "will be here long after it, which is the part I keep forgetting to notice"
+
+        assertFalse(ThemeExtractor.themes(turningOver).any { it.lemma == "over" })
+        assertFalse(ThemeExtractor.themes(gettingOut).any { it.lemma == "out" })
+        assertFalse(ThemeExtractor.themes(beingHere).any { it.lemma == "here" })
+        // Suppression narrowed the extractor rather than silencing it: the
+        // recording's real subject still threads alongside the discarded word.
+        assertEquals(listOf("river"), ThemeExtractor.themes(beingHere).map { it.lemma })
+    }
 
     @Test
     fun `felt spoken three times amid scaffolding yields zero themes`() {
@@ -267,11 +288,11 @@ class ThemeExtractorTest {
                 // androidGerundExtension
                 "going", "getting", "saying", "coming", "telling",
                 // androidHomographNounSuppression
-                "felt", "whole",
+                "felt", "whole", "over", "out", "here",
             ),
             effective,
         )
-        assertEquals(93, effective.size)
+        assertEquals(96, effective.size)
     }
 
     // --- minimumWords: exact boundary ---

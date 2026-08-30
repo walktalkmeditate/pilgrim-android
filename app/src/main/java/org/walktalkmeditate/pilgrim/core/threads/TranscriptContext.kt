@@ -78,8 +78,18 @@ data class TranscriptContext(
          * punctuation repair; this substrate's tokenizer never had that
          * bug, so only the stoplist half applies here.) No moon-line
          * re-arm accompanies this bump, same as iOS.
+         *
+         * v3 (U12 device field read, 2026-08-30): Android-only.
+         * [SpokenStoplist.androidHomographNounSuppression] gained "over",
+         * "out" and "here" after all three threaded as themes on the first
+         * corpus exercising ordinary reflective phrasing. A v2 file's
+         * themes can name any of them, so the bump forces re-analysis. Like
+         * V5->V6 on iOS this narrows theme extraction only, so again no
+         * moon-line re-arm. Nothing on the prompt-time side changed:
+         * [SpokenStoplist.nonContentLemmas] already unioned this set, and
+         * those consumers cache nothing.
          */
-        const val ANALYSIS_VERSION = 2
+        const val ANALYSIS_VERSION = 3
 
         fun hashTranscript(transcript: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(transcript.toByteArray(Charsets.UTF_8))
