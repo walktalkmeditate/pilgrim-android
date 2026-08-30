@@ -491,6 +491,9 @@ class RecordingsListViewModelTest {
             awaitAnalyzerEntered(throwingPrefs)
             assertNull(awaitTranscriptionCleared(rec.id)?.transcription)
             assertEquals(setOf(rec.id), vm.manualTranscribing.value)
+            // Don't lean on the schedule preceding the analyzer call
+            // inside the press coroutine; wait for it explicitly.
+            awaitScheduledCount(1)
             assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
         }
 
@@ -659,6 +662,9 @@ class RecordingsListViewModelTest {
             val updated = awaitTranscriptionCleared(rec.id)
             assertNull(updated?.transcription)
             assertNull(updated?.wordsPerMinute)
+            // The schedule lands after the null write the poll above
+            // observed — wait for it rather than racing it.
+            awaitScheduledCount(1)
             assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
         }
 
