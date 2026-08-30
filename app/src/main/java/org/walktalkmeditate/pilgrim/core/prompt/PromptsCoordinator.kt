@@ -122,6 +122,13 @@ open class PromptsCoordinator internal constructor(
      * internally, so [Dispatchers.Default] is correct for the orchestration
      * itself.
      *
+     * [generateAll] hops on the same dispatcher for the same reason:
+     * [AttentionDirectives.detect] runs several full lemmatization passes
+     * over the walk's transcripts, and it reaches Main through the exact
+     * `viewModelScope.launch` path above. The hop lives here rather than at
+     * each ViewModel call site so a future caller cannot reintroduce the
+     * regression by forgetting it.
+     *
      * Production wires [Dispatchers.Default] via the [Inject]-annotated
      * secondary constructor; tests pass a `TestDispatcher` so virtual time
      * stays deterministic.
@@ -351,8 +358,10 @@ open class PromptsCoordinator internal constructor(
      * parameter, since the StateFlow may not have re-emitted by the time
      * the persist suspend returns.
      */
-    open fun generateAll(context: ActivityContext, zone: ZoneId = ZoneId.systemDefault()): List<GeneratedPrompt> =
-        generateAll(context, customStyleStore.styles.value, zone)
+    open suspend fun generateAll(
+        context: ActivityContext,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<GeneratedPrompt> = generateAll(context, customStyleStore.styles.value, zone)
 
     /**
      * Render every built-in prompt plus one per [customStyles] entry for
@@ -361,11 +370,11 @@ open class PromptsCoordinator internal constructor(
      * in hand and reads it directly here, sidestepping the DataStore
      * StateFlow's emission lag.
      */
-    open fun generateAll(
+    open suspend fun generateAll(
         context: ActivityContext,
         customStyles: List<CustomPromptStyle>,
         zone: ZoneId = ZoneId.systemDefault(),
-    ): List<GeneratedPrompt> {
+    ): List<GeneratedPrompt> = withContext(defaultDispatcher) {
         val imperial = unitsPreferences.distanceUnits.value == UnitSystem.Imperial
         val weatherLabel = weatherLabelResolver()
         // Resolved ONCE here — not per style — so [context.detectedLanguageCode]'s
@@ -393,7 +402,7 @@ open class PromptsCoordinator internal constructor(
                 detectedLanguageName = resolved.languageName,
             )
         }
-        return builtins + customs
+        return@withContext builtins + customs
     }
 
     /**

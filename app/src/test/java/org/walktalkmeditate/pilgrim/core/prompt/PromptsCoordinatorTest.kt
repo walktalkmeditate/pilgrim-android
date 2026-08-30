@@ -25,6 +25,7 @@ import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -47,6 +48,7 @@ import org.walktalkmeditate.pilgrim.data.photo.BitmapLoader
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -114,7 +116,7 @@ class PromptsCoordinatorTest {
         photoAnalyzer: PhotoContextAnalyzer = newRealAnalyzer(),
         geocoder: PromptGeocoder = StubGeocoder(),
         practicePrefs: FakePracticePreferencesRepository = FakePracticePreferencesRepository(),
-        unitsPrefs: FakeUnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
+        unitsPrefs: UnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
         threadsDossierBuilder: org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder =
             org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
                 context,
@@ -133,6 +135,7 @@ class PromptsCoordinatorTest {
                 context,
                 org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(context, json),
             ),
+        defaultDispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcher,
     ): PromptsCoordinator = PromptsCoordinator(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -145,7 +148,7 @@ class PromptsCoordinatorTest {
         threadsDossierBuilder = threadsDossierBuilder,
         mlKitLanguageIdClient = mlKitLanguageIdClient,
         threadsAnalysisEnvironment = threadsAnalysisEnvironment,
-        defaultDispatcher = dispatcher,
+        defaultDispatcher = defaultDispatcher,
     )
 
     /** A [MlKitLanguageIdClient] that never detects a language — the safe
@@ -752,6 +755,47 @@ class PromptsCoordinatorTest {
         val custom = prompts.first { it.customStyle != null }
         assertTrue("built-in prompt must carry the resolved language name", builtin.text.contains("**Detected language:** Japanese"))
         assertTrue("custom prompt must carry the SAME resolved language name — not recomputed as null", custom.text.contains("**Detected language:** Japanese"))
+    }
+
+    /**
+     * Records the thread each `distanceUnits` read happens on. That read
+     * is the first statement inside `generateAll`'s dispatcher hop, so it
+     * stands in for the whole render — including
+     * [AttentionDirectives.detect]'s lemmatization passes, the CPU cost
+     * this hop exists to keep off Main.
+     */
+    private class ThreadRecordingUnitsPreferences : UnitsPreferencesRepository {
+        val readThreads = java.util.concurrent.CopyOnWriteArrayList<String>()
+        private val flow = kotlinx.coroutines.flow.MutableStateFlow(UnitSystem.Metric)
+        override val distanceUnits: kotlinx.coroutines.flow.StateFlow<UnitSystem>
+            get() {
+                readThreads += Thread.currentThread().name
+                return flow
+            }
+
+        override suspend fun setDistanceUnits(value: UnitSystem) {
+            flow.value = value
+        }
+    }
+
+    @Test
+    fun `generateAll renders off the calling thread, never on the caller's`() = runTest {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        val units = ThreadRecordingUnitsPreferences()
+        val coordinator = newCoordinator(unitsPrefs = units, defaultDispatcher = Dispatchers.Default)
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+        units.readThreads.clear()
+        val callerThread = Thread.currentThread().name
+
+        coordinator.generateAll(ctx, zone = nyZone)
+
+        assertEquals("exactly one units read per render", 1, units.readThreads.size)
+        assertNotEquals(
+            "generateAll's CPU work must not run on its caller's thread — from a ViewModel that thread is Main",
+            callerThread,
+            units.readThreads.single(),
+        )
     }
 
     // --- C2 fix: buildContext installs TranscriptNlp itself ---------------

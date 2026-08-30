@@ -672,12 +672,12 @@ private class FakePromptsCoordinator(
         return generateAllResult
     }
 
-    override fun generateAll(context: ActivityContext, zone: ZoneId): List<GeneratedPrompt> {
+    override suspend fun generateAll(context: ActivityContext, zone: ZoneId): List<GeneratedPrompt> {
         generateAllCalls.incrementAndGet()
         return generateAllResult
     }
 
-    override fun generateAll(
+    override suspend fun generateAll(
         context: ActivityContext,
         customStyles: List<CustomPromptStyle>,
         zone: ZoneId,
