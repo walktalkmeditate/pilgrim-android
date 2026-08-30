@@ -258,6 +258,11 @@ class PromptResponseContractTest {
         "the walker's framing was and how far they placed themselves at the centre of it — too few " +
         "words to read as a rate, so do not weigh them."
 
+    /** The variant printed when the share clause already gave the taxonomy —
+     * it narrows to the recordings it applies to rather than restating it. */
+    private val narrowedTallyClause = "Where a recording gave raw counts instead of a share, read them " +
+        "as a bare tally — too few words to read as a rate, so do not weigh them."
+
     private val modalClause = "Read the modal lean as the frame the walker was working inside — " +
         "obligation means the frame constrained them, counterfactual means they were already " +
         "replaying alternatives, possibility and tentative mean it was still open, intention means " +
@@ -293,9 +298,18 @@ class PromptResponseContractTest {
         current: TranscriptContext,
         allContexts: List<TranscriptContext> = emptyList(),
         walkIdByRecordingUuid: Map<String, Long> = emptyMap(),
+    ): String = realDossier(listOf(current), allContexts, walkIdByRecordingUuid)
+
+    /** `markerLine` decides share-vs-tally PER RECORDING, so only a
+     * multi-recording dossier can print both forms — the shape the
+     * single-recording fixtures above structurally could not reach. */
+    private fun realDossier(
+        currentRecordings: List<TranscriptContext>,
+        allContexts: List<TranscriptContext> = emptyList(),
+        walkIdByRecordingUuid: Map<String, Long> = emptyMap(),
     ): String = requireNotNull(
         ThreadsDossierFormatter.dossier(
-            currentRecordings = listOf(current to null),
+            currentRecordings = currentRecordings.map { it to null },
             allContexts = allContexts,
             threads = Threads(active = emptyList(), firstTimeLemmas = emptySet()),
             currentWalkId = 1L,
@@ -312,7 +326,11 @@ class PromptResponseContractTest {
         val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
 
         assertTrue("share clause: $contract", contract.contains(shareClause))
-        assertFalse("never both share and tally: $contract", contract.contains(tallyClause))
+        assertFalse("this dossier printed no raw counts, so no tally clause: $contract", contract.contains(tallyClause))
+        assertFalse(
+            "nor its narrowed variant: $contract",
+            contract.contains(narrowedTallyClause),
+        )
         assertFalse("no modal lean was printed: $contract", contract.contains(modalClause))
         assertTrue("key ends on the no-fixed-meaning trailer: $contract", contract.contains(keyTrailer))
     }
@@ -324,8 +342,64 @@ class PromptResponseContractTest {
 
         val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
 
-        assertTrue("tally clause: $contract", contract.contains(tallyClause))
-        assertFalse("never both share and tally: $contract", contract.contains(shareClause))
+        assertTrue("tally clause carries the full taxonomy when no share clause gave it: $contract", contract.contains(tallyClause))
+        assertFalse("this dossier printed no shares, so no share clause: $contract", contract.contains(shareClause))
+        assertFalse(
+            "the narrowed variant only fires when a share clause preceded it: $contract",
+            contract.contains(narrowedTallyClause),
+        )
+    }
+
+    @Test
+    fun `a dossier printing both marker forms teaches both clauses, the tally one narrowed`() {
+        // markerLine decides share-vs-tally PER RECORDING, so a long
+        // opening reflection and a short closing note — an ordinary walk
+        // shape — prints both. The old `if / else if` precedence dropped
+        // the tally clause, which is the one carrying "do not weigh them".
+        val dossier = realDossier(
+            listOf(threadsContext("r1", wordCount = 150), threadsContext("r2", wordCount = 40)),
+        )
+        assertTrue("fixture must print shares: $dossier", dossier.contains("absolutist words"))
+        assertTrue("fixture must print raw counts too: $dossier", dossier.contains("raw counts only"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("share clause: $contract", contract.contains(shareClause))
+        assertTrue("narrowed tally clause: $contract", contract.contains(narrowedTallyClause))
+        assertFalse(
+            "the share clause already gave the taxonomy; the tally clause must not restate it: $contract",
+            contract.contains(tallyClause),
+        )
+        assertTrue(
+            "both clauses and the trailer still join into one contract line: $contract",
+            contract.contains("- $shareClause $narrowedTallyClause $keyTrailer\n"),
+        )
+    }
+
+    @Test
+    fun `share, narrowed tally, modal lean, and trailer all still join into one contract line`() {
+        val long = threadsContext("r1", wordCount = 150, modalCounts = mapOf("should" to 12))
+        val short = threadsContext("r2", wordCount = 40)
+        val priors = listOf(
+            threadsContext("p1", wordCount = 200, modalCounts = mapOf("should" to 1)),
+            threadsContext("p2", wordCount = 200, modalCounts = mapOf("should" to 1)),
+            threadsContext("p3", wordCount = 200, modalCounts = mapOf("should" to 1)),
+        )
+        val dossier = realDossier(
+            currentRecordings = listOf(long, short),
+            allContexts = priors + long,
+            walkIdByRecordingUuid = mapOf("r1" to 1L, "p1" to 2L, "p2" to 3L, "p3" to 4L),
+        )
+        assertTrue("fixture must print all three probes: $dossier", dossier.contains("absolutist words"))
+        assertTrue("fixture must print all three probes: $dossier", dossier.contains("raw counts only"))
+        assertTrue("fixture must print all three probes: $dossier", dossier.contains("modal lean:"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue(
+            "the accretion budget is counted in LINES; three clauses still make one: $contract",
+            contract.contains("- $shareClause $narrowedTallyClause $modalClause $keyTrailer\n"),
+        )
     }
 
     @Test

@@ -375,21 +375,40 @@ object PromptAssembler {
      * sense line teach a density reading the dossier never printed, so
      * the senses half carries its own pinning test beside them.
      *
-     * At most one line either way: the contract's accretion budget does
-     * not grow to pay for this.
+     * The share and tally probes are independent, not `if / else if`.
+     * `ThreadsDossierFormatter.markerLine` decides share-vs-tally PER
+     * RECORDING, so a walk with a long opening reflection and a short
+     * closing note — an ordinary shape — prints both forms, and a
+     * precedence rule silently drops one. It dropped the tally clause,
+     * which is the one carrying "do not weigh them"; the model then read a
+     * 2-in-40-words count as a rate.
+     *
+     * At most one line either way: the contract's accretion budget is
+     * counted in LINES, and every clause here joins into the same one —
+     * the modal clause already shares it. When both marker forms printed,
+     * the tally clause narrows to the recordings it applies to rather than
+     * restating the taxonomy the share clause just gave.
      */
     private fun interpretiveKey(dossier: String): String? {
         val clauses = mutableListOf<String>()
-        if (dossier.contains("absolutist words")) {
+        val printedShares = dossier.contains("absolutist words")
+        val printedRawCounts = dossier.contains("raw counts only")
+        if (printedShares) {
             clauses.add(
                 "Read the absolutist-word share as how fixed the walker's framing was, and " +
                     "self-focus as how far they placed themselves at the centre of it.",
             )
-        } else if (dossier.contains("raw counts only")) {
+        }
+        if (printedRawCounts) {
             clauses.add(
-                "Read the absolutist and self-focus counts as a bare tally of how fixed the " +
-                    "walker's framing was and how far they placed themselves at the centre of it — " +
-                    "too few words to read as a rate, so do not weigh them.",
+                if (printedShares) {
+                    "Where a recording gave raw counts instead of a share, read them as a bare " +
+                        "tally — too few words to read as a rate, so do not weigh them."
+                } else {
+                    "Read the absolutist and self-focus counts as a bare tally of how fixed the " +
+                        "walker's framing was and how far they placed themselves at the centre of it — " +
+                        "too few words to read as a rate, so do not weigh them."
+                },
             )
         }
         if (dossier.contains("modal lean:")) {
