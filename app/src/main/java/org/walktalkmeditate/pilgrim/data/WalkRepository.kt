@@ -5,6 +5,7 @@ import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
@@ -35,6 +36,16 @@ open class WalkRepository @Inject constructor(
     private val waypointDao: WaypointDao,
     private val voiceRecordingDao: VoiceRecordingDao,
     private val walkPhotoDao: WalkPhotoDao,
+    /**
+     * Nullable + defaulted so the ~40 existing call sites across the test
+     * suite that construct [WalkRepository] directly (with named
+     * arguments, none specifying this one) keep compiling unchanged;
+     * production's Hilt graph always supplies the real singleton. `null`
+     * here means "no Threads context cleanup" — never reached in
+     * production, exercised deliberately by tests that don't care about
+     * Threads hygiene.
+     */
+    private val transcriptContextStore: TranscriptContextStore? = null,
 ) {
     fun observeAllWalks(): Flow<List<Walk>> = walkDao.observeAll()
 
@@ -180,9 +191,23 @@ open class WalkRepository @Inject constructor(
      * altitude_samples, walk_events, activity_intervals, waypoints,
      * voice_recordings, and walk_photos are removed via SQLite
      * `ON DELETE CASCADE`. No-op when the id matches no row.
+     *
+     * Recording uuids are captured INSIDE the transaction, before the
+     * cascade tears the rows down — otherwise there is nothing left to
+     * read once the delete commits. Threads context cleanup runs AFTER
+     * the transaction commits, mirroring iOS's capture-then-tombstone
+     * ordering (DAT-33/DAT-17): a context write must never be attempted
+     * for a recording whose walk turned out not to exist.
      */
     suspend fun deleteWalkById(walkId: Long) {
-        walkDao.deleteById(walkId)
+        val recordingUuids = database.withTransaction {
+            val uuids = voiceRecordingDao.getForWalk(walkId).map { it.uuid }
+            walkDao.deleteById(walkId)
+            uuids
+        }
+        if (recordingUuids.isNotEmpty()) {
+            transcriptContextStore?.delete(recordingUuids)
+        }
     }
 
     suspend fun recordLocation(sample: RouteDataSample): Long = routeDao.insert(sample)
@@ -253,11 +278,23 @@ open class WalkRepository @Inject constructor(
     suspend fun recordVoice(recording: VoiceRecording): Long =
         voiceRecordingDao.insert(recording)
 
-    suspend fun updateVoiceRecording(recording: VoiceRecording) =
+    /** `open` so tests can inject controlled failures (TranscriptionRunner's
+     * two-attempt persistence retry, U5/BEH-58). */
+    open suspend fun updateVoiceRecording(recording: VoiceRecording) =
         voiceRecordingDao.update(recording)
 
-    suspend fun deleteVoiceRecording(recording: VoiceRecording) =
+    /**
+     * Deletes a single voice-recording row (the orphan sweeper's
+     * case-b/case-c cleanup — a DB row whose backing file is missing or a
+     * "zombie" pairing). Any stored Threads context for it is tombstoned
+     * and removed the same way a whole-walk delete does — a vanished
+     * recording is a vanished recording regardless of which path removed
+     * its row.
+     */
+    suspend fun deleteVoiceRecording(recording: VoiceRecording) {
         voiceRecordingDao.delete(recording)
+        transcriptContextStore?.delete(recording.uuid)
+    }
 
     suspend fun getVoiceRecording(id: Long): VoiceRecording? =
         voiceRecordingDao.getById(id)
@@ -267,6 +304,11 @@ open class WalkRepository @Inject constructor(
 
     open suspend fun walkIdsWithPendingTranscriptions(): List<Long> =
         voiceRecordingDao.walkIdsWithNullTranscription()
+
+    /** U6: [ThreadsBackfillRunner][org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillRunner]'s
+     * default snapshot source — every already-transcribed recording. */
+    open suspend fun transcribedRecordingsSnapshot(): List<org.walktalkmeditate.pilgrim.data.dao.TranscribedRecordingSnapshot> =
+        voiceRecordingDao.transcribedSnapshot()
 
     fun observeVoiceRecordings(walkId: Long): Flow<List<VoiceRecording>> =
         voiceRecordingDao.observeForWalk(walkId)

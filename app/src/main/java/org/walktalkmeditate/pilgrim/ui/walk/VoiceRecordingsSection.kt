@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Battery2Bar
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Refresh
@@ -42,6 +43,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.alpha
@@ -49,7 +53,6 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import org.walktalkmeditate.pilgrim.R
-import org.walktalkmeditate.pilgrim.audio.TranscriptionRunner
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.ui.recordings.TranscriptionPlaceholder
@@ -106,6 +109,19 @@ sealed interface PendingTranscriptionSubstate {
     /** Auto-transcribe ON, model Ready — the worker owns it from here. */
     data object QueuedForProcessing : PendingTranscriptionSubstate
 
+    /**
+     * U6: auto-transcribe ON, model Ready, but the walk's post-finish
+     * batch never got enqueued — [org.walktalkmeditate.pilgrim.core.threads.BatteryGate]
+     * closed at the enqueue site. Distinct from [QueuedForProcessing]:
+     * that state promises the worker owns it from here, which is false
+     * while the walk-level skip banner is showing — nothing is queued
+     * until the user (or a future retry) actually kicks one off.
+     * [transcribeEnabled] mirrors [ManualPending]'s shape so the row can
+     * offer the same recovery affordance.
+     */
+    @Immutable
+    data class SkippedForBattery(val transcribeEnabled: Boolean) : PendingTranscriptionSubstate
+
     /** Terminal download failure — row exposes Retry (U9 C5). */
     data object DownloadFailedChecksum : PendingTranscriptionSubstate
 
@@ -118,11 +134,19 @@ sealed interface PendingTranscriptionSubstate {
  * Compose. [modelUsable] is [WhisperModelStore][org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore]'s
  * usability probe: it gates the pref-OFF manual affordance, while
  * [modelState] stays the display surface.
+ *
+ * [isSkippedForBattery] (U6) only ever reroutes the pref-ON/model-Ready
+ * cell — the one case that would otherwise claim "queued" while nothing
+ * is. The pref-OFF cells are already honest (a plain "not transcribed" +
+ * manual affordance, no queuing claim), and a non-Ready model state is
+ * already the true reason nothing has happened yet — the skip flag adds
+ * no new information there, so it does not override either.
  */
 fun pendingTranscriptionSubstate(
     autoTranscribe: Boolean,
     modelState: WhisperModelState,
     modelUsable: Boolean,
+    isSkippedForBattery: Boolean = false,
 ): PendingTranscriptionSubstate = if (!autoTranscribe) {
     if (modelUsable) {
         PendingTranscriptionSubstate.ManualPending(transcribeEnabled = true)
@@ -131,7 +155,11 @@ fun pendingTranscriptionSubstate(
     }
 } else {
     when (modelState) {
-        is WhisperModelState.Ready -> PendingTranscriptionSubstate.QueuedForProcessing
+        is WhisperModelState.Ready -> if (isSkippedForBattery) {
+            PendingTranscriptionSubstate.SkippedForBattery(transcribeEnabled = true)
+        } else {
+            PendingTranscriptionSubstate.QueuedForProcessing
+        }
         WhisperModelState.FailedChecksum -> PendingTranscriptionSubstate.DownloadFailedChecksum
         WhisperModelState.FailedStorage -> PendingTranscriptionSubstate.DownloadFailedStorage
         WhisperModelState.Absent,
@@ -140,6 +168,41 @@ fun pendingTranscriptionSubstate(
         is WhisperModelState.Downloading,
         WhisperModelState.Verifying,
         -> PendingTranscriptionSubstate.WaitingOnDownload(modelState)
+    }
+}
+
+/**
+ * U6 parity spec UI-24: battery icon tinted `dawn`, caption typography,
+ * copy pinned verbatim against iOS's literal string. `liveRegion =
+ * Polite` (the IntentionSettingSheet countdown precedent) announces the
+ * banner's appearance AND its clearing to TalkBack — this is the one
+ * surface a walker relying on a screen reader has for "why didn't my
+ * walk get transcribed automatically."
+ */
+@Composable
+private fun AutoTranscriptionSkippedBanner() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Battery2Bar,
+            contentDescription = null,
+            tint = pilgrimColors.dawn,
+        )
+        Text(
+            text = stringResource(R.string.transcription_skipped_battery),
+            style = pilgrimType.caption,
+            color = pilgrimColors.fog,
+            // IntentionSettingSheet countdown precedent: the modifier
+            // lives on the Text itself, not a wrapping container, so the
+            // liveRegion property attaches to the semantics node a
+            // screen reader (and `onNodeWithText`) actually finds.
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
     }
 }
 
@@ -180,6 +243,18 @@ fun VoiceRecordingsSection(
     // whose transcription is still null render "Transcribing…" instead
     // of the pending substate; they drop out when the transcript lands.
     manualTranscribingIds: Set<Long>,
+    // U6: whether AutoTranscriptionSkipState.skipReason is currently set
+    // — drives the section-level banner, independent of any one row's
+    // own [pendingSubstate] (parity spec UI-21: the two are gated by
+    // separately-set properties on the same singleton, not mutually
+    // exclusive by construction).
+    autoTranscriptionSkipped: Boolean,
+    // U6: whether a transcription batch is CURRENTLY running for this
+    // walk (derived from the shared WorkManager record, not a local
+    // flag). Every null-transcription row renders "Transcribing…"
+    // instead of its pending substate while this is true — the
+    // transcribe-all affordance disappearing, not merely disabling.
+    isBatchInFlight: Boolean,
     onManualTranscribe: () -> Unit,
     onOpenModelDownloadSheet: () -> Unit,
     onRetryModelDownload: () -> Unit,
@@ -217,6 +292,9 @@ fun VoiceRecordingsSection(
                 color = pilgrimColors.fog,
             )
         }
+        if (autoTranscriptionSkipped) {
+            AutoTranscriptionSkippedBanner()
+        }
         recordings.forEachIndexed { index, recording ->
             val isActive = playbackUiState.playingRecordingId == recording.id
             val isThisRowPlaying = isActive && playbackUiState.isPlaying
@@ -244,8 +322,11 @@ fun VoiceRecordingsSection(
                 // passing null keeps transcribed rows' params stable
                 // across download-progress emissions.
                 pendingSubstate = if (recording.transcription == null) pendingSubstate else null,
+                // U6: a batch in flight overrides the substate the SAME
+                // way an optimistic manual-press marker does — both mean
+                // "don't show the chip, something is genuinely running."
                 isManualTranscribing = recording.transcription == null &&
-                    recording.id in manualTranscribingIds,
+                    (recording.id in manualTranscribingIds || isBatchInFlight),
                 retranscribeEnabled = retranscribeEnabled,
                 onManualTranscribe = onManualTranscribe,
                 onOpenModelDownloadSheet = onOpenModelDownloadSheet,
@@ -380,7 +461,7 @@ private fun VoiceRecordingRow(
                     )
                 }
             }
-            TranscriptionRunner.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
+            VoiceRecording.NO_SPEECH_PLACEHOLDER -> TranscriptionPlaceholder(
                 text = transcription,
             )
             else -> EditableTranscription(
@@ -422,6 +503,27 @@ private fun PendingTranscriptionRow(
                 text = stringResource(R.string.transcription_action_transcribe),
                 onClick = onManualTranscribe,
                 enabled = substate.transcribeEnabled,
+                contentDescription = stringResource(R.string.transcription_action_transcribe_cd),
+            )
+        }
+
+        // U6: honest row state while the walk-level banner is showing —
+        // never "Queued for transcription…" (nothing is queued), same
+        // recovery affordance as ManualPending.
+        is PendingTranscriptionSubstate.SkippedForBattery -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+        ) {
+            TranscriptionPlaceholder(
+                text = stringResource(R.string.transcription_not_transcribed),
+                modifier = Modifier.weight(1f),
+            )
+            StoneChip(
+                text = stringResource(R.string.transcription_action_transcribe),
+                onClick = onManualTranscribe,
+                enabled = substate.transcribeEnabled,
+                contentDescription = stringResource(R.string.transcription_action_transcribe_cd),
             )
         }
 

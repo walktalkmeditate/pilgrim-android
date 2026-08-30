@@ -38,7 +38,7 @@ class MoonCalcTest {
         // We advance the epoch by 0.5 * bucketWidth (middle of each
         // bucket) and assert the name is the expected one.
         val epoch = Instant.parse("2000-01-06T18:14:00Z")
-        val bucketDays = 29.530588770576 / 8.0
+        val bucketDays = MoonCalc.SYNODIC_DAYS / 8.0
         val expected = listOf(
             "New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
             "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent",
@@ -59,7 +59,7 @@ class MoonCalcTest {
             "2099-12-31T23:59:59Z",
             "1980-01-15T00:00:00Z",
         )
-        val synodic = 29.530588770576
+        val synodic = MoonCalc.SYNODIC_DAYS
         for (iso in instants) {
             val phase = MoonCalc.moonPhase(Instant.parse(iso))
             assertTrue("age < 0: $iso", phase.ageInDays >= 0.0)
@@ -108,5 +108,23 @@ class MoonCalcTest {
         assertTrue(phase.ageInDays >= 0.0)
         assertTrue(phase.ageInDays < 29.531)
         assertTrue(phase.illumination in 0.0..1.0)
+    }
+
+    // --- pinned constants (parity spec docs/parity/2026-08-26-threads-senses-port.md) ---
+    //
+    // Pre-existing transcription bug: SYNODIC_DAYS carried a stray extra
+    // '8' (29.530588770576) vs iOS LunarPhase.synodicMonth
+    // (29.53058770576) — an eleven-vs-twelve-digit mismatch worth ~30s of
+    // cumulative lunation-boundary drift by 2026. Fixed to align with the
+    // iOS pin; LunationCalendar (U9) derives its own boundary math from
+    // this exact value, so a future regression here would silently shift
+    // every lunation index/boundary/moon name downstream.
+
+    @Test fun `synodic month constant matches the pinned iOS value exactly`() {
+        assertEquals(29.53058770576, MoonCalc.SYNODIC_DAYS, 0.0)
+    }
+
+    @Test fun `epoch instant matches the pinned iOS new moon exactly`() {
+        assertEquals(Instant.parse("2000-01-06T18:14:00Z"), MoonCalc.EPOCH)
     }
 }

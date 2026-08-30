@@ -21,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -29,12 +30,29 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlinx.serialization.json.Json
 import org.walktalkmeditate.pilgrim.audio.model.FakeWhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+import org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess
+import org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway
+import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
+import org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
+import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
+import org.walktalkmeditate.pilgrim.data.dao.VoiceRecordingDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
+import org.walktalkmeditate.pilgrim.data.dao.WalkPhotoDao
+import org.walktalkmeditate.pilgrim.data.dao.WaypointDao
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
@@ -58,9 +76,17 @@ class TranscriptionRunnerTest {
     private lateinit var store: WhisperModelStore
     private lateinit var downloadScheduler: FakeWhisperModelDownloadScheduler
     private lateinit var runner: TranscriptionRunner
+    private lateinit var threadsPreferences: FakeThreadsPreferencesRepository
+    private lateinit var threadsStore: TranscriptContextStore
+    private var languageGuess = LanguageGuess("en", 0.99f)
+    private var languageDetectionError: Throwable? = null
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
     private val modelRoot: File
         get() = File(context.filesDir, "whisper-model")
+
+    private val threadsContextsDir: File
+        get() = File(context.filesDir, "transcript_contexts")
 
     @Before
     fun setUp() {
@@ -92,6 +118,13 @@ class TranscriptionRunnerTest {
             scope = storeScope,
         )
         downloadScheduler = FakeWhisperModelDownloadScheduler()
+        threadsContextsDir.deleteRecursively()
+        // Off by default: every PRE-EXISTING test in this file transcribes
+        // without caring about Threads at all, so the toggle stays off
+        // unless a test explicitly opts in — this is the same fast
+        // bail-out path production takes for a real toggled-off user.
+        threadsPreferences = FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false)
+        threadsStore = TranscriptContextStore(context, json)
         runner = buildRunner(engine)
     }
 
@@ -99,11 +132,31 @@ class TranscriptionRunnerTest {
     fun tearDown() {
         storeScope.cancel()
         modelRoot.deleteRecursively()
+        threadsContextsDir.deleteRecursively()
         db.close()
     }
 
-    private fun buildRunner(engine: WhisperEngine) =
-        TranscriptionRunner(context, repository, engine, store, downloadScheduler)
+    private fun buildRunner(engine: WhisperEngine, repository: WalkRepository = this.repository) = TranscriptionRunner(
+        context,
+        repository,
+        engine,
+        store,
+        downloadScheduler,
+        TranscriptContextAnalyzer(
+            store = threadsStore,
+            environment = ThreadsAnalysisEnvironment(context, WordNetLexicon(context, json)),
+            languageIdClient = MlKitLanguageIdClient(
+                object : LanguageIdentifierGateway {
+                    override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> {
+                        languageDetectionError?.let { throw it }
+                        return listOf(languageGuess)
+                    }
+                },
+            ),
+            preferences = threadsPreferences,
+        ),
+        threadsPreferences,
+    )
 
     private fun installLegacyTiny() {
         val tiny = File(modelRoot, "ggml-tiny.en.bin")
@@ -183,7 +236,7 @@ class TranscriptionRunnerTest {
 
         val updated = repository.getVoiceRecording(recording.id)
         assertNotNull(updated)
-        assertEquals(TranscriptionRunner.NO_SPEECH_PLACEHOLDER, updated!!.transcription)
+        assertEquals(VoiceRecording.NO_SPEECH_PLACEHOLDER, updated!!.transcription)
         assertNull("WPM is meaningless for no-speech rows", updated.wordsPerMinute)
     }
 
@@ -426,6 +479,259 @@ class TranscriptionRunnerTest {
             "cancellation still triggers unload via the finally",
             1,
             engine.unloadModelCalls,
+        )
+    }
+
+    // ---- Phase 20 U5: post-persist Threads analysis wiring ----
+
+    @Test
+    fun `threads analysis is skipped entirely when the toggle is off`() = runBlocking {
+        // threadsPreferences defaults to off in setUp().
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(WhisperSegment("hello there world", 0L, 500L, 0.01f))
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertFalse(threadsStore.hasContext(updated.uuid))
+    }
+
+    @Test
+    fun `threads analysis writes a context when the toggle is on and language is English`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        // 30 words, English, no flagged segments.
+        engine.resultSegments = listOf(
+            WhisperSegment(
+                text = "I was walking along the river this morning and noticed how quiet the trail " +
+                    "was with the light moving gently through the leaves above the water and stones",
+                t0Ms = 0L,
+                t1Ms = 12_000L,
+                noSpeechProb = 0.01f,
+            ),
+        )
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertTrue("a context must be written for a toggled-on English recording", threadsStore.hasContext(updated.uuid))
+    }
+
+    @Test
+    fun `threads analysis is skipped for a no-speech placeholder recording`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(WhisperSegment("", 0L, 0L, 0.95f))
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertEquals(VoiceRecording.NO_SPEECH_PLACEHOLDER, updated.transcription)
+        assertFalse(
+            "no real transcript exists for a no-speech row — nothing should be analyzed",
+            threadsStore.hasContext(updated.uuid),
+        )
+    }
+
+    @Test
+    fun `threads analysis does not write when the detected language is not English`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        languageGuess = LanguageGuess("ja", 0.99f)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(
+            WhisperSegment(
+                text = "I was walking along the river this morning and noticed how quiet the trail " +
+                    "was with the light moving gently through the leaves above the water and stones",
+                t0Ms = 0L,
+                t1Ms = 12_000L,
+                noSpeechProb = 0.01f,
+            ),
+        )
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertFalse(threadsStore.hasContext(updated.uuid))
+    }
+
+    @Test
+    fun `an analyzer failure never blocks the already-persisted transcription`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        // Language detection itself throws — proves TranscriptionRunner's
+        // analyzeThreadsSafely try/catch, not just a store-level no-op.
+        languageDetectionError = RuntimeException("boom")
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultSegments = listOf(WhisperSegment("hello there friend", 0L, 500L, 0.01f))
+
+        val outcome = runner.transcribePending(walk.id)
+
+        assertEquals(Result.success(1), outcome)
+        val updated = repository.getVoiceRecording(recording.id)!!
+        assertEquals("hello there friend", updated.transcription)
+        assertFalse(
+            "the thrown error must not have left a context behind",
+            threadsStore.hasContext(updated.uuid),
+        )
+    }
+
+    // ---- U2/BEH-58: persistence retries exactly once (two total attempts) ----
+
+    private fun flakyRepository(failuresBeforeSuccess: Int) = FlakyWalkRepository(
+        database = db,
+        walkDao = db.walkDao(),
+        routeDao = db.routeDataSampleDao(),
+        altitudeDao = db.altitudeSampleDao(),
+        walkEventDao = db.walkEventDao(),
+        activityIntervalDao = db.activityIntervalDao(),
+        waypointDao = db.waypointDao(),
+        voiceRecordingDao = db.voiceRecordingDao(),
+        walkPhotoDao = db.walkPhotoDao(),
+        failuresBeforeSuccess = failuresBeforeSuccess,
+    )
+
+    @Test
+    fun `a transient DB failure on the first attempt succeeds on the retry`() = runBlocking {
+        val flaky = flakyRepository(failuresBeforeSuccess = 1)
+        val flakyRunner = buildRunner(engine, repository = flaky)
+        val walk = flaky.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        engine.resultText = "persisted on retry"
+
+        val outcome = flakyRunner.transcribePending(walk.id)
+
+        assertEquals(Result.success(1), outcome)
+        assertEquals(2, flaky.updateAttempts)
+        assertEquals("persisted on retry", flaky.getVoiceRecording(recording.id)!!.transcription)
+    }
+
+    @Test
+    fun `two consecutive DB failures give up — not persisted, not counted`() = runBlocking {
+        val flaky = flakyRepository(failuresBeforeSuccess = 2)
+        val flakyRunner = buildRunner(engine, repository = flaky)
+        val walk = flaky.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+
+        val outcome = flakyRunner.transcribePending(walk.id)
+
+        assertTrue("expected failure (all attempted recordings failed), was $outcome", outcome.isFailure)
+        assertEquals(2, flaky.updateAttempts)
+        assertNull(
+            "no more than 2 attempts — no backoff loop, no third try",
+            flaky.getVoiceRecording(recording.id)!!.transcription,
+        )
+    }
+
+    private class FlakyWalkRepository(
+        database: PilgrimDatabase,
+        walkDao: WalkDao,
+        routeDao: RouteDataSampleDao,
+        altitudeDao: AltitudeSampleDao,
+        walkEventDao: WalkEventDao,
+        activityIntervalDao: ActivityIntervalDao,
+        waypointDao: WaypointDao,
+        voiceRecordingDao: VoiceRecordingDao,
+        walkPhotoDao: WalkPhotoDao,
+        private var failuresBeforeSuccess: Int,
+    ) : WalkRepository(
+        database, walkDao, routeDao, altitudeDao, walkEventDao,
+        activityIntervalDao, waypointDao, voiceRecordingDao, walkPhotoDao,
+    ) {
+        var updateAttempts = 0
+            private set
+
+        override suspend fun updateVoiceRecording(recording: VoiceRecording) {
+            updateAttempts++
+            if (failuresBeforeSuccess > 0) {
+                failuresBeforeSuccess--
+                throw IOException("simulated transient DB failure")
+            }
+            super.updateVoiceRecording(recording)
+        }
+    }
+
+    // ---- flagged-segment quality signal (compressionRatio / noSpeechProb) ----
+
+    @Test
+    fun `a segment flagged by noSpeechProb is scrubbed from the marker text`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        // "should" appears in a segment whose noSpeechProb clears the 0.6
+        // flag threshold; the analysis must scrub it from markers even
+        // though the persisted transcription keeps the raw text.
+        engine.resultSegments = listOf(
+            WhisperSegment("should should should. ", 0L, 500L, 0.95f),
+            WhisperSegment(
+                "apple banana cherry date fig grape kiwi lemon mango orange peach quince fruit basket",
+                500L,
+                6000L,
+                0.01f,
+            ),
+        )
+
+        runner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        val context = threadsStore.readRaw(updated.uuid)
+        assertTrue(context != null)
+        assertEquals(
+            "the flagged 'should should should' fragment must be scrubbed from markers",
+            0,
+            context!!.markers.discrepancyCount,
+        )
+    }
+
+    // I2: the REAL WhisperCppEngine.transcribeWithSegments joins raw
+    // segment text then trims ONCE at the very ends (see that class) —
+    // FakeWhisperEngine's own join does not replicate that trim, so this
+    // test uses a one-off engine (same pattern as "per-recording engine
+    // failure does not abort the batch" above) that reproduces the real
+    // join-then-trim exactly. A flagged FIRST segment's own leading space
+    // survives in its raw segment.text but is gone from the trimmed
+    // transcript — an untrimmed fragment search would never find it there.
+    @Test
+    fun `a flagged FIRST segment carrying a leading space is still scrubbed from the marker text`() = runBlocking {
+        threadsPreferences.setThreadsAfterWalks(true)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        val recording = insertRecording(walk.id)
+        val segments = listOf(
+            WhisperSegment(" should should should.", 0L, 500L, 0.95f),
+            WhisperSegment(
+                " apple banana cherry date fig grape kiwi lemon mango orange peach quince fruit basket",
+                500L,
+                6000L,
+                0.01f,
+            ),
+        )
+        val joinThenTrimEngine = object : WhisperEngine {
+            override suspend fun transcribe(wavPath: java.nio.file.Path) =
+                Result.success(TranscriptionResult(text = "", wordsPerMinute = null))
+            override suspend fun transcribeWithSegments(wavPath: java.nio.file.Path) = Result.success(
+                TranscriptionResult(
+                    text = segments.joinToString("") { it.text }.trim(),
+                    wordsPerMinute = null,
+                    segments = segments,
+                ),
+            )
+            override fun unloadModel() {}
+        }
+        val customRunner = buildRunner(joinThenTrimEngine)
+
+        customRunner.transcribePending(walk.id)
+
+        val updated = repository.getVoiceRecording(recording.id)!!
+        val context = threadsStore.readRaw(updated.uuid)
+        assertTrue(context != null)
+        assertEquals(
+            "the flagged FIRST segment's fragment must still be found and scrubbed even though " +
+                "the global transcript trims away its leading space",
+            0,
+            context!!.markers.discrepancyCount,
         )
     }
 

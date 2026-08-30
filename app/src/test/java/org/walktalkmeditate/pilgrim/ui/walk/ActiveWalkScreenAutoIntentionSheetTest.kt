@@ -78,6 +78,12 @@ class ActiveWalkScreenAutoIntentionSheetTest {
                 suggestions = emptyList(),
                 onSave = {},
                 onDismiss = { showPreWalkIntention = false },
+                // This harness has no Hilt-enabled Activity (see the
+                // class doc) — override U10's default `hiltViewModel()`
+                // loader explicitly so composing the sheet doesn't
+                // require Hilt for a test that isn't exercising Thought
+                // Threads at all.
+                loadThreadSuggestions = { emptyList() },
             )
         }
     }

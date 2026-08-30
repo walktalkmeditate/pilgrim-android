@@ -9,6 +9,20 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 
 data class WalkFirstLatitude(val walkId: Long, val latitude: Double)
 
+/**
+ * U9: one row of [RouteDataSampleDao.routeSamplesNear] — the Android
+ * equivalent of iOS `routeFixNear`'s bounded ±90s fetch (parity spec
+ * `docs/parity/2026-08-25-threads-senses-port.md`). [horizontalAccuracyMeters]
+ * is projected as-is (nullable) — `qualifies()` in `core/threads/DossierSenses.kt`
+ * re-checks accuracy downstream; there is no SQL-side accuracy filter.
+ */
+data class RouteSampleWindowRow(
+    val timestamp: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val horizontalAccuracyMeters: Float?,
+)
+
 @Dao
 interface RouteDataSampleDao {
     @Insert
@@ -61,4 +75,22 @@ interface RouteDataSampleDao {
 
     @Query("DELETE FROM route_data_samples WHERE walk_id = :walkId")
     suspend fun deleteByWalkId(walkId: Long): Int
+
+    /**
+     * U9: every route sample within `[windowStart, windowEnd]` (both
+     * inclusive), across ALL walks — NOT scoped to a single `walk_id`,
+     * matching iOS `routeFixNear`'s own unscoped fetch (a recording's
+     * nearest fix could theoretically resolve from a neighboring walk's
+     * samples at the same wall-clock instant). Callers pass a ±90s
+     * window built from [org.walktalkmeditate.pilgrim.core.threads.DossierSenses.HYGIENE_MAX_GAP_SECONDS] —
+     * never a hand-copied literal. Capped at 240 rows (~1Hz logging
+     * yields far fewer inside a 180s window in practice); ordered
+     * ascending so the cap never bites the earliest candidates.
+     */
+    @Query(
+        "SELECT timestamp, latitude, longitude, horizontal_accuracy AS horizontalAccuracyMeters " +
+            "FROM route_data_samples WHERE timestamp BETWEEN :windowStart AND :windowEnd " +
+            "ORDER BY timestamp ASC LIMIT 240",
+    )
+    suspend fun routeSamplesNear(windowStart: Long, windowEnd: Long): List<RouteSampleWindowRow>
 }

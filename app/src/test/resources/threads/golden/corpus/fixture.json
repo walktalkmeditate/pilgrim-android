@@ -1,0 +1,179 @@
+{
+  "_comment": "Synthetic Thought Threads golden fixture (Task U11). Every transcript under corpus/transcripts/ is hand-authored for this fixture only -- never sourced from a real recorded walk. Timestamps are epoch milliseconds (UTC). See ../README.md for the full capture procedure and design rationale.",
+  "buildNowEpochMs": 1771153200000,
+  "buildNowIso": "2026-02-15T11:00:00Z",
+  "backfillComplete": true,
+  "moonLineLastReportedLunationIndex": 320,
+  "walks": [
+    {
+      "id": "walk-h0",
+      "label": "H0 - closed-lunation worded walk (outside the 30-day window, inside the moon's closed lunation)",
+      "startEpochMs": 1767171600000,
+      "startIso": "2025-12-31T09:00:00Z",
+      "endEpochMs": 1767175200000,
+      "intention": null,
+      "weatherCondition": "clear",
+      "recordings": [
+        {
+          "uuid": "00000000-0000-0000-0000-000000000000",
+          "transcriptFile": "transcripts/h0-closed-lunation.txt",
+          "startOffsetMs": 0,
+          "endOffsetMs": 300000,
+          "wordsPerMinute": 100.0,
+          "routeFix": null
+        }
+      ],
+      "altitudeSamples": [],
+      "photos": []
+    },
+    {
+      "id": "walk-h1",
+      "label": "H1 - river (1st recurrence seed) + mountain (1st quiet seed), -25 days",
+      "startEpochMs": 1768986000000,
+      "startIso": "2026-01-21T09:00:00Z",
+      "endEpochMs": 1768989600000,
+      "intention": null,
+      "weatherCondition": "clear",
+      "recordings": [
+        {
+          "uuid": "00000000-0000-0000-0000-000000000001",
+          "transcriptFile": "transcripts/h1-river-mountain.txt",
+          "startOffsetMs": 0,
+          "endOffsetMs": 300000,
+          "wordsPerMinute": 110.0,
+          "routeFix": { "latitude": 45.50000, "longitude": -122.60000, "horizontalAccuracyMeters": 10.0, "atRecordingStart": true }
+        }
+      ],
+      "altitudeSamples": [],
+      "photos": []
+    },
+    {
+      "id": "walk-h2",
+      "label": "H2 - river (2nd recurrence seed), -20 days",
+      "startEpochMs": 1769418000000,
+      "startIso": "2026-01-26T09:00:00Z",
+      "endEpochMs": 1769421600000,
+      "intention": null,
+      "weatherCondition": "clear",
+      "recordings": [
+        {
+          "uuid": "00000000-0000-0000-0000-000000000002",
+          "transcriptFile": "transcripts/h2-river.txt",
+          "startOffsetMs": 0,
+          "endOffsetMs": 300000,
+          "wordsPerMinute": 110.0,
+          "routeFix": { "latitude": 45.50020, "longitude": -122.60020, "horizontalAccuracyMeters": 10.0, "atRecordingStart": true }
+        }
+      ],
+      "altitudeSamples": [],
+      "photos": []
+    },
+    {
+      "id": "walk-h3",
+      "label": "H3 - mountain (2nd quiet seed), -15 days",
+      "startEpochMs": 1769850000000,
+      "startIso": "2026-01-31T09:00:00Z",
+      "endEpochMs": 1769853600000,
+      "intention": null,
+      "weatherCondition": "clear",
+      "recordings": [
+        {
+          "uuid": "00000000-0000-0000-0000-000000000003",
+          "transcriptFile": "transcripts/h3-mountain.txt",
+          "startOffsetMs": 0,
+          "endOffsetMs": 300000,
+          "wordsPerMinute": 110.0,
+          "routeFix": null
+        }
+      ],
+      "altitudeSamples": [],
+      "photos": []
+    },
+    {
+      "id": "walk-h4",
+      "label": "H4 - bridge (recurrence seed), -8 days",
+      "startEpochMs": 1770454800000,
+      "startIso": "2026-02-07T09:00:00Z",
+      "endEpochMs": 1770458400000,
+      "intention": null,
+      "weatherCondition": "clear",
+      "recordings": [
+        {
+          "uuid": "00000000-0000-0000-0000-000000000004",
+          "transcriptFile": "transcripts/h4-bridge.txt",
+          "startOffsetMs": 0,
+          "endOffsetMs": 300000,
+          "wordsPerMinute": 110.0,
+          "routeFix": { "latitude": 45.60000, "longitude": -122.70000, "horizontalAccuracyMeters": 10.0, "atRecordingStart": true }
+        }
+      ],
+      "altitudeSamples": [],
+      "photos": []
+    },
+    {
+      "id": "walk-current",
+      "label": "CURRENT - the walk the golden dossier is rendered for",
+      "startEpochMs": 1771146000000,
+      "startIso": "2026-02-15T09:00:00Z",
+      "endEpochMs": 1771151400000,
+      "intention": null,
+      "weatherCondition": "clear",
+      "recordings": [
+        {
+          "uuid": "00000000-0000-0000-0000-00000000000a",
+          "label": "river (recurring, fast pace)",
+          "transcriptFile": "transcripts/current-a-river.txt",
+          "startOffsetMs": 300000,
+          "endOffsetMs": 600000,
+          "wordsPerMinute": 180.0,
+          "routeFix": null
+        },
+        {
+          "uuid": "00000000-0000-0000-0000-00000000000b",
+          "label": "garden (first-time, slow pace, heavy 'could' repetition for modal lean)",
+          "transcriptFile": "transcripts/current-b-garden.txt",
+          "startOffsetMs": 700000,
+          "endOffsetMs": 1100000,
+          "wordsPerMinute": 90.0,
+          "routeFix": null
+        },
+        {
+          "uuid": "00000000-0000-0000-0000-00000000000c",
+          "label": "bridge (recurring, neutral pace, <100 words for the small-sample branch)",
+          "transcriptFile": "transcripts/current-c-bridge.txt",
+          "startOffsetMs": 1200000,
+          "endOffsetMs": 1500000,
+          "wordsPerMinute": 130.0,
+          "routeFix": null
+        }
+      ],
+      "altitudeSamples": [
+        { "offsetMs": 0, "altitudeMeters": 100.0 },
+        { "offsetMs": 900000, "altitudeMeters": 104.0 },
+        { "offsetMs": 1800000, "altitudeMeters": 108.0 },
+        { "offsetMs": 2700000, "altitudeMeters": 106.0 },
+        { "offsetMs": 3600000, "altitudeMeters": 103.0 }
+      ],
+      "photos": [
+        { "capturedAtOffsetMs": 400000, "latitude": 45.51000, "longitude": -122.61000 }
+      ]
+    }
+  ],
+  "sensesDesignNotes": {
+    "expectedToFire": [
+      "placeResonance - 'river' clustered at H1/H2 (~27m apart) against a ~13.6km baseline set by H4's far-away bridge fix; current walk's own river recording has no route fix so it is excluded from the cluster geometry but still counts toward the distinct-walk total",
+      "moonLine - H0 sits inside the lunation that closed most recently before buildNow (verified via LunationCalendar's own pinned formula, not hardcoded), carries a worded 'river' theme, and moonLineLastReportedLunationIndex is one behind the closed lunation's index",
+      "speechShape - all three current-walk recordings end by the 25-minute mark, inside the 30-minute first third of the 90-minute walk, then 65 wordless minutes follow"
+    ],
+    "deliberatelyNotFired": [
+      "markerColoring - at most 1 absolutist word total in any single current-walk recording (verified: zero absolutist tokens fall inside any +/-15-token window around a theme mention), structurally under the 3-token window floor regardless of placement",
+      "intentionLineage - every walk's intention is null",
+      "climbAnchoring - elevation samples rise only ~8m across the walk, under the 50m total-ascent floor",
+      "weatherWeave - every walk (including current) shares the same 'clear' bucket, so the shared bucket's count equals rather than falls strictly below the window's mode count",
+      "photoAdjacency - no current-walk recording has a route fix, so the sense's own fix lookup is structurally empty regardless of the photo's coordinates"
+    ],
+    "notExercisedAtAll": [
+      "Non-English handling (R5 language gate) is intentionally out of scope for this fixture -- it is already covered by TranscriptContextAnalyzerTest/MarkerAnalyzerTest on the Android side, and mixing an unpredictable cross-platform language-id disagreement into the golden fixture would add risk without adding coverage of the engine/formatter/senses surface this fixture targets."
+    ]
+  }
+}

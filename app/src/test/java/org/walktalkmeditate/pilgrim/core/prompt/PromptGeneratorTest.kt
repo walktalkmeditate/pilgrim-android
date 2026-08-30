@@ -14,16 +14,20 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.test.core.app.ApplicationProvider
 import java.time.LocalDateTime
 import java.time.ZoneId
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ContemplativeVoice
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -31,6 +35,12 @@ class PromptGeneratorTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val generator = PromptGenerator(context)
+
+    @Before
+    fun setUp() {
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        TranscriptNlp.install(WordNetLexicon(context, json))
+    }
 
     private val nyZone: ZoneId = ZoneId.of("America/New_York")
     private val testStartTimestamp: Long = LocalDateTime.of(2026, 5, 4, 9, 41)
@@ -46,6 +56,7 @@ class PromptGeneratorTest {
     private fun fixtureContext(
         recordings: List<RecordingContext> = emptyList(),
         routeSpeeds: List<Double> = emptyList(),
+        threadsDossier: String? = null,
     ): ActivityContext = ActivityContext(
         recordings = recordings,
         meditations = emptyList(),
@@ -67,6 +78,7 @@ class PromptGeneratorTest {
         pauses = emptyList(),
         ascentMeters = null,
         descentMeters = null,
+        threadsDossier = threadsDossier,
     )
 
     @Test
@@ -147,6 +159,45 @@ class PromptGeneratorTest {
     }
 
     @Test
+    fun generate_hasThreadsDossierFalseWhenContextCarriesNoDossier() {
+        val prompt = generator.generate(
+            style = PromptStyle.Contemplative,
+            activityContext = fixtureContext(threadsDossier = null),
+            imperial = false,
+            zone = nyZone,
+        )
+        assertEquals(false, prompt.hasThreadsDossier)
+    }
+
+    @Test
+    fun generate_hasThreadsDossierTrueWhenContextCarriesADossier() {
+        val prompt = generator.generate(
+            style = PromptStyle.Contemplative,
+            activityContext = fixtureContext(threadsDossier = "walk with 'river' (recurring)"),
+            imperial = false,
+            zone = nyZone,
+        )
+        assertEquals(true, prompt.hasThreadsDossier)
+    }
+
+    @Test
+    fun generateCustom_hasThreadsDossierTrueWhenContextCarriesADossier() {
+        val customStyle = CustomPromptStyle(
+            title = "My Voice",
+            icon = "flame",
+            instruction = "Reply like an old friend.",
+        )
+        val prompt = generator.generateCustom(
+            customStyle = customStyle,
+            activityContext = fixtureContext(threadsDossier = "walk with 'river' (recurring)"),
+            imperial = false,
+            customIconResolver = { Icons.Filled.LocalFireDepartment },
+            zone = nyZone,
+        )
+        assertEquals(true, prompt.hasThreadsDossier)
+    }
+
+    @Test
     fun generateCustom_usesCustomVoice_titleSubtitleFromCustomStyle() {
         val customStyle = CustomPromptStyle(
             title = "My Voice",
@@ -207,5 +258,69 @@ class PromptGeneratorTest {
         )
         assertNotNull(imperialPrompts.firstOrNull { it.text.contains("min/mi") })
         assertNotNull(metricPrompts.firstOrNull { it.text.contains("min/km") })
+    }
+
+    // --- U7: resolvedDerivations — one NLP pass shared across every style -----
+
+    private fun recordingContext(text: String) = RecordingContext(
+        uuid = "r1", timestamp = testStartTimestamp, startCoordinate = null,
+        endCoordinate = null, wordsPerMinute = null, text = text,
+    )
+
+    @Test
+    fun `resolvedDerivations directives match a direct AttentionDirectives call`() {
+        val ctx = fixtureContext(
+            recordings = listOf(
+                recordingContext("Setting out"),
+                recordingContext("Coming home"),
+            ),
+        )
+        val resolved = generator.resolvedDerivations(ctx)
+        assertEquals(AttentionDirectives.detect(ctx), resolved.directives)
+    }
+
+    @Test
+    fun `resolvedDerivations languageName is null when no language code is supplied`() {
+        val ctx = fixtureContext(recordings = listOf(recordingContext("Setting out")))
+        assertNull(generator.resolvedDerivations(ctx).languageName)
+    }
+
+    @Test
+    fun `resolvedDerivations languageName resolves the English display name of a supplied code`() {
+        val ctx = fixtureContext(recordings = listOf(recordingContext("Setting out")))
+        assertEquals("Japanese", generator.resolvedDerivations(ctx, detectedLanguageCode = "ja").languageName)
+        assertEquals("French", generator.resolvedDerivations(ctx, detectedLanguageCode = "fr").languageName)
+    }
+
+    @Test
+    fun `generateAll applies the SAME resolved directives to every style`() {
+        // "river" x3 fires the recurringWord directive so the Attend block
+        // is non-empty for every style.
+        val ctx = fixtureContext(
+            recordings = listOf(
+                recordingContext("The river was high near the river bend"),
+                recordingContext("Still thinking about the river"),
+            ),
+        )
+        val prompts = generator.generateAll(activityContext = ctx, imperial = false, zone = nyZone)
+        val attendBlocks = prompts.map { prompt ->
+            prompt.text.substringAfter("**Attend to:**\n", missingDelimiterValue = "").substringBefore("\n\n---")
+        }
+        assertTrue("every style must see a non-empty, identical directives block", attendBlocks.all { it.isNotEmpty() })
+        assertEquals(1, attendBlocks.toSet().size)
+    }
+
+    @Test
+    fun `generateAll honors an explicit directives override instead of recomputing`() {
+        val ctx = fixtureContext(recordings = listOf(recordingContext("Setting out")))
+        val prompts = generator.generateAll(
+            activityContext = ctx,
+            imperial = false,
+            zone = nyZone,
+            directives = listOf("A synthetic directive for this test."),
+            detectedLanguageName = "Spanish",
+        )
+        assertTrue(prompts.all { it.text.contains("A synthetic directive for this test.") })
+        assertTrue(prompts.all { it.text.contains("**Detected language:** Spanish") })
     }
 }

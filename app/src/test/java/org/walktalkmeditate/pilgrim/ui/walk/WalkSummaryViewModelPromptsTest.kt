@@ -217,6 +217,8 @@ class WalkSummaryViewModelPromptsTest {
             contributionLedger =
                 org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger(),
             persistenceScope = persistenceScope,
+            autoTranscriptionSkipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
+            threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(context),
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
         createdViewModels += vm
@@ -648,6 +650,9 @@ private class FakePromptsCoordinator(
     practicePreferences = FakePracticePreferencesRepository(),
     unitsPreferences = FakeUnitsPreferencesRepository(),
     appContext = ApplicationProvider.getApplicationContext<Application>(),
+    threadsDossierBuilder = ThrowingThreadsDossierBuilder,
+    mlKitLanguageIdClient = ThrowingMlKitLanguageIdClient,
+    threadsAnalysisEnvironment = ThrowingThreadsAnalysisEnvironment,
 ) {
     val buildContextCalls = AtomicInteger(0)
     val generateAllCalls = AtomicInteger(0)
@@ -667,12 +672,12 @@ private class FakePromptsCoordinator(
         return generateAllResult
     }
 
-    override fun generateAll(context: ActivityContext, zone: ZoneId): List<GeneratedPrompt> {
+    override suspend fun generateAll(context: ActivityContext, zone: ZoneId): List<GeneratedPrompt> {
         generateAllCalls.incrementAndGet()
         return generateAllResult
     }
 
-    override fun generateAll(
+    override suspend fun generateAll(
         context: ActivityContext,
         customStyles: List<CustomPromptStyle>,
         zone: ZoneId,
@@ -762,4 +767,31 @@ private val ThrowingGeocoder: org.walktalkmeditate.pilgrim.core.prompt.PromptGeo
 private val ThrowingPromptGenerator: org.walktalkmeditate.pilgrim.core.prompt.PromptGenerator =
     org.walktalkmeditate.pilgrim.core.prompt.PromptGenerator(
         ApplicationProvider.getApplicationContext<Application>(),
+    )
+
+private val ThrowingThreadsDossierBuilder: org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder =
+    org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+        ApplicationProvider.getApplicationContext<Application>(),
+        Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<Application>(),
+            PilgrimDatabase::class.java,
+        ).build(),
+        org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+    )
+
+private val ThrowingThreadsAnalysisEnvironment: org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment =
+    org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+        ApplicationProvider.getApplicationContext<Application>(),
+        org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(
+            ApplicationProvider.getApplicationContext<Application>(),
+            kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+        ),
+    )
+
+private val ThrowingMlKitLanguageIdClient: org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient =
+    org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient(
+        object : org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway {
+            override suspend fun identifyPossibleLanguages(text: String) =
+                emptyList<org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess>()
+        },
     )

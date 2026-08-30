@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.core.prompt
 
 import java.time.ZoneId
+import java.util.Locale
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
@@ -110,6 +111,18 @@ object PromptAssembler {
      * @param zone Time zone used for every wall-clock formatting call.
      *   Defaults to system default; tests pin a fixed zone for
      *   determinism.
+     * @param directives Precomputed attention directives, or `null` to
+     *   compute here. `null` is the right default for single-style
+     *   callers; [PromptGenerator.generateAll] computes this once via
+     *   [PromptGenerator.resolvedDerivations] and fans it out across
+     *   every style so a screen-open pays for one NLP pass, not one per
+     *   style (U7/BEH-77).
+     * @param detectedLanguageName Precomputed English display name of
+     *   the transcript's dominant language (U7), or `null` to omit the
+     *   "Detected language" line entirely — Android has no synchronous
+     *   on-device detector to fall back to inline the way iOS's
+     *   `TranscriptNLP.detectLanguage` does, so unlike [directives] there
+     *   is no "compute here" default; see [PromptGenerator.resolvedDerivations].
      */
     fun assemble(
         context: ActivityContext,
@@ -117,6 +130,8 @@ object PromptAssembler {
         imperial: Boolean,
         weatherLabel: (WeatherCondition) -> String = { it.name },
         zone: ZoneId = ZoneId.systemDefault(),
+        directives: List<String>? = null,
+        detectedLanguageName: String? = null,
     ): String {
         val lunarPhase = requireNotNull(context.lunarPhase) {
             "ActivityContext.lunarPhase must be non-null when assembling a prompt — " +
@@ -205,6 +220,10 @@ object PromptAssembler {
             sections.append("\n\n**Walking Transcription:**\n\n").append(transcription)
         }
 
+        if (transcription.isNotEmpty() && detectedLanguageName != null) {
+            sections.append("\n\n**Detected language:** ").append(detectedLanguageName)
+        }
+
         meditationsBlock?.let { block ->
             sections.append("\n\n**Meditation Sessions:**\n\n").append(block)
         }
@@ -213,10 +232,14 @@ object PromptAssembler {
             sections.append("\n\n").append(block)
         }
 
-        val directives = AttentionDirectives.detect(context)
-        if (directives.isNotEmpty()) {
+        context.threadsDossier?.let { dossier ->
+            sections.append("\n\n").append(dossier)
+        }
+
+        val resolvedDirectives = directives ?: AttentionDirectives.detect(context)
+        if (resolvedDirectives.isNotEmpty()) {
             sections.append("\n\n**Attend to:**\n")
-                .append(directives.joinToString(separator = "\n") { "- $it" })
+                .append(resolvedDirectives.joinToString(separator = "\n") { "- $it" })
         }
 
         val fullInstruction = StringBuilder(instruction)
@@ -228,9 +251,25 @@ object PromptAssembler {
         }
 
         sections.append("\n\n---\n\n").append(fullInstruction)
-        sections.append("\n\n").append(responseContract(voice, context.hasSpeech))
+        sections.append("\n\n").append(
+            responseContract(voice, context.hasSpeech, threadsDossier = context.threadsDossier),
+        )
         return sections.toString()
     }
+
+    /**
+     * English display name for a detected language [code] (BEH-77/EDG-87)
+     * — ALWAYS resolved against a fixed English locale, never the
+     * device's default, so the LLM (whose surrounding instructions are
+     * themselves in English) never receives a self-localized name like
+     * "français" for a French transcript. `null` for a blank/unrecognized
+     * result — Java's [Locale] API has no failable initializer the way
+     * iOS's `Locale(identifier:)` + `localizedString(forLanguageCode:)`
+     * pairing does, so an empty display name is the closest analogue to
+     * iOS's `nil`.
+     */
+    fun languageName(code: String): String? =
+        Locale.forLanguageTag(code).getDisplayLanguage(Locale.ENGLISH).takeIf { it.isNotBlank() }
 
     /**
      * Teaches the downstream model the walk's ritual grammar in Pilgrim's
@@ -278,8 +317,16 @@ object PromptAssembler {
      * do (invent, flatten, switch language) plus the voice's own form
      * constraints. This shapes the *reply's* quality — the part of the
      * feature the walker actually experiences.
+     *
+     * @param threadsDossier The dossier TEXT when the walk carries one,
+     *   null otherwise. Gates the thought-thread safety line on the
+     *   ARTIFACT ([ActivityContext.threadsDossier] != null), never the raw
+     *   `threadsAfterWalks` preference (BEH-75) — the preference can be on
+     *   with nothing yet analyzed, which must not show a caveat about data
+     *   that isn't there. The text itself feeds [interpretiveKey], which
+     *   teaches only the marker signals this dossier actually printed.
      */
-    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean): String {
+    internal fun responseContract(voice: WalkPromptVoice, hasSpeech: Boolean, threadsDossier: String?): String {
         val lines = voice.responseConstraints(hasSpeech).toMutableList()
         if (hasSpeech) {
             lines.add("Respond in the language the walker speaks in the transcription.")
@@ -289,11 +336,93 @@ object PromptAssembler {
                     "guess at names.",
             )
         }
+        if (threadsDossier != null) {
+            lines.add(
+                "The thought-thread marker profiles are descriptive on-device linguistic signals, " +
+                    "not assessments — interpret them gently, never produce clinical or diagnostic " +
+                    "language, and never treat a single walk's numbers as meaningful on their own.",
+            )
+            interpretiveKey(threadsDossier)?.let { lines.add(it) }
+        }
         lines.add(
             "Draw only on what this walk actually holds — never invent details, events, or " +
                 "memories that are not in the context above.",
         )
         return "**How to respond:**\n" + lines.joinToString(separator = "\n") { "- $it" }
+    }
+
+    /**
+     * How to read the marker signals — but only the ones this dossier
+     * actually printed. `ThreadsDossierFormatter.markerLine` prints
+     * "Markers unavailable" for a non-English recording and raw counts
+     * rather than shares below `DENSITY_FLOOR_WORDS`, and the modal-lean
+     * clause sits behind three thresholds and is usually silent. Teaching
+     * a taxonomy the dossier withheld hands the model vocabulary with no
+     * referent, and it will find something to attach it to.
+     *
+     * The probes match the formatter's own phrasings. That coupling is
+     * the point — it is pinned by the "against real formatter output"
+     * tests in PromptResponseContractTest, which run the real formatter,
+     * so a phrasing change fails a test rather than silently suppressing
+     * the key on every walk.
+     *
+     * Those tests pin the FORMATTER half only. In production [dossier] is
+     * wider: `ThreadsDossierBuilder` appends its `**Noticed:**` senses
+     * block to the same string, and
+     * `DossierSensesTracks.markerColoring` writes "Absolutist words
+     * cluster around …" into it — which misses the `"absolutist words"`
+     * probe on capitalization alone. Lowercasing either side would let a
+     * sense line teach a density reading the dossier never printed, so
+     * the senses half carries its own pinning test beside them.
+     *
+     * The share and tally probes are independent, not `if / else if`.
+     * `ThreadsDossierFormatter.markerLine` decides share-vs-tally PER
+     * RECORDING, so a walk with a long opening reflection and a short
+     * closing note — an ordinary shape — prints both forms, and a
+     * precedence rule silently drops one. It dropped the tally clause,
+     * which is the one carrying "do not weigh them"; the model then read a
+     * 2-in-40-words count as a rate.
+     *
+     * At most one line either way: the contract's accretion budget is
+     * counted in LINES, and every clause here joins into the same one —
+     * the modal clause already shares it. When both marker forms printed,
+     * the tally clause narrows to the recordings it applies to rather than
+     * restating the taxonomy the share clause just gave.
+     */
+    private fun interpretiveKey(dossier: String): String? {
+        val clauses = mutableListOf<String>()
+        val printedShares = dossier.contains("absolutist words")
+        val printedRawCounts = dossier.contains("raw counts only")
+        if (printedShares) {
+            clauses.add(
+                "Read the absolutist-word share as how fixed the walker's framing was, and " +
+                    "self-focus as how far they placed themselves at the centre of it.",
+            )
+        }
+        if (printedRawCounts) {
+            clauses.add(
+                if (printedShares) {
+                    "Where a recording gave raw counts instead of a share, read them as a bare " +
+                        "tally — too few words to read as a rate, so do not weigh them."
+                } else {
+                    "Read the absolutist and self-focus counts as a bare tally of how fixed the " +
+                        "walker's framing was and how far they placed themselves at the centre of it — " +
+                        "too few words to read as a rate, so do not weigh them."
+                },
+            )
+        }
+        if (dossier.contains("modal lean:")) {
+            clauses.add(
+                "Read the modal lean as the frame the walker was working inside — obligation " +
+                    "means the frame constrained them, counterfactual means they were already " +
+                    "replaying alternatives, possibility and tentative mean it was still open, " +
+                    "intention means they had settled on a course, and desire means they were " +
+                    "naming a want rather than a plan.",
+            )
+        }
+        if (clauses.isEmpty()) return null
+        return (clauses + "None of these has a fixed meaning; read each through this walk's intention and practice.")
+            .joinToString(separator = " ")
     }
 
     private fun formatPhotoSection(

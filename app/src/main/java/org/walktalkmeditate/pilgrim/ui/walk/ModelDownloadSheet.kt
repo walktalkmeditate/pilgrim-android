@@ -40,6 +40,7 @@ import org.walktalkmeditate.pilgrim.audio.model.WhisperModelDownloadScheduler
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelState
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelVariant
+import org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState
 import org.walktalkmeditate.pilgrim.data.voice.VoicePreferencesRepository
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -62,6 +63,7 @@ class ModelDownloadViewModel @Inject constructor(
     voicePreferences: VoicePreferencesRepository,
     private val downloadScheduler: WhisperModelDownloadScheduler,
     private val backgroundDataProbe: BackgroundDataRestrictionProbe,
+    autoTranscriptionSkipState: AutoTranscriptionSkipState,
 ) : ViewModel() {
 
     val modelState: StateFlow<WhisperModelState> = modelStore.state
@@ -69,14 +71,15 @@ class ModelDownloadViewModel @Inject constructor(
     /**
      * Substate for null-transcription rows on the recordings surfaces —
      * the [pendingTranscriptionSubstate] matrix over (auto-transcribe
-     * pref x model state x model usability).
+     * pref x model state x model usability x U6's battery-skip flag).
      */
     val pendingSubstate: StateFlow<PendingTranscriptionSubstate> = combine(
         voicePreferences.autoTranscribe,
         modelStore.state,
         modelStore.modelUsable,
-    ) { autoTranscribe, state, usable ->
-        pendingTranscriptionSubstate(autoTranscribe, state, usable)
+        autoTranscriptionSkipState.skipReason,
+    ) { autoTranscribe, state, usable, skipReason ->
+        pendingTranscriptionSubstate(autoTranscribe, state, usable, skipReason != null)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000L),
@@ -84,6 +87,7 @@ class ModelDownloadViewModel @Inject constructor(
             voicePreferences.autoTranscribe.value,
             modelStore.state.value,
             modelStore.modelUsable.value,
+            autoTranscriptionSkipState.skipReason.value != null,
         ),
     )
 

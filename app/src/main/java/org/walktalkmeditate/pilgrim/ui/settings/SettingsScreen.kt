@@ -206,6 +206,7 @@ fun SettingsScreen(
                     modelState = whisperModelState,
                     onSetVoiceGuideEnabled = viewModel::setVoiceGuideEnabled,
                     onSetAutoTranscribe = viewModel::setAutoTranscribe,
+                    onSetThreadsEnabled = viewModel::setThreadsEnabled,
                     onOpenVoiceGuides = { onAction(SettingsAction.OpenVoiceGuides) },
                     onOpenRecordings = { onAction(SettingsAction.OpenRecordings) },
                     onOpenModelDownload = { showModelDownloadSheet = true },

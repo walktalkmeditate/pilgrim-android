@@ -9,6 +9,48 @@ import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 
+/**
+ * U7: [WalkDao.getWalkLite]'s raw Room projection shape — see
+ * [org.walktalkmeditate.pilgrim.data.dao.RecordingWalkLiteRow] (the
+ * recording-joined equivalent) for the `toWalkLite()` conversion this
+ * mirrors.
+ */
+data class WalkLiteRow(
+    val walkId: Long,
+    val startTimestamp: Long,
+    val intention: String?,
+    val weatherCondition: String?,
+) {
+    fun toWalkLite(): org.walktalkmeditate.pilgrim.core.threads.WalkLite =
+        org.walktalkmeditate.pilgrim.core.threads.WalkLite(
+            walkId = walkId,
+            startedAt = java.time.Instant.ofEpochMilli(startTimestamp),
+            intention = intention,
+            weatherCondition = weatherCondition,
+        )
+}
+
+/**
+ * U9: one row of [WalkDao.walkSensesSnapshot] — the Android equivalent
+ * of iOS `walkSensesSnapshot` (parity spec
+ * `docs/parity/2026-08-26-threads-senses-port.md`). Android divergence:
+ * a suspend query, not `@MainActor` — Room forbids main-thread reads.
+ */
+data class WalkSnapshotProjectionRow(
+    val walkId: Long,
+    val startTimestamp: Long,
+    val intention: String?,
+    val weatherCondition: String?,
+) {
+    fun toWalkSnapshotRow(): org.walktalkmeditate.pilgrim.core.threads.WalkSnapshotRow =
+        org.walktalkmeditate.pilgrim.core.threads.WalkSnapshotRow(
+            walkId = walkId,
+            startDate = java.time.Instant.ofEpochMilli(startTimestamp),
+            intention = intention,
+            weatherCondition = weatherCondition,
+        )
+}
+
 @Dao
 interface WalkDao {
     @Insert
@@ -107,4 +149,34 @@ interface WalkDao {
             "ORDER BY end_timestamp DESC, id DESC LIMIT :limit",
     )
     suspend fun getRecentFinishedBefore(currentStart: Long, limit: Int): List<Walk>
+
+    /**
+     * U7: bounded [WalkLiteRow] projection for one walk — the source of
+     * [ThreadsDossierBuilder][org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder]'s
+     * `MemoKey.intention` field (BEH-36) and the current walk's own
+     * [org.walktalkmeditate.pilgrim.core.threads.WalkLite] when it isn't
+     * otherwise reachable through the recording→walk join (e.g. a walk
+     * with no recordings yet).
+     */
+    @Query(
+        "SELECT id AS walkId, start_timestamp AS startTimestamp, intention, " +
+            "weather_condition AS weatherCondition FROM walks WHERE id = :walkId",
+    )
+    suspend fun getWalkLite(walkId: Long): WalkLiteRow?
+
+    /**
+     * U9: one row per walk in `[from, to]` (both inclusive), ascending by
+     * start timestamp — serves placeResonance's baseline, intentionLineage,
+     * weatherWeave, AND moonLine's walk counts from one bounded query
+     * (parity spec: iOS's `walkSensesSnapshot` explicitly serves all
+     * three). Callers pass the window-UNION bound (30-day recurrence
+     * window ∪ the closed lunation), computed by the caller — never a
+     * constant baked into this query.
+     */
+    @Query(
+        "SELECT id AS walkId, start_timestamp AS startTimestamp, intention, " +
+            "weather_condition AS weatherCondition FROM walks " +
+            "WHERE start_timestamp BETWEEN :from AND :to ORDER BY start_timestamp ASC",
+    )
+    suspend fun walkSensesSnapshot(from: Long, to: Long): List<WalkSnapshotProjectionRow>
 }

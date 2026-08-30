@@ -25,6 +25,7 @@ import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -47,6 +48,7 @@ import org.walktalkmeditate.pilgrim.data.photo.BitmapLoader
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
+import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -114,7 +116,26 @@ class PromptsCoordinatorTest {
         photoAnalyzer: PhotoContextAnalyzer = newRealAnalyzer(),
         geocoder: PromptGeocoder = StubGeocoder(),
         practicePrefs: FakePracticePreferencesRepository = FakePracticePreferencesRepository(),
-        unitsPrefs: FakeUnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
+        unitsPrefs: UnitsPreferencesRepository = FakeUnitsPreferencesRepository(),
+        threadsDossierBuilder: org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder =
+            org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+                context,
+                db,
+                org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+            ),
+        mlKitLanguageIdClient: MlKitLanguageIdClient = neverDetectsLanguageClient(),
+        // A FRESH instance per call (never shared/reused across tests) so
+        // each test's own install state starts from that instance's own
+        // `installed = false` — see `generateAll installs TranscriptNlp
+        // itself...` below, which additionally resets the underlying
+        // static TranscriptNlp/VaderSentiment singletons to prove this
+        // isn't just riding a previous test's incidental global install.
+        threadsAnalysisEnvironment: org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment =
+            org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+                context,
+                org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(context, json),
+            ),
+        defaultDispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcher,
     ): PromptsCoordinator = PromptsCoordinator(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -124,7 +145,25 @@ class PromptsCoordinatorTest {
         practicePreferences = practicePrefs,
         unitsPreferences = unitsPrefs,
         appContext = context,
-        defaultDispatcher = dispatcher,
+        threadsDossierBuilder = threadsDossierBuilder,
+        mlKitLanguageIdClient = mlKitLanguageIdClient,
+        threadsAnalysisEnvironment = threadsAnalysisEnvironment,
+        defaultDispatcher = defaultDispatcher,
+    )
+
+    /** A [MlKitLanguageIdClient] that never detects a language — the safe
+     * default for tests that don't care about [ActivityContext.detectedLanguageCode]. */
+    private fun neverDetectsLanguageClient(): MlKitLanguageIdClient = MlKitLanguageIdClient(
+        object : LanguageIdentifierGateway {
+            override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> = emptyList()
+        },
+    )
+
+    private fun fixedLanguageClient(languageTag: String): MlKitLanguageIdClient = MlKitLanguageIdClient(
+        object : LanguageIdentifierGateway {
+            override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> =
+                listOf(LanguageGuess(languageTag, 0.99f))
+        },
     )
 
     /**
@@ -599,6 +638,204 @@ class PromptsCoordinatorTest {
         val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
         assertEquals(30.0, ctx.ascentMeters!!, 1e-9)
         assertEquals(20.0, ctx.descentMeters!!, 1e-9)
+    }
+
+    // --- U9: live threadsDossier + detectedLanguageCode wiring ------------------
+
+    private val threadsWordyText = "I was walking and I have to say I think about music because I can think about " +
+        "music too and I will think about music again since I have so many things I want and need. " +
+        "The river was wide and calm and I noticed the river every single time I walked beside the river " +
+        "today, tracing its edge with my eyes."
+
+    @Test
+    fun `buildContext populates threadsDossier from the real builder when the toggle is on`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        val toggledOnBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+            context,
+            db,
+            org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = true),
+        )
+        val coordinator = newCoordinator(threadsDossierBuilder = toggledOnBuilder)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertNotNull("toggle-gated dossier must be present when threadsAfterWalks is on", ctx.threadsDossier)
+        assertTrue(ctx.threadsDossier!!.startsWith("**Thought threads (on-device linguistic analysis):**"))
+    }
+
+    @Test
+    fun `buildContext leaves threadsDossier null when the toggle is off`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        // newCoordinator()'s default builder is wired with the toggle off.
+        val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertNull(ctx.threadsDossier)
+    }
+
+    @Test
+    fun `buildContext detects the language once over the joined transcript and stores the code`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, "some text")
+        val coordinator = newCoordinator(mlKitLanguageIdClient = fixedLanguageClient("ja"))
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals("ja", ctx.detectedLanguageCode)
+    }
+
+    @Test
+    fun `buildContext leaves detectedLanguageCode null when there is no speech`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        val coordinator = newCoordinator(mlKitLanguageIdClient = fixedLanguageClient("ja"))
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertNull(ctx.detectedLanguageCode)
+    }
+
+    @Test
+    fun `buildContext swallows a dossier builder throw and returns a dossier-less context`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        // ThreadsDossierBuilder is final, so the throw is injected via its
+        // preferences collaborator — build()'s first internal read.
+        val throwingPrefs = object :
+            org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
+            by org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository() {
+            override val threadsAfterWalks: kotlinx.coroutines.flow.StateFlow<Boolean>
+                get() = throw IllegalStateException("dossier build blew up")
+        }
+        val throwingBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+            context,
+            db,
+            throwingPrefs,
+        )
+        val coordinator = newCoordinator(threadsDossierBuilder = throwingBuilder)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)
+
+        assertNotNull("a dossier failure must never break context assembly", ctx)
+        assertNull(ctx!!.threadsDossier)
+    }
+
+    @Test
+    fun `buildContext swallows a language detection throw and returns a code-less context`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, "some text")
+        val throwingLanguageClient = MlKitLanguageIdClient(
+            object : LanguageIdentifierGateway {
+                override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> =
+                    throw IllegalStateException("language id blew up")
+            },
+        )
+        val coordinator = newCoordinator(mlKitLanguageIdClient = throwingLanguageClient)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)
+
+        assertNotNull("a language-id failure must never break context assembly", ctx)
+        assertNull(ctx!!.detectedLanguageCode)
+    }
+
+    @Test
+    fun `generateAll feeds the detected language name into both a built-in AND a custom prompt`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, "some text")
+        val coordinator = newCoordinator(mlKitLanguageIdClient = fixedLanguageClient("ja"))
+        coordinator.saveCustomStyle(
+            CustomPromptStyle(id = "custom-1", title = "Custom", instruction = "Reflect", icon = "star"),
+        )
+        awaitStylesSize(1)
+
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+        val prompts = coordinator.generateAll(ctx, zone = nyZone)
+
+        val builtin = prompts.first { it.style != null }
+        val custom = prompts.first { it.customStyle != null }
+        assertTrue("built-in prompt must carry the resolved language name", builtin.text.contains("**Detected language:** Japanese"))
+        assertTrue("custom prompt must carry the SAME resolved language name — not recomputed as null", custom.text.contains("**Detected language:** Japanese"))
+    }
+
+    /**
+     * Records the thread each `distanceUnits` read happens on. That read
+     * is the first statement inside `generateAll`'s dispatcher hop, so it
+     * stands in for the whole render — including
+     * [AttentionDirectives.detect]'s lemmatization passes, the CPU cost
+     * this hop exists to keep off Main.
+     */
+    private class ThreadRecordingUnitsPreferences : UnitsPreferencesRepository {
+        val readThreads = java.util.concurrent.CopyOnWriteArrayList<String>()
+        private val flow = kotlinx.coroutines.flow.MutableStateFlow(UnitSystem.Metric)
+        override val distanceUnits: kotlinx.coroutines.flow.StateFlow<UnitSystem>
+            get() {
+                readThreads += Thread.currentThread().name
+                return flow
+            }
+
+        override suspend fun setDistanceUnits(value: UnitSystem) {
+            flow.value = value
+        }
+    }
+
+    @Test
+    fun `generateAll renders off the calling thread, never on the caller's`() = runTest {
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        val units = ThreadRecordingUnitsPreferences()
+        val coordinator = newCoordinator(unitsPrefs = units, defaultDispatcher = Dispatchers.Default)
+        val ctx = coordinator.buildContext(walkId = walk.id, zone = nyZone)!!
+        units.readThreads.clear()
+        val callerThread = Thread.currentThread().name
+
+        coordinator.generateAll(ctx, zone = nyZone)
+
+        assertEquals("exactly one units read per render", 1, units.readThreads.size)
+        assertNotEquals(
+            "generateAll's CPU work must not run on its caller's thread — from a ViewModel that thread is Main",
+            callerThread,
+            units.readThreads.single(),
+        )
+    }
+
+    // --- C2 fix: buildContext installs TranscriptNlp itself ---------------
+
+    /**
+     * [org.walktalkmeditate.pilgrim.core.threads.AttentionDirectives.detect]
+     * is deliberately toggle-independent — it calls
+     * [org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp.contentLemmaMentions]
+     * regardless of `threadsAfterWalks`, so `newCoordinator()`'s default
+     * toggle-OFF [org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder]
+     * (which never touches the analyzer, and so never installs anything)
+     * must not be the only thing standing between this call and a crash.
+     * [resetTranscriptNlpInstall] forces the SAME "nothing has installed
+     * it yet" precondition a fresh process has — without it, an earlier
+     * test in this same JVM run (e.g. the U9 toggle-on tests above) could
+     * make this test pass vacuously regardless of whether the fix is
+     * actually wired up.
+     */
+    private fun resetTranscriptNlpInstall() {
+        val field = org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp::class.java.getDeclaredField("lexicon")
+        field.isAccessible = true
+        field.set(org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp, null)
+    }
+
+    @Test
+    fun `generateAll installs TranscriptNlp itself, without any manual install anywhere in the test`() = runTest(dispatcher) {
+        resetTranscriptNlpInstall()
+        val walk = insertWalkRow()
+        recordingForWalk(walk, threadsWordyText)
+        val coordinator = newCoordinator()
+
+        val prompts = coordinator.generateAll(walkId = walk.id, zone = nyZone)
+
+        assertTrue("must produce prompts without a pre-existing manual install", prompts.isNotEmpty())
+        assertTrue(
+            "AttentionDirectives' recurring-word directive needs TranscriptNlp installed to even run " +
+                "(it lemmatizes every spoken word) — finding its exact template text proves the coordinator " +
+                "installed the lexicon itself rather than merely not crashing",
+            prompts.any { it.text.contains("times across the recordings") },
+        )
     }
 
     /**

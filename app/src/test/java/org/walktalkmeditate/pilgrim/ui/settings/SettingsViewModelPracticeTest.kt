@@ -137,6 +137,8 @@ class SettingsViewModelPracticeTest {
         practicePreferences = practiceRepo,
         unitsPreferences = unitsRepo,
         voicePreferences = FakeVoicePreferencesRepository(),
+        threadsPreferences = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(),
+        threadsBackfillScheduler = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsBackfillScheduler(),
         walkRepository = walkRepository,
         voiceRecordingFileSystem = voiceFs,
         milestoneSurface = NoopMilestoneSurface,

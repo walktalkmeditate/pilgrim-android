@@ -9,7 +9,7 @@ import androidx.compose.runtime.Immutable
  * All fields are derivable from the instant alone — no location needed.
  * Uses the simplified synodic-period method (Meeus), same as iOS's
  * `LunarPhase`: reference new moon at 2000-01-06 18:14 UTC, synodic
- * month 29.530588770576 days.
+ * month 29.53058770576 days.
  */
 @Immutable
 data class MoonPhase(
@@ -21,7 +21,7 @@ data class MoonPhase(
     val name: String,
     /** Fraction of the Moon's disc illuminated, in [0.0, 1.0]. */
     val illumination: Double,
-    /** Days since the last new moon, in [0.0, 29.530588770576). */
+    /** Days since the last new moon, in [0.0, 29.53058770576). */
     val ageInDays: Double,
 ) {
     /**

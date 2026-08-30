@@ -232,6 +232,7 @@
          Copy rule: never promise language auto-detection (U10 L2). -->
     <string name="transcription_not_transcribed">Not yet transcribed</string>
     <string name="transcription_action_transcribe">Transcribe</string>
+    <string name="transcription_action_transcribe_cd">Transcribe this recording</string>
     <string name="transcription_preparing_model">Preparing transcription model\u2026</string>
     <string name="transcription_in_progress">Transcribing\u2026</string>
     <string name="transcription_queued">Queued for transcription\u2026</string>
@@ -242,6 +243,11 @@
     <string name="model_state_failed_checksum">Model download failed</string>
     <string name="model_state_failed_storage">Not enough space for the transcription model</string>
     <string name="model_state_failed_storage_hint">Not enough space for the transcription model \u2014 free up space to continue</string>
+
+    <!-- U6: auto-transcription battery-skip banner (parity spec
+         docs/parity/2026-08-25-threads-engine-port.md, UI-24). Copy is
+         pinned verbatim against iOS's literal string. -->
+    <string name="transcription_skipped_battery">Auto-transcription skipped \u2014 battery below 20%</string>
     <string name="model_action_retry">Retry</string>
 
     <!-- U11 model download sheet + Settings voice row -->
@@ -340,6 +346,8 @@
     <string name="settings_voice_guide_packs_row">Guide Packs</string>
     <string name="settings_auto_transcribe_label">Auto-transcribe</string>
     <string name="settings_auto_transcribe_description">Convert recordings to text after each walk</string>
+    <string name="settings_threads_label">Thought Threads</string>
+    <string name="settings_threads_description">Weave recurring themes from your recordings into AI prompts. English recordings for now.</string>
     <string name="settings_recordings_row">Recordings</string>
     <string name="settings_recordings_detail_zero">0 recordings • 0.0 MB</string>
     <string name="settings_recordings_detail_one">1 recording • %1$s MB</string>
@@ -626,6 +634,7 @@
     <string name="walk_options_intention_placeholder">What purpose guides this walk?</string>
     <string name="walk_options_intention_save">Set</string>
     <string name="walk_options_intention_cancel">Cancel</string>
+    <string name="walk_options_intention_recurring">Recurring</string>
     <string name="walk_options_intention_suggested">Suggested</string>
     <string name="walk_options_intention_recent">Recent</string>
     <string name="walk_options_intention_voice">Voice</string>

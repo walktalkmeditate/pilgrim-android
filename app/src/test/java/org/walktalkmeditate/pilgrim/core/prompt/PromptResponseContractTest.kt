@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.prompt
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ContemplativeVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.CreativeVoice
@@ -15,15 +23,41 @@ import org.walktalkmeditate.pilgrim.core.prompt.voices.GratitudeVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.JournalingVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.PhilosophicalVoice
 import org.walktalkmeditate.pilgrim.core.prompt.voices.ReflectiveVoice
+import org.walktalkmeditate.pilgrim.core.threads.ActiveThread
+import org.walktalkmeditate.pilgrim.core.threads.CurrentRecording
+import org.walktalkmeditate.pilgrim.core.threads.DossierSenses
+import org.walktalkmeditate.pilgrim.core.threads.LemmaMention
+import org.walktalkmeditate.pilgrim.core.threads.SenseInput
+import org.walktalkmeditate.pilgrim.core.threads.TemporalLean
+import org.walktalkmeditate.pilgrim.core.threads.Theme
+import org.walktalkmeditate.pilgrim.core.threads.ThreadAppearance
+import org.walktalkmeditate.pilgrim.core.threads.Threads
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierFormatter
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContext
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptMarkers
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 
 /**
  * Every generated prompt must end with a response contract: the
  * downstream LLM is told how to answer (voice-specific form constraints)
  * and what it may never do (invent details, ignore the walker's
  * language, flatten a two-voice recording into a monologue). Mirrors iOS
- * `PromptResponseContractTests.swift@9a418e4`.
+ * `PromptResponseContractTests.swift@0172e2b`. Robolectric-backed since
+ * v2 (U7): [spokenContext] has non-empty recordings, so
+ * [PromptAssembler.assemble] routes through [AttentionDirectives.detect],
+ * which requires an installed [WordNetLexicon] (see [setUp]).
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class PromptResponseContractTest {
+
+    @Before
+    fun setUp() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        TranscriptNlp.install(WordNetLexicon(context, json))
+    }
 
     private val nyZone: ZoneId = ZoneId.of("America/New_York")
 
@@ -163,7 +197,7 @@ class PromptResponseContractTest {
                 "guess at names.\n" +
                 "- Draw only on what this walk actually holds — never invent details, " +
                 "events, or memories that are not in the context above.",
-            PromptAssembler.responseContract(ContemplativeVoice, hasSpeech = true),
+            PromptAssembler.responseContract(ContemplativeVoice, hasSpeech = true, threadsDossier = null),
         )
     }
 
@@ -173,8 +207,326 @@ class PromptResponseContractTest {
             "**How to respond:**\n" +
                 "- Draw only on what this walk actually holds — never invent details, " +
                 "events, or memories that are not in the context above.",
-            PromptAssembler.responseContract(customVoice, hasSpeech = false),
+            PromptAssembler.responseContract(customVoice, hasSpeech = false, threadsDossier = null),
         )
+    }
+
+    // --- U7: thought-thread safety line, gated on the dossier ARTIFACT --------
+
+    @Test
+    fun `thought-thread safety line present only when a threads dossier is carried`() {
+        val withDossier = PromptAssembler.responseContract(
+            ReflectiveVoice,
+            hasSpeech = false,
+            threadsDossier = "**Thought threads (on-device linguistic analysis):**",
+        )
+        assertTrue(
+            "verbatim safety line: $withDossier",
+            withDossier.contains(
+                "The thought-thread marker profiles are descriptive on-device linguistic signals, not " +
+                    "assessments — interpret them gently, never produce clinical or diagnostic language, " +
+                    "and never treat a single walk's numbers as meaningful on their own.",
+            ),
+        )
+        val withoutDossier = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = false, threadsDossier = null)
+        assertFalse(
+            "no safety line without a dossier: $withoutDossier",
+            withoutDossier.contains("thought-thread marker profiles"),
+        )
+    }
+
+    @Test
+    fun `thought-thread safety line sits between the multi-voice line and the anti-fabrication line`() {
+        val text = PromptAssembler.responseContract(
+            ReflectiveVoice,
+            hasSpeech = true,
+            threadsDossier = "**Thought threads (on-device linguistic analysis):**",
+        )
+        val multiVoiceIdx = text.indexOf("more than one voice")
+        val safetyIdx = text.indexOf("thought-thread marker profiles")
+        val antiFabricationIdx = text.indexOf("Draw only on what this walk actually holds")
+        assertTrue("order: $text", multiVoiceIdx in 0 until safetyIdx)
+        assertTrue("order: $text", safetyIdx in 0 until antiFabricationIdx)
+    }
+
+    // --- Interpretive key: teach only what the dossier printed (iOS PR #72 fold-in) ---
+
+    private val shareClause = "Read the absolutist-word share as how fixed the walker's framing was, " +
+        "and self-focus as how far they placed themselves at the centre of it."
+
+    private val tallyClause = "Read the absolutist and self-focus counts as a bare tally of how fixed " +
+        "the walker's framing was and how far they placed themselves at the centre of it — too few " +
+        "words to read as a rate, so do not weigh them."
+
+    /** The variant printed when the share clause already gave the taxonomy —
+     * it narrows to the recordings it applies to rather than restating it. */
+    private val narrowedTallyClause = "Where a recording gave raw counts instead of a share, read them " +
+        "as a bare tally — too few words to read as a rate, so do not weigh them."
+
+    private val modalClause = "Read the modal lean as the frame the walker was working inside — " +
+        "obligation means the frame constrained them, counterfactual means they were already " +
+        "replaying alternatives, possibility and tentative mean it was still open, intention means " +
+        "they had settled on a course, and desire means they were naming a want rather than a plan."
+
+    private val keyTrailer = "None of these has a fixed meaning; read each through this walk's " +
+        "intention and practice."
+
+    private fun threadsContext(
+        uuid: String,
+        wordCount: Int,
+        languageCode: String? = "en",
+        modalCounts: Map<String, Int> = emptyMap(),
+    ): TranscriptContext = TranscriptContext(
+        uuid = uuid,
+        languageCode = languageCode,
+        wordCount = wordCount,
+        themes = emptyList(),
+        markers = TranscriptMarkers(
+            wordCount = wordCount,
+            absolutistCount = 3,
+            firstPersonCount = 10,
+            insightCount = 0,
+            causationCount = 0,
+            discrepancyCount = 0,
+            temporalLean = TemporalLean.PRESENT,
+            modalCounts = modalCounts,
+        ),
+        transcriptHash = "hash-$uuid",
+    )
+
+    private fun realDossier(
+        current: TranscriptContext,
+        allContexts: List<TranscriptContext> = emptyList(),
+        walkIdByRecordingUuid: Map<String, Long> = emptyMap(),
+    ): String = realDossier(listOf(current), allContexts, walkIdByRecordingUuid)
+
+    /** `markerLine` decides share-vs-tally PER RECORDING, so only a
+     * multi-recording dossier can print both forms — the shape the
+     * single-recording fixtures above structurally could not reach. */
+    private fun realDossier(
+        currentRecordings: List<TranscriptContext>,
+        allContexts: List<TranscriptContext> = emptyList(),
+        walkIdByRecordingUuid: Map<String, Long> = emptyMap(),
+    ): String = requireNotNull(
+        ThreadsDossierFormatter.dossier(
+            currentRecordings = currentRecordings.map { it to null },
+            allContexts = allContexts,
+            threads = Threads(active = emptyList(), firstTimeLemmas = emptySet()),
+            currentWalkId = 1L,
+            backfillComplete = false,
+            walkIdByRecordingUuid = walkIdByRecordingUuid,
+        ),
+    ) { "the real formatter must produce a dossier for a non-empty recording list" }
+
+    @Test
+    fun `responseContract against real formatter output adapts to what was printed — density shares teach the share clause`() {
+        val dossier = realDossier(threadsContext("r1", wordCount = 150))
+        assertTrue("fixture must print shares: $dossier", dossier.contains("absolutist words"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("share clause: $contract", contract.contains(shareClause))
+        assertFalse("this dossier printed no raw counts, so no tally clause: $contract", contract.contains(tallyClause))
+        assertFalse(
+            "nor its narrowed variant: $contract",
+            contract.contains(narrowedTallyClause),
+        )
+        assertFalse("no modal lean was printed: $contract", contract.contains(modalClause))
+        assertTrue("key ends on the no-fixed-meaning trailer: $contract", contract.contains(keyTrailer))
+    }
+
+    @Test
+    fun `responseContract against real formatter output adapts to what was printed — small-sample raw counts teach the bare-tally clause`() {
+        val dossier = realDossier(threadsContext("r1", wordCount = 40))
+        assertTrue("fixture must print raw counts: $dossier", dossier.contains("raw counts only"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("tally clause carries the full taxonomy when no share clause gave it: $contract", contract.contains(tallyClause))
+        assertFalse("this dossier printed no shares, so no share clause: $contract", contract.contains(shareClause))
+        assertFalse(
+            "the narrowed variant only fires when a share clause preceded it: $contract",
+            contract.contains(narrowedTallyClause),
+        )
+    }
+
+    @Test
+    fun `a dossier printing both marker forms teaches both clauses, the tally one narrowed`() {
+        // markerLine decides share-vs-tally PER RECORDING, so a long
+        // opening reflection and a short closing note — an ordinary walk
+        // shape — prints both. The old `if / else if` precedence dropped
+        // the tally clause, which is the one carrying "do not weigh them".
+        val dossier = realDossier(
+            listOf(threadsContext("r1", wordCount = 150), threadsContext("r2", wordCount = 40)),
+        )
+        assertTrue("fixture must print shares: $dossier", dossier.contains("absolutist words"))
+        assertTrue("fixture must print raw counts too: $dossier", dossier.contains("raw counts only"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("share clause: $contract", contract.contains(shareClause))
+        assertTrue("narrowed tally clause: $contract", contract.contains(narrowedTallyClause))
+        assertFalse(
+            "the share clause already gave the taxonomy; the tally clause must not restate it: $contract",
+            contract.contains(tallyClause),
+        )
+        assertTrue(
+            "both clauses and the trailer still join into one contract line: $contract",
+            contract.contains("- $shareClause $narrowedTallyClause $keyTrailer\n"),
+        )
+    }
+
+    @Test
+    fun `share, narrowed tally, modal lean, and trailer all still join into one contract line`() {
+        val long = threadsContext("r1", wordCount = 150, modalCounts = mapOf("should" to 12))
+        val short = threadsContext("r2", wordCount = 40)
+        val priors = listOf(
+            threadsContext("p1", wordCount = 200, modalCounts = mapOf("should" to 1)),
+            threadsContext("p2", wordCount = 200, modalCounts = mapOf("should" to 1)),
+            threadsContext("p3", wordCount = 200, modalCounts = mapOf("should" to 1)),
+        )
+        val dossier = realDossier(
+            currentRecordings = listOf(long, short),
+            allContexts = priors + long,
+            walkIdByRecordingUuid = mapOf("r1" to 1L, "p1" to 2L, "p2" to 3L, "p3" to 4L),
+        )
+        assertTrue("fixture must print all three probes: $dossier", dossier.contains("absolutist words"))
+        assertTrue("fixture must print all three probes: $dossier", dossier.contains("raw counts only"))
+        assertTrue("fixture must print all three probes: $dossier", dossier.contains("modal lean:"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue(
+            "the accretion budget is counted in LINES; three clauses still make one: $contract",
+            contract.contains("- $shareClause $narrowedTallyClause $modalClause $keyTrailer\n"),
+        )
+    }
+
+    @Test
+    fun `responseContract against real formatter output adapts to what was printed — a printed modal lean teaches the modal clause`() {
+        val current = threadsContext("r1", wordCount = 150, modalCounts = mapOf("should" to 12))
+        val priors = listOf(
+            threadsContext("p1", wordCount = 200, modalCounts = mapOf("should" to 1)),
+            threadsContext("p2", wordCount = 200, modalCounts = mapOf("should" to 1)),
+            threadsContext("p3", wordCount = 200, modalCounts = mapOf("should" to 1)),
+        )
+        val dossier = realDossier(
+            current = current,
+            allContexts = priors + current,
+            walkIdByRecordingUuid = mapOf("r1" to 1L, "p1" to 2L, "p2" to 3L, "p3" to 4L),
+        )
+        assertTrue("fixture must print a modal lean: $dossier", dossier.contains("modal lean:"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("modal clause: $contract", contract.contains(modalClause))
+        assertTrue("shares were printed too: $contract", contract.contains(shareClause))
+    }
+
+    @Test
+    fun `responseContract against real formatter output adapts to what was printed — a dossier that withheld every probe gets the handling note and no key`() {
+        val dossier = realDossier(threadsContext("r1", wordCount = 150, languageCode = "es"))
+        assertTrue("fixture must withhold markers: $dossier", dossier.contains("Markers unavailable"))
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("handling note stays unconditional: $contract", contract.contains("thought-thread marker profiles"))
+        assertFalse("no share clause: $contract", contract.contains(shareClause))
+        assertFalse("no tally clause: $contract", contract.contains(tallyClause))
+        assertFalse("no modal clause: $contract", contract.contains(modalClause))
+        assertFalse("no trailer without clauses: $contract", contract.contains(keyTrailer))
+    }
+
+    /**
+     * The `**Noticed:**` block `ThreadsDossierBuilder` appends after the
+     * formatter's own text, assembled from the real [DossierSenses]
+     * dispatcher and joined the way that builder joins it — so the
+     * interpretive key's probes see the whole production string rather
+     * than the formatter half the tests above cover.
+     */
+    private fun withSensesBlock(baseDossier: String): String {
+        val walkStart = Instant.parse("2026-06-15T09:00:00Z")
+        // 100 filler tokens keep markerColoring's ±15-token window a small
+        // fraction of the transcript, which is what clears its 2x-density gate.
+        val text = ("absolutely always never nothing totally " + "filler ".repeat(100)).trim()
+        val mentions = TranscriptNlp.wordTokenOffsets(text).take(1).map {
+            LemmaMention(lemma = it.token, surface = it.token, start = it.start, length = it.token.length)
+        }
+        val theme = Theme(lemma = "focus", displayTerm = "focus", mentionCount = 1, salience = 0.1, mentions = mentions)
+        val input = SenseInput(
+            currentWalkId = 1L,
+            walkStart = walkStart,
+            walkEnd = walkStart.plusSeconds(3600),
+            totalAscent = 0.0,
+            elevationSeries = emptyList(),
+            photos = emptyList(),
+            currentRecordings = listOf(
+                CurrentRecording(
+                    uuid = "r1",
+                    start = walkStart,
+                    end = walkStart.plusSeconds(30),
+                    text = text,
+                    wordCount = 0,
+                    themes = listOf(theme),
+                ),
+            ),
+            threads = listOf(
+                ActiveThread(
+                    lemma = "focus",
+                    displayTerm = "focus",
+                    appearances = listOf(
+                        ThreadAppearance(
+                            recordingUuid = "r1",
+                            walkId = 1L,
+                            date = walkStart,
+                            mentionCount = 1,
+                            salience = 0.1,
+                        ),
+                    ),
+                ),
+            ),
+            backfillComplete = false,
+            walkSnapshots = emptyList(),
+            recordingTimestamps = emptyMap(),
+            fixes = emptyMap(),
+            moon = null,
+        )
+        val lines = DossierSenses.lines(input).lines
+        check(lines.isNotEmpty()) { "the senses fixture must fire at least one line" }
+        return baseDossier + "\n\n**Noticed:**\n" + lines.joinToString("\n")
+    }
+
+    @Test
+    fun `the senses block does not widen the interpretive key's probes past the formatter's output`() {
+        val withheld = realDossier(threadsContext("r1", wordCount = 150, languageCode = "es"))
+        assertTrue("fixture must withhold every marker probe: $withheld", withheld.contains("Markers unavailable"))
+        val dossier = withSensesBlock(withheld)
+        assertTrue(
+            "fixture must carry a firing marker-coloring sense: $dossier",
+            dossier.contains("Absolutist words cluster around"),
+        )
+
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertFalse("a senses line must not teach a density reading: $contract", contract.contains(shareClause))
+        assertFalse("nor a bare-tally reading: $contract", contract.contains(tallyClause))
+        assertFalse("no clauses, no trailer: $contract", contract.contains(keyTrailer))
+    }
+
+    @Test
+    fun `null threadsDossier carries neither the handling note nor the interpretive key`() {
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = null)
+
+        assertFalse("no handling note: $contract", contract.contains("thought-thread marker profiles"))
+        assertFalse("no key: $contract", contract.contains(keyTrailer))
+    }
+
+    @Test
+    fun `interpretive key clauses and trailer join into one contract line`() {
+        val dossier = realDossier(threadsContext("r1", wordCount = 150))
+        val contract = PromptAssembler.responseContract(ReflectiveVoice, hasSpeech = true, threadsDossier = dossier)
+
+        assertTrue("one bullet, single-space joined: $contract", contract.contains("- $shareClause $keyTrailer\n"))
     }
 
     @Test

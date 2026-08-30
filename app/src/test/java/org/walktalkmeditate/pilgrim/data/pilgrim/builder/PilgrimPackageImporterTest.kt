@@ -27,6 +27,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry
@@ -59,18 +61,31 @@ class PilgrimPackageImporterTest {
     private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
     private lateinit var importer: PilgrimPackageImporter
+    private lateinit var threadsStore: TranscriptContextStore
+    private lateinit var threadsPreferences: FakeThreadsPreferencesRepository
 
     @Before fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         db = Room.inMemoryDatabaseBuilder(context, PilgrimDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        importer = PilgrimPackageImporter(db, json, context, FakeArchivedWalkRegistry())
+        File(context.filesDir, "transcript_contexts").deleteRecursively()
+        threadsStore = TranscriptContextStore(context, json)
+        threadsPreferences = FakeThreadsPreferencesRepository()
+        importer = PilgrimPackageImporter(
+            db,
+            json,
+            context,
+            FakeArchivedWalkRegistry(),
+            threadsStore,
+            threadsPreferences,
+        )
     }
 
     @After fun tearDown() {
         db.close()
         tempDir.deleteRecursively()
+        File(context.filesDir, "transcript_contexts").deleteRecursively()
     }
 
     // ---- decodeWalkFiles unit coverage (no archive / no DB) ----
@@ -277,6 +292,108 @@ class PilgrimPackageImporterTest {
         assertNotNull("the original walk must survive a failed tended re-insert", survivor)
         assertEquals("original", survivor!!.intention)
     }
+
+    // ---- Phase 20 U5: threads clearTombstones + importGeneration hygiene ----
+
+    // Android's .pilgrim wire format carries no recording identity
+    // (PilgrimVoiceRecording has no uuid field — PilgrimPackageConverter
+    // mints a fresh random VoiceRecording.uuid on import), so there is no
+    // way to pre-arrange a KNOWN uuid collision with an existing
+    // tombstone. This test instead spies on the store to prove the call
+    // actually happens with a non-empty uuid list whenever the imported
+    // archive contains voice recordings — RecordingTranscriptContextStore
+    // still delegates to the real implementation, so this is not a bare
+    // no-op double.
+    @Test
+    fun `a successful import with voice recordings clears tombstones for the minted uuids`() = runBlocking {
+        val spyStore = RecordingTranscriptContextStore(context, json)
+        val spyPreferences = FakeThreadsPreferencesRepository()
+        val importerWithSpy = PilgrimPackageImporter(
+            db,
+            json,
+            context,
+            FakeArchivedWalkRegistry(),
+            spyStore,
+            spyPreferences,
+        )
+        val uri = buildArchive(
+            tended = false,
+            walks = mapOf("walk.json" to json.encodeToString(walkWithVoiceRecording(UUID.randomUUID().toString()))),
+        )
+
+        val summary = importerWithSpy.import(uri)
+
+        assertEquals(1, summary.added)
+        assertEquals(1, spyStore.clearTombstonesCalls.size)
+        assertEquals(1, spyStore.clearTombstonesCalls.single().size)
+    }
+
+    @Test
+    fun `a successful import bumps importGeneration exactly once, even with no voice recordings`() = runBlocking {
+        val spyPreferences = FakeThreadsPreferencesRepository()
+        val importerWithSpy = PilgrimPackageImporter(
+            db,
+            json,
+            context,
+            FakeArchivedWalkRegistry(),
+            TranscriptContextStore(context, json),
+            spyPreferences,
+        )
+        val before = spyPreferences.importGeneration.value
+        val uri = buildArchive(
+            tended = false,
+            walks = mapOf("walk.json" to json.encodeToString(goodWalk())),
+        )
+
+        importerWithSpy.import(uri)
+
+        assertEquals(before + 1, spyPreferences.importGeneration.value)
+    }
+
+    @Test
+    fun `a failed import (invalid package) does not bump importGeneration`() = runBlocking {
+        val spyPreferences = FakeThreadsPreferencesRepository()
+        val importerWithSpy = PilgrimPackageImporter(
+            db,
+            json,
+            context,
+            FakeArchivedWalkRegistry(),
+            TranscriptContextStore(context, json),
+            spyPreferences,
+        )
+        val badUri = Uri.parse("content://test/does-not-exist-${UUID.randomUUID()}")
+        shadowOf(context.contentResolver).registerInputStream(badUri, ByteArrayInputStream(ByteArray(0)))
+
+        try {
+            importerWithSpy.import(badUri)
+        } catch (expected: PilgrimPackageError) {
+            // expected — the point is that the generation must not bump.
+        }
+
+        assertEquals(0, spyPreferences.importGeneration.value)
+    }
+
+    private class RecordingTranscriptContextStore(context: Context, json: Json) :
+        TranscriptContextStore(context, json) {
+        val clearTombstonesCalls = mutableListOf<List<String>>()
+        override suspend fun clearTombstones(uuids: List<String>) {
+            clearTombstonesCalls += uuids
+            super.clearTombstones(uuids)
+        }
+    }
+
+    private fun walkWithVoiceRecording(uuid: String): PilgrimWalk =
+        goodWalk(uuid).copy(
+            voiceRecordings = listOf(
+                PilgrimVoiceRecording(
+                    startDate = Instant.ofEpochMilli(0L),
+                    endDate = Instant.ofEpochMilli(5_000L),
+                    duration = 5.0,
+                    transcription = "a transcript",
+                    isEnhanced = false,
+                ),
+            ),
+        )
 
     // ---- helpers ----
 

@@ -3,10 +3,13 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.PersistableBundle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -154,7 +157,7 @@ internal fun PromptDetailContent(
     )
 
     fun handleCopy() {
-        copyTextToClipboard(context, prompt.text)
+        copyTextToClipboard(context, prompt.text, prompt.hasThreadsDossier)
         showCopiedFeedback = true
         showAIPills = true
         copyResetJob?.cancel()
@@ -349,10 +352,24 @@ private fun AIPill(
     }
 }
 
-private fun copyTextToClipboard(context: Context, text: String) {
+/**
+ * U10 clipboard hardening: a prompt whose text was assembled with a
+ * Thought Threads dossier folded in gets `EXTRA_IS_SENSITIVE` on the
+ * clip's description (API 33+ only — the extra doesn't exist below that,
+ * and the guard keeps this a no-op rather than a crash there). The share
+ * path (`launchShare`, below) is unaffected: `Intent.ACTION_SEND` has no
+ * equivalent extra to set.
+ */
+private fun copyTextToClipboard(context: Context, text: String, hasThreadsDossier: Boolean) {
     val clipboard =
         context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-    clipboard?.setPrimaryClip(ClipData.newPlainText("Pilgrim prompt", text))
+    val clip = ClipData.newPlainText("Pilgrim prompt", text)
+    if (hasThreadsDossier && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+    }
+    clipboard?.setPrimaryClip(clip)
 }
 
 private fun launchShare(context: Context, text: String) {

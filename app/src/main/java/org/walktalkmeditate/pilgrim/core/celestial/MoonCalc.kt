@@ -9,7 +9,7 @@ import kotlin.math.floor
  * Moon phase calculator — simplified synodic-period method (Meeus).
  *
  * Reference epoch: **2000-01-06 18:14 UTC** (a known new moon).
- * Synodic month: **29.530588770576 days**. Age is time since the
+ * Synodic month: **29.53058770576 days**. Age is time since the
  * most recent new moon; illumination is the cosine curve between
  * successive new moons.
  *
@@ -32,11 +32,29 @@ object MoonCalc {
      * `internal` so [MoonPhase.isWaxing] can derive the waxing/waning
      * boundary from the same source-of-truth constant rather than
      * duplicating the numeric literal.
+     *
+     * Pre-existing transcription bug (Phase 20/U9, parity spec
+     * `docs/parity/2026-08-26-threads-senses-port.md`): this value
+     * carried a stray extra '8' (29.530588770576, 12 digits) vs iOS
+     * `LunarPhase.synodicMonth` (29.53058770576, 11 digits) — worth
+     * ~30s of cumulative lunation-boundary drift by 2026. Fixed to the
+     * iOS pin exactly.
      */
-    internal const val SYNODIC_DAYS = 29.530588770576
+    internal const val SYNODIC_DAYS = 29.53058770576
+
+    /**
+     * The reference new moon instant: 2000-01-06 18:14 UTC. Promoted
+     * from `private` to `internal` (same reasoning as [SYNODIC_DAYS])
+     * so [org.walktalkmeditate.pilgrim.core.threads.LunationCalendar]
+     * derives its own epoch + index×length boundary arithmetic from
+     * this SAME instant rather than redeclaring it — two independently
+     * maintained epoch literals could drift apart with no compiler
+     * error.
+     */
+    internal val EPOCH: Instant = Instant.parse("2000-01-06T18:14:00Z")
 
     /** JD of the reference new moon: 2000-01-06 18:14 UTC. */
-    private val EPOCH_JD: Double = julianDay(Instant.parse("2000-01-06T18:14:00Z"))
+    private val EPOCH_JD: Double = julianDay(EPOCH)
 
     private val PHASE_NAMES = listOf(
         "New Moon",

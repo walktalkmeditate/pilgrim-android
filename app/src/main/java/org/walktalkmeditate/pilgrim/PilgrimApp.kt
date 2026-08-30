@@ -44,6 +44,18 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var orphanSweeperSchedulerProvider: Provider<OrphanSweeperScheduler>
 
     /**
+     * U6: iOS parity `MainCoordinator.init()`'s unconditional
+     * `Task { @MainActor in ThreadsBackfill.runIfNeeded() }` — called on
+     * every process start regardless of the toggle or battery state;
+     * [org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillScheduler.ensureScheduled]'s
+     * own KEEP-policy enqueue and [org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillWorker]'s
+     * internal guards decide whether real work happens, not this call
+     * site. Without it the backfill never runs at all.
+     */
+    @Inject lateinit var threadsBackfillSchedulerProvider:
+        Provider<org.walktalkmeditate.pilgrim.core.threads.ThreadsBackfillScheduler>
+
+    /**
      * E2 cold-start reconcile for the launcher-icon switcher. When the
      * user picks an icon, [IconSwitcher.switchTo] intentionally leaves
      * the previously-running alias enabled so the live MainActivity
@@ -162,6 +174,16 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var walkLifecycleObserverProvider: Provider<WalkLifecycleObserver>
 
     /**
+     * U6: two of the [org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState]'s
+     * five clear-sites (walk start, walk cancel/discard) — see that
+     * observer's KDoc for the full five-site mapping. Same eager-
+     * instantiation reasoning as [walkLifecycleObserverProvider]: without
+     * this reference the `init { scope.launch { ... } }` block never runs.
+     */
+    @Inject lateinit var autoTranscriptionSkipClearObserverProvider:
+        Provider<org.walktalkmeditate.pilgrim.walk.AutoTranscriptionSkipClearObserver>
+
+    /**
      * Cold-launch recovery: any Walk row whose `end_timestamp IS NULL`
      * is a walk the OS killed (swipe-from-recents, force-stop, low-mem
      * kill) without going through the normal `finishWalk` path.
@@ -231,6 +253,12 @@ class PilgrimApp : Application(), Configuration.Provider {
         // soundscape DataStore subscriptions, etc.) never instantiates
         // there — that's the rss savings.
         orphanSweeperSchedulerProvider.get().scheduleDaily()
+
+        // U6: unconditional on every process start — the scheduler's KEEP
+        // policy dedupes a redundant call while a sweep is already
+        // enqueued/running, and the worker's own toggle/battery/
+        // completion guards decide whether real work happens.
+        threadsBackfillSchedulerProvider.get().ensureScheduled()
 
         // Seed bell + soundscape selection defaults on first launch
         // so MeditationBellObserver's null-id "None" guard doesn't
@@ -316,6 +344,11 @@ class PilgrimApp : Application(), Configuration.Provider {
         // controller state flow. Without this, voice auto-stop on the
         // discardWalk path (Active → Idle) silently fails.
         walkLifecycleObserverProvider.get()
+
+        // U6: force Hilt to instantiate the skip-clear observer so its
+        // `init { scope.launch { ... } }` block subscribes to the
+        // controller state flow for the whole process.
+        autoTranscriptionSkipClearObserverProvider.get()
 
         // Stage 11-A: arm the cache backfill coordinator. Idempotent
         // start() — re-invocation is a no-op via AtomicBoolean.

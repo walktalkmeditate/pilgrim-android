@@ -15,6 +15,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +29,14 @@ import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWork
 import org.walktalkmeditate.pilgrim.audio.model.ModelDownloadWorkSource
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelConfig
 import org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+import org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess
+import org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway
+import org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient
+import org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+import org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -84,12 +93,27 @@ class ModelUpgradePathTest {
             scope = scope,
         )
         scheduler = FakeWhisperModelDownloadScheduler()
+        // This suite doesn't exercise Threads at all — toggle off is the
+        // production fast bail-out, so the rest of the wiring below never
+        // actually runs.
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
         runner = TranscriptionRunner(
             context,
             repository,
             WhisperCppEngine(store, native),
             store,
             scheduler,
+            TranscriptContextAnalyzer(
+                store = TranscriptContextStore(context, json),
+                environment = ThreadsAnalysisEnvironment(context, WordNetLexicon(context, json)),
+                languageIdClient = MlKitLanguageIdClient(
+                    object : LanguageIdentifierGateway {
+                        override suspend fun identifyPossibleLanguages(text: String): List<LanguageGuess> = emptyList()
+                    },
+                ),
+                preferences = FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+            ),
+            FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
         )
     }
 

@@ -1,0 +1,18 @@
+**Thought threads (on-device linguistic analysis):**
+Recording 1: absolutist words 2.7% over 110 words (your usual walking baseline ~1.8%); self-focus 7.3%; insight 0, causation 0, discrepancy 0; temporal lean: past (coarse heuristic); sentiment -0.29
+Recording 2: absolutist words 1.4% over 144 words (your usual walking baseline ~1.8%); self-focus 13.2%; insight 0, causation 0, discrepancy 11; temporal lean: past (coarse heuristic); sentiment -0.62
+Recording 3: 62 words — small sample, raw counts only: 0 absolutist, 5 self-focus; insight 0, causation 0, discrepancy 0; temporal lean: past (coarse heuristic); sentiment -0.30
+modal lean: possibility — 'could' ×11 (your usual ~2 per walk)
+
+**Threads across recent walks:**
+'bridge' — 2 walks in the last 30 days (first spoken Feb 7)
+'garden' — first appearance in the record (first spoken Feb 15), spoken more slowly than the rest of this walk
+'river' — 3 walks in the last 30 days, fading across appearances (first spoken Dec 31), spoken more quickly than the rest of this walk
+
+**Quiet this walk:**
+Notably quiet this walk: 'mountain' — present in 2 of the walker's recent walks.
+
+**Noticed:**
+'river' has surfaced on 3 walks — 4 times near the same stretch of ground.
+The Wolf Moon has set: 1 walk, 1 with recorded words.
+All the words came in the first third; the last 65 minutes were wordless.

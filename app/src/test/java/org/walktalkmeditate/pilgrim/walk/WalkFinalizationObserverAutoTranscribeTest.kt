@@ -26,9 +26,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.FakePreferencesDataStore
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCacheStore
 import org.walktalkmeditate.pilgrim.data.collective.ContributionLedger
 import org.walktalkmeditate.pilgrim.data.collective.CollectiveCounterDelta
@@ -75,6 +77,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
     private lateinit var fakeCollectiveService: FakeCollectiveCounterServiceForAutoTranscribe
     private lateinit var collectiveRepository: CollectiveRepository
     private lateinit var widgetRefreshScheduler: NoopWidgetRefreshScheduler
+    private lateinit var skipState: FakeAutoTranscriptionSkipState
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
 
@@ -121,9 +124,24 @@ class WalkFinalizationObserverAutoTranscribeTest {
             contributionLedger = ContributionLedger(FakePreferencesDataStore(), collectiveJson),
         )
         widgetRefreshScheduler = NoopWidgetRefreshScheduler()
+        skipState = FakeAutoTranscriptionSkipState()
 
         stateFlow = MutableStateFlow(WalkState.Idle)
         observerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+
+    /** U6: the enqueue-site gate requires at least one voice recording
+     * before it will schedule transcription (BEH-82). */
+    private suspend fun insertRecording(walkId: Long) {
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = walkId,
+                startTimestamp = 0L,
+                endTimestamp = 1_000L,
+                durationMillis = 1_000L,
+                fileRelativePath = "recordings/w/rec.wav",
+            ),
+        )
     }
 
     @After
@@ -140,6 +158,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
         val observer = WalkFinalizationObserver(
             walkState = stateFlow,
             scope = observerScope,
+            context = context,
             repository = repository,
             transcriptionScheduler = transcriptionScheduler,
             hemisphereRepository = hemisphereRepo,
@@ -147,6 +166,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = voicePrefs,
             walkMetricsCache = NoopWalkMetricsCache,
+            autoTranscriptionSkipState = skipState,
         )
         // Sleep so the IO-attached collector consumes the initial Idle
         // before we start mutating stateFlow. Same pattern + value as the
@@ -159,7 +179,8 @@ class WalkFinalizationObserverAutoTranscribeTest {
     fun `autoTranscribe = true schedules transcription`() = runBlocking {
         val voicePrefs = FakeVoicePreferencesRepository(initialAutoTranscribe = true)
         buildObserver(voicePrefs)
-        val walkId = 11L
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        insertRecording(walkId)
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
@@ -199,6 +220,7 @@ class WalkFinalizationObserverAutoTranscribeTest {
         val observer = WalkFinalizationObserver(
             walkState = stateFlow,
             scope = observerScope,
+            context = context,
             repository = repository,
             transcriptionScheduler = transcriptionScheduler,
             hemisphereRepository = hemisphereRepo,
@@ -206,10 +228,12 @@ class WalkFinalizationObserverAutoTranscribeTest {
             widgetRefreshScheduler = widgetRefreshScheduler,
             voicePreferences = voicePrefs,
             walkMetricsCache = NoopWalkMetricsCache,
+            autoTranscriptionSkipState = skipState,
         )
         @Suppress("UNUSED_VARIABLE") val keepAlive = observer
         Thread.sleep(COLLECTOR_ATTACH_WAIT_MS)
-        val walkId = 44L
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        insertRecording(walkId)
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),
@@ -252,7 +276,8 @@ class WalkFinalizationObserverAutoTranscribeTest {
         // the construction-time value, this test fails — the gate must
         // read .value live at finalize.
         voicePrefs.setAutoTranscribe(true)
-        val walkId = 33L
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        insertRecording(walkId)
         stateFlow.value = WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L))
         stateFlow.value = WalkState.Finished(
             WalkAccumulator(walkId = walkId, startedAt = 0L, distanceMeters = 100.0),

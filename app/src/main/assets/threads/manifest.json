@@ -1,0 +1,65 @@
+{
+  "assets": {
+    "adjective-exceptions.txt.gzip": {
+      "bytes": 6064,
+      "entries": 1489,
+      "sha256": "d2376036e761b7dfe2ce6aba29e0bf3498a812fd8deef847354886b7b08f4d71"
+    },
+    "adjectives.txt.gzip": {
+      "bytes": 60086,
+      "entries": 17879,
+      "sha256": "d14769d792d0b7853599787da2c61efe1d527905e089365ea8b6cac26c7fc6f7"
+    },
+    "morphology-rules.json.gzip": {
+      "bytes": 139,
+      "entries": 21,
+      "sha256": "804dd0c87a0e14a3a8b0585dcd71211682720ad272d9388c5936fe33772f8c65"
+    },
+    "noun-exceptions.txt.gzip": {
+      "bytes": 13311,
+      "entries": 2050,
+      "sha256": "0c16ffb3392c95264fc19a6b44fd88e7cee0fa42277bc40f7ac464d6e94f9139"
+    },
+    "nouns.txt.gzip": {
+      "bytes": 178762,
+      "entries": 54373,
+      "sha256": "6e87f8f3433b1ab024db6d46e002da1ed0f334e0995aeac16483f735d64a6c06"
+    },
+    "synsets.txt.gzip": {
+      "bytes": 294391,
+      "entries": 32158,
+      "sha256": "81f9b7e668851b73db04b156533cb4ff44791da78d7c4d53979b7138cc4ada8c"
+    },
+    "vader-lexicon.txt.gzip": {
+      "bytes": 29524,
+      "entries": 7209,
+      "sha256": "42e44732c9e221f425e68e823384795ac037c4d0e6d117a7d6fc73e1b7182a6b"
+    },
+    "vader-license.txt": {
+      "bytes": 1076,
+      "sha256": "b78925304c567623f14677bad66b8e305e7ddcaf7982c8d8411ce51c55a8bf51"
+    },
+    "verb-exceptions.txt.gzip": {
+      "bytes": 10921,
+      "entries": 2401,
+      "sha256": "266a6033d159c8e9aca2fb393ac47ff1bafeba2e5cef8b2c30e6d27745ef244d"
+    },
+    "verbs.txt.gzip": {
+      "bytes": 25350,
+      "entries": 8431,
+      "sha256": "6dad11e45bd9aeee9b3bdbd02ddfa4b5e7fdf6a2b57cd4e0389b974dd5939b4c"
+    }
+  },
+  "sources": {
+    "vader": {
+      "commit": "0b8040fd23e0ba0a68ebf043697f087cd4c4d6c6",
+      "sha256": "ec636f884f36b5de6a4d681b2f61c08c2ec90eeb440472033f3307d0d6fa8bc9",
+      "url": "https://raw.githubusercontent.com/cjhutto/vaderSentiment/0b8040fd23e0ba0a68ebf043697f087cd4c4d6c6/vaderSentiment/vader_lexicon.txt"
+    },
+    "wordnet": {
+      "sha256": "3f7d8be8ef6ecc7167d39b10d66954ec734280b5bdcd57f7d9eafe429d11c22a",
+      "url": "https://wordnetcode.princeton.edu/wn3.1.dict.tar.gz",
+      "version": "3.1"
+    }
+  }
+}

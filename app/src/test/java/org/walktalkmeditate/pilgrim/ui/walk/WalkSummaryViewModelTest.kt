@@ -90,6 +90,12 @@ class WalkSummaryViewModelTest {
     private lateinit var contributionLedger: ContributionLedger
     private lateinit var modelStoreScope: CoroutineScope
     private lateinit var modelStore: org.walktalkmeditate.pilgrim.audio.model.WhisperModelStore
+    // U7 edit-path wiring (BEH-59 carry): real store + real WordNet/VADER
+    // analysis, matching TranscriptContextAnalyzerTest's established
+    // pattern — only the language client is faked (always English).
+    private lateinit var threadsStore: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
+    private lateinit var threadsPreferences: org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
+    private lateinit var threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer
     private val dispatcher = UnconfinedTestDispatcher()
 
     /**
@@ -149,6 +155,30 @@ class WalkSummaryViewModelTest {
             voiceRecordingDao = db.voiceRecordingDao(),
             walkPhotoDao = db.walkPhotoDao(),
         )
+        run {
+            val threadsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; explicitNulls = false }
+            java.io.File(context.filesDir, "transcript_contexts").deleteRecursively()
+            threadsStore = org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore(context, threadsJson)
+            val threadsEnvironment = org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+                context,
+                org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(context, threadsJson),
+            )
+            threadsPreferences = org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository()
+            val threadsLanguageClient = org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient(
+                object : org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway {
+                    override suspend fun identifyPossibleLanguages(
+                        text: String,
+                    ): List<org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess> =
+                        listOf(org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess("en", 0.99f))
+                },
+            )
+            threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer(
+                threadsStore,
+                threadsEnvironment,
+                threadsLanguageClient,
+                threadsPreferences,
+            )
+        }
         playback = FakeVoicePlaybackController()
         scheduler = FakeTranscriptionScheduler()
         sweeper = OrphanRecordingSweeper(context, repository, scheduler)
@@ -228,6 +258,9 @@ class WalkSummaryViewModelTest {
             org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(
                 initialCelestialAwarenessEnabled = true,
             ),
+        autoTranscriptionSkipStateOverride: org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState =
+            org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
+        threadsAnalyzerOverride: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer = threadsAnalyzer,
     ): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
         val json = kotlinx.serialization.json.Json {
@@ -293,6 +326,8 @@ class WalkSummaryViewModelTest {
             routeCatalogService = routeCatalogServiceOverride,
             contributionLedger = contributionLedger,
             persistenceScope = persistenceScope,
+            autoTranscriptionSkipState = autoTranscriptionSkipStateOverride,
+            threadsAnalyzer = threadsAnalyzerOverride,
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
         createdViewModels += vm
@@ -354,6 +389,24 @@ class WalkSummaryViewModelTest {
             practicePreferences = org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository(),
             unitsPreferences = org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             appContext = ctxApp,
+            threadsDossierBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+                ctxApp,
+                db,
+                org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+            ),
+            mlKitLanguageIdClient = org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient(
+                object : org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway {
+                    override suspend fun identifyPossibleLanguages(text: String) =
+                        emptyList<org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess>()
+                },
+            ),
+            threadsAnalysisEnvironment = org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+                ctxApp,
+                org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(
+                    ctxApp,
+                    kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+                ),
+            ),
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =
@@ -1870,6 +1923,101 @@ class WalkSummaryViewModelTest {
             assertEquals(listOf(walk.id), scheduler.scheduledWalkIds)
         }
 
+    // --- U7 edit-path wiring (BEH-59 carry) -------------------------------
+
+    @Test
+    fun `saveTranscription eagerly analyzes when the threads toggle is on`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+        val uuid = repository.getVoiceRecording(recId)!!.uuid
+
+        val vm = newViewModel(walkId = walk.id)
+        vm.saveTranscription(recId, "The quiet mountain trail held a long stillness today")
+
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (!threadsStore.hasContext(uuid)) delay(25L)
+            }
+        }
+    }
+
+    @Test
+    fun `saveTranscription removes any stale context when the threads toggle is off`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+        val uuid = repository.getVoiceRecording(recId)!!.uuid
+        threadsAnalyzer.analyzeAndStore(uuid, "prior text analyzed while the toggle was on")
+        assertTrue(threadsStore.hasContext(uuid))
+        threadsPreferences.setThreadsAfterWalks(false)
+
+        val vm = newViewModel(walkId = walk.id)
+        vm.saveTranscription(recId, "an edit made while the feature is off")
+
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (threadsStore.hasContext(uuid)) delay(25L)
+            }
+        }
+    }
+
+    @Test
+    fun `retranscribeRecording removes the stale context after the null write`() = runTest(dispatcher) {
+        installLegacyTiny()
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+        val uuid = repository.getVoiceRecording(recId)!!.uuid
+        repository.updateVoiceRecordingTranscription(recId, "old transcription")
+        threadsAnalyzer.analyzeAndStore(uuid, "old transcription")
+        assertTrue(threadsStore.hasContext(uuid))
+
+        val vm = newViewModel(walkId = walk.id, transcriptionSchedulerOverride = scheduler)
+        awaitRetranscribeEnabled(vm)
+        vm.retranscribeRecording(recId)
+
+        withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) {
+                while (threadsStore.hasContext(uuid)) delay(25L)
+            }
+        }
+    }
+
+    @Test
+    fun `saveTranscription survives an analyzer failure and still commits the edit`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+        repository.updateVoiceRecordingTranscription(recId, "old transcription")
+
+        // A real analyzer whose very first internal read throws — the
+        // class is final, so the throw is injected via its preferences
+        // collaborator. persistenceScope has no CoroutineExceptionHandler
+        // (WalkModule), so pre-wrap this throw crashed the process.
+        var analyzerEntered = 0
+        val throwingPrefs = object :
+            org.walktalkmeditate.pilgrim.core.threads.ThreadsPreferencesRepository
+            by org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository() {
+            override val threadsAfterWalks: kotlinx.coroutines.flow.StateFlow<Boolean>
+                get() {
+                    analyzerEntered++
+                    throw IllegalStateException("threads preferences read failed")
+                }
+        }
+        val throwingAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(
+            context,
+            throwingPrefs,
+        )
+
+        val vm = newViewModel(walkId = walk.id, threadsAnalyzerOverride = throwingAnalyzer)
+        vm.saveTranscription(recId, "edited text that survives")
+        advanceUntilIdle()
+
+        assertTrue("analyzer must have been reached and thrown", analyzerEntered > 0)
+        assertEquals("edited text that survives", repository.getVoiceRecording(recId)?.transcription)
+    }
+
     @Test
     fun `transcribePendingRecordings no-ops pre-Ready and schedules once ready`() =
         runTest(dispatcher) {
@@ -1921,6 +2069,96 @@ class WalkSummaryViewModelTest {
 
             repository.updateVoiceRecordingTranscription(pendingId, "fresh transcript")
             awaitManualTranscribing(vm, emptySet())
+        }
+
+    // --- U6: transcribe-all clears the skip flag only on non-empty results ---
+
+    @Test
+    fun `transcribePendingRecordings landing a result clears the skip flag`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val pendingId =
+                insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            val skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
+            skipState.setSkipped()
+
+            val vm = newViewModel(
+                walkId = walk.id,
+                transcriptionSchedulerOverride = scheduler,
+                autoTranscriptionSkipStateOverride = skipState,
+            )
+            awaitRetranscribeEnabled(vm)
+
+            vm.transcribePendingRecordings()
+            awaitManualTranscribing(vm, setOf(pendingId))
+
+            repository.updateVoiceRecordingTranscription(pendingId, "fresh transcript")
+            awaitManualTranscribing(vm, emptySet())
+
+            assertNull(
+                "a non-empty transcribe-all result must clear the skip flag",
+                skipState.skipReason.value,
+            )
+        }
+
+    @Test
+    fun `transcribePendingRecordings with no landed results leaves the skip flag up`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            val skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
+            skipState.setSkipped()
+
+            val vm = newViewModel(
+                walkId = walk.id,
+                transcriptionSchedulerOverride = scheduler,
+                autoTranscriptionSkipStateOverride = skipState,
+            )
+            awaitRetranscribeEnabled(vm)
+
+            vm.transcribePendingRecordings()
+            advanceUntilIdle()
+            // No landed transcription simulated — an all-failed retry.
+
+            assertEquals(
+                "an all-failed retry must leave the banner up",
+                org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipReason.LowBattery,
+                skipState.skipReason.value,
+            )
+        }
+
+    @Test
+    fun `retranscribeRecording (single) landing a result does NOT clear the skip flag`() =
+        runTest(dispatcher) {
+            installLegacyTiny()
+            val walk = repository.startWalk(startTimestamp = 0L)
+            repository.finishWalk(walk, endTimestamp = 60_000L)
+            val recId = insertVoiceRecording(walk.id, startOffset = 1_000L, durationMillis = 5_000L)
+            repository.updateVoiceRecordingTranscription(recId, "old transcription")
+            val skipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState()
+            skipState.setSkipped()
+
+            val vm = newViewModel(
+                walkId = walk.id,
+                transcriptionSchedulerOverride = scheduler,
+                autoTranscriptionSkipStateOverride = skipState,
+            )
+            awaitRetranscribeEnabled(vm)
+            vm.retranscribeRecording(recId)
+            awaitManualTranscribing(vm, setOf(recId))
+
+            repository.updateVoiceRecordingTranscription(recId, "fresh transcript")
+            awaitManualTranscribing(vm, emptySet())
+
+            assertEquals(
+                "a single-file retry must never touch the skip flag — only transcribe-all does (iOS parity)",
+                org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipReason.LowBattery,
+                skipState.skipReason.value,
+            )
         }
 
     @Test

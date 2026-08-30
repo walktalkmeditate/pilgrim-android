@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.core.prompt
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.Locale
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,6 +14,9 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.ElementBalance
 import org.walktalkmeditate.pilgrim.core.celestial.MoonPhase
@@ -20,8 +26,18 @@ import org.walktalkmeditate.pilgrim.core.celestial.PlanetaryPosition
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.ZodiacPosition
 import org.walktalkmeditate.pilgrim.core.celestial.ZodiacSign
+import org.walktalkmeditate.pilgrim.core.threads.TranscriptNlp
+import org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon
 import org.walktalkmeditate.pilgrim.data.practice.ZodiacSystem
 
+/**
+ * Robolectric-backed (not a plain JUnit class) since v2: any fixture with
+ * non-empty `recordings` routes through [AttentionDirectives.detect],
+ * which calls [TranscriptNlp.contentLemmaMentions] and throws unless a
+ * [WordNetLexicon] has been installed for the process (see [setUp]).
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class PromptAssemblerTest {
 
     private val nyZone: ZoneId = ZoneId.of("America/New_York")
@@ -39,6 +55,9 @@ class PromptAssemblerTest {
     fun setUp() {
         savedLocale = Locale.getDefault()
         Locale.setDefault(Locale.US)
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+        TranscriptNlp.install(WordNetLexicon(context, json))
     }
 
     @After
@@ -81,6 +100,7 @@ class PromptAssemblerTest {
         pauses: List<PauseContext> = emptyList(),
         ascentMeters: Double? = null,
         descentMeters: Double? = null,
+        threadsDossier: String? = null,
     ): ActivityContext = ActivityContext(
         recordings = recordings,
         meditations = meditations,
@@ -102,16 +122,21 @@ class PromptAssemblerTest {
         pauses = pauses,
         ascentMeters = ascentMeters,
         descentMeters = descentMeters,
+        threadsDossier = threadsDossier,
     )
 
     private fun assemble(
         context: ActivityContext,
         imperial: Boolean = false,
+        directives: List<String>? = null,
+        detectedLanguageName: String? = null,
     ): String = PromptAssembler.assemble(
         context = context,
         voice = fakeVoice,
         imperial = imperial,
         zone = nyZone,
+        directives = directives,
+        detectedLanguageName = detectedLanguageName,
     )
 
     private fun sampleCelestial(): CelestialSnapshot = CelestialSnapshot(
@@ -616,10 +641,13 @@ class PromptAssemblerTest {
         val meditationEnd = nyTimestamp(2026, 5, 4, 10, 5)
         val waypointTime = nyTimestamp(2026, 5, 4, 9, 45)
         val photoTime = nyTimestamp(2026, 5, 4, 9, 47)
+        // 25-word texts + a +20% wordsPerMinute shift fire the
+        // firstVersusLast pace branch so the Attend marker renders.
+        val paceQualifiedText = List(25) { "and" }.joinToString(separator = " ")
         val context = fixtureContext(
             recordings = listOf(
-                RecordingContext("r1", recordingTime, null, null, null, "first"),
-                RecordingContext("r2", recordingTime + 60_000L, null, null, null, "last"),
+                RecordingContext("r1", recordingTime, null, null, 100.0, paceQualifiedText),
+                RecordingContext("r2", recordingTime + 60_000L, null, null, 120.0, paceQualifiedText),
             ),
             meditations = listOf(
                 MeditationContext(meditationStart, meditationEnd, 300L),
@@ -790,6 +818,122 @@ class PromptAssemblerTest {
         assertTrue(
             "crossing phrase driven by active + paused time: $result",
             result.contains("Time: began in the evening, ended in the night, on May 4, 2026, 5:30 PM"),
+        )
+    }
+
+    // --- U7: threads dossier + detected language ------------------------------
+
+    // 25 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble dossier renders after recent-walks and before directives, when present`() {
+        // Pace-qualified recordings (25 words, +20% wordsPerMinute) so the
+        // Attend block renders and its position can be asserted.
+        val paceQualifiedText = List(25) { "and" }.joinToString(separator = " ")
+        val context = fixtureContext(
+            recordings = listOf(
+                RecordingContext("r1", testStartTimestamp, null, null, 100.0, paceQualifiedText),
+                RecordingContext("r2", testStartTimestamp + 60_000L, null, null, 120.0, paceQualifiedText),
+            ),
+            recentWalkSnippets = listOf(
+                WalkSnippet(
+                    date = nyTimestamp(2026, 5, 1, 7, 30),
+                    placeName = null,
+                    weatherCondition = null,
+                    celestialSummary = null,
+                    transcriptionPreview = "soft start",
+                ),
+            ),
+            threadsDossier = "**Thought threads (on-device linguistic analysis):**\nRecording 1: stub",
+        )
+        val result = assemble(context)
+
+        val recentWalksIdx = result.indexOf("**Recent Walk Context (for continuity):**")
+        val dossierIdx = result.indexOf("**Thought threads (on-device linguistic analysis):**")
+        val attendIdx = result.indexOf("**Attend to:**")
+        assertTrue("recent walks precedes dossier: $result", recentWalksIdx in 0 until dossierIdx)
+        assertTrue("dossier precedes directives: $result", dossierIdx in 0 until attendIdx)
+    }
+
+    // 26 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble omits the dossier block entirely when threadsDossier is null`() {
+        val result = assemble(fixtureContext(threadsDossier = null))
+        assertFalse("no dossier text: $result", result.contains("Thought threads"))
+    }
+
+    // 27 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble response contract includes the thought-thread safety line only when a dossier is present`() {
+        val withDossier = assemble(fixtureContext(threadsDossier = "**Thought threads (on-device linguistic analysis):**\nstub"))
+        assertTrue(
+            "safety line verbatim when dossier present: $withDossier",
+            withDossier.contains(
+                "The thought-thread marker profiles are descriptive on-device linguistic signals, not " +
+                    "assessments — interpret them gently, never produce clinical or diagnostic language, " +
+                    "and never treat a single walk's numbers as meaningful on their own.",
+            ),
+        )
+        val withoutDossier = assemble(fixtureContext(threadsDossier = null))
+        assertFalse(
+            "no safety line when there is no dossier to caveat: $withoutDossier",
+            withoutDossier.contains("thought-thread marker profiles"),
+        )
+    }
+
+    // 28 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble detected-language line renders only with non-empty transcription AND a supplied name`() {
+        val withRecordingAndName = assemble(
+            fixtureContext(
+                recordings = listOf(
+                    RecordingContext("r1", testStartTimestamp, null, null, null, "first thought"),
+                ),
+            ),
+            detectedLanguageName = "Japanese",
+        )
+        assertTrue(
+            "detected-language line verbatim: $withRecordingAndName",
+            withRecordingAndName.contains("\n\n**Detected language:** Japanese"),
+        )
+
+        val withRecordingNoName = assemble(
+            fixtureContext(
+                recordings = listOf(
+                    RecordingContext("r1", testStartTimestamp, null, null, null, "first thought"),
+                ),
+            ),
+        )
+        assertFalse(
+            "no name supplied -> no line, never a placeholder: $withRecordingNoName",
+            withRecordingNoName.contains("Detected language"),
+        )
+
+        val noRecordingButName = assemble(fixtureContext(recordings = emptyList()), detectedLanguageName = "Japanese")
+        assertFalse(
+            "no transcription -> no line even if a name is supplied: $noRecordingButName",
+            noRecordingButName.contains("Detected language"),
+        )
+    }
+
+    // 29 ----------------------------------------------------------------------
+
+    @Test
+    fun `assemble detected-language line is positioned right after the transcription block`() {
+        val result = assemble(
+            fixtureContext(
+                recordings = listOf(
+                    RecordingContext("r1", testStartTimestamp, null, null, null, "first thought"),
+                ),
+            ),
+            detectedLanguageName = "French",
+        )
+        assertTrue(
+            "language line directly follows the transcription text: $result",
+            result.contains("first thought\n\n**Detected language:** French"),
         )
     }
 }

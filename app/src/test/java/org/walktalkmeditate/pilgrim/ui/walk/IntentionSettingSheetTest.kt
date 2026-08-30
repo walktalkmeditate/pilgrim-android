@@ -6,11 +6,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -251,5 +254,103 @@ class IntentionSettingSheetTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("0/140").assertIsDisplayed()
         assertTrue(!consumed)
+    }
+
+    // --- U10 Recurring (Thought Threads) chip shelf ------------------------
+
+    @Test
+    fun `Recurring section starts absent and appears once the load completes`() {
+        val deferred = CompletableDeferred<List<String>>()
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null, recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { deferred.await() },
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Recurring").assertDoesNotExist()
+
+        deferred.complete(listOf("walk with 'river'"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Recurring").assertIsDisplayed()
+        composeRule.onNodeWithText("walk with 'river'").assertIsDisplayed()
+        composeRule.onNodeWithTag(INTENTION_RECURRING_CHIPS_TAG).assertExists()
+    }
+
+    @Test
+    fun `a throwing suggestion loader leaves the sheet interactive with no Recurring section`() {
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null, recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { throw IllegalStateException("suggestion load failed") },
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Recurring").assertDoesNotExist()
+        composeRule.onNodeWithTag(INTENTION_RECURRING_CHIPS_TAG).assertDoesNotExist()
+        composeRule.onNodeWithText("0/140").assertIsDisplayed()
+    }
+
+    @Test
+    fun `Recurring section absent when the load resolves empty`() {
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null, recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { emptyList() },
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Recurring").assertDoesNotExist()
+    }
+
+    @Test
+    fun `Recurring renders above Suggested and Recent`() {
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null,
+                recents = listOf("yesterday's intention"),
+                suggestions = listOf("Honor the stillness"),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { listOf("walk with 'river'") },
+            )
+        }
+        composeRule.waitForIdle()
+        val recurringTop = composeRule.onNodeWithText("Recurring").getUnclippedBoundsInRoot().top
+        val suggestedTop = composeRule.onNodeWithText("Suggested").getUnclippedBoundsInRoot().top
+        val recentTop = composeRule.onNodeWithText("Recent").getUnclippedBoundsInRoot().top
+        assertTrue(recurringTop < suggestedTop)
+        assertTrue(suggestedTop < recentTop)
+    }
+
+    @Test
+    fun `Recurring chips hide once the field is non-empty`() {
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = "already typed", recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { listOf("walk with 'river'") },
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Recurring").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tapping a Recurring chip replaces the field content`() {
+        composeRule.setContent {
+            IntentionSheetContent(
+                initial = null, recents = emptyList(), suggestions = emptyList(),
+                onSave = {}, onDismiss = {},
+                loadThreadSuggestions = { listOf("walk with 'river'") },
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("walk with 'river'").performClick()
+        composeRule.waitForIdle()
+        // Field now holds exactly the chip text (17 chars) -> counter reflects it.
+        composeRule.onNodeWithText("17/140").assertIsDisplayed()
     }
 }

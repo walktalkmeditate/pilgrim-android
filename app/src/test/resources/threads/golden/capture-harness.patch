@@ -1,0 +1,282 @@
+diff --git c/Pilgrim.xcodeproj/project.pbxproj i/Pilgrim.xcodeproj/project.pbxproj
+index 3e93e7c..e340a06 100644
+--- c/Pilgrim.xcodeproj/project.pbxproj
++++ i/Pilgrim.xcodeproj/project.pbxproj
+@@ -225,6 +225,7 @@
+ 		366617D2E2404425A7BB8E0F /* ThreadsDossierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C6AF4CB2CDC4F6DA1162CEA /* ThreadsDossierTests.swift */; };
+ 		6021C36CC44F486A8322CCF6 /* ThreadsDossierSensesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1892F0715213484FB4831780 /* ThreadsDossierSensesTests.swift */; };
+ 		39963097E78080FC16ED4DD9 /* ThreadsDossierModalLeanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 166A1DAD8E9A1074A5502612 /* ThreadsDossierModalLeanTests.swift */; };
++		77640AB8DE754BFE8F2B6CFE /* ThreadsGoldenCaptureHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 824B3200B30140A2A2799275 /* ThreadsGoldenCaptureHarness.swift */; };
+ 		1777298B91F74F3BB7845E89 /* DossierSenses.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE45CFE80BF143578CE9AD0F /* DossierSenses.swift */; };
+ 		5A75182DEE57461AB02425A6 /* DossierSensesTracks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14EF62C0258F4A5E9B1CB669 /* DossierSensesTracks.swift */; };
+ 		DD4A23D5ECB4476E8D5D7137 /* DossierSensesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44C8743FE13846D2827B0B84 /* DossierSensesTests.swift */; };
+@@ -874,6 +875,7 @@
+ 		3C6AF4CB2CDC4F6DA1162CEA /* ThreadsDossierTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThreadsDossierTests.swift; sourceTree = "<group>"; };
+ 		1892F0715213484FB4831780 /* ThreadsDossierSensesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThreadsDossierSensesTests.swift; sourceTree = "<group>"; };
+ 		166A1DAD8E9A1074A5502612 /* ThreadsDossierModalLeanTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThreadsDossierModalLeanTests.swift; sourceTree = "<group>"; };
++		824B3200B30140A2A2799275 /* ThreadsGoldenCaptureHarness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThreadsGoldenCaptureHarness.swift; sourceTree = "<group>"; };
+ 		EE45CFE80BF143578CE9AD0F /* DossierSenses.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DossierSenses.swift; sourceTree = "<group>"; };
+ 		14EF62C0258F4A5E9B1CB669 /* DossierSensesTracks.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DossierSensesTracks.swift; sourceTree = "<group>"; };
+ 		44C8743FE13846D2827B0B84 /* DossierSensesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DossierSensesTests.swift; sourceTree = "<group>"; };
+@@ -1939,6 +1941,7 @@
+ 				3C6AF4CB2CDC4F6DA1162CEA /* ThreadsDossierTests.swift */,
+ 				1892F0715213484FB4831780 /* ThreadsDossierSensesTests.swift */,
+ 				166A1DAD8E9A1074A5502612 /* ThreadsDossierModalLeanTests.swift */,
++				824B3200B30140A2A2799275 /* ThreadsGoldenCaptureHarness.swift */,
+ 				44C8743FE13846D2827B0B84 /* DossierSensesTests.swift */,
+ 				81C820FEC4D64630A9C557BE /* DossierSensesMarkerPhotoTests.swift */,
+ 				4CEFDF8E058F4DDEB49054A4 /* DossierSensesCrossWalkTests.swift */,
+@@ -3323,6 +3326,7 @@
+ 				366617D2E2404425A7BB8E0F /* ThreadsDossierTests.swift in Sources */,
+ 				6021C36CC44F486A8322CCF6 /* ThreadsDossierSensesTests.swift in Sources */,
+ 				39963097E78080FC16ED4DD9 /* ThreadsDossierModalLeanTests.swift in Sources */,
++				77640AB8DE754BFE8F2B6CFE /* ThreadsGoldenCaptureHarness.swift in Sources */,
+ 				DD4A23D5ECB4476E8D5D7137 /* DossierSensesTests.swift in Sources */,
+ 				45ADCF5FB26E4696BC6F1FB2 /* DossierSensesMarkerPhotoTests.swift in Sources */,
+ 				971D537B63FD4464A1BD7C08 /* DossierSensesCrossWalkTests.swift in Sources */,
+diff --git c/UnitTests/ThreadsGoldenCaptureHarness.swift i/UnitTests/ThreadsGoldenCaptureHarness.swift
+new file mode 100644
+index 0000000..539a36e
+--- /dev/null
++++ i/UnitTests/ThreadsGoldenCaptureHarness.swift
+@@ -0,0 +1,240 @@
++import XCTest
++@testable import Pilgrim
++
++/// U11 golden-fixture capture harness (pilgrim-android Task U11). NOT a
++/// regression test — a one-shot capture tool run once at the `0172e2b` pin
++/// to print the REAL iOS `ThreadsDossierBuilder.build` output for a
++/// synthetic, hand-authored corpus, so the Android port can pin against it.
++///
++/// Every transcript string below is copied verbatim from
++/// `pilgrim-android/app/src/test/resources/threads/golden/corpus/transcripts/`
++/// (the canonical, hand-authored source — see that repo's
++/// `docs/.../golden/README.md` for the full corpus design rationale). No
++/// text here was ever spoken into the app or sourced from a real recorded
++/// walk; every sentence was invented for this fixture.
++///
++/// This harness drives the REAL, CoreData-free `ThreadsDossierBuilder.build`
++/// overload (recordings/walkIndex/store/senses/resolveRouteFix/defaults are
++/// all injectable value types — no `WalkInterface`/CoreStore fetch is
++/// needed), so the capture exercises the actual analyzer, `ThreadStore`,
++/// `ThreadsDossierFormatter`, and `DossierSenses` — the full engine minus
++/// only the CoreData plumbing that resolves those inputs in production.
++final class ThreadsGoldenCaptureHarness: XCTestCase {
++
++    func testCaptureGoldenDossier() throws {
++        NSTimeZone.default = TimeZone(identifier: "UTC")!
++
++        let savedThreadsAfterWalks = UserPreferences.threadsAfterWalks.value
++        let backfillKey = "threadsBackfillCompletedV6"
++        let savedBackfillComplete = UserDefaults.standard.bool(forKey: backfillKey)
++        defer {
++            UserPreferences.threadsAfterWalks.value = savedThreadsAfterWalks
++            UserDefaults.standard.set(savedBackfillComplete, forKey: backfillKey)
++        }
++        UserPreferences.threadsAfterWalks.value = true
++        UserDefaults.standard.set(true, forKey: backfillKey)
++
++        let directory = FileManager.default.temporaryDirectory
++            .appendingPathComponent("ThreadsGoldenCapture-\(UUID().uuidString)")
++        defer { try? FileManager.default.removeItem(at: directory) }
++        let store = TranscriptContextStore(directory: directory)
++
++        let defaultsSuiteName = "ThreadsGoldenCaptureDefaults-\(UUID().uuidString)"
++        let defaultsSuite = UserDefaults(suiteName: defaultsSuiteName)!
++        defer { UserDefaults().removePersistentDomain(forName: defaultsSuiteName) }
++        // One behind the closed lunation's own index (computed below) —
++        // "not yet reported this lunation", matching the corpus design note.
++        defaultsSuite.set(320, forKey: ThreadsDossierBuilder.moonLineDefaultsKey)
++
++        // MARK: - Walk + recording identifiers (mirror corpus/fixture.json)
++
++        let walkH0 = UUID(uuidString: "10000000-0000-0000-0000-000000000000")!
++        let walkH1 = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
++        let walkH2 = UUID(uuidString: "10000000-0000-0000-0000-000000000002")!
++        let walkH3 = UUID(uuidString: "10000000-0000-0000-0000-000000000003")!
++        let walkH4 = UUID(uuidString: "10000000-0000-0000-0000-000000000004")!
++        let walkCurrent = UUID(uuidString: "10000000-0000-0000-0000-00000000000a")!
++
++        let recH0 = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
++        let recH1 = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
++        let recH2 = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
++        let recH3 = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
++        let recH4 = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
++        let recA = UUID(uuidString: "00000000-0000-0000-0000-00000000000a")!
++        let recB = UUID(uuidString: "00000000-0000-0000-0000-00000000000b")!
++        let recC = UUID(uuidString: "00000000-0000-0000-0000-00000000000c")!
++
++        // MARK: - Walk start dates (epoch seconds — see corpus/fixture.json epochMs / 1000)
++
++        let dateH0 = Date(timeIntervalSince1970: 1_767_171_600)
++        let dateH1 = Date(timeIntervalSince1970: 1_768_986_000)
++        let dateH2 = Date(timeIntervalSince1970: 1_769_418_000)
++        let dateH3 = Date(timeIntervalSince1970: 1_769_850_000)
++        let dateH4 = Date(timeIntervalSince1970: 1_770_454_800)
++        let dateCurrentStart = Date(timeIntervalSince1970: 1_771_146_000)
++        let dateCurrentEnd = Date(timeIntervalSince1970: 1_771_151_400)
++        let buildNow = Date(timeIntervalSince1970: 1_771_153_200)
++
++        let dateRAStart = Date(timeIntervalSince1970: 1_771_146_300)
++        let dateRAEnd = Date(timeIntervalSince1970: 1_771_146_600)
++        let dateRBStart = Date(timeIntervalSince1970: 1_771_146_700)
++        let dateRBEnd = Date(timeIntervalSince1970: 1_771_147_100)
++        let dateRCStart = Date(timeIntervalSince1970: 1_771_147_200)
++        let dateRCEnd = Date(timeIntervalSince1970: 1_771_147_500)
++
++        // MARK: - Transcripts (verbatim copies of corpus/transcripts/*.txt)
++
++        let textH0 = "The morning stayed grey and still. I stopped again near the same old river bend and watched it flow past without much thought. The river felt colder than before but just as familiar as always."
++
++        let textH1 = "This morning I walked out early and the air felt cool against my face. I noticed the light change slowly as the sun climbed higher above some trees. I thought about my job and the choices ahead of me. The river ran quiet beside the trail and I paused to watch the water move past smooth stones. Further along a mountain rose in the distance framed by clouds and for a moment everything else seemed small. I could see the mountain clearly from a ridge and the river curved back toward it. I could imagine standing at the peak someday. My uncle always said patience matters more than speed. I never expected to feel so calm out here alone with my own thoughts drifting quietly onward."
++
++        let textH2 = "The weather turned bright and quiet after several cloudy days. I found myself thinking about an old friend I had not spoken to in a long while. Somewhere past the bend the river widened and slowed almost to stillness. I stood at the bank and watched the river catch the afternoon light in long streaks. My legs felt tired but my mind grew strangely clear. I could hear birds calling from somewhere in the reeds and I could smell rain somewhere far off. A dog barked once from a yard nearby and then silence returned. I realized I had been holding my shoulders tight the entire time without noticing. Something about the water always settles my breathing."
++
++        let textH3 = "Clouds moved fast overhead and the temperature dropped as the afternoon wore on. I passed a small pond where ducks drifted without much urgency. My thoughts kept circling back to a conversation from last week that still bothered me. Ahead the mountain looked sharper than usual, its edges cut clean against the gray sky. I stopped to catch my breath and studied the mountain for a long while, trying to guess how long the climb would take from here. A church bell rang faintly somewhere in the valley below. I could feel the cold settling into my hands. Every one of these days teaches me something different about patience and about myself."
++
++        let textH4 = "A light rain had passed through overnight and everything smelled fresh and green. My phone buzzed twice but I left it in my pocket without looking. I crossed an old stone bridge near the edge of town and stopped halfway to look down at the current below. Ducks paddled lazily near the pilings while a heron watched from the reeds without moving. Something about standing on the bridge made my chest loosen a little, like a held breath finally let go. I could hear traffic somewhere behind me, distant and unbothered. My sister called last night with news I am still turning over slowly. Every quiet minute out here feels like a small gift I did not expect to receive today."
++
++        let textRA = "The morning seemed different today, sharper somehow, like the whole valley had been rinsed overnight. I moved quickly without really deciding to, my legs eager for once. Near the old crossing the river caught the early light and threw it back in broken pieces across the surface. I stopped only briefly, just long enough to watch a heron lift off from the far bank. Further on the river bent away from the open field and disappeared behind a stand of birch. My chest felt still and my breathing came easy the rest of the way. I never once looked at my phone the entire time, which surprised me a little."
++
++        let textRB = "I stopped where the old garden meets the fence and just stood there for a while. I could have kept going but something made me stop. I could see every overgrown bed from where I stood, tangled and quiet. I could have pulled a few weeds but I did not feel like it today. I could hear bees somewhere close by, working without hurry. I could smell wet soil and crushed mint under my shoes. I could have called my brother right then but I put it off again. I could picture the garden the way it looked years ago, tidier, more cared for. I could almost hear my grandmother humming the way she used to out here, always in the same corner. I could stay longer or I could turn back now, and for a long moment I could not decide either way."
++
++        let textRC = "Near the end I crossed the small bridge again, the same one from before. I stood on the bridge for a moment and looked down at the slow water below. A cyclist passed behind me and called out a friendly greeting. I did not linger long, just enough to feel the wood settle faintly under my weight before turning back toward home."
++
++        // MARK: - Seed historical contexts (real analyzer, real NLTagger/NLEmbedding)
++
++        TranscriptContextAnalyzer.analyzeAndStore(recordingUUID: recH0, transcript: textH0, store: store)
++        TranscriptContextAnalyzer.analyzeAndStore(recordingUUID: recH1, transcript: textH1, store: store)
++        TranscriptContextAnalyzer.analyzeAndStore(recordingUUID: recH2, transcript: textH2, store: store)
++        TranscriptContextAnalyzer.analyzeAndStore(recordingUUID: recH3, transcript: textH3, store: store)
++        TranscriptContextAnalyzer.analyzeAndStore(recordingUUID: recH4, transcript: textH4, store: store)
++
++        // MARK: - walkIndex: every recording (historical AND current) -> (walkUUID, walk start date)
++
++        let walkIndex: [UUID: (walkUUID: UUID, date: Date)] = [
++            recH0: (walkH0, dateH0),
++            recH1: (walkH1, dateH1),
++            recH2: (walkH2, dateH2),
++            recH3: (walkH3, dateH3),
++            recH4: (walkH4, dateH4),
++            recA: (walkCurrent, dateCurrentStart),
++            recB: (walkCurrent, dateCurrentStart),
++            recC: (walkCurrent, dateCurrentStart),
++        ]
++
++        // MARK: - Current walk's own recordings (RecordingContext value type)
++
++        let recordings: [RecordingContext] = [
++            RecordingContext(
++                text: textRA, timestamp: dateRAStart, startCoordinate: nil, endCoordinate: nil,
++                wordsPerMinute: 180.0, recordingUUID: recA, endTimestamp: dateRAEnd
++            ),
++            RecordingContext(
++                text: textRB, timestamp: dateRBStart, startCoordinate: nil, endCoordinate: nil,
++                wordsPerMinute: 90.0, recordingUUID: recB, endTimestamp: dateRBEnd
++            ),
++            RecordingContext(
++                text: textRC, timestamp: dateRCStart, startCoordinate: nil, endCoordinate: nil,
++                wordsPerMinute: 130.0, recordingUUID: recC, endTimestamp: dateRCEnd
++            ),
++        ]
++
++        // MARK: - Senses bundle (hand-built value types — no CoreData/DataManager)
++
++        let closedLunation = LunationCalendar.mostRecentClosed(asOf: buildNow)
++        let moonName = LunationCalendar.moonName(for: closedLunation)
++
++        let walkSnapshots: [DossierSenses.WalkSnapshotRow] = [
++            .init(walkUUID: walkH0, startDate: dateH0, intention: nil, weatherCondition: "clear"),
++            .init(walkUUID: walkH1, startDate: dateH1, intention: nil, weatherCondition: "clear"),
++            .init(walkUUID: walkH2, startDate: dateH2, intention: nil, weatherCondition: "clear"),
++            .init(walkUUID: walkH3, startDate: dateH3, intention: nil, weatherCondition: "clear"),
++            .init(walkUUID: walkH4, startDate: dateH4, intention: nil, weatherCondition: "clear"),
++            .init(walkUUID: walkCurrent, startDate: dateCurrentStart, intention: nil, weatherCondition: "clear"),
++        ]
++
++        let recordingTimestamps: [UUID: Date] = [
++            recH0: dateH0, recH1: dateH1, recH2: dateH2, recH3: dateH3, recH4: dateH4,
++            recA: dateRAStart, recB: dateRBStart, recC: dateRCStart,
++        ]
++
++        // A mild ~8m rise, well under the 50m totalAscent floor — present so
++        // the fixture demonstrates real elevation plumbing without firing
++        // climbAnchoring (see corpus/fixture.json's sensesDesignNotes).
++        let elevationSeries: [DossierSenses.ElevationSample] = [
++            .init(timestamp: dateCurrentStart, altitude: 100.0),
++            .init(timestamp: dateCurrentStart.addingTimeInterval(900), altitude: 104.0),
++            .init(timestamp: dateCurrentStart.addingTimeInterval(1800), altitude: 108.0),
++            .init(timestamp: dateCurrentStart.addingTimeInterval(2700), altitude: 106.0),
++            .init(timestamp: dateCurrentStart.addingTimeInterval(3600), altitude: 103.0),
++        ]
++
++        // One photo, far from every route fix below and from any
++        // current-walk recording (none of which carry a route fix at all)
++        // — present in the metadata, structurally unable to fire photoAdjacency.
++        let photos: [DossierSenses.PhotoPin] = [
++            .init(
++                capturedAt: dateCurrentStart.addingTimeInterval(400),
++                coordinate: .init(latitude: 45.51000, longitude: -122.61000)
++            ),
++        ]
++
++        let bundle = DossierSensesFetchBundle(
++            walkStart: dateCurrentStart,
++            walkEnd: dateCurrentEnd,
++            totalAscent: 8.0,
++            elevationSeries: elevationSeries,
++            photos: photos,
++            walkSnapshots: walkSnapshots,
++            recordingTimestamps: recordingTimestamps,
++            closedLunation: closedLunation,
++            moonName: moonName
++        )
++
++        // MARK: - Route fixes (H1/H2 clustered ~27m apart; H4 ~13.6km away
++        // sets a large baseline; no current-walk recording gets a fix at all)
++
++        let fixesByTimestamp: [Date: DossierSenses.RouteFix] = [
++            dateH1: .init(
++                coordinate: .init(latitude: 45.50000, longitude: -122.60000),
++                horizontalAccuracy: 10.0, gapSeconds: 0
++            ),
++            dateH2: .init(
++                coordinate: .init(latitude: 45.50020, longitude: -122.60020),
++                horizontalAccuracy: 10.0, gapSeconds: 0
++            ),
++            dateH4: .init(
++                coordinate: .init(latitude: 45.60000, longitude: -122.70000),
++                horizontalAccuracy: 10.0, gapSeconds: 0
++            ),
++        ]
++        let resolveFix: (Date) -> DossierSenses.RouteFix? = { instant in fixesByTimestamp[instant] }
++
++        // MARK: - Build (the REAL, full ThreadsDossierBuilder.build)
++
++        let dossier = ThreadsDossierBuilder.build(
++            walkUUID: walkCurrent,
++            recordings: recordings,
++            walkIndex: walkIndex,
++            store: store,
++            senses: bundle,
++            resolveRouteFix: resolveFix,
++            defaults: defaultsSuite
++        )
++
++        XCTAssertNotNil(dossier, "the golden fixture must produce a real dossier — a nil result means the corpus needs revisiting, not a fixture to capture")
++
++        let text = dossier ?? "<<<NIL DOSSIER>>>"
++        print("===GOLDEN-DOSSIER-BEGIN===")
++        print(text)
++        print("===GOLDEN-DOSSIER-END===")
++
++        // Best-effort file write alongside the stdout capture (stdout via
++        // xcodebuild's log is the authoritative capture path; this is a
++        // convenience fallback only, so failures here must not fail the test).
++        try? text.write(
++            toFile: "/tmp/pilgrim-ios-golden-capture-output.txt",
++            atomically: true,
++            encoding: .utf8
++        )
++    }
++}

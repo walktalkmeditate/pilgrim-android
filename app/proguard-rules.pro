@@ -38,3 +38,16 @@
 -keep class com.google.android.gms.internal.mlkit_** { *; }
 -dontwarn com.google.mlkit.**
 -dontwarn com.google.android.gms.internal.mlkit_**
+
+# whisper.cpp JNI (Phase 20 U5): `whisper-jni.cpp`'s
+# nativeTranscribeSegments constructs WhisperSegment via a raw
+# FindClass + GetMethodID + NewObject sequence — R8 has no visibility
+# into that JNI reflection, so an unminified ctor name/signature
+# mismatch after minification returns a null jclass/jmethodID in
+# native code (not a Kotlin exception), and the ONLY decode path
+# TranscriptionRunner calls (transcribeWithSegments) fails on every
+# release-build transcription. Keep the exact constructor the native
+# side resolves by descriptor (Ljava/lang/String;JJF)V.
+-keep class org.walktalkmeditate.pilgrim.audio.WhisperSegment {
+    <init>(java.lang.String, long, long, float);
+}

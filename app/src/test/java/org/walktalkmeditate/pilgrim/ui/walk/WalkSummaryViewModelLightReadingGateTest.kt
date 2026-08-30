@@ -198,6 +198,8 @@ class WalkSummaryViewModelLightReadingGateTest {
             contributionLedger =
                 org.walktalkmeditate.pilgrim.data.collective.routes.inMemoryContributionLedger(),
             persistenceScope = persistenceScope,
+            autoTranscriptionSkipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
+            threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(context),
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
         createdViewModels += vm
@@ -251,6 +253,24 @@ class WalkSummaryViewModelLightReadingGateTest {
             practicePreferences = FakePracticePreferencesRepository(),
             unitsPreferences = FakeUnitsPreferencesRepository(),
             appContext = ctx,
+            threadsDossierBuilder = org.walktalkmeditate.pilgrim.core.threads.realThreadsDossierBuilderForTests(
+                ctx,
+                db,
+                org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository(initialThreadsAfterWalks = false),
+            ),
+            mlKitLanguageIdClient = org.walktalkmeditate.pilgrim.core.prompt.MlKitLanguageIdClient(
+                object : org.walktalkmeditate.pilgrim.core.prompt.LanguageIdentifierGateway {
+                    override suspend fun identifyPossibleLanguages(text: String) =
+                        emptyList<org.walktalkmeditate.pilgrim.core.prompt.LanguageGuess>()
+                },
+            ),
+            threadsAnalysisEnvironment = org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment(
+                ctx,
+                org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(
+                    ctx,
+                    kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+                ),
+            ),
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =

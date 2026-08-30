@@ -200,6 +200,10 @@ fun WalkSummaryScreen(
     val pendingSubstate by modelDownloadViewModel.pendingSubstate.collectAsStateWithLifecycle()
     val retranscribeEnabled by viewModel.retranscribeEnabled.collectAsStateWithLifecycle()
     val manualTranscribingIds by viewModel.manualTranscribing.collectAsStateWithLifecycle()
+    // U6: the battery-skip banner + the transcribe-all in-flight signal
+    // (parity spec docs/parity/2026-08-25-threads-engine-port.md).
+    val autoTranscriptionSkipped by viewModel.autoTranscriptionSkipped.collectAsStateWithLifecycle()
+    val isBatchInFlight by viewModel.isTranscribingBatch.collectAsStateWithLifecycle()
     var showModelDownloadSheet by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
@@ -730,6 +734,8 @@ fun WalkSummaryScreen(
                                 pendingSubstate = pendingSubstate,
                                 retranscribeEnabled = retranscribeEnabled,
                                 manualTranscribingIds = manualTranscribingIds,
+                                autoTranscriptionSkipped = autoTranscriptionSkipped,
+                                isBatchInFlight = isBatchInFlight,
                                 onManualTranscribe = viewModel::transcribePendingRecordings,
                                 onOpenModelDownloadSheet = {
                                     showModelDownloadSheet = true

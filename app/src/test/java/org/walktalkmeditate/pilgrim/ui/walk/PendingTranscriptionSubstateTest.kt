@@ -143,6 +143,64 @@ class PendingTranscriptionSubstateTest {
         )
     }
 
+    // --- U6: battery-skip honesty (a skipped recording must never claim
+    // "Queued for processing" — extend the substate mapper instead of
+    // reusing QueuedForProcessing) ---------------------------------------
+
+    @Test
+    fun `pref on, model ready, skipped for battery - shows SkippedForBattery not QueuedForProcessing`() {
+        assertEquals(
+            PendingTranscriptionSubstate.SkippedForBattery(transcribeEnabled = true),
+            pendingTranscriptionSubstate(
+                autoTranscribe = true,
+                modelState = readyBase,
+                modelUsable = true,
+                isSkippedForBattery = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `pref on, model ready, NOT skipped - still QueuedForProcessing (default param preserved)`() {
+        assertEquals(
+            PendingTranscriptionSubstate.QueuedForProcessing,
+            pendingTranscriptionSubstate(
+                autoTranscribe = true,
+                modelState = readyBase,
+                modelUsable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `skip flag never overrides a delivery-phase state - model not ready yet takes priority`() {
+        for (state in deliveryPhases) {
+            assertEquals(
+                "state=$state",
+                PendingTranscriptionSubstate.WaitingOnDownload(state),
+                pendingTranscriptionSubstate(
+                    autoTranscribe = true,
+                    modelState = state,
+                    modelUsable = false,
+                    isSkippedForBattery = true,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `skip flag never overrides the pref-OFF manual state - already honest, already actionable`() {
+        assertEquals(
+            PendingTranscriptionSubstate.ManualPending(transcribeEnabled = true),
+            pendingTranscriptionSubstate(
+                autoTranscribe = false,
+                modelState = readyBase,
+                modelUsable = true,
+                isSkippedForBattery = true,
+            ),
+        )
+    }
+
     @Test
     fun `pref on maps the two terminals to their actionable substates`() {
         assertEquals(

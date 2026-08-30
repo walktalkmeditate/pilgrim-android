@@ -2,6 +2,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -11,6 +12,79 @@
 #define LOG_TAG "PilgrimWhisper"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+
+// NewStringUTF expects Modified UTF-8 (JNI spec): 1-3-byte sequences
+// only, supplementary characters as CESU-8 surrogate pairs. whisper.cpp
+// emits segment text at TOKEN boundaries, which can cut a multi-byte
+// UTF-8 character across two segments, and its byte-level BPE vocabulary
+// can emit 4-byte sequences — both are invalid input for NewStringUTF
+// (CheckJNI aborts on debug builds, release garbles). Incomplete
+// sequences at a segment's edges are dropped (the truncated bytes carry
+// no standalone meaning; the neighboring segment holds the rest);
+// complete 4-byte sequences are transcoded to CESU-8 surrogate pairs;
+// anything else malformed becomes U+FFFD.
+static std::string toModifiedUtf8(const char* bytes) {
+    std::string out;
+    if (!bytes) return out;
+    const auto* s = reinterpret_cast<const unsigned char*>(bytes);
+    const size_t n = std::strlen(bytes);
+    out.reserve(n);
+    const auto isCont = [](unsigned char b) { return (b & 0xC0u) == 0x80u; };
+    size_t i = 0;
+    // Orphan continuation bytes at the very start are the tail of a
+    // character the PREVIOUS segment began — drop, don't replace.
+    while (i < n && isCont(s[i])) ++i;
+    while (i < n) {
+        const unsigned char lead = s[i];
+        if (lead < 0x80u) {
+            out.push_back(static_cast<char>(lead));
+            ++i;
+            continue;
+        }
+        size_t len = 0;
+        if ((lead & 0xE0u) == 0xC0u) len = 2;
+        else if ((lead & 0xF0u) == 0xE0u) len = 3;
+        else if ((lead & 0xF8u) == 0xF0u) len = 4;
+        if (len == 0) {
+            out.append("\xEF\xBF\xBD");
+            ++i;
+            continue;
+        }
+        // Truncated at the end of the segment — the next segment carries
+        // the remaining bytes.
+        if (i + len > n) break;
+        bool continuationsValid = true;
+        for (size_t k = 1; k < len; ++k) continuationsValid = continuationsValid && isCont(s[i + k]);
+        if (!continuationsValid) {
+            out.append("\xEF\xBF\xBD");
+            ++i;
+            continue;
+        }
+        if (len < 4) {
+            out.append(reinterpret_cast<const char*>(s + i), len);
+            i += len;
+            continue;
+        }
+        const uint32_t cp = ((lead & 0x07u) << 18) |
+                            ((s[i + 1] & 0x3Fu) << 12) |
+                            ((s[i + 2] & 0x3Fu) << 6) |
+                            (s[i + 3] & 0x3Fu);
+        if (cp < 0x10000u || cp > 0x10FFFFu) {
+            out.append("\xEF\xBF\xBD");
+            i += len;
+            continue;
+        }
+        const uint32_t v = cp - 0x10000u;
+        const uint32_t surrogates[2] = {0xD800u + (v >> 10), 0xDC00u + (v & 0x3FFu)};
+        for (const uint32_t sv : surrogates) {
+            out.push_back(static_cast<char>(0xE0u | (sv >> 12)));
+            out.push_back(static_cast<char>(0x80u | ((sv >> 6) & 0x3Fu)));
+            out.push_back(static_cast<char>(0x80u | (sv & 0x3Fu)));
+        }
+        i += len;
+    }
+    return out;
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeInit(
@@ -130,7 +204,86 @@ Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeTranscribe(
     for (int i = 0; i < n; ++i) {
         out += whisper_full_get_segment_text(ctx, i);
     }
-    return env->NewStringUTF(out.c_str());
+    // Concatenation reassembles characters split across token-boundary
+    // segments, so that half of the risk is gone here — but a complete
+    // 4-byte sequence inside one segment survives joining untouched, so
+    // the joined string still needs the same Modified-UTF-8 sanitize.
+    const std::string safe = toModifiedUtf8(out.c_str());
+    return env->NewStringUTF(safe.c_str());
+}
+
+// Additive (Phase 20 U5): a second, parallel decode entry point returning
+// per-segment text/timing/no-speech-probability so the Thought Threads
+// analyzer can compute hallucination-flag ranges. Deliberately NOT
+// refactored to share decode code with nativeTranscribe above (whose
+// decode path stays byte-for-byte unchanged) — the wparams setup here is
+// duplicated on purpose so the pinned original entry point can never be
+// affected by a change made for this one. The one shared piece is the
+// output-side toModifiedUtf8 sanitize, which both entry points need for
+// the same NewStringUTF crash class.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_walktalkmeditate_pilgrim_audio_JniWhisperNative_nativeTranscribeSegments(
+    JNIEnv* env, jobject /*this*/, jlong ctxHandle, jstring wavPath) {
+    auto ctx = reinterpret_cast<whisper_context*>(ctxHandle);
+    if (!ctx) return nullptr;
+
+    jclass segmentClass = env->FindClass("org/walktalkmeditate/pilgrim/audio/WhisperSegment");
+    if (!segmentClass) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jmethodID ctor = env->GetMethodID(segmentClass, "<init>", "(Ljava/lang/String;JJF)V");
+    if (!ctor) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+
+    const char* path = env->GetStringUTFChars(wavPath, nullptr);
+    auto samples = readWavPcmF32(path);
+    env->ReleaseStringUTFChars(wavPath, path);
+    if (samples.empty()) {
+        LOGW("readWavPcmF32 returned empty (segments)");
+        return env->NewObjectArray(0, segmentClass, nullptr);
+    }
+
+    auto wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    wparams.print_realtime = false;
+    wparams.print_progress = false;
+    wparams.print_timestamps = false;
+    wparams.print_special = false;
+    wparams.translate = false;
+    // Forced English — see the identical comment on nativeTranscribe
+    // above; this is iOS parity, not a leftover.
+    wparams.language = "en";
+    unsigned hw = std::thread::hardware_concurrency();
+    wparams.n_threads = std::max(1u, std::min(4u, hw == 0 ? 2u : hw));
+
+    int rc = whisper_full(ctx, wparams, samples.data(), samples.size());
+    if (rc != 0) {
+        LOGW("whisper_full failed rc=%d (segments)", rc);
+        return nullptr;
+    }
+
+    int n = whisper_full_n_segments(ctx);
+    jobjectArray result = env->NewObjectArray(n, segmentClass, nullptr);
+    for (int i = 0; i < n; ++i) {
+        // Per-segment text can begin/end mid-character and can hold 4-byte
+        // sequences — sanitize before NewStringUTF (see toModifiedUtf8).
+        const std::string text = toModifiedUtf8(whisper_full_get_segment_text(ctx, i));
+        // t0/t1 are whisper.cpp's native 10ms units (centiseconds) —
+        // sample_to_timestamp()/to_timestamp() in whisper.cpp confirm the
+        // ×10 scale to milliseconds.
+        auto t0Ms = static_cast<jlong>(whisper_full_get_segment_t0(ctx, i) * 10);
+        auto t1Ms = static_cast<jlong>(whisper_full_get_segment_t1(ctx, i) * 10);
+        float noSpeechProb = whisper_full_get_segment_no_speech_prob(ctx, i);
+
+        jstring jtext = env->NewStringUTF(text.c_str());
+        jobject segment = env->NewObject(segmentClass, ctor, jtext, t0Ms, t1Ms, noSpeechProb);
+        env->SetObjectArrayElement(result, i, segment);
+        env->DeleteLocalRef(jtext);
+        env->DeleteLocalRef(segment);
+    }
+    return result;
 }
 
 // Frees a whisper_context so its ~75 MB of model weights are released

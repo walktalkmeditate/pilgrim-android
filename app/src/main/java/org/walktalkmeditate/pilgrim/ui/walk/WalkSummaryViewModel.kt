@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -283,6 +284,9 @@ class WalkSummaryViewModel @Inject constructor(
     routeCatalogService: CollectiveRouteCatalogService,
     private val contributionLedger: ContributionLedger,
     @PersistenceScope private val persistenceScope: CoroutineScope,
+    private val autoTranscriptionSkipState:
+        org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState,
+    private val threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -607,6 +611,21 @@ class WalkSummaryViewModel @Inject constructor(
             started = SharingStarted.Eagerly,
             initialValue = null,
         )
+
+    /**
+     * U6: drives [org.walktalkmeditate.pilgrim.ui.walk.VoiceRecordingsSection]'s
+     * banner (parity spec UI-24/UI-21) — independent of any one row's
+     * [PendingTranscriptionSubstate], matching iOS's two separately-set
+     * `TranscriptionService.shared` properties.
+     */
+    val autoTranscriptionSkipped: StateFlow<Boolean> =
+        autoTranscriptionSkipState.skipReason
+            .map { it != null }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+                initialValue = autoTranscriptionSkipState.skipReason.value != null,
+            )
 
     /**
      * Live list of voice recordings for this walk. Backed by a Room
@@ -971,15 +990,43 @@ class WalkSummaryViewModel @Inject constructor(
      * Walk Summary tap-to-edit save action. Trims the user text and
      * commits the updated transcription via [WalkRepository]. No-op on
      * blank input (matches iOS `onTranscriptionSave`).
+     *
+     * BEH-59 carry: after a successful write, [threadsAnalyzer] either
+     * eagerly (re)analyzes the hand-edited text (toggle on) or removes
+     * any stale stored context (toggle off) — see
+     * [org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer.analyzeOrForget].
      */
     fun saveTranscription(recordingId: Long, newText: String) {
         val trimmed = newText.trim()
         if (trimmed.isEmpty()) return
         // persistenceScope (not viewModelScope) — user navigating Back
         // immediately after tapping Done would otherwise cancel the
-        // DB write mid-flight and silently lose the edit.
+        // DB write mid-flight and silently lose the edit. Already IO-
+        // dispatched (WalkModule.providePersistenceScope), so
+        // analyzeOrForget's CPU-bound theme/marker extraction never
+        // lands on Main.
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, trimmed)
+            val uuid = repository.getVoiceRecording(recordingId)?.uuid ?: return@launch
+            analyzeOrForgetSafely(uuid, trimmed)
+        }
+    }
+
+    /**
+     * Analysis is strictly best-effort once the transcription write has
+     * landed: [persistenceScope] carries no CoroutineExceptionHandler
+     * (WalkModule.providePersistenceScope), so an unwrapped throw here
+     * would reach the default handler and crash the process (mirrors
+     * [org.walktalkmeditate.pilgrim.audio.TranscriptionRunner]'s
+     * `analyzeThreadsSafely`).
+     */
+    private suspend fun analyzeOrForgetSafely(uuid: String, transcription: String?) {
+        try {
+            threadsAnalyzer.analyzeOrForget(uuid, transcription)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "threads analyzeOrForget failed for recording $uuid", t)
         }
     }
 
@@ -1005,13 +1052,32 @@ class WalkSummaryViewModel @Inject constructor(
     private val _manualTranscribing = MutableStateFlow<Set<Long>>(emptySet())
     val manualTranscribing: StateFlow<Set<Long>> = _manualTranscribing.asStateFlow()
 
+    /**
+     * U6/UI-25: ids marked pending by [transcribePendingRecordings]
+     * SPECIFICALLY — a strict subset of [_manualTranscribing], which
+     * [retranscribeRecording] (single-file retry) also populates.
+     * [retranscribeRecording] never touches
+     * [AutoTranscriptionSkipState] — iOS's `retranscribeSingle` doesn't
+     * either — only a batch "transcribe all pending" retry earning at
+     * least one real result clears the skip flag (iOS
+     * `WalkSummaryRecordingsSection.transcribeAll`).
+     */
+    private val _transcribeAllPendingIds = MutableStateFlow<Set<Long>>(emptySet())
+
     @Suppress("unused")
     private val manualTranscribingClearer: Job = viewModelScope.launch {
         try {
             repository.observeVoiceRecordings(walkId).collect { recs ->
-                val landed = recs.filter { it.transcription != null }.map { it.id }
-                if (landed.isNotEmpty()) {
-                    _manualTranscribing.update { it - landed.toSet() }
+                val landed = recs.filter { it.transcription != null }.map { it.id }.toSet()
+                if (landed.isEmpty()) return@collect
+                _manualTranscribing.update { it - landed }
+                val landedFromTranscribeAll = _transcribeAllPendingIds.value intersect landed
+                if (landedFromTranscribeAll.isNotEmpty()) {
+                    // Non-empty results only — an all-failed retry must
+                    // leave the banner up so the user knows the skip
+                    // condition (or a fresh failure) is still unresolved.
+                    autoTranscriptionSkipState.clear()
+                    _transcribeAllPendingIds.update { it - landedFromTranscribeAll }
                 }
             }
         } catch (ce: CancellationException) {
@@ -1026,6 +1092,36 @@ class WalkSummaryViewModel @Inject constructor(
     }
 
     /**
+     * U6: whether a transcription batch is CURRENTLY in flight for this
+     * walk, derived from WorkManager's own record (not a VM-local flag —
+     * [_manualTranscribing] only reflects ids THIS VM instance marked,
+     * which would miss a batch another screen — or the post-walk
+     * auto-transcription trigger — started). Drives the transcribe-all
+     * affordance's visibility: it must disappear (not merely disable)
+     * while ANY batch for this walk is running, regardless of who
+     * started it.
+     *
+     * Wrapped in a cold `flow {}` builder so `WorkManager.getInstance`
+     * is called on first REAL subscription, not at VM construction —
+     * most WalkSummaryViewModel unit tests never touch this flow, and
+     * eagerly calling `getInstance` in a property initializer would
+     * require every one of them to also initialize a test WorkManager.
+     */
+    val isTranscribingBatch: StateFlow<Boolean> = kotlinx.coroutines.flow.flow {
+        emitAll(
+            androidx.work.WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWorkFlow(
+                    org.walktalkmeditate.pilgrim.audio.TranscriptionScheduler.uniqueWorkName(walkId),
+                )
+                .map { infos -> infos.any { !it.state.isFinished } },
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+        initialValue = false,
+    )
+
+    /**
      * Walk Summary retranscribe-single action. Clears the existing
      * transcription so the row reverts to the pending placeholder, then
      * schedules the per-walk transcription worker which will pick up
@@ -1036,13 +1132,23 @@ class WalkSummaryViewModel @Inject constructor(
      * Fails closed pre-Ready: the UI disables the affordance, and this
      * guard catches a stale-UI tap before the destructive null write
      * (U11 spec section 5).
+     *
+     * BEH-59 carry: the null write has nothing worth analyzing yet, so
+     * [threadsAnalyzer] always removes any stale stored context here
+     * (regardless of the toggle) rather than leaving it to be read by a
+     * dossier build for a transcript that's about to be replaced — the
+     * real re-transcription this schedules will re-analyze normally via
+     * `TranscriptionRunner`'s own wiring once it lands.
      */
     fun retranscribeRecording(recordingId: Long) {
         if (!retranscribeEnabled.value) return
         // persistenceScope — see [saveTranscription] for the
-        // back-nav-mid-write rationale.
+        // back-nav-mid-write rationale and off-main dispatch.
         persistenceScope.launch {
             repository.updateVoiceRecordingTranscription(recordingId, null)
+            repository.getVoiceRecording(recordingId)?.uuid?.let { uuid ->
+                analyzeOrForgetSafely(uuid, null)
+            }
             // Marked AFTER the null write so the clearer can't drop the
             // id against a stale still-transcribed emission.
             _manualTranscribing.update { it + recordingId }
@@ -1076,6 +1182,7 @@ class WalkSummaryViewModel @Inject constructor(
             }
             if (pendingIds.isNotEmpty()) {
                 _manualTranscribing.update { it + pendingIds }
+                _transcribeAllPendingIds.update { it + pendingIds }
             }
         }
     }
@@ -1623,6 +1730,14 @@ class WalkSummaryViewModel @Inject constructor(
         // posted to the same main looper. Stop just halts current
         // playback; the next VM finds the player ready to use.
         playback.stop()
+        // U6: the fourth AutoTranscriptionSkipState clear-site (iOS
+        // MainCoordinator.handleSummaryDismiss) — this VM is scoped to
+        // the summary's NavBackStackEntry, so onCleared fires exactly
+        // when the summary is dismissed (Done tap or back/scrim), by
+        // either path. iOS pairs this clear with `homeViewModel.loadWalks()`;
+        // Android's walk list is a live Room Flow with no manual reload
+        // to mirror.
+        autoTranscriptionSkipState.clear()
         super.onCleared()
     }
 
