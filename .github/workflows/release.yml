@@ -35,7 +35,7 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # The release job only needs the tag's tree, not the full
           # history. Shallow clone saves a few seconds.
