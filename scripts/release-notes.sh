@@ -71,6 +71,11 @@ mkdir -p build "$PLAY_NOTES_DIR"
 if [ -f "$WHATSNEW" ]; then
   echo "Using curated $WHATSNEW for Play notes."
   cp "$WHATSNEW" "$DEFAULT"
+  # Consume it. Left in place it is not an override for THIS release, it is
+  # an override for every release after it too: v1.3.0 and v1.4.0 both went
+  # to Play carrying v1.2.0's curated copy because nothing ever cleared it.
+  # The workflow stages this deletion alongside default.txt.
+  rm -f "$WHATSNEW"
 elif [ -n "$LAST_TAG" ]; then
   echo "Auto-generating Play notes from $RANGE."
   {

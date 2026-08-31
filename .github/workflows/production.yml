@@ -143,7 +143,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/build.gradle.kts app/src/main/play/release-notes/en-US/default.txt
+          # -A on the notes dir so the curated whatsnew.txt's deletion is
+          # staged too; release-notes.sh consumes it, and leaving it behind
+          # republishes this release's copy for the next one.
+          git add app/build.gradle.kts
+          git add -A app/src/main/play/release-notes/en-US/
           git commit -m "chore(release): bump to v${VERSION_NAME} (code ${VERSION_CODE}) [skip ci]"
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
