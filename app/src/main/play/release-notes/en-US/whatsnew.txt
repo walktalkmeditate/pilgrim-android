@@ -1,5 +1,0 @@
-• Thought threads: your voice recordings are read on your device for the words and moods that keep returning, and woven into your AI walk prompts
-• On by default — turn it off any time in Settings → Voice. English for now
-• On first launch your past recordings are read once in the background, only while the battery can spare it
-• The app never transmits your transcripts or anything derived from them; a prompt leaves your phone only when you copy it
-• Walk well.
