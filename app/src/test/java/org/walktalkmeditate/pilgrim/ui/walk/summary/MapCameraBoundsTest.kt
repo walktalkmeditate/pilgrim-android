@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 class MapCameraBoundsTest {
     private fun sample(t: Long, lat: Double, lng: Double) = RouteDataSample(
@@ -45,5 +46,43 @@ class MapCameraBoundsTest {
         assertEquals(3.301, bounds.neLat, 0.0001)
         assertEquals(0.399, bounds.swLng, 0.0001)
         assertEquals(5.601, bounds.neLng, 0.0001)
+    }
+
+    // iOS `boundsForRoute` (WalkSummaryView.swift:848-861@7c200bf): 15% of
+    // each axis's span plus 0.001°, the rectangle every summary fit uses.
+
+    private fun point(lat: Double, lng: Double) =
+        LocationPoint(timestamp = 0L, latitude = lat, longitude = lng)
+
+    @Test fun boundsForRoute_emptyRoute_returnsNull() {
+        assertNull(boundsForRoute(emptyList()))
+    }
+
+    @Test fun boundsForRoute_padsEachAxisByFifteenPercentPlusAThousandth() {
+        val bounds = boundsForRoute(listOf(point(1.0, 1.0), point(2.0, 3.0), point(3.0, 5.0)))
+        assertNotNull(bounds)
+        // lat span 2.0 → pad 0.301; lng span 4.0 → pad 0.601.
+        assertEquals(0.699, bounds!!.swLat, 1e-9)
+        assertEquals(3.301, bounds.neLat, 1e-9)
+        assertEquals(0.399, bounds.swLng, 1e-9)
+        assertEquals(5.601, bounds.neLng, 1e-9)
+    }
+
+    @Test fun boundsForRoute_singlePoint_keepsTheThousandthFloor() {
+        val bounds = boundsForRoute(listOf(point(10.0, 20.0)))
+        assertNotNull(bounds)
+        assertEquals(9.999, bounds!!.swLat, 1e-9)
+        assertEquals(10.001, bounds.neLat, 1e-9)
+        assertEquals(19.999, bounds.swLng, 1e-9)
+        assertEquals(20.001, bounds.neLng, 1e-9)
+    }
+
+    @Test fun timeRangeBounds_matchTheRouteBoundsOfTheSamePoints() {
+        // iOS `boundsForTimeRange` pads through `boundsForRoute`.
+        val samples = listOf(sample(100L, 1.0, 1.0), sample(200L, 3.0, 5.0))
+        assertEquals(
+            boundsForRoute(listOf(point(1.0, 1.0), point(3.0, 5.0))),
+            computeBoundsForTimeRange(samples, 0L, 300L),
+        )
     }
 }

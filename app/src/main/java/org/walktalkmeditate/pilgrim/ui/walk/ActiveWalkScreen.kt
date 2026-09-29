@@ -277,7 +277,7 @@ fun ActiveWalkScreen(
     val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
-    val initialCameraCenter by viewModel.initialCameraCenter.collectAsStateWithLifecycle()
+    val initialCameraSeed by viewModel.initialCameraSeed.collectAsStateWithLifecycle()
     val waypointCount by viewModel.waypointCount.collectAsStateWithLifecycle()
     val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
     val intention by viewModel.intention.collectAsStateWithLifecycle()
@@ -772,7 +772,7 @@ fun ActiveWalkScreen(
             // The list grows with the walk: render it in walk order and
             // mutate only the tail per fix.
             chronologicalSegmentOrder = true,
-            initialCenter = initialCameraCenter,
+            initialCamera = initialCameraSeed,
             // Match map bottom-inset to the visible sheet height so the
             // user puck stays just above the sheet in BOTH detents.
             bottomInsetDp = sheetInsetDp,

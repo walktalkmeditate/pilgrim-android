@@ -675,11 +675,14 @@ fun WalkSummaryScreen(
                                 routeSamples = s.summary.routeSamples,
                                 units = distanceUnits,
                                 onSegmentSelected = { startMs, endMs ->
-                                    zoomTargetBounds = computeBoundsForTimeRange(
+                                    // A segment with no GPS samples keeps the current
+                                    // framing, as iOS's `if let bounds = boundsForTimeRange`
+                                    // does (WalkSummaryView.swift:623-627@7c200bf).
+                                    computeBoundsForTimeRange(
                                         samples = s.summary.routeSamples,
                                         startMs = startMs,
                                         endMs = endMs,
-                                    )
+                                    )?.let { zoomTargetBounds = it }
                                 },
                                 onSegmentDeselected = { zoomTargetBounds = null },
                             )

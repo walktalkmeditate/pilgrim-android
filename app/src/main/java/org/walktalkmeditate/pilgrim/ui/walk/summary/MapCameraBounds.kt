@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.walk.summary
 
 import androidx.compose.runtime.Immutable
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
  * Geographic bounds for a Mapbox camera fit. Verbatim port of iOS
@@ -20,12 +21,8 @@ data class MapCameraBounds(
  * Compute camera bounds covering all GPS samples whose timestamp falls
  * inside `[startMs, endMs]`. Returns null when no samples land in the
  * range — caller falls back to the full-route fit-bounds. iOS-faithful
- * port of `boundsForTimeRange` + `boundsForRoute`
- * (`WalkSummaryView.swift:911-931`):
- *   - 15% padding on each axis
- *   - +0.001 floor so a degenerate single-point range still produces a
- *     visible span (otherwise the camera fits to a zero-area rectangle
- *     and Mapbox returns the global default zoom).
+ * port of `boundsForTimeRange` (`WalkSummaryView.swift:841-846@7c200bf`),
+ * which pads through [boundsForRoute].
  */
 fun computeBoundsForTimeRange(
     samples: List<RouteDataSample>,
@@ -34,8 +31,22 @@ fun computeBoundsForTimeRange(
 ): MapCameraBounds? {
     val inRange = samples.filter { it.timestamp in startMs..endMs }
     if (inRange.isEmpty()) return null
-    val lats = inRange.map { it.latitude }
-    val lngs = inRange.map { it.longitude }
+    return paddedBounds(inRange.map { it.latitude }, inRange.map { it.longitude })
+}
+
+/**
+ * iOS `boundsForRoute` (`WalkSummaryView.swift:848-861@7c200bf`): the
+ * route's extent padded by 15% of its span plus 0.001° on each axis. The
+ * 0.001° floor gives a one-point or tiny route a visible span, so an
+ * unclamped fit stays off street zoom. Null for an empty route (every iOS
+ * caller guards that case before calling).
+ */
+fun boundsForRoute(points: List<LocationPoint>): MapCameraBounds? {
+    if (points.isEmpty()) return null
+    return paddedBounds(points.map { it.latitude }, points.map { it.longitude })
+}
+
+private fun paddedBounds(lats: List<Double>, lngs: List<Double>): MapCameraBounds {
     val minLat = lats.min()
     val maxLat = lats.max()
     val minLng = lngs.min()
