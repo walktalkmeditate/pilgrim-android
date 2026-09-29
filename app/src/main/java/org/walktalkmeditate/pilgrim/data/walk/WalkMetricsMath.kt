@@ -1,41 +1,38 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.walk
 
-import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
-import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 /**
- * Pure math used by both the cache writer ([WalkMetricsCache]) and the
- * cache-fallback reader ([org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter]).
+ * Pure math shared by the cache writer ([WalkMetricsCache]), the
+ * cache-fallback reader ([org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter]),
+ * and the Walk Summary and share totals.
  *
  * Stage 11-A spec review CRITICAL #2 mandate: live-compute and cached
  * paths must produce byte-identical meditation values so that
  * `meditationSeconds == null` rows export the same number a populated
  * cache row would.
  *
- * Both meditation paths apply the iOS clamp `min(rawMeditate, activeDuration)`
- * (NewWalk.swift:42) so corrupt walks (a 50-min MEDITATING interval on
- * an 18-min active wall clock) cannot inflate exported time beyond what
- * the user actually walked.
+ * Every meditation path applies the iOS clamp `min(rawMeditate, activeDuration)`
+ * (NewWalk.swift:42) so corrupt walks (a 50-min sitting on an 18-min
+ * active wall clock) cannot inflate time beyond what the user actually
+ * walked. iOS's summary card and share payload read that same clamped
+ * `meditateDuration`.
  */
 internal object WalkMetricsMath {
 
     /**
-     * Sum of MEDITATING [ActivityInterval] durations, clamped to the
-     * walk's active duration. Negative interval spans are coerced to 0.
+     * Total of the walk's sittings — derived from [events] by
+     * [deriveActivityIntervals], closing an open sitting at the walk's
+     * end — in whole seconds, clamped to the walk's active duration.
+     * `activity_intervals` rows are never read: `walk_events` is the one
+     * source of sittings (#223).
      */
-    fun computeMeditationSeconds(
-        intervals: List<ActivityInterval>,
-        walk: Walk,
-        events: List<WalkEvent>,
-    ): Long {
-        val rawMillis = intervals
-            .filter { it.activityType == ActivityType.MEDITATING }
-            .sumOf { (it.endTimestamp - it.startTimestamp).coerceAtLeast(0L) }
-        val rawSeconds = rawMillis / 1_000L
+    fun computeMeditationSeconds(walk: Walk, events: List<WalkEvent>): Long {
+        val sittings = deriveActivityIntervals(events, walkId = walk.id, closeAt = walk.endTimestamp)
+        val rawSeconds = sittings.sumOf { it.endTimestamp - it.startTimestamp } / 1_000L
         val activeDurationSeconds = computeActiveDurationSeconds(walk, events)
         return rawSeconds.coerceAtMost(activeDurationSeconds).coerceAtLeast(0L)
     }

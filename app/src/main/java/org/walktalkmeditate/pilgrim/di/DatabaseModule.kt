@@ -33,14 +33,7 @@ object DatabaseModule {
         PilgrimDatabase::class.java,
         PilgrimDatabase.DATABASE_NAME,
     )
-        .addMigrations(
-            PilgrimDatabase.MIGRATION_2_3,
-            PilgrimDatabase.MIGRATION_3_4,
-            PilgrimDatabase.MIGRATION_4_5,
-            PilgrimDatabase.MIGRATION_5_6,
-            PilgrimDatabase.MIGRATION_6_7,
-            PilgrimDatabase.MIGRATION_7_8,
-        )
+        .addMigrations(*PilgrimDatabase.MIGRATIONS)
         // WalkTrackingService runs in the `:tracker` process (manifest
         // android:process). Both processes open this same SQLite file;
         // without multi-instance invalidation the UI process's Room

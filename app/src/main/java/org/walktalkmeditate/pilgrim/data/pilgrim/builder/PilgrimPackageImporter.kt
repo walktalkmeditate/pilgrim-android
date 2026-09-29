@@ -246,7 +246,10 @@ class PilgrimPackageImporter @Inject constructor(
      *    JSON payload, so on import we honor those edits by replacing in place.
      *  - Otherwise, skip if uuid already in DB (idempotent re-import).
      *  - Insert walk row (Room returns the autogen id).
-     *  - Bulk-insert child entities with `walkId = newId`.
+     *  - Bulk-insert child entities with `walkId = newId`. A package's
+     *    "meditation" activities arrive as MEDITATION_START/END events
+     *    ([PilgrimPackageConverter.convertToImport]), so a walk's sittings
+     *    commit or roll back with the walk.
      * A walk whose transaction throws is rolled back in full and counted in
      * `failed`; sibling walks already committed are unaffected.
      */

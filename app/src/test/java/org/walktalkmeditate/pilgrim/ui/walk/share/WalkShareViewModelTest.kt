@@ -324,6 +324,28 @@ class WalkShareViewModelTest {
     }
 
     @Test
+    fun `payload meditation total is clamped to active time like iOS's meditateDuration`() = runTest(dispatcher) {
+        // 60 s walk, 30 s paused → 30 s active; the open sitting from 5 s
+        // would read 55 s unclamped.
+        val walkId = seedWalkWithRoute(
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 5_000L, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 0L, timestamp = 10_000L, eventType = WalkEventType.PAUSED),
+                WalkEvent(walkId = 0L, timestamp = 40_000L, eventType = WalkEventType.RESUMED),
+            ),
+        )
+        val vm = vm(walkId)
+        val loaded = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(5_000L) {
+                vm.uiState.first { it is WalkShareUiState.Loaded } as WalkShareUiState.Loaded
+            }
+        }
+
+        assertEquals(30.0, loaded.inputs.meditateDurationSeconds, 0.0)
+        assertEquals(0.0, loaded.inputs.activeDurationSeconds, 0.0)
+    }
+
+    @Test
     fun `dangling MEDITATION_START with no END is closed at the walk's end timestamp`() = runTest(dispatcher) {
         val walkId = seedWalkWithRoute(
             events = listOf(

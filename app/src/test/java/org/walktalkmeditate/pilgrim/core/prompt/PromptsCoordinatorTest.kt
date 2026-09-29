@@ -275,33 +275,36 @@ class PromptsCoordinatorTest {
     }
 
     @Test
-    fun `buildContext keeps only MEDITATING intervals`() = runTest(dispatcher) {
+    fun `buildContext derives meditations from the walk's events in start order`() = runTest(dispatcher) {
         val walk = insertWalkRow()
+        // Inserted out of order; the DAO and the derivation both sort.
         listOf(
-            ActivityInterval(
-                walkId = walk.id,
-                startTimestamp = testStartTimestamp + 1_000L,
-                endTimestamp = testStartTimestamp + 91_000L,
-                activityType = ActivityType.MEDITATING,
-            ),
-            ActivityInterval(
-                walkId = walk.id,
-                startTimestamp = testStartTimestamp + 100_000L,
-                endTimestamp = testStartTimestamp + 200_000L,
-                activityType = ActivityType.WALKING,
-            ),
-            ActivityInterval(
-                walkId = walk.id,
-                startTimestamp = testStartTimestamp + 300_000L,
-                endTimestamp = testStartTimestamp + 360_000L,
-                activityType = ActivityType.MEDITATING,
-            ),
-        ).forEach { repository.recordActivityInterval(it) }
+            testStartTimestamp + 300_000L to WalkEventType.MEDITATION_START,
+            testStartTimestamp + 360_000L to WalkEventType.MEDITATION_END,
+            testStartTimestamp + 1_000L to WalkEventType.MEDITATION_START,
+            testStartTimestamp + 91_000L to WalkEventType.MEDITATION_END,
+        ).forEach { (timestamp, type) ->
+            repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = timestamp, eventType = type))
+        }
+        // #223: activity_intervals is not a sittings source, so neither
+        // of these rows may appear as a meditation.
+        listOf(ActivityType.MEDITATING, ActivityType.WALKING).forEach { type ->
+            repository.recordActivityInterval(
+                ActivityInterval(
+                    walkId = walk.id,
+                    startTimestamp = testStartTimestamp + 100_000L,
+                    endTimestamp = testStartTimestamp + 200_000L,
+                    activityType = type,
+                ),
+            )
+        }
 
         val ctx = newCoordinator().buildContext(walkId = walk.id, zone = nyZone)!!
-        assertEquals(2, ctx.meditations.size)
-        assertEquals(90L, ctx.meditations[0].durationSeconds)
-        assertEquals(60L, ctx.meditations[1].durationSeconds)
+        assertEquals(
+            listOf(testStartTimestamp + 1_000L, testStartTimestamp + 300_000L),
+            ctx.meditations.map { it.startDate },
+        )
+        assertEquals(listOf(90L, 60L), ctx.meditations.map { it.durationSeconds })
     }
 
     @Test

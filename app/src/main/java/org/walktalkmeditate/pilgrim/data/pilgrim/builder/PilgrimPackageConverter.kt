@@ -31,6 +31,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.AltitudeCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -40,15 +41,21 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
  *
  * Most schema fields that iOS reads from the Walk object directly
  * are computed on Android from related entities (distance from
- * route, durations from activity intervals, ascent from altitude).
+ * route, durations from walk events, ascent from altitude).
  * Fields Android doesn't track (heart rates, reflection style)
  * emit as null/empty arrays. Weather rides through starting
- * Stage 12 (`Walk.weatherCondition` + 3 friends). Seek events
- * export under `workoutEvents` with iOS's wire identifiers
- * (`PilgrimPackageConverter.swift:493-513@c1745e8`); Android's
+ * Stage 12 (`Walk.weatherCondition` + 3 friends). Seek and honor
+ * events export under `workoutEvents` with iOS's wire identifiers
+ * (`PilgrimPackageConverter.swift:493-517@7c200bf`); Android's
  * lifecycle events (pause/meditation/waypoint) stay out of that
  * array because they already ride as `pauses` / `activities` /
  * route GeoJSON points.
+ *
+ * Sittings live in `walk_events` (#223): export derives the
+ * `"meditation"` activities from the MEDITATION_START/END events, and
+ * import turns each `"meditation"` activity back into such a pair.
+ * Every other activity is kept in `activity_intervals` and re-exports
+ * as `"unknown"`, so an iOS-made walk round-trips unchanged.
  */
 object PilgrimPackageConverter {
 
@@ -80,18 +87,24 @@ object PilgrimPackageConverter {
         // fallback path for meditation runs the same iOS-faithful clamp
         // ([WalkMetricsMath.computeMeditationSeconds]) the cache writer
         // applies, so cleared-cache and populated-cache exports match
-        // byte-for-byte and corrupt walks (e.g. 50-min MEDITATING
-        // interval on an 18-min active wall clock) cap at activeDuration.
+        // byte-for-byte and corrupt walks (e.g. a 50-min sitting on an
+        // 18-min active wall clock) cap at activeDuration.
         val distanceMeters = walk.distanceMeters
             ?: WalkDistanceCalculator.computeDistanceMeters(bundle.routeSamples)
         val meditateSec = (
             walk.meditationSeconds
-                ?: WalkMetricsMath.computeMeditationSeconds(
-                    intervals = bundle.activityIntervals,
-                    walk = walk,
-                    events = bundle.walkEvents,
-                )
+                ?: WalkMetricsMath.computeMeditationSeconds(walk, bundle.walkEvents)
             ).toDouble()
+        // MEDITATING rows left in `activity_intervals` (pre-9 iOS imports,
+        // repaired into events by MIGRATION_8_9) are skipped, so no
+        // sitting is emitted twice.
+        val sittings = deriveActivityIntervals(
+            events = bundle.walkEvents,
+            walkId = walk.id,
+            closeAt = walk.endTimestamp,
+        )
+        val otherActivities = bundle.activityIntervals.filter { it.activityType != ActivityType.MEDITATING }
+        val activities = (sittings + otherActivities).sortedBy { it.startTimestamp }
 
         val photoResult = PilgrimPackagePhotoConverter.exportPhotos(
             walkPhotos = bundle.walkPhotos,
@@ -134,7 +147,7 @@ object PilgrimPackageConverter {
             weather = weather,
             route = buildRouteGeoJson(bundle.routeSamples, bundle.waypoints),
             pauses = pauses,
-            activities = bundle.activityIntervals.map { it.toPilgrimActivity() },
+            activities = activities.map { it.toPilgrimActivity() },
             voiceRecordings = bundle.voiceRecordings.map { it.toPilgrimVoiceRecording() },
             intention = walk.intention,
             // iOS v1.6.0 — emit PilgrimReflection with the user's notes
@@ -269,11 +282,17 @@ object PilgrimPackageConverter {
      * - `intentions` from manifest, `events` from manifest,
      *   `customPromptStyles` from manifest — all dropped.
      *
-     * `workoutEvents` import as [WalkEvent] rows: seek identifiers map
-     * to their domain types; anything unrecognized (including iOS's
-     * legacy lap/marker/segment, which Android doesn't model) is KEPT
-     * as [WalkEventType.UNKNOWN] — mirroring iOS's
+     * `workoutEvents` import as [WalkEvent] rows: seek and honor
+     * identifiers map to their domain types; anything unrecognized
+     * (including iOS's legacy lap/marker/segment, which Android doesn't
+     * model) is KEPT as [WalkEventType.UNKNOWN] — mirroring iOS's
      * `walkEventType(from:)` default (`.unknown`, never dropped).
+     *
+     * Each `"meditation"` activity becomes a MEDITATION_START/END event
+     * pair, the walk's one source of sittings. `stats.meditateDuration`
+     * is not copied (iOS stores it as-is): the walk's cached meditation
+     * stays null, and the metrics backfill recomputes it from those
+     * events, clamped, in whole seconds.
      *
      * Weather (4 cols since Stage 12) rides through unchanged.
      */
@@ -295,14 +314,37 @@ object PilgrimPackageConverter {
         )
 
         val (routeSamples, waypoints) = decomposeRoute(pilgrim.route, walkStart = pilgrim.startDate)
-        val activityIntervals = pilgrim.activities.map { activity ->
+        val (meditations, otherActivities) = pilgrim.activities.partition { it.type == MEDITATION_ACTIVITY }
+        // iOS writes only "meditation" and "unknown". Android can't
+        // recover what an "unknown" was, so it is stored as WALKING —
+        // never MEDITATING, which would invent a sitting — and
+        // re-exports as "unknown".
+        val activityIntervals = otherActivities.map { activity ->
             ActivityInterval(
                 walkId = 0L,
                 startTimestamp = activity.startDate.toEpochMilli(),
                 endTimestamp = activity.endDate.toEpochMilli(),
-                activityType = pilgrimActivityToDomain(activity.type),
+                activityType = ActivityType.WALKING,
             )
         }
+        // A sitting that doesn't end after it starts contributes nothing
+        // (the derivation's strict rule), so it gets no events either.
+        val sittingEvents = meditations
+            .filter { it.endDate.isAfter(it.startDate) }
+            .flatMap { sitting ->
+                listOf(
+                    WalkEvent(
+                        walkId = 0L,
+                        timestamp = sitting.startDate.toEpochMilli(),
+                        eventType = WalkEventType.MEDITATION_START,
+                    ),
+                    WalkEvent(
+                        walkId = 0L,
+                        timestamp = sitting.endDate.toEpochMilli(),
+                        eventType = WalkEventType.MEDITATION_END,
+                    ),
+                )
+            }
         val voiceRecordings = pilgrim.voiceRecordings.map { vr ->
             val startMs = vr.startDate.toEpochMilli()
             val endMs = vr.endDate.toEpochMilli()
@@ -338,7 +380,7 @@ object PilgrimPackageConverter {
                 eventType = walkEventTypeFromWire(event.type),
             )
         }
-        val walkEvents = (pauseEvents + workoutEvents).sortedBy { it.timestamp }
+        val walkEvents = (pauseEvents + workoutEvents + sittingEvents).sortedBy { it.timestamp }
         val walkPhotos = PilgrimPackagePhotoConverter.importPhotos(exported = pilgrim.photos)
 
         return PendingImport(
@@ -409,17 +451,6 @@ object PilgrimPackageConverter {
         return routeSamples to waypoints
     }
 
-    private fun pilgrimActivityToDomain(type: String): ActivityType = when (type) {
-        "meditation" -> ActivityType.MEDITATING
-        // iOS schema's "unknown" was originally TALKING or WALKING on
-        // Android; we can't recover the distinction from the wire.
-        // Default to MEDITATING-vs-WALKING by absence: anything not
-        // "meditation" maps to WALKING (since talkDuration on imported
-        // walks is 0 — iOS doesn't track talk duration via activity
-        // intervals).
-        else -> ActivityType.WALKING
-    }
-
     private fun computePauses(events: List<WalkEvent>, walkEnd: Instant): List<PilgrimPause> {
         if (events.isEmpty()) return emptyList()
         val sorted = events.sortedBy { it.timestamp }
@@ -466,7 +497,7 @@ object PilgrimPackageConverter {
 
     private fun ActivityInterval.toPilgrimActivity(): PilgrimActivity {
         val type = when (activityType) {
-            ActivityType.MEDITATING -> "meditation"
+            ActivityType.MEDITATING -> MEDITATION_ACTIVITY
             ActivityType.TALKING -> "unknown"
             ActivityType.WALKING -> "unknown"
         }
@@ -479,17 +510,19 @@ object PilgrimPackageConverter {
 
     /**
      * Wire identifiers must stay byte-for-byte with iOS
-     * `workoutEventTypeString` (`PilgrimPackageConverter.swift:493-502@c1745e8`)
-     * or cross-platform imports lose seek-ness. Android lifecycle events
-     * return null: PAUSED/RESUMED already export as `pauses`,
-     * MEDITATION_* as `activities`, and WAYPOINT_MARKED's waypoint rides
-     * in the route GeoJSON — a second representation under
-     * `workoutEvents` would double-count on import.
+     * `workoutEventTypeString` (`PilgrimPackageConverter.swift:493-504@7c200bf`)
+     * or cross-platform imports lose seek-ness and honor-ness. Android
+     * lifecycle events return null: PAUSED/RESUMED already export as
+     * `pauses`, MEDITATION_* as `activities`, and WAYPOINT_MARKED's
+     * waypoint rides in the route GeoJSON — a second representation
+     * under `workoutEvents` would double-count on import.
      */
     private fun WalkEvent.toPilgrimWorkoutEvent(): PilgrimWorkoutEvent? {
         val wireType = when (eventType) {
             WalkEventType.SEEK_MODE -> "seekMode"
             WalkEventType.SEEK_ARRIVAL -> "seekArrival"
+            WalkEventType.HONOR_MODE -> "honorMode"
+            WalkEventType.HONOR_ARRIVAL -> "honorArrival"
             WalkEventType.UNKNOWN -> "unknown"
             WalkEventType.PAUSED,
             WalkEventType.RESUMED,
@@ -505,13 +538,15 @@ object PilgrimPackageConverter {
     }
 
     /**
-     * iOS `walkEventType(from:)` (`PilgrimPackageConverter.swift:504-513@c1745e8`):
+     * iOS `walkEventType(from:)` (`PilgrimPackageConverter.swift:506-517@7c200bf`):
      * unrecognized identifiers fall back to the unknown sentinel and the
      * event is kept, never dropped.
      */
     private fun walkEventTypeFromWire(type: String): WalkEventType = when (type) {
         "seekMode" -> WalkEventType.SEEK_MODE
         "seekArrival" -> WalkEventType.SEEK_ARRIVAL
+        "honorMode" -> WalkEventType.HONOR_MODE
+        "honorArrival" -> WalkEventType.HONOR_ARRIVAL
         else -> WalkEventType.UNKNOWN
     }
 
@@ -526,4 +561,7 @@ object PilgrimPackageConverter {
         )
 
     private const val TAG = "PilgrimPackageConverter"
+
+    /** iOS `PilgrimActivity.type` for a sitting (`PilgrimPackageConverter.swift:58-64@7c200bf`). */
+    private const val MEDITATION_ACTIVITY = "meditation"
 }

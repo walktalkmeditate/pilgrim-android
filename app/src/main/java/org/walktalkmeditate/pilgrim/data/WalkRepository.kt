@@ -263,6 +263,13 @@ open class WalkRepository @Inject constructor(
 
     suspend fun recordActivityInterval(interval: ActivityInterval): Long = activityIntervalDao.insert(interval)
 
+    /**
+     * The walk's `activity_intervals` rows — never its sittings. Sittings
+     * live in `walk_events` and are read through
+     * [org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals]
+     * (#223); these rows only carry an imported walk's non-meditation
+     * activities back out to `.pilgrim` export.
+     */
     open suspend fun activityIntervalsFor(walkId: Long): List<ActivityInterval> = activityIntervalDao.getForWalk(walkId)
 
     suspend fun addWaypoint(waypoint: Waypoint): Long = waypointDao.insert(waypoint)
