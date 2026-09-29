@@ -6,7 +6,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,7 +42,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = null,
+                cachedShare = null,
                 onCachedShareEngaged = {},
             )
         }
@@ -60,7 +62,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = null,
+                cachedShare = null,
                 onCachedShareEngaged = {},
             )
         }
@@ -77,7 +79,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = null,
+                cachedShare = null,
                 onCachedShareEngaged = {},
             )
         }
@@ -95,7 +97,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = null,
+                cachedShare = null,
                 onCachedShareEngaged = {},
             )
         }
@@ -114,7 +116,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = { fired += 1 },
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = null,
+                cachedShare = null,
                 onCachedShareEngaged = {},
             )
         }
@@ -135,7 +137,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = null,
+                cachedShare = null,
                 onCachedShareEngaged = {},
             )
         }
@@ -153,7 +155,7 @@ class WalkSharingButtonsTest {
                 onGoshuinShare = {},
                 onEtegamiShare = {},
                 onWalkJourneyShare = {},
-                activeCachedShare = activeShare(),
+                cachedShare = activeShare(),
                 onCachedShareEngaged = {},
             )
         }
@@ -165,22 +167,21 @@ class WalkSharingButtonsTest {
         composeRule.onNodeWithTag("share-active-returns").assertExists()
     }
 
-    @Test
-    fun expiredCachedShare_fallsBackToPlainButton() {
-        // issue #222 scope: expired is treated the same as never-shared,
-        // NOT iOS's separate `returnedSection` layout. `WalkSharingButtons`
-        // itself is expiry-agnostic — it only ever sees `activeCachedShare`
-        // after the caller applies the same filter WalkSummaryScreen uses
-        // in production (`cachedShare?.takeIf { !it.isExpiredAt() }`).
-        val expired = CachedShare(
-            url = "https://walk.pilgrimapp.org/s/expired",
-            id = "expired",
-            expiryEpochMs = System.currentTimeMillis() - 60_000L,
-            shareDateEpochMs = System.currentTimeMillis() - 600_000L,
-            expiryOption = ExpiryOption.Moon,
-        )
-        assert(expired.isExpiredAt()) { "fixture must actually be expired for this test to mean anything" }
+    // -- issue #225: an expired share has returned to the trail
+    //    (`WalkSharingButtons.swift:310-344@7c200bf`) --
 
+    private fun expiredShare(
+        expiryOption: ExpiryOption? = ExpiryOption.Moon,
+        expiryEpochMs: Long = NOW - 60_000L,
+    ) = CachedShare(
+        url = "https://walk.pilgrimapp.org/s/expired",
+        id = "expired",
+        expiryEpochMs = expiryEpochMs,
+        shareDateEpochMs = NOW - 600_000L,
+        expiryOption = expiryOption,
+    )
+
+    private fun setButtons(cachedShare: CachedShare?, onWalkJourneyShare: () -> Unit = {}) {
         composeRule.setContent {
             WalkSharingButtons(
                 hasRoute = true,
@@ -188,12 +189,55 @@ class WalkSharingButtonsTest {
                 isEtegamiGenerating = false,
                 onGoshuinShare = {},
                 onEtegamiShare = {},
-                onWalkJourneyShare = {},
-                activeCachedShare = expired.takeIf { !it.isExpiredAt() },
+                onWalkJourneyShare = onWalkJourneyShare,
+                cachedShare = cachedShare,
                 onCachedShareEngaged = {},
+                nowEpochMs = NOW,
             )
         }
-        composeRule.onNodeWithTag("share-button-walk-journey").assertExists()
+    }
+
+    @Test
+    fun expiredCachedShare_showsReturnedBlock_notTheActiveBlockOrPlainButton() {
+        setButtons(expiredShare(expiryOption = ExpiryOption.Moon))
+
+        composeRule.onNodeWithTag("share-returned-block").assertExists()
+        composeRule.onNodeWithText("This walk has returned to the trail").assertExists()
+        composeRule.onNodeWithText("Shared for 1 moon").assertExists()
+        composeRule.onNodeWithText("Share again").assertExists()
         composeRule.onNodeWithTag("share-active-block").assertDoesNotExist()
+        composeRule.onNodeWithTag("share-button-walk-journey").assertDoesNotExist()
+    }
+
+    @Test
+    fun expiredCachedShare_withNoOption_saysTheWalkWasShared() {
+        setButtons(expiredShare(expiryOption = null))
+
+        composeRule.onNodeWithText("This walk was shared").assertExists()
+        composeRule.onNodeWithText("Shared for", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun cachedShare_expiringExactlyNow_rendersReturned() {
+        // iOS `isExpired` is `expiry <= Date()`.
+        setButtons(expiredShare(expiryEpochMs = NOW))
+
+        composeRule.onNodeWithTag("share-returned-block").assertExists()
+        composeRule.onNodeWithTag("share-active-block").assertDoesNotExist()
+    }
+
+    @Test
+    fun shareAgain_opensTheJourneyShare() {
+        var fired = 0
+        setButtons(expiredShare(), onWalkJourneyShare = { fired += 1 })
+
+        composeRule.onNodeWithTag("share-returned-share-again").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(1, fired)
+    }
+
+    private companion object {
+        const val NOW = 1_700_000_000_000L
     }
 }

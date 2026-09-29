@@ -183,12 +183,12 @@ fun WalkSummaryScreen(
     // docs/parity/2026-07-23-port-collective-trail-u6.md T3).
     val walkWasContributed by viewModel.walkWasContributed.collectAsStateWithLifecycle()
     val collectiveContributionLine by viewModel.collectiveContributionLine.collectAsStateWithLifecycle()
-    // Issue #222: inline shared-state block on the WalkSharingButtons
-    // journey footer. `activeCachedShare` mirrors the Share modal's own
-    // non-expired check (`WalkShareScreen.kt`'s `activeShare` val) — a
-    // null cache OR an expired one both fall back to the plain button.
+    // Issues #222/#225: the journey footer of WalkSharingButtons reads
+    // the cached share unfiltered and branches three ways itself —
+    // never shared, active, or returned to the trail
+    // (`WalkSharingButtons.swift:148-159@7c200bf`). Expired records
+    // persist, as on iOS, so the returned block keeps rendering.
     val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
-    val activeCachedShare = cachedShare?.takeIf { !it.isExpiredAt() }
     // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
     // the user taps the section-17 row; transitions through Loading →
     // Listing → Detail / Editor.
@@ -905,7 +905,7 @@ fun WalkSummaryScreen(
                                 onShareJourney()
                                 viewModel.markCurrentWalkShared()
                             },
-                            activeCachedShare = activeCachedShare,
+                            cachedShare = cachedShare,
                             onCachedShareEngaged = viewModel::markCurrentWalkShared,
                         )
                     }

@@ -108,7 +108,11 @@ fun SettingsScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     }
     val photoPermLauncher = rememberLauncherForActivityResult(photoPermContract) {
-        showPhotosDeniedNote = !isPhotosPermissionGranted(context)
+        val granted = isPhotosPermissionGranted(context)
+        viewModel.onPhotoPermissionResult(granted)
+        // The revert goes through the ViewModel, not onSetWalkReliquary,
+        // so the note survives it, as iOS intends.
+        showPhotosDeniedNote = !granted
     }
     // rememberLazyListState wraps a rememberSaveable internally — without
     // it, rotating the device would yank the user back to the top of
@@ -173,8 +177,11 @@ fun SettingsScreen(
                     onSetAutoPlayWhisper = viewModel::setAutoPlayWhisperOnProximity,
                     walkReliquary = walkReliquary,
                     onSetWalkReliquary = { enabled ->
-                        // Persist the preference regardless (iOS keeps
-                        // the toggle on and shows the denied note).
+                        // Persist ON now; the permission callback reverts
+                        // it on denial and shows the note. iOS writes
+                        // only after a grant, but likewise snaps the
+                        // switch back off on denial and keeps the note
+                        // (`PracticeCard.swift:95-98@7c200bf`).
                         viewModel.setWalkReliquaryEnabled(enabled)
                         when {
                             !enabled -> showPhotosDeniedNote = false

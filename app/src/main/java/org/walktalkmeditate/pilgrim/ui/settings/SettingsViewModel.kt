@@ -176,6 +176,17 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Issue #221, iOS parity `PracticeCard.swift:78-116@7c200bf`: the
+     * reliquary switch persisted ON when it flipped, so a denial reverts
+     * it to OFF. A grant writes nothing: the user may have switched it
+     * off while the permission dialog was up, and iOS's stale-callback
+     * guard never brings a switch the user turned off back on.
+     */
+    fun onPhotoPermissionResult(granted: Boolean) {
+        if (!granted) setWalkReliquaryEnabled(false)
+    }
+
     fun setAutoPlayWhisperOnProximity(value: Boolean) {
         viewModelScope.launch {
             runCatching { practicePreferences.setAutoPlayWhisperOnProximity(value) }
