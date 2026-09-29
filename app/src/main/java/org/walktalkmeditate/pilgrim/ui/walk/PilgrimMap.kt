@@ -1845,7 +1845,7 @@ internal fun shouldEnterFollowViewport(
 /** iOS's `> 0.5` re-entry guard — `PilgrimMapView.swift:212@2ee1185`. */
 internal const val FOLLOW_INSET_EPSILON_DP = 0.5f
 
-private const val FOLLOW_ZOOM = 16.0
+private const val FOLLOW_ZOOM = MapCameraSeed.CURRENT_LOCATION_ZOOM
 
 /**
  * Both SDKs default a follow-puck state to pitch 45; iOS inherits it by

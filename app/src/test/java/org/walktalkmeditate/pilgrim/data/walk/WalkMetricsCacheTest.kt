@@ -98,6 +98,23 @@ class WalkMetricsCacheTest {
     }
 
     @Test
+    fun computeAndPersist_fillsOnlyTheMissingColumn() = runTest {
+        // MIGRATION_8_9 nulls only meditation. The cached distance stays as
+        // it is, not recomputed from the route (which here measures ~111 m).
+        val id = walkDao.insert(
+            Walk(startTimestamp = 0L, endTimestamp = 30 * 60_000L, distanceMeters = 5_000.0, meditationSeconds = null),
+        )
+        db.routeDataSampleDao().insert(routeSample(id, t = 0L, lat = 0.0, lng = 0.0))
+        db.routeDataSampleDao().insert(routeSample(id, t = 60_000L, lat = 0.0, lng = 0.001))
+        sitting(id, start = 60_000L, end = 360_000L)
+
+        cache.computeAndPersist(id)
+
+        val w = walkDao.getById(id)!!
+        assertEquals(5_000.0 to 300L, w.distanceMeters to w.meditationSeconds)
+    }
+
+    @Test
     fun nativeWalkWithOnlyMeditationEvents_cachesItsSitting() = runTest {
         // #223: native walks record sittings only as events. The cache
         // used to sum the (empty) activity_intervals table and store 0.

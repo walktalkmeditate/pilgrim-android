@@ -49,7 +49,7 @@ internal class CameraFitApplier<C>(private val surface: CameraFitSurface<C>) {
         viewWidthDp: Double,
         viewHeightDp: Double,
         durationMs: Long,
-    ): CameraFitDecision {
+    ) {
         val requestGeneration = ++generation
         val decision = decideCameraFit(bounds, bottomInsetDp, viewWidthDp, viewHeightDp, lastApplied)
         if (decision is CameraFitDecision.Fit) {
@@ -62,7 +62,6 @@ internal class CameraFitApplier<C>(private val surface: CameraFitSurface<C>) {
                 lastApplied = AppliedCameraFit(bounds, bottomInsetDp)
             }
         }
-        return decision
     }
 
     /** Drops any result still in flight, for a map leaving composition. */

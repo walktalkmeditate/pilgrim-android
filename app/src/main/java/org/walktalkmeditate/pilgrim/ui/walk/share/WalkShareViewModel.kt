@@ -68,7 +68,6 @@ import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 
 /**
@@ -1411,16 +1410,14 @@ class WalkShareViewModel @Inject constructor(
                 longitude = it.longitude,
             )
         }
-        val totals = replayWalkEventTotals(events = events, closeAt = endTs)
         // iOS sends the clamped `walk.meditateDuration`; this is the same
         // clamped value the summary card, cache, and export carry.
         val meditateSeconds = WalkMetricsMath.computeMeditationSeconds(walk, events)
-        val totalElapsedMs = endTs - walk.startTimestamp
-        // iOS's `walk.activeDuration` is elapsed minus pauses, sittings
-        // included: the worker renders walking time as active − meditate −
-        // talk and rejects meditate + talk > active, so meditation must not
-        // be subtracted here too.
-        val activeMs = (totalElapsedMs - totals.totalPausedMillis).coerceAtLeast(0)
+        val pauses = WalkMetricsMath.pauseSpans(walk, events)
+        // Sittings included: the worker renders walking time as active −
+        // meditate − talk and rejects meditate + talk > active, so
+        // meditation must not be subtracted here too.
+        val activeMs = WalkMetricsMath.activeDurationMillis(walk, pauses)
         val distance = walkDistanceMeters(points)
 
         // Elevation: sum of positive deltas on the timestamp-sorted
@@ -1468,8 +1465,7 @@ class WalkShareViewModel @Inject constructor(
             // as one type so the pure payload layer keeps no dependency
             // on the walk-metrics package — the same seam
             // PromptsCoordinator already uses for PauseContext.
-            pauseSpans = WalkMetricsMath.pauseSpans(walk, events)
-                .map { PauseSpan(startMs = it.startMs, durationMillis = it.durationMillis) },
+            pauseSpans = pauses.map { PauseSpan(startMs = it.startMs, durationMillis = it.durationMillis) },
         )
         recordingsByUuid = recordings.associateBy { it.uuid }
         _walkUuid.value = walk.uuid

@@ -78,7 +78,6 @@ import org.walktalkmeditate.pilgrim.data.walk.computeWalkMapAnnotations
 import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
@@ -1779,19 +1778,22 @@ class WalkSummaryViewModel @Inject constructor(
             )
         }
         val distance = walkDistanceMeters(points)
-        // Close dangling PAUSED/MEDITATION_START intervals at the walk's
-        // end timestamp — the reducer folds them into the in-memory
-        // accumulator on Finish but does not persist synthetic close
-        // events, so the replay would otherwise undercount pause and
-        // meditation time (and overcount active walking).
-        val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
+        // A pause still open at Finish closes at the walk's end timestamp:
+        // the reducer persists no synthetic RESUMED for it.
+        val pauses = WalkMetricsMath.pauseSpans(walk, events)
+        val totalPausedMillis = pauses.sumOf { it.durationMillis }
+        // Stage 13-A: paused-excluded, meditation-included. Mirrors the
+        // iOS hero stat `walk.activeDuration`. Distinct from
+        // [activeWalking] below, which also excludes meditation (used by
+        // the Walk card stats).
+        val activeMillis = WalkMetricsMath.activeDurationMillis(walk, pauses)
         // The clamped total the cache, export, and share payload carry
         // (iOS's summary reads the clamped `walk.meditateDuration`), so
         // every surface shows one number for the same walk.
-        val meditatedMillis = WalkMetricsMath.computeMeditationSeconds(walk, events) * 1_000L
+        val meditatedSeconds = WalkMetricsMath.computeMeditationSeconds(walk, events)
+        val meditatedMillis = meditatedSeconds * 1_000L
         val totalElapsed = (walk.endTimestamp ?: walk.startTimestamp) - walk.startTimestamp
-        val activeWalking = (totalElapsed - totals.totalPausedMillis - meditatedMillis)
-            .coerceAtLeast(0)
+        val activeWalking = (activeMillis - meditatedMillis).coerceAtLeast(0)
 
         val distanceKm = distance / 1_000.0
         val pace = if (distanceKm >= 0.01 && activeWalking >= 1_000L) {
@@ -1945,11 +1947,6 @@ class WalkSummaryViewModel @Inject constructor(
         }
 
         val talkMillis = voiceRecordings.sumOf { it.durationMillis }
-        // Stage 13-A: paused-excluded, meditation-included. Mirrors the
-        // iOS hero stat `walk.activeDuration`. Distinct from
-        // [activeWalkingMillis] above which also excludes meditation
-        // (used by the Walk card stats).
-        val activeMillis = (totalElapsed - totals.totalPausedMillis).coerceAtLeast(0L)
         val ascendMeters = computeAscend(altitudeSamples)
 
         // Stage 7-C: compose the etegami spec. Pulls altitude samples
@@ -2026,12 +2023,12 @@ class WalkSummaryViewModel @Inject constructor(
         )
         val calloutInputs = WalkSummaryCalloutInputs(
             currentDistanceMeters = distance,
-            // Live event-replay total — Walk.meditationSeconds is the
+            // Live clamped total — Walk.meditationSeconds is the
             // cached column that may not be populated yet for a
             // freshly-finished walk (WalkMetricsCache races the same
             // WalkState.Finished transition that opens this screen).
             // See same pattern in detectMilestoneFor above.
-            currentMeditationSeconds = meditatedMillis / 1_000L,
+            currentMeditationSeconds = meditatedSeconds,
             pastWalksMaxDistance = pastFinished.maxOfOrNull { it.distanceMeters ?: 0.0 } ?: 0.0,
             pastWalksMaxMeditation = pastFinished.maxOfOrNull { it.meditationSeconds ?: 0L } ?: 0L,
             pastWalksDistanceSum = pastFinished.sumOf { it.distanceMeters ?: 0.0 },
@@ -2044,7 +2041,7 @@ class WalkSummaryViewModel @Inject constructor(
                 walk = walk,
                 totalElapsedMillis = totalElapsed,
                 activeWalkingMillis = activeWalking,
-                totalPausedMillis = totals.totalPausedMillis,
+                totalPausedMillis = totalPausedMillis,
                 totalMeditatedMillis = meditatedMillis,
                 distanceMeters = distance,
                 paceSecondsPerKm = pace,
