@@ -7,6 +7,9 @@ import android.content.Context
 import android.media.AudioManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +20,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -29,6 +36,7 @@ import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
 import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
+import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
 import org.walktalkmeditate.pilgrim.data.WalkRepository
@@ -53,12 +61,14 @@ class WalkLifecycleObserverTest {
     private lateinit var context: Context
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
+    private lateinit var audioManager: AudioManager
+    private lateinit var audioFocus: AudioFocusCoordinator
+    private lateinit var sweeper: OrphanRecordingSweeper
     private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var fakeAudioCapture: FakeAudioCapture
     private lateinit var stateFlow: MutableStateFlow<WalkState>
     private lateinit var observedFlow: CountingStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
-    private lateinit var observer: WalkLifecycleObserver
     private val seekSessionStore = org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore()
     private val testClock = object : Clock {
         @Volatile var current: Long = 0L
@@ -84,11 +94,10 @@ class WalkLifecycleObserverTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
-        val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
+        audioManager = context.getSystemService(AudioManager::class.java)
+        audioFocus = AudioFocusCoordinator(audioManager)
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, testClock)
 
-        stateFlow = MutableStateFlow(WalkState.Idle)
-        observedFlow = CountingStateFlow(stateFlow)
         // TestRealTimeDispatcher (not Dispatchers.IO) — a cached pool of
         // dedicated daemon threads that Default/IO-pool saturation can't
         // starve. The observer's launched stop()+reset runs promptly even
@@ -100,15 +109,21 @@ class WalkLifecycleObserverTest {
         // Canonical fix for the ci-realtime-withtimeout flake family — see
         // [TestRealTimeDispatcher].
         observerScope = CoroutineScope(SupervisorJob() + TestRealTimeDispatcher.instance)
-        val sweeper = OrphanRecordingSweeper(
+        sweeper = OrphanRecordingSweeper(
             context = context,
             repository = repository,
             transcriptionScheduler = FakeTranscriptionScheduler(),
         )
-        observer = WalkLifecycleObserver(
-            walkState = observedFlow,
+        stateFlow = MutableStateFlow(WalkState.Idle)
+        observedFlow = CountingStateFlow(stateFlow)
+        attachObserver(observedFlow, voiceRecorder)
+    }
+
+    private fun attachObserver(walkState: CountingStateFlow<WalkState>, recorder: VoiceRecorder) {
+        WalkLifecycleObserver(
+            walkState = walkState,
             scope = observerScope,
-            voiceRecorder = voiceRecorder,
+            voiceRecorder = recorder,
             repository = repository,
             orphanSweeper = sweeper,
             seekSessionStore = seekSessionStore,
@@ -127,7 +142,7 @@ class WalkLifecycleObserverTest {
         // consumed and the latch is spent before the test mutates state.
         runBlocking {
             withTimeout(COLLECTOR_SUBSCRIBE_TIMEOUT_MS) {
-                observedFlow.processed.first { it >= 1 }
+                walkState.processed.first { it >= 1 }
             }
         }
     }
@@ -232,6 +247,107 @@ class WalkLifecycleObserverTest {
         )
     }
 
+    // ─── Discard mid-recording (U8 audit B, iOS PR #84 counterpart) ─────
+    // Each state change goes through [transitionTo], which waits for the
+    // observer to consume it: back-to-back Active → Idle writes would
+    // otherwise conflate into "still Idle" and no transition would fire.
+    // Each wait is on the partial file disappearing, not on audioLevel == 0:
+    // the capture loop's `finally` zeroes the level before the recorder
+    // abandons focus and before the observer deletes the WAV.
+
+    @Test
+    fun `discard mid-recording deletes the partial file and abandons focus`() = runBlocking {
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        val path = startLiveRecordingFor(walkId)
+
+        transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
+        repository.deleteWalkById(walkId)
+        transitionTo(WalkState.Idle)
+
+        awaitDeleted(path)
+        assertSessionReleased(voiceRecorder, fakeAudioCapture)
+        assertTrue(repository.voiceRecordingsFor(walkId).isEmpty())
+    }
+
+    @Test
+    fun `Idle never commits a row even while the parent walk still exists`() = runBlocking {
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        val path = startLiveRecordingFor(walkId)
+
+        transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
+        transitionTo(WalkState.Idle)
+
+        awaitDeleted(path)
+        assertNotNull(
+            "the parent walk row still exists, so an attempted insert would have landed",
+            repository.getWalk(walkId),
+        )
+        assertTrue(
+            "Idle must drop the take rather than commit it",
+            repository.voiceRecordingsFor(walkId).isEmpty(),
+        )
+    }
+
+    @Test
+    fun `Meditating to Idle (discard from Meditating) cleans up like Active`() = runBlocking {
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        val path = startLiveRecordingFor(walkId)
+
+        transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
+        transitionTo(
+            WalkState.Meditating(
+                WalkAccumulator(walkId = walkId, startedAt = 0L),
+                meditationStartedAt = 30_000L,
+            ),
+        )
+        repository.deleteWalkById(walkId)
+        transitionTo(WalkState.Idle)
+
+        awaitDeleted(path)
+        assertSessionReleased(voiceRecorder, fakeAudioCapture)
+        assertTrue(repository.voiceRecordingsFor(walkId).isEmpty())
+    }
+
+    @Test
+    fun `discard before any audio was captured leaves no file and releases focus`() = runBlocking {
+        val silentCapture = FakeAudioCapture(bursts = emptyList())
+        val silentRecorder = VoiceRecorder(context, silentCapture, audioFocus, testClock)
+        val silentSource = MutableStateFlow<WalkState>(WalkState.Idle)
+        val silentObserved = CountingStateFlow(silentSource)
+        attachObserver(silentObserved, silentRecorder)
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        val path = silentRecorder.start(walkId = walkId, walkUuid = UUID.randomUUID().toString())
+            .getOrThrow()
+        assertTrue("the header-only WAV exists while the take is open", Files.exists(path))
+
+        transitionTo(
+            WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)),
+            silentSource,
+            silentObserved,
+        )
+        repository.deleteWalkById(walkId)
+        transitionTo(WalkState.Idle, silentSource, silentObserved)
+
+        awaitDeleted(path)
+        assertSessionReleased(silentRecorder, silentCapture)
+    }
+
+    @Test
+    fun `discard with no recording open leaves another holder's focus alone`() = runBlocking {
+        assertTrue(audioFocus.requestMediaPlayback())
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+
+        transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
+        repository.deleteWalkById(walkId)
+        transitionTo(WalkState.Idle)
+        awaitObserverHandlersDone()
+
+        assertNull(
+            "a discard with nothing recording must not abandon focus it never took",
+            shadowOf(audioManager).lastAbandonedAudioFocusRequest,
+        )
+    }
+
     @Test
     fun `cold-start initial Idle does not stop the recorder`() = runBlocking {
         // Mirror the cold-start scenario: process boot, controller's state
@@ -302,9 +418,65 @@ class WalkLifecycleObserverTest {
         )
     }
 
-    private fun startLiveRecordingFor(walkId: Long) {
+    private fun awaitDeleted(path: Path) {
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (Files.exists(path) && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+        }
+        assertFalse("the partial recording was never deleted: $path", Files.exists(path))
+    }
+
+    /**
+     * Publishes [state] and waits until the observer has consumed it. Every
+     * earlier write went through here too, so the collector is caught up and
+     * the next processed count identifies this value exactly.
+     */
+    private suspend fun transitionTo(
+        state: WalkState,
+        source: MutableStateFlow<WalkState> = stateFlow,
+        observed: CountingStateFlow<WalkState> = observedFlow,
+    ) {
+        val consumedBefore = observed.processed.value
+        source.value = state
+        withTimeout(WAIT_FOR_OBSERVER_MS) {
+            observed.processed.first { it > consumedBefore }
+        }
+    }
+
+    /**
+     * The observer forks each terminal transition's voice handling into a
+     * child of [observerScope]; a child leaves the scope's children once it
+     * completes, so only the long-lived collector remains.
+     */
+    private fun awaitObserverHandlersDone() {
+        val scopeJob = checkNotNull(observerScope.coroutineContext[Job])
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (scopeJob.children.count() > 1 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+        }
+        assertEquals("the observer's voice handling never finished", 1, scopeJob.children.count())
+    }
+
+    private fun assertSessionReleased(recorder: VoiceRecorder, capture: FakeAudioCapture) {
+        val requested = shadowOf(audioManager).lastAudioFocusRequest
+        assertNotNull("the recorder took focus when the take opened", requested)
+        assertSame(
+            "the recorder abandons the exact focus request it took",
+            requested.audioFocusRequest,
+            shadowOf(audioManager).lastAbandonedAudioFocusRequest,
+        )
+        assertFalse(recorder.isRecording.value)
+        assertNull(recorder.recordingStartedAtMillis)
+        assertTrue(
+            "the session is released, so a second stop finds nothing open",
+            recorder.stop().exceptionOrNull() is VoiceRecorderError.NoActiveRecording,
+        )
+        assertEquals("the microphone is stopped exactly once", 1, capture.stopCallCount.get())
+    }
+
+    private fun startLiveRecordingFor(walkId: Long): Path {
         testClock.current = 0L
-        voiceRecorder.start(walkId = walkId, walkUuid = java.util.UUID.randomUUID().toString())
+        val path = voiceRecorder.start(walkId = walkId, walkUuid = UUID.randomUUID().toString())
             .getOrThrow()
         // Wait for the capture loop to drain the burst (proves capture
         // executor actually started).
@@ -318,6 +490,7 @@ class WalkLifecycleObserverTest {
             "FakeAudioCapture burst did not arrive within " +
                 "${CAPTURE_START_TIMEOUT_MS}ms — test infra broken"
         }
+        return path
     }
 
     private companion object {
