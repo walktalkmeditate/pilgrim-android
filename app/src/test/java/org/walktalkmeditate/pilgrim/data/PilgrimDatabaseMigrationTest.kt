@@ -35,7 +35,8 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
  * can't find the exported schema JSON (the helper is designed for
  * on-device `androidTest` runs).
  *
- * From 8→9 on, tests build the previous version from its exported schema
+ * The 8→9 tests, and the chains from 6 and 7, build the starting version
+ * from its exported schema
  * with [MigrationTestDatabases] and open it through `Room.databaseBuilder`
  * with the production [PilgrimDatabase.MIGRATIONS], so Room's schema
  * validation and identity check run exactly as on a device.
@@ -619,17 +620,19 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
-    fun `an unfinished walk gains its events but its cache is not re-nulled`() {
+    fun `an unfinished walk gains its events and stays uncached`() {
         MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
 
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
             runBlocking {
-                assertEquals(0L, room.walkDao().getById(UNFINISHED_WALK)!!.meditationSeconds)
+                assertNull(room.walkDao().getById(UNFINISHED_WALK)!!.meditationSeconds)
                 assertEquals(
                     listOf(WalkEventType.MEDITATION_START to 21_000_000L, WalkEventType.MEDITATION_END to 21_100_000L),
                     room.walkEventDao().getForWalk(UNFINISHED_WALK).map { it.eventType to it.timestamp },
                 )
+                runMetricsBackfill(room)
+                assertNull("the backfill skips a walk in progress", room.walkDao().getById(UNFINISHED_WALK)!!.meditationSeconds)
             }
         } finally {
             room.close()
@@ -716,6 +719,113 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
+    fun `overlapping and duplicate MEDITATING rows backfill and export as one merged sitting`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db ->
+            db.insertWalk(SINGLE_WALK, "overlapping", start = 0L, end = 3_600_000L, distance = 0.0, meditationSeconds = 1_800L)
+            db.insertInterval(SINGLE_WALK, 600_000L, 1_200_000L, "MEDITATING")
+            db.insertInterval(SINGLE_WALK, 900_000L, 1_500_000L, "MEDITATING")
+            db.insertInterval(SINGLE_WALK, 600_000L, 1_200_000L, "MEDITATING", uuid = "interval-duplicate")
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                assertEquals(
+                    "the repair writes a pair per row; merging happens when sittings are derived",
+                    6,
+                    room.walkEventDao().getForWalk(SINGLE_WALK).size,
+                )
+                runMetricsBackfill(room)
+                assertEquals(900L, room.walkDao().getById(SINGLE_WALK)!!.meditationSeconds)
+                val exported = export(room, SINGLE_WALK)
+                assertEquals(
+                    listOf(Triple("meditation", 600_000L, 1_500_000L)),
+                    exported.activities.map { Triple(it.type, it.startDate.toEpochMilli(), it.endDate.toEpochMilli()) },
+                )
+                assertEquals(900.0, exported.stats.meditateDuration, 0.0)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `MEDITATING rows beside a lone MEDITATION_START are left to the events`() {
+        // The repair fills only walks with no meditation event at all: any
+        // such event means walk_events already holds the walk's sittings.
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db ->
+            db.insertWalk(SINGLE_WALK, "lone-start", start = 0L, end = 3_600_000L, distance = 0.0, meditationSeconds = 900L)
+            db.insertInterval(SINGLE_WALK, 600_000L, 1_500_000L, "MEDITATING")
+            db.insertEvent(SINGLE_WALK, 3_000_000L, "MEDITATION_START")
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                assertEquals(
+                    listOf(WalkEventType.MEDITATION_START to 3_000_000L),
+                    room.walkEventDao().getForWalk(SINGLE_WALK).map { it.eventType to it.timestamp },
+                )
+                runMetricsBackfill(room)
+                assertEquals(
+                    "the open sitting closes at the walk's end; the row's 900 s is never read",
+                    600L,
+                    room.walkDao().getById(SINGLE_WALK)!!.meditationSeconds,
+                )
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `a v7 database migrates to 9 through the shared migrations array`() {
+        assertMigratesToNineFrom(version = 7)
+    }
+
+    @Test
+    fun `a v6 database migrates to 9 through the shared migrations array`() {
+        assertMigratesToNineFrom(version = 6)
+    }
+
+    /**
+     * Replays [version]'s schema with one walk and one photo, then opens it
+     * through [PilgrimDatabase.MIGRATIONS]: a migration missing from the
+     * array, or one whose result differs from the current entities, fails
+     * Room's open here.
+     */
+    private fun assertMigratesToNineFrom(version: Int) {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = version) { db ->
+            db.insertWalk(SINGLE_WALK, "chain", start = 0L, end = 3_600_000L, distance = 12.5, meditationSeconds = 0L)
+            db.insertRow(
+                "walk_photos",
+                "uuid" to "ph-chain", "walk_id" to SINGLE_WALK, "photo_uri" to "content://photo/chain",
+                "pinned_at" to 1_000L,
+            )
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(9L, db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(9),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            runBlocking {
+                val walk = room.walkDao().getById(SINGLE_WALK)!!
+                assertEquals(12.5, walk.distanceMeters!!, 0.0)
+                assertNull(walk.steps)
+                val photo = room.walkPhotoDao().getForWalk(SINGLE_WALK).single()
+                assertNull(photo.capturedLat)
+                assertNull(photo.capturedLng)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
     fun `a schema 9 replay opens through Room without any migration`() {
         // Proves the helper replays a schema exactly as Room would create
         // it: Room's validation would reject a table that differs.
@@ -781,8 +891,9 @@ class PilgrimDatabaseMigrationTest {
         db.insertEvent(BOTH_SOURCES_WALK, 40_600_000L, "MEDITATION_START")
         db.insertEvent(BOTH_SOURCES_WALK, 40_900_000L, "MEDITATION_END")
 
-        // Still in progress (no end), intervals only.
-        db.insertWalk(UNFINISHED_WALK, "unfinished", start = 20_000_000L, end = null, distance = null, meditationSeconds = 0L)
+        // Still in progress (no end), intervals only. Uncached, as
+        // production never caches an unfinished walk.
+        db.insertWalk(UNFINISHED_WALK, "unfinished", start = 20_000_000L, end = null, distance = null, meditationSeconds = null)
         db.insertInterval(UNFINISHED_WALK, 21_000_000L, 21_100_000L, "MEDITATING")
 
         // Archive-stripped: surface stats survive, children are gone.
@@ -862,9 +973,15 @@ class PilgrimDatabaseMigrationTest {
         "uuid" to "event-$walkId-$timestamp-$type", "walk_id" to walkId, "timestamp" to timestamp, "event_type" to type,
     )
 
-    private fun SupportSQLiteDatabase.insertInterval(walkId: Long, start: Long, end: Long, type: String) = insertRow(
+    private fun SupportSQLiteDatabase.insertInterval(
+        walkId: Long,
+        start: Long,
+        end: Long,
+        type: String,
+        uuid: String = "interval-$walkId-$start-$end",
+    ) = insertRow(
         "activity_intervals",
-        "uuid" to "interval-$walkId-$start-$end", "walk_id" to walkId,
+        "uuid" to uuid, "walk_id" to walkId,
         "start_timestamp" to start, "end_timestamp" to end, "activity_type" to type,
     )
 
@@ -914,6 +1031,9 @@ class PilgrimDatabaseMigrationTest {
         const val WORLD_WALK_COUNT = 7L
         const val WORLD_INTERVAL_COUNT = 8L
         const val WORLD_EVENT_COUNT = 6L
+
+        /** The one walk of a test that seeds its own database, not [seedV8World]. */
+        const val SINGLE_WALK = 1L
 
         val CANONICAL_UUID = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
     }

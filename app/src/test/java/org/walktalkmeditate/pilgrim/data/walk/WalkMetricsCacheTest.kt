@@ -82,6 +82,22 @@ class WalkMetricsCacheTest {
     }
 
     @Test
+    fun computeAndPersist_neverOverwritesCachesFilledSinceItStarted() = runTest {
+        // An archive strip fills a walk's caches from its children, then
+        // deletes them. A backfill pass that computed from the emptied walk
+        // must not replace those stats with zeros.
+        val id = walkDao.insert(
+            Walk(startTimestamp = 0L, endTimestamp = 30 * 60_000L, distanceMeters = 5_000.0, meditationSeconds = 600L),
+        )
+
+        cache.computeAndPersist(id)
+
+        val w = walkDao.getById(id)!!
+        assertEquals(5_000.0, w.distanceMeters!!, 0.0)
+        assertEquals(600L, w.meditationSeconds)
+    }
+
+    @Test
     fun nativeWalkWithOnlyMeditationEvents_cachesItsSitting() = runTest {
         // #223: native walks record sittings only as events. The cache
         // used to sum the (empty) activity_intervals table and store 0.

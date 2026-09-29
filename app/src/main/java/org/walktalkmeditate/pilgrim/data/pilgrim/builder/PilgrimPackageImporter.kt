@@ -31,6 +31,8 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimArchivedWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimManifest
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
+import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.di.PilgrimJson
 
 /**
@@ -353,6 +355,13 @@ class PilgrimPackageImporter @Inject constructor(
      *    (route, photos, recordings, waypoints, events, activity
      *    intervals) and keep the surface stats. The strip happens
      *    inside the transaction so partial failure rolls back cleanly.
+     *  - The cached `distance_meters` / `meditation_seconds` are the only
+     *    stats a stripped walk keeps. A finished walk with either still
+     *    NULL (a legacy row the backfill hasn't reached, or one
+     *    `MIGRATION_8_9` re-nulled) has both computed from its children
+     *    first, exactly as [org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache]
+     *    would; otherwise the backfill later recomputes them from nothing
+     *    and caches 0 for good. Closes the NULL-cache half of #238.
      *  - If no matching Walk exists, create a stub Walk row with the
      *    archived surface stats so the user still sees a dot on the
      *    journey (matches iOS — the walk happened, it just lives in
@@ -378,6 +387,18 @@ class PilgrimPackageImporter @Inject constructor(
             for (entry in entries) {
                 val existing = walkDao.getByUuid(entry.id)
                 if (existing != null) {
+                    // Deliberately outside runCatching: if the stats can't be
+                    // cached, the transaction must roll back before the strip
+                    // destroys the children they come from.
+                    if (existing.endTimestamp != null &&
+                        (existing.distanceMeters == null || existing.meditationSeconds == null)
+                    ) {
+                        walkDao.updateAggregates(
+                            existing.id,
+                            WalkDistanceCalculator.computeDistanceMeters(routeDao.getForWalk(existing.id)),
+                            WalkMetricsMath.computeMeditationSeconds(existing, eventDao.getForWalk(existing.id)),
+                        )
+                    }
                     // Strip heavy children. DAOs each expose a per-walkId
                     // delete; chain them inside the same transaction so
                     // partial failures roll back together.

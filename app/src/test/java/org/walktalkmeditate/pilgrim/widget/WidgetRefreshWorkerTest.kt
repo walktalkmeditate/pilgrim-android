@@ -32,6 +32,8 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -141,6 +143,28 @@ class WidgetRefreshWorkerTest {
         )
         // No paused/meditated events — full hour of active walking.
         assertEquals(60 * 60 * 1000L, lastWalk.activeDurationMs)
+    }
+
+    @Test
+    fun `overlapping sittings are subtracted once, merged, like every other surface`() = runBlocking {
+        val minute = 60 * 1000L
+        val walk = walkRepository.startWalk(startTimestamp = 1_000L)
+        walkRepository.finishWalk(walk, 1_000L + 60 * minute)
+        // Sittings [10, 30] and [20, 40] overlap into one 30-minute sitting.
+        // The old last-START-wins replay counted only [20, 30].
+        listOf(
+            10 * minute to WalkEventType.MEDITATION_START,
+            20 * minute to WalkEventType.MEDITATION_START,
+            30 * minute to WalkEventType.MEDITATION_END,
+            40 * minute to WalkEventType.MEDITATION_END,
+        ).forEach { (offset, type) ->
+            walkRepository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 1_000L + offset, eventType = type))
+        }
+
+        buildWorker().doWork()
+
+        val state = widgetStateRepository.stateFlow.first() as WidgetState.LastWalk
+        assertEquals(30 * minute, state.activeDurationMs)
     }
 
     @Test

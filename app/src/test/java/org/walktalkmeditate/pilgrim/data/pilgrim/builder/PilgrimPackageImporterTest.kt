@@ -14,6 +14,9 @@ import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -21,6 +24,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,9 +35,12 @@ import org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepositor
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimArchivedWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimManifest
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimModification
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPhoto
@@ -41,10 +48,13 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPreferences
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
+import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
 import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.ui.settings.data.WalksSource
 
 /**
  * AF28 (iOS PR #45) + the import data-loss fix.
@@ -387,6 +397,62 @@ class PilgrimPackageImporterTest {
         })
     }
 
+    // ---- #238: the archive strip keeps an uncached walk's stats ----
+
+    @Test
+    fun `archiving a walk with NULL caches keeps the stats its children gave`() = runBlocking {
+        val uuid = UUID.randomUUID().toString()
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        db.routeDataSampleDao().insertAll(
+            listOf(
+                RouteDataSample(walkId = walkId, timestamp = 2_000L, latitude = 0.0, longitude = 0.0),
+                RouteDataSample(walkId = walkId, timestamp = 3_000L, latitude = 0.0, longitude = 0.001),
+            ),
+        )
+        db.walkEventDao().insert(WalkEvent(walkId = walkId, timestamp = 601_000L, eventType = WalkEventType.MEDITATION_START))
+        db.walkEventDao().insert(WalkEvent(walkId = walkId, timestamp = 1_201_000L, eventType = WalkEventType.MEDITATION_END))
+        val childDistance = WalkDistanceCalculator.computeDistanceMeters(db.routeDataSampleDao().getForWalk(walkId))
+        assertTrue("the fixture's route must have a real distance", childDistance > 100.0)
+
+        importer.import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+
+        assertEquals("the strip ran", emptyList<Any>(), db.routeDataSampleDao().getForWalk(walkId))
+        assertEquals("the strip ran", emptyList<Any>(), db.walkEventDao().getForWalk(walkId))
+        val stripped = db.walkDao().getById(walkId)!!
+        assertEquals(childDistance, stripped.distanceMeters!!, 0.0)
+        assertEquals(600L, stripped.meditationSeconds)
+
+        runBackfillOnce()
+
+        val afterBackfill = db.walkDao().getById(walkId)!!
+        assertEquals(
+            stripped.distanceMeters to stripped.meditationSeconds,
+            afterBackfill.distanceMeters to afterBackfill.meditationSeconds,
+        )
+    }
+
+    /** One pass of the real [WalkMetricsBackfillCoordinator] over the walks as they are now. */
+    private suspend fun runBackfillOnce() = coroutineScope {
+        val snapshot = object : WalksSource {
+            override fun observeAllWalks(): Flow<List<Walk>> = flow { emit(db.walkDao().getAll()) }
+        }
+        val cache = WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao())
+        WalkMetricsBackfillCoordinator(snapshot, cache, this).start()
+    }
+
+    private fun archivedEntry(uuid: String) = PilgrimArchivedWalk(
+        id = uuid,
+        startDate = 1.0,
+        endDate = 3_601.0,
+        archivedAt = 1_700_000_000.0,
+        stats = PilgrimArchivedWalk.Stats(
+            distance = 0.0,
+            activeDuration = 3_600.0,
+            talkDuration = 0.0,
+            meditateDuration = 0.0,
+        ),
+    )
+
     // ---- Phase 20 U5: threads clearTombstones + importGeneration hygiene ----
 
     // Android's .pilgrim wire format carries no recording identity
@@ -570,7 +636,7 @@ class PilgrimPackageImporterTest {
             ),
         )
 
-    private fun manifestJson(walkCount: Int, tended: Boolean): String =
+    private fun manifestJson(walkCount: Int, tended: Boolean, archived: List<PilgrimArchivedWalk>?): String =
         json.encodeToString(
             PilgrimManifest(
                 schemaVersion = PilgrimSchema.VERSION,
@@ -589,16 +655,20 @@ class PilgrimPackageImporterTest {
                 customPromptStyles = emptyList(),
                 intentions = emptyList(),
                 events = emptyList(),
-                archived = null,
+                archived = archived,
                 modifications = if (tended) listOf(PilgrimModification(op = "edit", walkId = "x")) else null,
             ),
         )
 
-    private fun buildArchive(tended: Boolean, walks: Map<String, String>): Uri {
+    private fun buildArchive(
+        tended: Boolean,
+        walks: Map<String, String>,
+        archived: List<PilgrimArchivedWalk>? = null,
+    ): Uri {
         val bytes = ByteArrayOutputStream().use { baos ->
             ZipOutputStream(baos).use { zip ->
                 zip.putNextEntry(ZipEntry("manifest.json"))
-                zip.write(manifestJson(walkCount = walks.size, tended = tended).toByteArray())
+                zip.write(manifestJson(walkCount = walks.size, tended = tended, archived = archived).toByteArray())
                 zip.closeEntry()
                 walks.forEach { (name, content) ->
                     zip.putNextEntry(ZipEntry("walks/$name"))

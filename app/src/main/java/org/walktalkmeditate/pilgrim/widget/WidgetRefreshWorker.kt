@@ -11,6 +11,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
@@ -22,8 +23,10 @@ import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
  *
  * Distance: haversine-summed from RouteDataSamples via the shared
  * `walkDistanceMeters` helper. Active duration: total elapsed minus
- * paused + meditated, replayed from WalkEvents via `replayWalkEventTotals`
- * (same logic as `WalkSummaryViewModel.buildState`).
+ * paused (replayed from WalkEvents via `replayWalkEventTotals`) minus
+ * meditated ([WalkMetricsMath.computeMeditationSeconds]: the merged,
+ * clamped sittings total every other surface shows) — the same math
+ * as `WalkSummaryViewModel.buildState`.
  */
 @HiltWorker
 class WidgetRefreshWorker @AssistedInject constructor(
@@ -71,7 +74,8 @@ class WidgetRefreshWorker @AssistedInject constructor(
             val distance = walkDistanceMeters(points)
             val events = walkRepository.eventsFor(reportable.id)
             val totals = replayWalkEventTotals(events = events, closeAt = reportable.endTimestamp)
-            val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
+            val meditatedMillis = WalkMetricsMath.computeMeditationSeconds(reportable, events) * 1_000L
+            val activeWalking = (totalElapsed - totals.totalPausedMillis - meditatedMillis)
                 .coerceAtLeast(0)
             WidgetState.LastWalk(
                 walkId = reportable.id,

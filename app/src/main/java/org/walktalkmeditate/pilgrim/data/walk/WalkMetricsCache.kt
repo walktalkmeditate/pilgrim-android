@@ -24,7 +24,7 @@ interface WalkMetricsCaching {
 
 /**
  * Computes distance and meditation aggregates for a finished walk and
- * writes them to the cache columns on [Walk] via [WalkDao.updateAggregates].
+ * writes them to the cache columns on [Walk] via [WalkDao.updateAggregatesIfUncached].
  *
  * - Distance: cumulative haversine over [WalkRepository.locationSamplesFor],
  *   delegated to [WalkDistanceCalculator].
@@ -53,6 +53,6 @@ class WalkMetricsCache @Inject constructor(
 
         val distance = WalkDistanceCalculator.computeDistanceMeters(samples)
         val meditation = WalkMetricsMath.computeMeditationSeconds(walk, events)
-        walkDao.updateAggregates(walkId, distance, meditation)
+        walkDao.updateAggregatesIfUncached(walkId, distance, meditation)
     }
 }
