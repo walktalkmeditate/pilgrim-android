@@ -7,6 +7,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.IOException
@@ -14,8 +15,10 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +26,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -119,8 +123,19 @@ class SettingsViewModelPracticeTest {
         routeCatalogService = bootstrapRouteCatalogService(context, scope)
     }
 
+    private val builtVms = mutableListOf<SettingsViewModel>()
+
     @After
     fun tearDown() {
+        // Join every VM's scope before closing the database: a Room query
+        // still running on Dispatchers.IO would otherwise hit the closed
+        // pool and surface as UncaughtExceptionsBeforeTest in a later test
+        // in this JVM fork.
+        runBlocking {
+            withTimeout(10_000L) {
+                builtVms.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() }
+            }
+        }
         db.close()
         scope.cancel()
         dataStoreScope.cancel()
@@ -144,7 +159,7 @@ class SettingsViewModelPracticeTest {
         milestoneSurface = NoopMilestoneSurface,
         bellPlayer = NoopBellPlayer,
         routeCatalogService = routeCatalogService,
-    )
+    ).also { builtVms += it }
 
     @Test
     fun `beginWithIntention reflects repo value`() = runBlocking {
