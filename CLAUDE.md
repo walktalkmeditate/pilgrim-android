@@ -7,19 +7,20 @@ Native Kotlin + Jetpack Compose port of `../pilgrim-ios`. See `/Users/rubberduck
 - **Application ID**: `org.walktalkmeditate.pilgrim` (same namespace as iOS).
 - **License**: GPL-3.0-or-later. **No OutRun mention anywhere** — this is framed as a fresh project, not a fork, per direct user instruction.
 - **Copyright**: `Walk Talk Meditate contributors`.
-- **Starting version**: 0.1.0. Do not mirror iOS version numbers.
+- **Versioning**: Android's major.minor tracks the iOS release it is at parity with (Android 2.0.0 is iOS v2.0.0 parity); patch numbers are per-platform, so an Android-only hotfix is 2.0.1 whatever iOS does. versionCode follows the release pipeline (commit count). Releases 0.1.0 through 1.5.x predate this rule.
 - **Min SDK**: 28. **Target SDK**: 36. **Java toolchain**: 17.
 
 ## Parity scope (frozen)
 
-**Parity target: pilgrim-ios main @ `33b0dbc`** (2026-08-29). This advanced from `0172e2b` (the shipped `v1.11.0` tag) in two pre-release fold-in hops, the R2 rule exercised as designed: first to `e7051bc` for iOS PRs #72 (oblique voice + prompt relevance) and #74 (theme-layer noise), then to `33b0dbc` for PR #79 — which is iOS's fix for three parity questions this port raised while reviewing the first hop (`pilgrim-ios` #76/#77/#78), consolidating the stoplists into one `nonContentLemmas` definition. A fourth, `intentionEcho`, is filed as `pilgrim-ios` #80 and unfixed on both platforms. Anything iOS shipped AT OR BEFORE `33b0dbc` is in-scope for Android port. Anything iOS ships AFTER `33b0dbc` is OUT OF SCOPE — with one bounded exception: deltas landing before Android v1.5.0 ships are re-diffed and triaged per the fold-in rule (R2 in `docs/brainstorms/2026-08-25-ios-v1110-parity-retarget-requirements.md`): chores, hotfixes, and incremental refinements to the dossier/senses/chips surfaces fold into Phase 20; new headline features, reverts of ported work, or redesigns require explicit user re-triage.
+**Parity target: pilgrim-ios `v2.0.0` @ `7c200bf`** (2026-09-16, the Honor release). Phase 21 retargeted here from `33b0dbc`, the Android v1.5.0 anchor (iOS later re-pointed its `v1.11.0` tag to `bcdf538`, which is `33b0dbc` plus a build bump). iOS closed `pilgrim-ios` #80 (`intentionEcho`) on 2026-09-16 without a code change, so it stays unfixed on both platforms and Android stays parity-exact. Anything iOS shipped AT OR BEFORE `7c200bf` is in-scope for Android port. Anything iOS ships AFTER `7c200bf` is OUT OF SCOPE — with one bounded exception, the fold-in rule (R2 in `docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md`): iOS deltas landing before Android 2.0.0 ships are re-diffed and triaged. Chores, hotfixes, and incremental refinements to Honor or any surface this release touches fold into Phase 21; new headline features, reverts of ported work, or redesigns require explicit user re-triage. The fold-in window closes when the parity gate (R24) starts; later iOS deltas are triaged the same way into Android 2.0.1, so the gate runs once against a fixed pin.
 
-To diff iOS for in-scope work that hasn't landed on Android yet:
+To list in-scope iOS history, and the post-pin deltas the fold-in rule triages:
 ```bash
-cd ../pilgrim-ios && git log --oneline 33b0dbc
+cd ../pilgrim-ios && git log --oneline 7c200bf
+cd ../pilgrim-ios && git fetch && git log --oneline 7c200bf..origin/main
 ```
 
-Comparing to a future iOS HEAD past `33b0dbc` is fine for context, but parity work targets `33b0dbc` only.
+Comparing to a future iOS HEAD past `7c200bf` is fine for context, but parity work targets `7c200bf` only.
 
 ## Architecture
 
@@ -71,7 +72,7 @@ Comparing to a future iOS HEAD past `33b0dbc` is fine for context, but parity wo
 ## Long-session reliability
 
 The hardest part of this app is surviving a 45-90 minute walk with screen off, battery saver on, and the device in a backpack. Design the tracking pipeline with explicit teardown:
-- Foreground service with `START_STICKY` and `ongoing notification` that updates live stats.
+- Foreground service returning `START_REDELIVER_INTENT` (after a kill every delivered start replays, and the service never calls `stopSelf(startId)`), with an ongoing notification that updates live stats.
 - Battery-optimization exemption request flow with clear "why" copy.
 - Structured concurrency scoped to the service's lifecycle.
 - Flush writes to Room on every significant sample, not only on walk finish.
@@ -85,4 +86,4 @@ The hardest part of this app is surviving a 45-90 minute walk with screen off, b
 
 ## Phasing — current state
 
-Phases 0-15 shipped: 0-13 through Stage 13-XZ (PR #83) + v1.7.0 parity sweep (PRs #177–#193); **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** landed 2026-07-16 (PRs #198/#199, plan `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`), released as v1.2.0 at exact parity with `c1745e8`. **Phases 16-18 (v1.9.0 parity) + the clearing-glyph fold-in shipped 2026-07-30** as v1.3.0 (code 590, PRs #203-#210, plan `docs/plans/2026-07-23-001-feat-ios-v190-parity-port-plan.md`) at parity with `b4decad`. **Phase 19 (Walk with Me interactive share, iOS v1.10.0 parity) shipped 2026-08-19** as v1.4.0 (code 650, PR #215 + active-walk map parity PR #227, plan `docs/plans/2026-08-14-001-feat-walk-with-me-interactive-share-plan.md`) at exact parity with `2ee1185` = the shipped iOS `v1.10.0` tag. See the port plan + autopilot memory entries for stage-level history. **Phase 20 (Thought Threads, iOS v1.11.0 parity, target v1.5.0) is IN PROGRESS** per plan `docs/plans/2026-08-25-001-feat-thought-threads-port-plan.md` + requirements `docs/brainstorms/2026-08-25-ios-v1110-parity-retarget-requirements.md`. Its pre-release fold-in stage (2026-08-29) ported iOS PRs #72/#74 and advanced the anchor to `33b0dbc`; Phase 20 is now code-complete and gated on the R17 device QA in `docs/qa/2026-08-26-phase20-thought-threads-qa.md`.
+Phases 0-15 shipped: 0-13 through Stage 13-XZ (PR #83) + v1.7.0 parity sweep (PRs #177–#193); **Phase 14 (Seek Mode) + Phase 15 (Journal Scenery)** landed 2026-07-16 (PRs #198/#199, plan `docs/plans/2026-07-14-001-feat-seek-mode-journal-scenery-plan.md`), released as v1.2.0 at exact parity with `c1745e8`. **Phases 16-18 (v1.9.0 parity) + the clearing-glyph fold-in shipped 2026-07-30** as v1.3.0 (code 590, PRs #203-#210, plan `docs/plans/2026-07-23-001-feat-ios-v190-parity-port-plan.md`) at parity with `b4decad`. **Phase 19 (Walk with Me interactive share, iOS v1.10.0 parity) shipped 2026-08-19** as v1.4.0 (code 650, PR #215 + active-walk map parity PR #227, plan `docs/plans/2026-08-14-001-feat-walk-with-me-interactive-share-plan.md`) at exact parity with `2ee1185` = the shipped iOS `v1.10.0` tag. See the port plan + autopilot memory entries for stage-level history. **Phase 20 (Thought Threads, iOS v1.11.0 parity) shipped 2026-08-31** as v1.5.0 (code 733, PR #229 plus #230–#232, plan `docs/plans/2026-08-25-001-feat-thought-threads-port-plan.md`) at parity with `33b0dbc`, reached through two pre-release fold-in hops (iOS PRs #72/#74, then #79). **Phase 21 (Honor, iOS v2.0.0 parity, target Android 2.0.0) is IN PROGRESS** per plan `docs/plans/2026-09-29-001-feat-honor-groundwork-own-shared-walks-plan.md` + requirements `docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md`: Stage 21-0 (groundwork) ships first as 1.5.1; Stage 21-1 (Honor on your own and shared walks, Seek onto `:tracker`) lands on main behind the release flag; Stages 21-2 (pilgrimages), 21-3 (offline maps), and the parity gate + 2.0.0 release each get their own plan.
