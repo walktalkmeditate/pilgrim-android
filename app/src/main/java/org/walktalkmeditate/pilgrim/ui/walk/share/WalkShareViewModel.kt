@@ -1416,8 +1416,11 @@ class WalkShareViewModel @Inject constructor(
         // clamped value the summary card, cache, and export carry.
         val meditateSeconds = WalkMetricsMath.computeMeditationSeconds(walk, events)
         val totalElapsedMs = endTs - walk.startTimestamp
-        val activeWalkingMs = (totalElapsedMs - totals.totalPausedMillis - meditateSeconds * 1_000L)
-            .coerceAtLeast(0)
+        // iOS's `walk.activeDuration` is elapsed minus pauses, sittings
+        // included: the worker renders walking time as active − meditate −
+        // talk and rejects meditate + talk > active, so meditation must not
+        // be subtracted here too.
+        val activeMs = (totalElapsedMs - totals.totalPausedMillis).coerceAtLeast(0)
         val distance = walkDistanceMeters(points)
 
         // Elevation: sum of positive deltas on the timestamp-sorted
@@ -1433,7 +1436,12 @@ class WalkShareViewModel @Inject constructor(
             }
         }
 
-        val talkSeconds = recordings.sumOf { (it.endTimestamp - it.startTimestamp) / 1_000.0 }
+        // Clamped to active time as iOS's NewWalk clamps `talkDuration`
+        // (`NewWalk.swift:38@7c200bf`): a recording can run through a pause.
+        val talkSeconds = minOf(
+            recordings.sumOf { (it.endTimestamp - it.startTimestamp) / 1_000.0 },
+            activeMs / 1_000.0,
+        )
 
         val inputs = ShareInputs(
             walk = walk,
@@ -1443,7 +1451,7 @@ class WalkShareViewModel @Inject constructor(
             voiceRecordings = recordings,
             waypoints = waypoints,
             distanceMeters = distance,
-            activeDurationSeconds = activeWalkingMs / 1_000.0,
+            activeDurationSeconds = activeMs / 1_000.0,
             meditateDurationSeconds = meditateSeconds.toDouble(),
             talkDurationSeconds = talkSeconds,
             elevationAscentMeters = ascent,
