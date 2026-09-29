@@ -350,9 +350,20 @@ internal object SharePayloadBuilder {
         // A zero-candidate / zero-pause interactive walk still gets a
         // (empty) Tour and an empty pauses list, never null — matching
         // iOS's `applyInteractiveTourAndPauses`, which runs
-        // unconditionally once `interactive` is true.
+        // unconditionally once `interactive` is true. Recording
+        // coordinates come from the full-resolution samples, not
+        // [finalRoute], and obey the same kept window as the waypoints
+        // (`WalkShareViewModel.swift:442-451@7c200bf`). The sample scan
+        // lives here, off Main, never in the ViewModel's per-emission
+        // candidate derivation.
         val tour = if (options.interactive) {
-            TourBuilder.tourItems(candidates = candidates, trimM = trimM, soundscapeUrl = options.soundscapeUrl).tour
+            TourBuilder.tourItems(
+                candidates = candidates,
+                trimM = trimM,
+                soundscapeUrl = options.soundscapeUrl,
+                samples = inputs.routePoints,
+                keptWindow = interactiveRoute.keptWindow,
+            ).tour
         } else {
             null
         }

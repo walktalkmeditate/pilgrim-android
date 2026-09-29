@@ -10,6 +10,7 @@ import org.junit.Test
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /**
  * Mirrors `UnitTests/TourBuilderTests.swift` scenario-for-scenario (pin
@@ -43,11 +44,13 @@ class TourBuilderTest {
         seconds: Double = 60.0,
         included: Boolean = true,
         kind: TourRecordingKind = TourRecordingKind.SPOKEN,
+        startTs: Long = 1000L + id * 100L,
     ): TourRecordingCandidate = TourRecordingCandidate(
         id = id,
         recordingUuid = "rec-$id",
-        startTs = 1000L + id * 100L,
-        endTs = 1050L + id * 100L,
+        startTs = startTs,
+        startMillis = startTs * 1_000L,
+        endTs = startTs + 50L,
         duration = seconds,
         sizeBytes = bytes,
         transcription = null,
@@ -125,7 +128,8 @@ class TourBuilderTest {
     @Test
     fun `tourItems always nulls out transcription`() {
         val withTranscript = TourRecordingCandidate(
-            id = 0, recordingUuid = "rec-0", startTs = 1000L, endTs = 1060L, duration = 60.0, sizeBytes = 1_000_000L,
+            id = 0, recordingUuid = "rec-0", startTs = 1000L, startMillis = 1_000_000L, endTs = 1060L, duration = 60.0,
+            sizeBytes = 1_000_000L,
             transcription = "some real speech", wpm = 120.0, autoKind = TourRecordingKind.SPOKEN,
             includeInShare = true, kindOverride = null, fileRelativePath = "0.m4a", unavailableReason = null,
         )
@@ -153,7 +157,8 @@ class TourBuilderTest {
     @Test
     fun `unavailable candidates never enter the tour`() {
         val removed = TourRecordingCandidate(
-            id = 1, recordingUuid = "rec-1", startTs = 1100L, endTs = 1150L, duration = 50.0, sizeBytes = 0L,
+            id = 1, recordingUuid = "rec-1", startTs = 1100L, startMillis = 1_100_000L, endTs = 1150L, duration = 50.0,
+            sizeBytes = 0L,
             transcription = "kept transcript", wpm = null, autoKind = TourRecordingKind.SPOKEN,
             includeInShare = false, kindOverride = null, fileRelativePath = null, unavailableReason = "audio removed",
         )
@@ -439,5 +444,117 @@ class TourBuilderTest {
             included.map { it.startTs },
             TourBuilder.tourItems(candidates, trimM = 0).tour.recordings.map { it.startTs },
         )
+    }
+
+    // MARK: - Stage 21-0 U5: recording coordinates (TourBuilderTests.swift:187-238@7c200bf)
+
+    private fun sample(timestampMs: Long, lat: Double, lon: Double = -8.0) =
+        LocationPoint(timestamp = timestampMs, latitude = lat, longitude = lon)
+
+    private val oneFix = listOf(sample(timestampMs = 500_000L, lat = 42.0))
+
+    @Test
+    fun `candidates carry the recording's full-precision start`() {
+        val rec = recording(startTimestamp = 1_700_000_000_750L, endTimestamp = 1_700_000_030_000L)
+        val candidate = TourBuilder.candidates(listOf(rec)).single()
+        assertEquals(1_700_000_000_750L, candidate.startMillis)
+        assertEquals(1_700_000_000L, candidate.startTs)
+    }
+
+    @Test
+    fun `a recording takes the coordinate of the sample nearest its start`() {
+        // Port of `testCandidatesCarryTheRecordingCoordinate`: +125 s
+        // against 60 s samples takes the +120 s fix.
+        val start = 1_700_000_000_000L
+        val route = (0 until 5).map { i -> sample(timestampMs = start + i * 60_000L, lat = 42.0 + i * 0.001) }
+        val rec = recording(startTimestamp = start + 125_000L, endTimestamp = start + 160_000L)
+        val artifacts = mapOf(rec.uuid to RecordingArtifact(sizeBytes = 1_000L, fileExists = true))
+
+        val shipped = TourBuilder.tourItems(
+            TourBuilder.candidates(listOf(rec), artifacts),
+            trimM = 0,
+            samples = route,
+        ).tour.recordings.single()
+
+        assertEquals(42.002, shipped.lat!!, 0.0001)
+        assertEquals(-8.0, shipped.lon!!, 0.0001)
+    }
+
+    @Test
+    fun `the nearest sample is picked by milliseconds, not the truncated start second`() {
+        // The recording starts at 10.9 s: 100 ms from the 11 s fix, 900 ms
+        // from the 10 s fix that its truncated start_ts (10) would pick.
+        val rec = candidate(id = 0, startTs = 10L).copy(startMillis = 10_900L)
+        val route = listOf(sample(timestampMs = 10_000L, lat = 1.0), sample(timestampMs = 11_000L, lat = 2.0))
+
+        val shipped = TourBuilder.tourItems(listOf(rec), trimM = 0, samples = route).tour.recordings.single()
+
+        assertEquals(2.0, shipped.lat!!, 0.0)
+    }
+
+    @Test
+    fun `a tie between two samples keeps the earlier one, as Swift's min(by) does`() {
+        val rec = candidate(id = 0, startTs = 1L).copy(startMillis = 1_500L)
+        val route = listOf(sample(timestampMs = 1_000L, lat = 1.0), sample(timestampMs = 2_000L, lat = 2.0))
+
+        val shipped = TourBuilder.tourItems(listOf(rec), trimM = 0, samples = route).tour.recordings.single()
+
+        assertEquals(1.0, shipped.lat!!, 0.0)
+    }
+
+    @Test
+    fun `no samples leaves both coordinates null`() {
+        val shipped = TourBuilder.tourItems(listOf(candidate(id = 0)), trimM = 0).tour.recordings.single()
+        assertNull(shipped.lat)
+        assertNull(shipped.lon)
+    }
+
+    @Test
+    fun `the kept window nulls coordinates outside it`() {
+        // Port of `testKeptWindowNullsCoordinatesOutsideIt`.
+        val inside = candidate(id = 0, startTs = 500L)
+        val before = candidate(id = 1, startTs = 100L)
+        val after = candidate(id = 2, startTs = 900L)
+
+        val recordings = TourBuilder.tourItems(
+            listOf(before, inside, after),
+            trimM = 150,
+            samples = oneFix,
+            keptWindow = 400L..600L,
+        ).tour.recordings
+
+        assertEquals("the recording itself always ships; only its place is dropped", 3, recordings.size)
+        val byStart = recordings.associateBy { it.startTs }
+        assertNull("a recording before the kept window loses its coordinate", byStart.getValue(100L).lat)
+        assertNull(byStart.getValue(100L).lon)
+        assertNull("a recording after the kept window loses its coordinate", byStart.getValue(900L).lat)
+        assertNull(byStart.getValue(900L).lon)
+        assertNotNull("a recording inside the kept window keeps its coordinate", byStart.getValue(500L).lat)
+        assertNotNull(byStart.getValue(500L).lon)
+    }
+
+    @Test
+    fun `the kept window bounds are inclusive`() {
+        // Port of `testKeptWindowBoundsAreInclusive`.
+        val recordings = TourBuilder.tourItems(
+            listOf(candidate(id = 0, startTs = 400L), candidate(id = 1, startTs = 600L)),
+            trimM = 150,
+            samples = oneFix,
+            keptWindow = 400L..600L,
+        ).tour.recordings
+
+        assertEquals("recordings exactly at either bound stay inside the window", 2, recordings.mapNotNull { it.lat }.size)
+    }
+
+    @Test
+    fun `no kept window keeps every coordinate`() {
+        // Port of `testNoKeptWindowKeepsEveryCoordinate`.
+        val recordings = TourBuilder.tourItems(
+            listOf(candidate(id = 0, startTs = 100L), candidate(id = 1, startTs = 900L)),
+            trimM = 0,
+            samples = oneFix,
+        ).tour.recordings
+
+        assertEquals("no trim means no window, and every coordinate rides along", 2, recordings.mapNotNull { it.lat }.size)
     }
 }

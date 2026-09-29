@@ -85,7 +85,7 @@ class SharePayloadTourTest {
             recordings = listOf(
                 SharePayload.TourRecording(
                     n = 1, startTs = 1100L, endTs = 1400L, duration = 300.0, kind = "spoken",
-                    transcription = null, wpm = 120.0, sizeBytes = 2_400_000L,
+                    transcription = null, wpm = 120.0, sizeBytes = 2_400_000L, lat = 35.68, lon = -105.94,
                 ),
                 SharePayload.TourRecording(
                     n = 2, startTs = 1450L, endTs = 1500L, duration = 50.0, kind = "ambient",
@@ -106,6 +106,10 @@ class SharePayloadTourTest {
         assertEquals(2_400_000L, recs[0].jsonObject["size_bytes"]!!.jsonPrimitive.long)
         assertEquals(120.0, recs[0].jsonObject["wpm"]!!.jsonPrimitive.double, 0.0)
         assertFalse("wpm key must be omitted (not null) for a recording with no wpm", recs[1].jsonObject.containsKey("wpm"))
+        assertEquals(35.68, recs[0].jsonObject["lat"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(-105.94, recs[0].jsonObject["lon"]!!.jsonPrimitive.double, 0.0)
+        assertFalse("lat key must be omitted (not null) for a recording with no coordinate", recs[1].jsonObject.containsKey("lat"))
+        assertFalse("lon key must be omitted (not null) for a recording with no coordinate", recs[1].jsonObject.containsKey("lon"))
     }
 
     // MARK: - soundscape_url wire encoding (fold-in, iOS PR #61/#62)
@@ -625,6 +629,117 @@ class SharePayloadTourTest {
 
         assertEquals("a route too short to trim reports trimM 0", 0, payload.tour!!.trimM)
         assertTrue(payload.waypoints.orEmpty().map { it.label }.contains("Before the first fix"))
+    }
+
+    // MARK: - Stage 21-0 U5: recording coordinates (SharePayloadBuilder.build integration)
+
+    private fun available(recordings: List<VoiceRecording>) =
+        recordings.associate { it.uuid to RecordingArtifact(sizeBytes = 1_000L, fileExists = true) }
+
+    private fun tourRecordingsJson(payload: SharePayload): List<JsonObject> =
+        encode(payload).parsedObject()["tour"]!!.jsonObject["recordings"]!!.jsonArray.map { it.jsonObject }
+
+    private val parisRoute = (0 until 20).map { i ->
+        LocationPoint(timestamp = 1_700_000_000_000L + i * 30_000L, latitude = 48.8566 + i * 0.001, longitude = 2.3522)
+    }
+
+    private fun recordingAt(point: LocationPoint) =
+        recording(startTimestamp = point.timestamp, endTimestamp = point.timestamp + 20_000L)
+
+    /** AE7: two voices inside the kept window, the third spoken in the trimmed doorstep zone at the walk's end. */
+    private fun doorstepInputs(): ShareInputs {
+        val recordings = listOf(recordingAt(parisRoute[5]), recordingAt(parisRoute[10]), recordingAt(parisRoute[19]))
+        return baseInputs(routePoints = parisRoute, recordings = recordings, recordingArtifacts = available(recordings))
+    }
+
+    private val trimmedInteractive: WalkShareOptions get() = allOn().copy(interactive = true, trimEnabled = true)
+
+    @Test
+    fun `covers AE7 - a recording in the trimmed doorstep zone ships without a coordinate, the others keep theirs`() {
+        // Port of `testInteractiveKeptWindowStripsTrimmedRecordingCoordinates`
+        // (`WalkShareInteractiveTests.swift:225-241@7c200bf`).
+        val inputs = doorstepInputs()
+        val window = computeInteractiveRoute(inputs, trimmedInteractive).keptWindow!!
+        val starts = inputs.voiceRecordings.map { it.startTimestamp / 1_000L }
+        assertTrue("fixture: the first two start inside the kept window", starts[0] in window && starts[1] in window)
+        assertTrue("fixture: the third starts after the kept window", starts[2] > window.last)
+
+        val recs = tourRecordingsJson(SharePayloadBuilder.build(inputs, trimmedInteractive))
+
+        assertEquals("every recording still ships; only the doorstep's place is dropped", 3, recs.size)
+        assertEquals(parisRoute[5].latitude, recs[0]["lat"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(parisRoute[5].longitude, recs[0]["lon"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(parisRoute[10].latitude, recs[1]["lat"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(parisRoute[10].longitude, recs[1]["lon"]!!.jsonPrimitive.double, 0.0)
+        assertFalse("a doorstep voice must not carry the fix that names the doorstep", recs[2].containsKey("lat"))
+        assertFalse(recs[2].containsKey("lon"))
+    }
+
+    @Test
+    fun `an untrimmed share keeps every recording coordinate`() {
+        // Port of `testUntrimmedShareKeepsEveryRecordingCoordinate`
+        // (`WalkShareInteractiveTests.swift:243-254@7c200bf`).
+        val doorstep = recordingAt(parisRoute[0])
+        val inputs = baseInputs(routePoints = parisRoute, recordings = listOf(doorstep), recordingArtifacts = available(listOf(doorstep)))
+
+        val recs = tourRecordingsJson(SharePayloadBuilder.build(inputs, allOn().copy(interactive = true, trimEnabled = false)))
+
+        assertEquals(parisRoute[0].latitude, recs.single()["lat"]!!.jsonPrimitive.double, 0.0)
+        assertEquals(parisRoute[0].longitude, recs.single()["lon"]!!.jsonPrimitive.double, 0.0)
+    }
+
+    @Test
+    fun `a full-resolution sample the 200-point downsample dropped still wins`() {
+        // 600 collinear fixes one second apart: the RDP downsample keeps far
+        // fewer, so the fix a recording starts on is not on the shared route.
+        val route = (0 until 600).map { i ->
+            LocationPoint(timestamp = 1_700_000_000_000L + i * 1_000L, latitude = 35.0 + i * 0.0001, longitude = -105.0)
+        }
+        val shippedTs = prepareRoute(baseInputs(routePoints = route)).downsampled.map { it.ts }.toSet()
+        val dropped = route[300]
+        assertFalse("fixture: the downsample dropped the fix", dropped.timestamp / 1_000L in shippedTs)
+        val rec = recordingAt(dropped)
+
+        val recs = tourRecordingsJson(
+            SharePayloadBuilder.build(
+                baseInputs(routePoints = route, recordings = listOf(rec), recordingArtifacts = available(listOf(rec))),
+                allOn().copy(interactive = true),
+            ),
+        )
+
+        assertEquals(dropped.latitude, recs.single()["lat"]!!.jsonPrimitive.double, 0.0)
+    }
+
+    @Test
+    fun `a walk with no samples ships its recordings with both coordinate keys absent`() {
+        val rec = recording(startTimestamp = 1_700_000_010_000L, endTimestamp = 1_700_000_040_000L)
+        val payload = SharePayloadBuilder.build(
+            baseInputs(routePoints = emptyList(), recordings = listOf(rec), recordingArtifacts = available(listOf(rec))),
+            trimmedInteractive,
+        )
+
+        val recs = tourRecordingsJson(payload)
+
+        assertEquals(1, recs.size)
+        assertFalse(recs.single().containsKey("lat"))
+        assertFalse(recs.single().containsKey("lon"))
+    }
+
+    @Test
+    fun `the wire JSON never carries a literal null coordinate`() {
+        val routeless = recording(startTimestamp = 1_700_000_010_000L, endTimestamp = 1_700_000_040_000L)
+        val payloads = listOf(
+            SharePayloadBuilder.build(doorstepInputs(), trimmedInteractive),
+            SharePayloadBuilder.build(
+                baseInputs(routePoints = emptyList(), recordings = listOf(routeless), recordingArtifacts = available(listOf(routeless))),
+                trimmedInteractive,
+            ),
+        )
+
+        for (json in payloads.map { encode(it) }) {
+            assertFalse(json, json.contains("\"lat\":null"))
+            assertFalse(json, json.contains("\"lon\":null"))
+        }
     }
 
     private fun waypoint(label: String, timestampMs: Long) = org.walktalkmeditate.pilgrim.data.entity.Waypoint(

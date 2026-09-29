@@ -117,8 +117,16 @@ data class SharePayload(
     /**
      * One tour recording entry. `transcription` is structurally present
      * but contractually always null — transcripts never leave the
-     * device (iOS `TourBuilder.swift:105-108`). iOS
-     * `SharePayload.TourRecording` (`SharePayload.swift:99-115`).
+     * device (iOS `TourBuilder.swift:141-144@7c200bf`). iOS
+     * `SharePayload.TourRecording` (`SharePayload.swift:103-123@7c200bf`).
+     *
+     * [lat]/[lon] are the full-resolution route sample nearest the
+     * recording's start, null when the walk carried no samples or the
+     * start falls outside the trim's kept window (see
+     * [TourBuilder.tourItems]). A null coordinate is omitted from the
+     * wire, never sent as a literal null, via the app's
+     * `explicitNulls = false` [kotlinx.serialization.json.Json]: tour.json
+     * would otherwise store `"lat":null` as a place claim.
      */
     @Serializable
     data class TourRecording(
@@ -130,5 +138,7 @@ data class SharePayload(
         val transcription: String? = null,
         val wpm: Double? = null,
         @SerialName("size_bytes") val sizeBytes: Long,
+        val lat: Double? = null,
+        val lon: Double? = null,
     )
 }

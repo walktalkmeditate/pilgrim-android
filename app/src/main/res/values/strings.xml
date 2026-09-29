@@ -484,6 +484,7 @@
     <string name="share_interactive_toggle_subtitle">Viewers walk your route on a living map — your recordings play where you made them, photos appear where you took them. Recordings and full-size photos upload over your connection.</string>
     <string name="share_interactive_no_recordings">No recordings on this walk — the page will carry your route, photos, and moments.</string>
     <string name="share_interactive_voices_warning">Voices will be audible to anyone with the link.</string>
+    <string name="share_interactive_walk_it_there">Anyone with the link can walk it there.</string>
     <string name="share_interactive_trim_title">Trim start &amp; end</string>
     <string name="share_interactive_trim_subtitle_can_trim">Keeps the first and last %1$d m off the shared map — including photos and waymarkers there.</string>
     <string name="share_interactive_trim_subtitle_too_short">This walk is too short to trim.</string>

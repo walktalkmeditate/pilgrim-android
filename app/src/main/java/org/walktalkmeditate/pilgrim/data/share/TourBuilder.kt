@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.share
 
+import kotlin.math.abs
 import org.walktalkmeditate.pilgrim.data.audio.AudioAsset
 import org.walktalkmeditate.pilgrim.data.audio.AudioAssetType
 import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 
 /** Port of iOS `TourRecordingKind` (`TourBuilder.swift:3`). Wire value is the lowercase name. */
 enum class TourRecordingKind(internal val wireValue: String) {
@@ -26,8 +28,18 @@ data class RecordingArtifact(
 )
 
 /**
- * Port of iOS `TourRecordingCandidate` (`TourBuilder.swift:5-20`), plus
- * one Android-original field.
+ * Port of iOS `TourRecordingCandidate` (`TourBuilder.swift:5-24@7c200bf`),
+ * plus two Android-original fields.
+ *
+ * [startMillis] stands in for iOS's `lat`/`lon`. iOS resolves the
+ * recording's coordinate on the candidate itself, inside
+ * `candidates(for:)` (`TourBuilder.swift:71@7c200bf`). Android derives
+ * its candidates on every UI emission on Main, and the rows never render
+ * a coordinate, so the sample scan waits for [TourBuilder.tourItems],
+ * which only [SharePayloadBuilder.build] feeds samples to, off Main. The
+ * candidate carries the full-precision start so that scan still picks by
+ * milliseconds, as iOS's full-precision `Date`s do; [startTs] is the
+ * truncated wire value.
  *
  * [recordingUuid] has no iOS counterpart: iOS's candidate carries the
  * playable `fileURL` directly and matches a repair slot back to its
@@ -46,6 +58,7 @@ data class TourRecordingCandidate(
     val id: Int,
     val recordingUuid: String,
     val startTs: Long,
+    val startMillis: Long,
     val endTs: Long,
     val duration: Double,
     val sizeBytes: Long,
@@ -174,6 +187,7 @@ internal object TourBuilder {
                 id = index,
                 recordingUuid = rec.uuid,
                 startTs = startTs,
+                startMillis = rec.startTimestamp,
                 endTs = endTs,
                 duration = rec.durationMillis / MILLIS_PER_SECOND.toDouble(),
                 sizeBytes = sizeBytes ?: 0L,
@@ -260,12 +274,36 @@ internal object TourBuilder {
      * never leave the device. [soundscapeUrl] defaults to null (a
      * classic-shaped call site never sends one); the interactive
      * builder passes the already-resolved [soundscapeUrl] result
-     * through — iOS `tourItems(candidates:trimM:soundscapeUrl:)`
-     * (`TourBuilder.swift:112@2ee1185`).
+     * through — iOS `tourItems(candidates:trimM:soundscapeUrl:keptWindow:)`
+     * (`TourBuilder.swift:121-153@7c200bf`).
+     *
+     * Each recording's `lat`/`lon` is the sample in [samples] nearest
+     * its start by absolute time difference in milliseconds, the first
+     * minimum winning a tie as Swift's `min(by:)` does, with no cap on
+     * the gap (`TourBuilder.swift:71@7c200bf`). [samples] must be the
+     * walk's full-resolution route, never the downsampled or trimmed
+     * share route: "a voice moment deserves the closest fix the phone
+     * actually recorded" (`TourBuilder.swift:50-51@7c200bf`). Empty
+     * [samples] leave both null.
+     *
+     * [keptWindow] is the trim's inclusive epoch-second window. A
+     * recording whose truncated [TourRecordingCandidate.startTs] falls
+     * outside it still ships, but without a coordinate — the same test
+     * the waypoint filter applies: "Audio stays, the place does not"
+     * (`TourBuilder.swift:129-134@7c200bf`). Null means no trim was
+     * applied, so every recording keeps its coordinate.
      */
-    fun tourItems(candidates: List<TourRecordingCandidate>, trimM: Int, soundscapeUrl: String? = null): TourItemsResult {
+    fun tourItems(
+        candidates: List<TourRecordingCandidate>,
+        trimM: Int,
+        soundscapeUrl: String? = null,
+        samples: List<LocationPoint> = emptyList(),
+        keptWindow: LongRange? = null,
+    ): TourItemsResult {
         val included = includedCandidates(candidates)
         val recordings = included.mapIndexed { index, c ->
+            val inWindow = keptWindow?.contains(c.startTs) ?: true
+            val nearest = if (inWindow) samples.minByOrNull { abs(it.timestamp - c.startMillis) } else null
             SharePayload.TourRecording(
                 n = index + 1,
                 startTs = c.startTs,
@@ -275,6 +313,8 @@ internal object TourBuilder {
                 transcription = null,
                 wpm = c.wpm,
                 sizeBytes = c.sizeBytes,
+                lat = nearest?.latitude,
+                lon = nearest?.longitude,
             )
         }
         val files = included.mapNotNull { it.fileRelativePath }
