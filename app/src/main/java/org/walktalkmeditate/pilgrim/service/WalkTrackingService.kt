@@ -19,6 +19,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,18 +29,30 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
+import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.location.LocationSource
+import org.walktalkmeditate.pilgrim.walk.HonorSettings
+import org.walktalkmeditate.pilgrim.walk.HonorStart
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
+import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
+import org.walktalkmeditate.pilgrim.walk.honor.HonorGlanceState
+import org.walktalkmeditate.pilgrim.walk.honor.HonorSession
 import org.walktalkmeditate.pilgrim.widget.DeepLinkTarget
 
 /**
@@ -70,6 +83,16 @@ class WalkTrackingService : Service() {
     @Inject lateinit var backgroundWhisperAutoPlayer: BackgroundWhisperAutoPlayer
 
     @Inject lateinit var soundscapeOrchestrator: SoundscapeOrchestrator
+
+    @Inject lateinit var releaseFlags: Provider<ReleaseFlags>
+
+    @Inject lateinit var honorSessionProvider: Provider<HonorSession>
+
+    /** Resolved only with the release flag on: with it off, nothing Honor is built here. */
+    private var honorSession: HonorSession? = null
+
+    /** The units the Honor glance speaks for this walk, fixed at its start (spec D §10.2). */
+    private var honorGlanceUnits: UnitSystem? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var locationJob: Job? = null
@@ -118,6 +141,7 @@ class WalkTrackingService : Service() {
             ACTION_SELECT_SOUNDSCAPE,
             ACTION_CLEAR_SOUNDSCAPE_SELECTION -> handleSoundscapeAction(action, intent)
             ACTION_UPDATE_SEEK_GLANCE -> handleSeekGlanceAction(intent)
+            ACTION_HONOR_COMMAND -> handleHonorCommand(intent, redelivered = flags and START_FLAG_REDELIVERY != 0)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -159,6 +183,17 @@ class WalkTrackingService : Service() {
                 runCatching { backgroundWhisperAutoPlayer.stop() }
             }
         }
+        // Same shape: the session's actor runs on its own dispatcher, so
+        // joining it here can't wait on the main thread this blocks.
+        honorSession?.let { session ->
+            kotlinx.coroutines.runBlocking {
+                try {
+                    session.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Honor session teardown failed: ${e::class.simpleName}")
+                }
+            }
+        }
         scope.cancel()
         // Explicit teardown so the FGS notification is gone the moment
         // the service stops, not whenever the OS gets around to clearing
@@ -182,14 +217,13 @@ class WalkTrackingService : Service() {
         // duplicate route samples in the window between.
         if (locationJob?.isActive == true) return
 
-        val intentionExtra = startIntent?.getStringExtra(EXTRA_INTENTION)
-        val isFreshStart = startIntent?.getBooleanExtra(EXTRA_FRESH_START, false) == true
-        // Absent (legacy intent, notification revival) or unknown values
-        // collapse to Wander. Restored walks ignore this extra entirely —
-        // their mode is re-derived from the persisted SEEK_MODE event.
-        val modeExtra = WalkMode.fromWire(
-            startIntent?.getStringExtra(EXTRA_WALK_MODE),
-        )
+        // Absent (legacy intent, notification revival) or unknown mode
+        // values collapse to Wander. Restored walks ignore the extras
+        // entirely — their mode is re-derived from the persisted marker.
+        val honorEnabled = releaseFlags.get().honor
+        val extras = startExtrasFrom(startIntent, honorEnabled)
+        if (honorEnabled) honorSession = honorSessionProvider.get()
+        honorGlanceUnits = extras.honorGlanceUnits
 
         // API 34+ rejects startForeground(type=location) with SecurityException
         // if FINE location isn't granted at that moment; API 33+ silently
@@ -241,51 +275,20 @@ class WalkTrackingService : Service() {
             //     adopts the existing walk; the `isFreshStart` insert is
             //     skipped.
             // restoreActiveWalk is only meaningful when the controller
-            // is Idle — Finished walks are already closed in Room.
-            val currentState = controller.state.value
-            val restored = if (currentState is WalkState.Idle) {
-                runCatching { controller.restoreActiveWalk() }
-                    .onFailure { Log.w(TAG, "restoreActiveWalk on revival failed", it) }
-                    .getOrNull()
-            } else {
-                null
+            // is Idle — Finished walks are already closed in Room. A
+            // start carrying a Begin-minted uuid is resolved against
+            // Room before anything is inserted (WalkTrackingStarter).
+            val starter = WalkTrackingStarter(controller, repository, honorSession, ::lastKnownFix)
+            if (!starter.resolve(extras)) {
+                stopSelf()
+                return@launch
             }
-            when (decideStartAction(currentState, isFreshStart, hasRestoredWalk = restored != null)) {
-                StartAction.StartFresh -> {
-                    // No walk in Room yet — UI is asking us to create
-                    // one (either fresh Idle launch or the
-                    // second-walk-in-cached-tracker Finished path).
-                    // Failure here (e.g. controller already non-Idle
-                    // from a fast race) is logged and swallowed so the
-                    // pipeline still proceeds against whatever state
-                    // the controller landed in.
-                    try {
-                        controller.startWalk(intentionExtra, modeExtra)
-                    } catch (ce: CancellationException) {
-                        throw ce
-                    } catch (e: IllegalStateException) {
-                        Log.w(TAG, "fresh ACTION_START rejected: ${e.message}")
-                    }
-                }
-                StartAction.AdoptRestored -> {
-                    // restoreActiveWalk already adopted an in-progress
-                    // walk — the location collector below will record
-                    // against it. No further dispatch needed.
-                }
-                StartAction.StopNoWalk -> {
-                    Log.w(TAG, "ACTION_START with no actionable walk — stopping (state=$currentState, isFreshStart=$isFreshStart)")
-                    stopSelf()
-                    return@launch
-                }
-                StartAction.IgnoreInProgress -> {
-                    // Controller already in-progress (Active/Paused/
-                    // Meditating). A redundant ACTION_START in this
-                    // state shouldn't double-start; the collector below
-                    // resubscribes to GPS for the live walk.
-                }
-            }
+            // After the restore and the start decision, as the whisper
+            // auto-player is wired: the session replaces any session a
+            // cached process still holds.
+            val honorTap = starter.startHonor(scope)
             try {
-                locationSource.locationFlow().collect { point ->
+                collectWalkFixes(locationSource.locationFlow(), honorTap) { point ->
                     controller.recordLocation(point)
                 }
             } catch (e: SecurityException) {
@@ -308,7 +311,11 @@ class WalkTrackingService : Service() {
             // `notificationFingerprint` reads `unitsPreferences.distanceUnits.value`
             // synchronously) keeps the existing decideStateAction path
             // untouched.
-            combine(controller.state, unitsPreferences.distanceUnits) { state, _ -> state }
+            // The Honor glance joins the same collector: a changed glance
+            // re-renders at once, and the fingerprint decides whether the
+            // words changed (spec D §10.3).
+            val honorGlance = honorSession?.glance ?: flowOf(null)
+            combine(controller.state, unitsPreferences.distanceUnits, honorGlance) { state, _, _ -> state }
                 .collect { state ->
                     val (nextLatch, action) = decideStateAction(state, hasBeenActive)
                     hasBeenActive = nextLatch
@@ -438,6 +445,55 @@ class WalkTrackingService : Service() {
                 updateNotification(controller.state.value)
             }
         }
+    }
+
+    /**
+     * A walker's command from a card or the listening chip. The OS
+     * redelivers every start after a kill, commands included; a replayed
+     * skip or rate would act twice, so a redelivered command is dropped
+     * here, and the session's sequence number drops any replay that
+     * slips past (plan U17, the non-redelivery rule).
+     */
+    private fun handleHonorCommand(intent: Intent?, redelivered: Boolean) {
+        val action = decideHonorCommandAction(
+            honorEnabled = releaseFlags.get().honor,
+            redelivered = redelivered,
+            pipelineActive = locationJob?.isActive == true,
+        )
+        when (action) {
+            HonorCommandAction.StopNoPipeline -> {
+                Log.w(TAG, "ignoring an Honor command — no active walk pipeline")
+                stopSelf()
+            }
+            HonorCommandAction.Ignore -> Log.i(TAG, "Honor command ignored (redelivered=$redelivered)")
+            HonorCommandAction.Apply -> {
+                val seq = intent?.getLongExtra(EXTRA_HONOR_COMMAND_SEQ, 0L) ?: 0L
+                val command = honorCommandFromExtras(
+                    kind = intent?.getStringExtra(EXTRA_HONOR_COMMAND),
+                    momentId = intent?.getStringExtra(EXTRA_HONOR_MOMENT_ID),
+                    fraction = intent?.getDoubleExtra(EXTRA_HONOR_SCRUB_FRACTION, 0.0) ?: 0.0,
+                )
+                if (command == null || seq <= 0L) {
+                    Log.w(TAG, "malformed Honor command dropped")
+                    return
+                }
+                honorSession?.command(seq, command)
+            }
+        }
+    }
+
+    /**
+     * The system's last fix, for a fresh Honor session's Begin input: the
+     * nearest thing `:tracker` has to iOS's replayed pre-Start fix. Bounded
+     * so a slow provider only delays the first recorded sample briefly.
+     */
+    private suspend fun lastKnownFix(): LocationPoint? = try {
+        withTimeoutOrNull(LAST_KNOWN_FIX_TIMEOUT_MS) { locationSource.lastKnownLocation() }
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (e: Exception) {
+        Log.w(TAG, "last known fix unavailable: ${e::class.simpleName}")
+        null
     }
 
     private fun handleControllerAction(action: String, intent: Intent?) {
@@ -590,6 +646,8 @@ class WalkTrackingService : Service() {
                     state,
                     unitsPreferences.distanceUnits.value,
                     latestSeekGlance,
+                    honorSession?.glance?.value,
+                    honorUnits(),
                 ),
             )
             .setOngoing(true)
@@ -636,18 +694,23 @@ class WalkTrackingService : Service() {
     /** The UI-process orchestrator's latest published glance (U10). */
     private var latestSeekGlance: SeekGlanceState? = null
 
+    /** A revival without start extras has no fixed units; it speaks the ones this process reads. */
+    private fun honorUnits(): UnitSystem = honorGlanceUnits ?: unitsPreferences.distanceUnits.value
+
     private fun updateNotification(state: WalkState) {
+        val honorGlance = honorSession?.glance?.value
         val fingerprint = notificationFingerprint(
             state = state,
             seekGlance = latestSeekGlance,
             unitsOrdinal = unitsPreferences.distanceUnits.value.ordinal.toLong(),
+            honorGlance = honorGlance,
+            honorUnits = honorUnits(),
         )
         val nowElapsed = SystemClock.elapsedRealtime()
         val notify = shouldNotify(
             fingerprint = fingerprint,
             lastFingerprint = lastNotifiedFingerprint,
-            isActiveSeek = state is WalkState.Active &&
-                state.walk.mode == WalkMode.Seek,
+            floorApplies = notifyFloorApplies(state, honorGlance),
             millisSinceLastNotify = nowElapsed - lastNotifyElapsedMillis,
         )
         if (!notify) return
@@ -700,6 +763,29 @@ class WalkTrackingService : Service() {
      * pipeline tore down) is unit-testable without a Hilt service.
      */
     internal enum class SeekGlanceAction { StopNoPipeline, StoreAndRender }
+
+    /** The walk-uuid replay guard on [StartAction.StartFresh] (plan U17's `:tracker` rules). */
+    internal enum class FreshStartAction {
+        /** No uuid, or one Room has never seen: insert the walk. */
+        Insert,
+
+        /** A redelivered start whose walk is still unfinished: adopt it, as any restored walk. */
+        AdoptExisting,
+
+        /** A redelivered start whose walk, or its Honor marker, shows it finished. */
+        StopFinished,
+    }
+
+    /** What the location job does with the Honor session once the start has resolved. */
+    internal sealed interface HonorSessionAction {
+        /** No honor walk in progress: end any session a cached process holds. */
+        data object Stop : HonorSessionAction
+
+        /** Start or revive the session of [walkId]; the session decides which from Room. */
+        data class Start(val walkId: Long) : HonorSessionAction
+    }
+
+    internal enum class HonorCommandAction { StopNoPipeline, Ignore, Apply }
 
     companion object {
         /**
@@ -800,6 +886,44 @@ class WalkTrackingService : Service() {
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SELECT_SOUNDSCAPE"
         const val ACTION_CLEAR_SOUNDSCAPE_SELECTION =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.CLEAR_SOUNDSCAPE_SELECTION"
+        const val ACTION_HONOR_COMMAND =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.HONOR_COMMAND"
+
+        /** Extra: the uuid the Honor Begin use case minted for the walk, on
+         *  [ACTION_START]. The replay guard of a redelivered start. */
+        const val EXTRA_WALK_UUID = "extra.walk_uuid"
+
+        /** Extra: the Way an honor walk follows, on [ACTION_START]. Its
+         *  presence is what makes the start an Honor start. */
+        const val EXTRA_HONOR_WAY_ID = "extra.honor_way_id"
+
+        /** Extra: [HonorSettings.voicesEnabled], frozen at Start. Boolean. */
+        const val EXTRA_HONOR_VOICES_ENABLED = "extra.honor_voices_enabled"
+
+        /** Extra: [HonorSettings.softTapEnabled], frozen at Start. Boolean. */
+        const val EXTRA_HONOR_SOFT_TAP_ENABLED = "extra.honor_soft_tap_enabled"
+
+        /** Extra: the [UnitSystem] name the Honor glance speaks for the
+         *  walk (iOS fixes the Live Activity's units at its start). */
+        const val EXTRA_HONOR_GLANCE_UNITS = "extra.honor_glance_units"
+
+        /** Extra: the command's sequence number, rising across UI restarts. Long. */
+        const val EXTRA_HONOR_COMMAND_SEQ = "extra.honor_command_seq"
+
+        /** Extra: which [HonorCommand], by its wire name ([HONOR_COMMAND_SKIP] and the rest). */
+        const val EXTRA_HONOR_COMMAND = "extra.honor_command"
+
+        /** Extra: the moment a toggle, scrub, or reply names. */
+        const val EXTRA_HONOR_MOMENT_ID = "extra.honor_moment_id"
+
+        /** Extra: a scrub's fraction of the voice. Double. */
+        const val EXTRA_HONOR_SCRUB_FRACTION = "extra.honor_scrub_fraction"
+
+        const val HONOR_COMMAND_TOGGLE_PLAYBACK = "toggle_playback"
+        const val HONOR_COMMAND_SCRUB = "scrub"
+        const val HONOR_COMMAND_SKIP = "skip"
+        const val HONOR_COMMAND_CYCLE_RATE = "cycle_rate"
+        const val HONOR_COMMAND_PLAY_REPLY = "play_reply"
 
         /** Extra: starting walk's intention text, or new intention on
          *  [ACTION_SET_INTENTION]. UTF-8 string, ≤140 chars (server-side
@@ -860,6 +984,7 @@ class WalkTrackingService : Service() {
         /** Persist `walk.steps` this often while Active so a mid-walk
          *  OEM kill recovers with the last live counter intact. */
         private const val STEP_FLUSH_INTERVAL_MS = 30_000L
+        private const val LAST_KNOWN_FIX_TIMEOUT_MS = 1_000L
         private const val CHANNEL_ID = "walk_tracking"
         private const val NOTIFICATION_ID = 1
         private const val REQUEST_CODE_CONTENT = 0
@@ -943,6 +1068,91 @@ class WalkTrackingService : Service() {
             else -> StartAction.IgnoreInProgress
         }
 
+        // ─── U17 Honor (plan docs/plans/2026-09-29-001-feat-honor-groundwork-own-shared-walks-plan.md U17) ───
+
+        /**
+         * The uuid replay guard for [StartAction.StartFresh]. The OS's
+         * redelivery is the main revival after an OEM kill, and it replays
+         * the original fresh start: Room, not the stale extras, says what
+         * that start still means. [walkWithUuid] is the walk under the
+         * start's uuid; [hasHonorMarker] whether that uuid survives only in
+         * its Honor marker (a finished walk the walker has since deleted).
+         */
+        internal fun decideFreshStart(
+            walkUuid: String?,
+            walkWithUuid: Walk?,
+            hasHonorMarker: Boolean,
+        ): FreshStartAction = when {
+            walkUuid == null -> FreshStartAction.Insert
+            walkWithUuid != null && walkWithUuid.endTimestamp == null -> FreshStartAction.AdoptExisting
+            walkWithUuid != null -> FreshStartAction.StopFinished
+            hasHonorMarker -> FreshStartAction.StopFinished
+            else -> FreshStartAction.Insert
+        }
+
+        /** An honor walk in progress gets its session; anything else ends the one a cached process holds. */
+        internal fun decideHonorSessionAction(state: WalkState): HonorSessionAction {
+            val walk = state.inProgressWalk()?.takeIf { it.mode == WalkMode.Honor }
+                ?: return HonorSessionAction.Stop
+            return HonorSessionAction.Start(walk.walkId)
+        }
+
+        /**
+         * A command with no pipeline must not leave a started-but-unpromoted
+         * service behind (the seek-glance guard's twin). A redelivered one is
+         * never applied: it already acted before the kill.
+         */
+        internal fun decideHonorCommandAction(
+            honorEnabled: Boolean,
+            redelivered: Boolean,
+            pipelineActive: Boolean,
+        ): HonorCommandAction = when {
+            !pipelineActive -> HonorCommandAction.StopNoPipeline
+            !honorEnabled || redelivered -> HonorCommandAction.Ignore
+            else -> HonorCommandAction.Apply
+        }
+
+        /** Pure decode of [ACTION_HONOR_COMMAND]'s extras; an unknown kind or a missing moment decodes to null. */
+        internal fun honorCommandFromExtras(kind: String?, momentId: String?, fraction: Double): HonorCommand? =
+            when (kind) {
+                HONOR_COMMAND_TOGGLE_PLAYBACK -> momentId?.let { HonorCommand.TogglePlayback(it) }
+                HONOR_COMMAND_SCRUB -> momentId?.let { HonorCommand.Scrub(it, fraction) }
+                HONOR_COMMAND_SKIP -> HonorCommand.Skip
+                HONOR_COMMAND_CYCLE_RATE -> HonorCommand.CycleRate
+                HONOR_COMMAND_PLAY_REPLY -> momentId?.let { HonorCommand.PlayReply(it) }
+                else -> null
+            }
+
+        /**
+         * Reads [ACTION_START]'s extras once. With [honorEnabled] off the
+         * uuid and the Way are never read, so a stray Honor start is an
+         * ordinary one and the controller starts it as a wander.
+         */
+        internal fun startExtrasFrom(intent: Intent?, honorEnabled: Boolean): TrackerStartExtras {
+            val wayId = intent?.getStringExtra(EXTRA_HONOR_WAY_ID)?.takeIf { honorEnabled }
+            val honor = wayId?.let {
+                HonorStart(
+                    wayId = it,
+                    settings = HonorSettings(
+                        voicesEnabled = intent.getBooleanExtra(EXTRA_HONOR_VOICES_ENABLED, false),
+                        softTapEnabled = intent.getBooleanExtra(EXTRA_HONOR_SOFT_TAP_ENABLED, false),
+                    ),
+                )
+            }
+            return TrackerStartExtras(
+                isFreshStart = intent?.getBooleanExtra(EXTRA_FRESH_START, false) == true,
+                request = WalkStartRequest(
+                    intention = intent?.getStringExtra(EXTRA_INTENTION),
+                    mode = WalkMode.fromWire(intent?.getStringExtra(EXTRA_WALK_MODE)),
+                    walkUuid = intent?.getStringExtra(EXTRA_WALK_UUID)?.takeIf { honorEnabled },
+                    honor = honor,
+                ),
+                honorGlanceUnits = intent?.getStringExtra(EXTRA_HONOR_GLANCE_UNITS)
+                    ?.takeIf { honor != null }
+                    ?.let { name -> UnitSystem.entries.firstOrNull { it.name == name } },
+            )
+        }
+
         // ─── U10 seek glance (port spec
         //     docs/parity/2026-07-14-port-seek-glance-u10.md B3/B4) ───
 
@@ -990,11 +1200,18 @@ class WalkTrackingService : Service() {
          * alone never rebuild a seek notification, the 15 s floor
          * refreshes the walked-distance prefix instead (Samsung
          * update-suppression budget).
+         *
+         * An honor walk showing its glance, in any state, swaps the
+         * payload for the glance's displayed line the same way (spec D
+         * §10.3: iOS pushes on a glance change), so the fingerprint moves
+         * only when the words on the notification do.
          */
         internal fun notificationFingerprint(
             state: WalkState,
             seekGlance: SeekGlanceState?,
             unitsOrdinal: Long,
+            honorGlance: HonorGlanceState? = null,
+            honorUnits: UnitSystem = UnitSystem.DEFAULT,
         ): Long {
             val classOrdinal = when (state) {
                 WalkState.Idle -> 0L
@@ -1005,8 +1222,10 @@ class WalkTrackingService : Service() {
             }
             val isActiveSeek = state is WalkState.Active &&
                 state.walk.mode == WalkMode.Seek
+            val shownHonor = shownHonorGlance(state, honorGlance)
             val payload = when {
                 isActiveSeek -> seekGlancePayload(seekGlance)
+                shownHonor != null -> HONOR_GLANCE_PAYLOAD_BASE + honorGlanceDisplayCode(shownHonor, honorUnits)
                 state is WalkState.Active -> (state.walk.distanceMeters / 5.0).toLong()
                 state is WalkState.Paused -> (state.walk.distanceMeters / 5.0).toLong()
                 state is WalkState.Meditating -> (state.walk.distanceMeters / 5.0).toLong()
@@ -1032,6 +1251,9 @@ class WalkTrackingService : Service() {
             return 10_000L + bucketSlot * 100L + hintSlot * 10L + completeSlot
         }
 
+        /** Clear of the seek payload's 10⁴ slot; [honorGlanceDisplayCode] stays under 10³. */
+        private const val HONOR_GLANCE_PAYLOAD_BASE = 20_000L
+
         /**
          * The notify gate: any fingerprint change (state class, units,
          * glance — or, off seek, the 5 m distance bucket) notifies;
@@ -1041,13 +1263,24 @@ class WalkTrackingService : Service() {
          * `WalkActivityManager.swift:26-36@c1745e8`). Wander walks are
          * deliberately floor-free — their fingerprint already tracks
          * distance, so U10 changes nothing about their cadence.
+         * [notifyFloorApplies] says which walks take the floor.
          */
         internal fun shouldNotify(
             fingerprint: Long,
             lastFingerprint: Long,
-            isActiveSeek: Boolean,
+            floorApplies: Boolean,
             millisSinceLastNotify: Long,
         ): Boolean = fingerprint != lastFingerprint ||
-            (isActiveSeek && millisSinceLastNotify >= SEEK_NOTIFY_FLOOR_MILLIS)
+            (floorApplies && millisSinceLastNotify >= SEEK_NOTIFY_FLOOR_MILLIS)
+
+        /**
+         * The walks whose fingerprint leaves out the walked distance: an
+         * Active seek walk, and an Active honor walk showing its glance
+         * (iOS keeps the 15 s arm for Honor, spec D §10.3). Paused and
+         * sitting lines show no walked distance, so they need no floor.
+         */
+        internal fun notifyFloorApplies(state: WalkState, honorGlance: HonorGlanceState?): Boolean =
+            state is WalkState.Active &&
+                (state.walk.mode == WalkMode.Seek || shownHonorGlance(state, honorGlance) != null)
     }
 }

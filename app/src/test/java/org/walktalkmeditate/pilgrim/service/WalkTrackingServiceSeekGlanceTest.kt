@@ -131,7 +131,7 @@ class WalkTrackingServiceSeekGlanceTest {
             WalkTrackingService.shouldNotify(
                 fingerprint = next,
                 lastFingerprint = last,
-                isActiveSeek = true,
+                floorApplies = true,
                 millisSinceLastNotify = 1,
             ),
         )
@@ -144,7 +144,7 @@ class WalkTrackingServiceSeekGlanceTest {
             WalkTrackingService.shouldNotify(
                 fingerprint = fingerprint,
                 lastFingerprint = fingerprint,
-                isActiveSeek = true,
+                floorApplies = true,
                 millisSinceLastNotify = WalkTrackingService.SEEK_NOTIFY_FLOOR_MILLIS - 1,
             ),
         )
@@ -157,7 +157,7 @@ class WalkTrackingServiceSeekGlanceTest {
             WalkTrackingService.shouldNotify(
                 fingerprint = fingerprint,
                 lastFingerprint = fingerprint,
-                isActiveSeek = true,
+                floorApplies = true,
                 millisSinceLastNotify = WalkTrackingService.SEEK_NOTIFY_FLOOR_MILLIS,
             ),
         )
@@ -171,7 +171,7 @@ class WalkTrackingServiceSeekGlanceTest {
             WalkTrackingService.shouldNotify(
                 fingerprint = fingerprint,
                 lastFingerprint = fingerprint,
-                isActiveSeek = false,
+                floorApplies = false,
                 millisSinceLastNotify = 600_000,
             ),
         )

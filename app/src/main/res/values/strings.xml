@@ -33,6 +33,13 @@
     <string name="walk_notification_seek_direction_left">left</string>
     <string name="walk_notification_seek_direction_right">right</string>
     <string name="walk_notification_seek_direction_behind">behind</string>
+    <!-- U17 Honor glance line (iOS PilgrimWidgetLiveActivity.swift:190-199@7c200bf),
+         shown in every walk state. %1$s = the WalkFormat walked distance
+         (active only), then the glance line ("~400 m to go" / "off the way"),
+         whose words are code-side literals: iOS never localizes them. -->
+    <string name="walk_notification_honor_active">Walking — %1$s · %2$s</string>
+    <string name="walk_notification_honor_paused">Walk paused · %1$s</string>
+    <string name="walk_notification_honor_meditating">Meditating · %1$s</string>
 
     <!-- iOS Permissions.* (Base.lproj/Localizable.strings) verbatim. -->
     <string name="onboarding_title">Prepare for the journey</string>

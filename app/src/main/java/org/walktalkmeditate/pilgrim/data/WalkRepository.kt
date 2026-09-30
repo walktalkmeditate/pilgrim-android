@@ -137,6 +137,9 @@ open class WalkRepository @Inject constructor(
 
     suspend fun walkByUuid(uuid: String): Walk? = walkDao.getByUuid(uuid)
 
+    /** Whether a walk under [walkUuid] finished with Honor: the marker outlives the walk's own row. */
+    suspend fun hasHonorMarker(walkUuid: String): Boolean = database.honorDao().getMarker(walkUuid) != null
+
     /** [uuid] is the Honor Begin use case's minted uuid; null mints one here. */
     suspend fun startWalk(startTimestamp: Long, intention: String? = null, uuid: String? = null): Walk {
         val draft = if (uuid == null) {

@@ -2,17 +2,20 @@
 package org.walktalkmeditate.pilgrim.core.flags
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 
 /**
  * What the flag-off release build ships, checked by the release-variant CI
@@ -61,6 +64,14 @@ class ReleaseBuildContentsTest {
             .setPackage(context.packageName)
 
         assertEquals(emptyList<Any>(), context.packageManager.queryIntentActivities(honorLink, 0))
+    }
+
+    @Test
+    fun `release keeps the walk service unexported in its own process`() {
+        val info = context.packageManager.getServiceInfo(ComponentName(context, WalkTrackingService::class.java), 0)
+
+        assertFalse("only the app's own intents may reach :tracker", info.exported)
+        assertEquals("${context.packageName}:tracker", info.processName)
     }
 
     private fun allowedPermissions(): Set<String> = setOf(

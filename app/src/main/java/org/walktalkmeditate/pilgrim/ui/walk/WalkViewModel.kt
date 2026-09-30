@@ -11,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import javax.inject.Provider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -44,7 +45,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -65,6 +68,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
+import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -128,6 +132,9 @@ class WalkViewModel @Inject constructor(
     private val voiceGuidePauseController:
         org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePauseController,
     private val soundscapeUiController: WalkSoundscapeUiController,
+    private val releaseFlags: ReleaseFlags,
+    /** Resolved only for an honor start, so a flag-off build never builds it. */
+    private val beginHonorWalk: Provider<BeginHonorWalk>,
 ) : ViewModel() {
 
     /**
@@ -1405,6 +1412,42 @@ class WalkViewModel @Inject constructor(
         intention: String? = null,
         mode: WalkMode = WalkMode.Wander,
     ) {
+        launchWalkStart(intention) { controller.startWalk(intention, mode) }
+    }
+
+    /**
+     * Start on an honor walk of the walker's own walk [sourceWalkId]
+     * (plan U17; the U19 harness and U21's overview call it). The Begin
+     * use case builds and stages the Way and starts the walk through the
+     * same path as [startWalk], so the permission check, weather, and
+     * greeting run as for any walk. [honorVoicesEnabled] is the overview's
+     * "walk with their voice" (iOS default on), AND-ed with Sounds. A
+     * refusal ends as a controller refusal does: no walk, nothing shown.
+     */
+    fun startHonorWalk(
+        sourceWalkId: Long,
+        intention: String? = null,
+        honorVoicesEnabled: Boolean = true,
+    ) {
+        if (!releaseFlags.honor) return
+        launchWalkStart(intention) {
+            val settings = HonorSettings.atStart(
+                honorVoicesEnabled = honorVoicesEnabled,
+                soundsEnabled = soundsPreferences.soundsEnabled.value,
+            )
+            val request = BeginHonorWalk.Request(sourceWalkId, intention, settings)
+            when (val result = beginHonorWalk.get().invoke(request)) {
+                is BeginHonorWalk.Result.Started -> result.walk
+                is BeginHonorWalk.Result.Refused -> {
+                    Log.w(TAG, "honor walk refused: ${result.reason}")
+                    null
+                }
+            }
+        }
+    }
+
+    /** [start] returns the walk it started, or null when it refused before starting one. */
+    private fun launchWalkStart(intention: String?, start: suspend () -> Walk?) {
         viewModelScope.launch {
             // AF45: don't begin a doomed walk without location permission —
             // the :tracker service would hit SecurityException on
@@ -1427,7 +1470,7 @@ class WalkViewModel @Inject constructor(
             // would finish a walk that's ALREADY running — effectively
             // cancelling a legitimate earlier startWalk call.
             val started = try {
-                controller.startWalk(intention, mode)
+                start()
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (e: IllegalStateException) {
@@ -1437,7 +1480,7 @@ class WalkViewModel @Inject constructor(
                 // the first call's state transition drive the UI.
                 Log.d(TAG, "startWalk ignored — controller is not idle: ${e.message}")
                 return@launch
-            }
+            } ?: return@launch
             // Stage 12-A: schedule the +2s/+10s weather fetch as soon
             // as we have the new walkId. Runs independently of the
             // foreground-service start below — even if the service

@@ -108,6 +108,8 @@ class WalkViewModelPlacementTest {
             intentionHistory = org.walktalkmeditate.pilgrim.data.intention.FakeIntentionHistoryRepository(),
             voiceGuidePauseController = org.walktalkmeditate.pilgrim.audio.voiceguide.FakeVoiceGuidePauseController(),
             soundscapeUiController = FakeWalkSoundscapeUiController(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            beginHonorWalk = { error("no honor start in this test") },
         )
     }
 
