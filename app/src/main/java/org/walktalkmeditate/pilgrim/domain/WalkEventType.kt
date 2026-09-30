@@ -32,9 +32,9 @@ enum class WalkEventType {
 
     /**
      * Written once at recording start when the walk honors a Way
-     * (iOS `WalkEvent.EventType.honorMode`). Until the flag-gated Honor
-     * mode lands, [walkModeFromEvents] still reads such a walk as Wander;
-     * the event is kept so `.pilgrim` round-trips preserve it.
+     * (iOS `WalkEvent.EventType.honorMode`). With the release flag off,
+     * [walkModeFromEvents] reads such a walk as Wander; the event is kept
+     * so `.pilgrim` round-trips preserve it.
      */
     HONOR_MODE,
 

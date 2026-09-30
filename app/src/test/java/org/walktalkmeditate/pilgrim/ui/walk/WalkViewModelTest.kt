@@ -47,6 +47,7 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.AudioFocusCoordinator
 import org.walktalkmeditate.pilgrim.audio.FakeAudioCapture
 import org.walktalkmeditate.pilgrim.audio.FakeTranscriptionScheduler
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
@@ -151,7 +152,7 @@ class WalkViewModelTest {
             walkPhotoDao = db.walkPhotoDao(),
         )
         clock = FakeClock(initial = 1_000L)
-        controller = WalkControllerImpl(repository, clock, fakeStepCounter())
+        controller = WalkControllerImpl(repository, clock, fakeStepCounter(), FixedReleaseFlags(honor = true))
         fakeAudioCapture = FakeAudioCapture(bursts = listOf(ShortArray(1_600) { 500 }))
         val audioFocus = AudioFocusCoordinator(context.getSystemService(AudioManager::class.java))
         voiceRecorder = VoiceRecorder(context, fakeAudioCapture, audioFocus, clock)

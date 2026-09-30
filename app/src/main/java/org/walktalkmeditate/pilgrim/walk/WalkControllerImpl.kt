@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
@@ -46,6 +47,7 @@ class WalkControllerImpl @Inject constructor(
     private val repository: WalkRepository,
     private val clock: Clock,
     private val stepCounter: org.walktalkmeditate.pilgrim.sensor.StepCounter,
+    private val releaseFlags: ReleaseFlags,
 ) : WalkController {
     private val _state = MutableStateFlow<WalkState>(WalkState.Idle)
     override val state: StateFlow<WalkState> = _state.asStateFlow()
@@ -393,10 +395,10 @@ class WalkControllerImpl @Inject constructor(
             totalPausedMillis = totals.totalPausedMillis,
             totalMeditatedMillis = totals.totalMeditatedMillis,
             // Walks stay ordinary Room rows; the mode is re-derived from
-            // the SEEK_MODE marker the reducer persisted at start. A
+            // the SEEK_MODE or HONOR_MODE marker persisted at start. A
             // restored seek walk must keep speaking seek (greeting, U9
             // orchestrator gates, U10 glance) across a process kill.
-            mode = walkModeFromEvents(events),
+            mode = walkModeFromEvents(events, honorEnabled = releaseFlags.honor),
         )
         val pendingPause = totals.pendingPauseAt
         val pendingMeditation = totals.pendingMeditationAt

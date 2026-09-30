@@ -2,7 +2,6 @@
 package org.walktalkmeditate.pilgrim.data.dao
 
 import androidx.room.Dao
-import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Update
@@ -58,9 +57,6 @@ interface WalkDao {
 
     @Update
     suspend fun update(walk: Walk)
-
-    @Delete
-    suspend fun delete(walk: Walk)
 
     @Query("DELETE FROM walks WHERE id = :walkId")
     suspend fun deleteById(walkId: Long)

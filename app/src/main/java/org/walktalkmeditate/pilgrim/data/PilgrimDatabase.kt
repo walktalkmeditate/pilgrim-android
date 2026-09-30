@@ -24,6 +24,11 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorDao
+import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 
 @Database(
     entities = [
@@ -35,8 +40,12 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
         Waypoint::class,
         VoiceRecording::class,
         WalkPhoto::class,
+        HonorSessionEntity::class,
+        HonorMomentStateEntity::class,
+        HonorCardStateEntity::class,
+        HonorWalkMarkerEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -52,6 +61,7 @@ abstract class PilgrimDatabase : RoomDatabase() {
     abstract fun waypointDao(): WaypointDao
     abstract fun voiceRecordingDao(): VoiceRecordingDao
     abstract fun walkPhotoDao(): WalkPhotoDao
+    abstract fun honorDao(): HonorDao
 
     companion object {
         const val DATABASE_NAME = "pilgrim.db"
@@ -261,6 +271,70 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 "AND `ai`.`activity_type` = 'MEDITATING'))"
 
         /**
+         * Phase 21 (U14): the live Honor tables and the walk marker. Purely
+         * additive: four new tables, nothing existing is touched, and every
+         * one starts empty. The DDL is Room's own for v10, copied from
+         * `app/schemas/.../10.json`, with `IF NOT EXISTS` so a re-run is
+         * harmless.
+         *
+         * - `honor_sessions`: one row per walk with Honor, keyed by walk id.
+         * - `honor_moment_states`: one row per (walk, moment).
+         * - `honor_card_states`: the UI's card rows, per (walk, moment).
+         * - `honor_walk_markers`: keyed by walk uuid with no foreign key, so
+         *   it outlives the walk row and a web-editor re-import.
+         *
+         * The first three cascade from `walks`, as every walk child does.
+         */
+        val MIGRATION_9_10: Migration = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `honor_sessions` (" +
+                        "`walk_id` INTEGER NOT NULL, `way_id` TEXT NOT NULL, " +
+                        "`source_kind` TEXT NOT NULL, `voices_enabled` INTEGER NOT NULL, " +
+                        "`soft_tap_enabled` INTEGER NOT NULL, `phase` TEXT NOT NULL, " +
+                        "`start_frac` REAL, `anchored_by_fallback` INTEGER NOT NULL, " +
+                        "`anchor_active_seconds` REAL NOT NULL, `companion_t0_seconds` REAL NOT NULL, " +
+                        "`progress_frac` REAL NOT NULL, `progress_high_water` REAL NOT NULL, " +
+                        "`walked_frac` REAL NOT NULL, `off_way_since` INTEGER, " +
+                        "`off_way_active_seconds` REAL NOT NULL, `last_reacquire_attempt` INTEGER, " +
+                        "`soft_tap_since` INTEGER, `soft_tap_armed` INTEGER NOT NULL, " +
+                        "`arrival_inside_fixes` INTEGER NOT NULL, `playing_moment_id` TEXT, " +
+                        "`voice_paused` INTEGER NOT NULL, `voice_started_at` INTEGER, " +
+                        "`voice_start_offset_millis` INTEGER, `voice_pause_offset_millis` INTEGER, " +
+                        "`voice_rate` REAL NOT NULL, `arrival_their_seconds` REAL, " +
+                        "`arrival_your_seconds` REAL, `last_command_seq` INTEGER NOT NULL, " +
+                        "`gate_generation` INTEGER NOT NULL, `finish_kind` TEXT, " +
+                        "PRIMARY KEY(`walk_id`), " +
+                        "FOREIGN KEY(`walk_id`) REFERENCES `walks`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `honor_moment_states` (" +
+                        "`walk_id` INTEGER NOT NULL, `moment_id` TEXT NOT NULL, " +
+                        "`reached_at` INTEGER, `queue_position` INTEGER, " +
+                        "`voice_started_at` INTEGER, `voice_ended_at` INTEGER, " +
+                        "`voice_end` TEXT, `heard` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`walk_id`, `moment_id`), " +
+                        "FOREIGN KEY(`walk_id`) REFERENCES `walks`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `honor_card_states` (" +
+                        "`walk_id` INTEGER NOT NULL, `moment_id` TEXT NOT NULL, " +
+                        "`dismissed` INTEGER NOT NULL, `touched` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`walk_id`, `moment_id`), " +
+                        "FOREIGN KEY(`walk_id`) REFERENCES `walks`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `honor_walk_markers` (" +
+                        "`walk_uuid` TEXT NOT NULL, `finished_at` INTEGER NOT NULL, " +
+                        "`finish_kind` TEXT NOT NULL, PRIMARY KEY(`walk_uuid`))",
+                )
+            }
+        }
+
+        /**
          * Every manual migration, in order — the one list the production
          * builder ([org.walktalkmeditate.pilgrim.di.DatabaseModule]) and the
          * migration tests register. 1→2 is the AutoMigration declared on
@@ -276,6 +350,7 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 MIGRATION_6_7,
                 MIGRATION_7_8,
                 MIGRATION_8_9,
+                MIGRATION_9_10,
             )
     }
 }

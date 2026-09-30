@@ -22,6 +22,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -38,6 +39,8 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.honor.HonorWalkState
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimArchivedWalk
@@ -51,6 +54,7 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
@@ -96,6 +100,7 @@ class PilgrimPackageImporterTest {
             threadsStore,
             threadsPreferences,
             WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
+            repository(),
         )
     }
 
@@ -432,6 +437,87 @@ class PilgrimPackageImporterTest {
         )
     }
 
+    // ---- Honor: the archive strip and the tended replace keep what iOS keeps ----
+
+    private fun honorImporter(store: WayStore): PilgrimPackageImporter {
+        val repository = repository(store)
+        return PilgrimPackageImporter(
+            db,
+            json,
+            context,
+            FakeArchivedWalkRegistry(),
+            threadsStore,
+            threadsPreferences,
+            WalkMetricsCache(repository, db.walkDao(), db.walkEventDao()),
+            repository,
+        )
+    }
+
+    @Test
+    fun `the archive strip removes the live Honor rows and staging and keeps the link and marker`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val honor = HonorWalkState(db, store)
+        val uuid = UUID.randomUUID().toString()
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        db.walkEventDao().insert(WalkEvent(walkId = walkId, timestamp = 1_000L, eventType = WalkEventType.HONOR_MODE))
+        honor.seed(walkId, uuid)
+
+        honorImporter(store).import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+
+        assertNotNull("the row stays", db.walkDao().getById(walkId))
+        assertEquals("the strip ran", emptyList<Any>(), db.walkEventDao().getForWalk(walkId))
+        honor.assertReleased(walkId, uuid)
+    }
+
+    @Test
+    fun `a failure inside the archive batch keeps the walk's Honor state and staging, and archives nothing`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val honor = HonorWalkState(db, store)
+        val uuid = UUID.randomUUID().toString()
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        honor.seed(walkId, uuid)
+        val registry = FakeArchivedWalkRegistry()
+        val failingCache = object : WalkMetricsCaching {
+            override suspend fun computeAndPersist(walkId: Long) = throw java.io.IOException("disk full")
+        }
+        val importer = PilgrimPackageImporter(
+            db, json, context, registry, threadsStore, threadsPreferences, failingCache, repository(store),
+        )
+
+        runCatching {
+            importer.import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+        }
+
+        honor.assertLive(walkId, uuid)
+        assertFalse("nothing is marked archived after a rollback", registry.isArchived(uuid))
+    }
+
+    @Test
+    fun `the tended replace keeps the link, marker, and staging under the new Room id`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val honor = HonorWalkState(db, store)
+        val uuid = UUID.randomUUID().toString()
+        val oldId = db.walkDao().insert(
+            Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 100_000L, intention = "original"),
+        )
+        honor.seed(oldId, uuid)
+
+        val summary = honorImporter(store).import(
+            buildArchive(
+                tended = true,
+                walks = mapOf("walk.json" to json.encodeToString(goodWalk(uuid = uuid, intention = "edited"))),
+            ),
+        )
+
+        assertEquals(1, summary.replaced)
+        val replaced = db.walkDao().getByUuid(uuid)!!
+        assertTrue("re-inserted under a new Room id", replaced.id != oldId)
+        assertEquals("edited", replaced.intention)
+        honor.assertKept(uuid)
+        assertNotNull("the staging is keyed by the same uuid, so it stays", store.staged(uuid))
+        assertNull("the old id's live rows cascaded with the old row", db.honorDao().getSession(oldId))
+    }
+
     /** One pass of the real [WalkMetricsBackfillCoordinator] over the walks as they are now. */
     private suspend fun runBackfillOnce() = coroutineScope {
         val snapshot = object : WalksSource {
@@ -477,6 +563,7 @@ class PilgrimPackageImporterTest {
             spyStore,
             spyPreferences,
             WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
+            repository(),
         )
         val uri = buildArchive(
             tended = false,
@@ -501,6 +588,7 @@ class PilgrimPackageImporterTest {
             TranscriptContextStore(context, json),
             spyPreferences,
             WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
+            repository(),
         )
         val before = spyPreferences.importGeneration.value
         val uri = buildArchive(
@@ -524,6 +612,7 @@ class PilgrimPackageImporterTest {
             TranscriptContextStore(context, json),
             spyPreferences,
             WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()),
+            repository(),
         )
         val badUri = Uri.parse("content://test/does-not-exist-${UUID.randomUUID()}")
         shadowOf(context.contentResolver).registerInputStream(badUri, ByteArrayInputStream(ByteArray(0)))
@@ -577,7 +666,7 @@ class PilgrimPackageImporterTest {
         )
     }
 
-    private fun repository() = WalkRepository(
+    private fun repository(wayStore: WayStore? = null) = WalkRepository(
         database = db,
         walkDao = db.walkDao(),
         routeDao = db.routeDataSampleDao(),
@@ -587,6 +676,7 @@ class PilgrimPackageImporterTest {
         waypointDao = db.waypointDao(),
         voiceRecordingDao = db.voiceRecordingDao(),
         walkPhotoDao = db.walkPhotoDao(),
+        wayStore = wayStore,
     )
 
     private fun goodWalk(

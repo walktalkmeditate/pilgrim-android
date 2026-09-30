@@ -14,9 +14,9 @@ import org.walktalkmeditate.pilgrim.domain.walkModeFromEvents
  * explained to the downstream model by the practice lexicon.
  *
  * Deliberately not [WalkMode]: that enum carries a third value
- * (`Together`) the shipped iOS lexicon has no prose for. A two-case
- * enum keeps [PromptAssembler.practiceLexicon]'s `when` exhaustive
- * without inventing text (spec D3).
+ * (`Honor`) whose lexicon has not been ported yet. A two-case enum keeps
+ * [PromptAssembler.practiceLexicon]'s `when` exhaustive without
+ * inventing text (spec D3).
  */
 enum class PracticeMode { Wander, Seek }
 
@@ -39,7 +39,9 @@ data class WalkPractice(val mode: PracticeMode, val seekStory: SeekStoryContext?
 object WalkPracticeModel {
 
     fun practice(events: List<WalkEventLike>): WalkPractice {
-        if (walkModeFromEvents(events) != WalkMode.Seek) {
+        // With no Honor lexicon yet, an honor walk reads as Wander here
+        // whatever the release flag says.
+        if (walkModeFromEvents(events, honorEnabled = false) != WalkMode.Seek) {
             return WalkPractice(PracticeMode.Wander, null)
         }
         val arrivals = events

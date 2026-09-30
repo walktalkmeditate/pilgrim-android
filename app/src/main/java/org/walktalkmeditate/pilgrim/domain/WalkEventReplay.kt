@@ -81,11 +81,18 @@ interface WalkEventLike {
 
 /**
  * Re-derives a walk's [WalkMode] from its persisted event log. Walks
- * stay ordinary Room rows (no mode column); a seek is recognized by
- * the single SEEK_MODE marker the reducer writes at start. Shared by
- * both controllers' restore/derivation paths so the two processes can
- * never disagree about a walk's mode. A HONOR_MODE marker reads as
- * Wander: Android has no Honor mode yet.
+ * stay ordinary Room rows (no mode column); a seek or an honor walk is
+ * recognized by the single SEEK_MODE or HONOR_MODE marker written at
+ * start. Shared by both controllers' restore/derivation paths so the two
+ * processes can never disagree about a walk's mode.
+ *
+ * [honorEnabled] is the release flag: with it off, an honor walk (an
+ * imported iOS one, say) reads as Wander and keeps its events. The honor
+ * marker is checked first, as iOS's practice model does
+ * (`ActivityContext.swift:46-50@7c200bf`); a walk never carries both.
  */
-fun walkModeFromEvents(events: List<WalkEventLike>): WalkMode =
-    if (events.any { it.type == WalkEventType.SEEK_MODE }) WalkMode.Seek else WalkMode.Wander
+fun walkModeFromEvents(events: List<WalkEventLike>, honorEnabled: Boolean): WalkMode = when {
+    honorEnabled && events.any { it.type == WalkEventType.HONOR_MODE } -> WalkMode.Honor
+    events.any { it.type == WalkEventType.SEEK_MODE } -> WalkMode.Seek
+    else -> WalkMode.Wander
+}

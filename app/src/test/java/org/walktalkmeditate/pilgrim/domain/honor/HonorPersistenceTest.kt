@@ -1,15 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.domain.honor
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.ui.walk.PRESET_CHIPS
 import org.walktalkmeditate.pilgrim.ui.walk.WAYPOINT_CUSTOM_ICON_KEY
 
-/** Vocabulary half of iOS `HonorPersistence.swift@7c200bf`. */
+/**
+ * Port of iOS `HonorPersistenceTests.swift@7c200bf`'s vocabulary. Robolectric
+ * because the arrival label resolves through a real string resource. The
+ * event raw values (5, 6) are iOS's Core Data storage, which Android replaces
+ * with enum names; the `.pilgrim` strings are pinned in `PilgrimPackageConverterTest`.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class HonorPersistenceTest {
 
     @Test
@@ -33,5 +45,14 @@ class HonorPersistenceTest {
             SeekPersistence.ARRIVAL_WAYPOINT_ICON
         assertEquals("mappin", WAYPOINT_CUSTOM_ICON_KEY)
         assertFalse(takenIcons.contains(HonorPersistence.ARRIVAL_WAYPOINT_ICON))
+    }
+
+    @Test
+    fun `arrival label carries the Way's title`() {
+        val resources = ApplicationProvider.getApplicationContext<Application>().resources
+        assertEquals(
+            "Walked their way: Rúa do Franco → Obradoiro",
+            HonorPersistence.arrivalWaypointLabel(resources, wayTitle = "Rúa do Franco → Obradoiro"),
+        )
     }
 }

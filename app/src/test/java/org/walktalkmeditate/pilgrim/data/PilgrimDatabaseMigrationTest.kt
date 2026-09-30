@@ -21,12 +21,19 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.WalkExportBundle
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 
 /**
  * The 2→3 … 5→6 tests exercise each Migration's `migrate` directly
@@ -35,7 +42,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
  * can't find the exported schema JSON (the helper is designed for
  * on-device `androidTest` runs).
  *
- * The 8→9 tests, and the chains from 6 and 7, build the starting version
+ * The 8→9 and 9→10 tests, and the chains from 6 and 7, build the starting version
  * from its exported schema
  * with [MigrationTestDatabases] and open it through `Room.databaseBuilder`
  * with the production [PilgrimDatabase.MIGRATIONS], so Room's schema
@@ -508,15 +515,15 @@ class PilgrimDatabaseMigrationTest {
     // ---- 8 → 9: the #223 sittings repair, through Room's own open path ----
 
     @Test
-    fun `a v8 database migrates to 9 through Room's identity check and keeps its data`() {
+    fun `a v8 database migrates through 9 and Room's identity check and keeps its data`() {
         MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
 
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
             val db = room.openHelper.writableDatabase
-            assertEquals(9L, db.longQuery("PRAGMA user_version"))
+            assertEquals(LATEST_VERSION.toLong(), db.longQuery("PRAGMA user_version"))
             assertEquals(
-                MigrationTestDatabases.identityHash(9),
+                MigrationTestDatabases.identityHash(LATEST_VERSION),
                 db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
             )
             assertEquals(MigrationTestDatabases.identityHash(8), MigrationTestDatabases.identityHash(9))
@@ -779,13 +786,13 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
-    fun `a v7 database migrates to 9 through the shared migrations array`() {
-        assertMigratesToNineFrom(version = 7)
+    fun `a v7 database migrates to the latest version through the shared migrations array`() {
+        assertMigratesToLatestFrom(version = 7)
     }
 
     @Test
-    fun `a v6 database migrates to 9 through the shared migrations array`() {
-        assertMigratesToNineFrom(version = 6)
+    fun `a v6 database migrates to the latest version through the shared migrations array`() {
+        assertMigratesToLatestFrom(version = 6)
     }
 
     /**
@@ -794,7 +801,7 @@ class PilgrimDatabaseMigrationTest {
      * array, or one whose result differs from the current entities, fails
      * Room's open here.
      */
-    private fun assertMigratesToNineFrom(version: Int) {
+    private fun assertMigratesToLatestFrom(version: Int) {
         MigrationTestDatabases.createAtVersion(context, dbName, version = version) { db ->
             db.insertWalk(SINGLE_WALK, "chain", start = 0L, end = 3_600_000L, distance = 12.5, meditationSeconds = 0L)
             db.insertRow(
@@ -807,9 +814,9 @@ class PilgrimDatabaseMigrationTest {
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
             val db = room.openHelper.writableDatabase
-            assertEquals(9L, db.longQuery("PRAGMA user_version"))
+            assertEquals(LATEST_VERSION.toLong(), db.longQuery("PRAGMA user_version"))
             assertEquals(
-                MigrationTestDatabases.identityHash(9),
+                MigrationTestDatabases.identityHash(LATEST_VERSION),
                 db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
             )
             runBlocking {
@@ -826,14 +833,109 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
-    fun `a schema 9 replay opens through Room without any migration`() {
+    fun `a schema 10 replay opens through Room without any migration`() {
         // Proves the helper replays a schema exactly as Room would create
         // it: Room's validation would reject a table that differs.
+        MigrationTestDatabases.createAtVersion(context, dbName, version = LATEST_VERSION)
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            assertEquals(LATEST_VERSION.toLong(), room.openHelper.writableDatabase.longQuery("PRAGMA user_version"))
+        } finally {
+            room.close()
+        }
+    }
+
+    // ---- 9 → 10: the live Honor tables and the walk marker (U14) ----
+
+    @Test
+    fun `a v9 database migrates to 10 through Room's identity check and keeps its data`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 9) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(10L, db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(10),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
+            assertEquals(WORLD_INTERVAL_COUNT, db.longQuery("SELECT COUNT(*) FROM activity_intervals"))
+            assertEquals(
+                "9 → 10 only adds tables: the #223 repair ran at 8 → 9, not again",
+                WORLD_EVENT_COUNT,
+                db.longQuery("SELECT COUNT(*) FROM walk_events"),
+            )
+            runBlocking {
+                val walk = room.walkDao().getById(IOS_MEDITATION_WALK)!!
+                assertEquals("ios-meditation", walk.uuid)
+                assertEquals(900L, walk.meditationSeconds)
+                assertEquals("signpost.right.fill", room.waypointDao().getForWalk(IOS_MEDITATION_WALK).single().icon)
+                assertEquals("hello", room.voiceRecordingDao().getForWalk(IOS_MEDITATION_WALK).single().transcription)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `the migrated Honor tables start empty and take their rows`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 9) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            HONOR_TABLES.forEach { table ->
+                assertEquals("$table starts empty", 0L, db.longQuery("SELECT COUNT(*) FROM $table"))
+            }
+            runBlocking {
+                val dao = room.honorDao()
+                dao.insertSession(
+                    HonorSessionEntity(
+                        walkId = UNFINISHED_WALK,
+                        wayId = "walk:0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50",
+                        sourceKind = HonorSourceKind.OWN_WALK,
+                        voicesEnabled = true,
+                        softTapEnabled = false,
+                    ),
+                )
+                dao.upsertMomentState(HonorMomentStateEntity(UNFINISHED_WALK, "voice-1", reachedAt = 1L))
+                dao.markCardTouched(UNFINISHED_WALK, "voice-1")
+                dao.insertMarker(HonorWalkMarkerEntity("unfinished", finishedAt = 2L, finishKind = HonorFinishKind.CLEAN))
+
+                assertEquals(HonorPhase.WALKING, dao.getSession(UNFINISHED_WALK)!!.phase)
+                assertEquals(1, dao.getMomentStates(UNFINISHED_WALK).size)
+                assertEquals(1, dao.getCardStates(UNFINISHED_WALK).size)
+
+                room.walkDao().deleteById(UNFINISHED_WALK)
+
+                assertNull("the live rows cascade from the walk", dao.getSession(UNFINISHED_WALK))
+                assertTrue(dao.getMomentStates(UNFINISHED_WALK).isEmpty())
+                assertTrue(dao.getCardStates(UNFINISHED_WALK).isEmpty())
+                assertNotNull("the marker has no foreign key", dao.getMarker("unfinished"))
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `running migration 9 to 10 again changes nothing`() {
         MigrationTestDatabases.createAtVersion(context, dbName, version = 9)
 
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
-            assertEquals(9L, room.openHelper.writableDatabase.longQuery("PRAGMA user_version"))
+            val db = room.openHelper.writableDatabase
+            val schemaBefore = db.stringQuery(HONOR_SCHEMA_SQL)
+            db.beginTransaction()
+            try {
+                PilgrimDatabase.MIGRATION_9_10.migrate(db)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            assertEquals(schemaBefore, db.stringQuery(HONOR_SCHEMA_SQL))
         } finally {
             room.close()
         }
@@ -1036,5 +1138,13 @@ class PilgrimDatabaseMigrationTest {
         const val SINGLE_WALK = 1L
 
         val CANONICAL_UUID = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+        const val LATEST_VERSION = 10
+
+        val HONOR_TABLES = listOf("honor_sessions", "honor_moment_states", "honor_card_states", "honor_walk_markers")
+
+        val HONOR_SCHEMA_SQL =
+            "SELECT group_concat(sql, ';') FROM (SELECT sql FROM sqlite_master " +
+                "WHERE name LIKE 'honor_%' ORDER BY name)"
     }
 }

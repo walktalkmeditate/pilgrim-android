@@ -168,7 +168,7 @@ class WalkPhotoDaoTest {
         photoDao.insert(samplePhoto(w, uri = "content://x/2", pinnedAt = 6_000L))
         assertEquals(2, photoDao.countForWalk(w))
 
-        walkDao.delete(walkDao.getById(w)!!)
+        walkDao.deleteById(w)
 
         assertEquals(0, photoDao.countForWalk(w))
     }

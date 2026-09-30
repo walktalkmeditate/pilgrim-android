@@ -36,7 +36,8 @@ private val FRAME_HEIGHT = 40.dp
 /**
  * Per-mode footstep glyph above each `ModeButton` label — verbatim port
  * of iOS `WalkStartView.footprintForMode`. Wander = two prints rotated
- * outward; Together = three pairs orbiting; Seek = single print + a
+ * outward; Honor, until its staff glyph lands, keeps the earlier
+ * Together glyph of three pairs orbiting; Seek = single print + a
  * stack of dissolving dots. Frame is 60×40 dp to match iOS.
  *
  * Active mode renders fully opaque + a subtle 1.01× breath scale; the
@@ -76,7 +77,7 @@ fun PathFootprints(
     ) {
         when (mode) {
             WalkMode.Wander -> WanderFootprints()
-            WalkMode.Together -> TogetherFootprints(reduceMotion = reduceMotion)
+            WalkMode.Honor -> TogetherFootprints(reduceMotion = reduceMotion)
             WalkMode.Seek -> SeekFootprints(reduceMotion = reduceMotion)
         }
     }

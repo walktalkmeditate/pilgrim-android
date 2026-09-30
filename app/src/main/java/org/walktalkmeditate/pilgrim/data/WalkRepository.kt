@@ -4,7 +4,9 @@ package org.walktalkmeditate.pilgrim.data
 import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
@@ -22,6 +24,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
@@ -46,6 +49,11 @@ open class WalkRepository @Inject constructor(
      * Threads hygiene.
      */
     private val transcriptContextStore: TranscriptContextStore? = null,
+    /**
+     * Nullable + defaulted for the same reason as [transcriptContextStore]:
+     * `null` means "no staged Way to discard", never reached in production.
+     */
+    private val wayStore: WayStore? = null,
 ) {
     fun observeAllWalks(): Flow<List<Walk>> = walkDao.observeAll()
 
@@ -182,15 +190,21 @@ open class WalkRepository @Inject constructor(
         walkDao.updateSteps(id = walkId, steps = steps)
     }
 
-    suspend fun deleteWalk(walk: Walk) {
-        walkDao.delete(walk)
-    }
+    suspend fun deleteWalk(walk: Walk) = deleteWalkById(walk.id)
 
     /**
+     * The one walk-delete path: [deleteWalk], this, and the discard's
+     * PurgeWalk all end here, and [stripArchivedWalk] applies the same
+     * Honor rule to a walk whose row stays.
+     *
      * Deletes the walk row by id. All child rows in route_data_samples,
      * altitude_samples, walk_events, activity_intervals, waypoints,
-     * voice_recordings, and walk_photos are removed via SQLite
-     * `ON DELETE CASCADE`. No-op when the id matches no row.
+     * voice_recordings, walk_photos, and the live Honor tables are removed
+     * via SQLite `ON DELETE CASCADE`; any staged own-walk Way goes after
+     * the commit. The walk's Ways-store link file and its Honor marker are
+     * kept: both are keyed by the walk's uuid, and iOS drops a link only
+     * when its Way is deleted (parity spec A §23), so a walked shared Way
+     * stays walked for the expiry sweep. No-op when the id matches no row.
      *
      * Recording uuids are captured INSIDE the transaction, before the
      * cascade tears the rows down — otherwise there is nothing left to
@@ -200,14 +214,49 @@ open class WalkRepository @Inject constructor(
      * for a recording whose walk turned out not to exist.
      */
     suspend fun deleteWalkById(walkId: Long) {
-        val recordingUuids = database.withTransaction {
-            val uuids = voiceRecordingDao.getForWalk(walkId).map { it.uuid }
+        val removed = database.withTransaction {
+            val walk = walkDao.getById(walkId) ?: return@withTransaction null
+            val recordingUuids = voiceRecordingDao.getForWalk(walkId).map { it.uuid }
             walkDao.deleteById(walkId)
-            uuids
-        }
+            walk.uuid to recordingUuids
+        } ?: return
+        val (walkUuid, recordingUuids) = removed
         if (recordingUuids.isNotEmpty()) {
             transcriptContextStore?.delete(recordingUuids)
         }
+        discardHonorStaging(walkUuid)
+    }
+
+    /**
+     * The `.pilgrim` archive strip of one walk: its heavy children and its
+     * live Honor rows go, while the row with its surface stats, its link
+     * file, and its Honor marker stay. The children are iOS's
+     * (`PilgrimPackageImporter.swift:457-464@7c200bf`). Joins the caller's
+     * transaction; once that commits, the caller runs [discardHonorStaging]
+     * for the walk.
+     *
+     * A failed delete propagates. Catching it would not keep the others:
+     * each DAO call is a nested transaction, which on framework SQLite
+     * dooms the whole batch without throwing, so the caller would go on to
+     * discard staging and mark walks archived that had rolled back.
+     */
+    suspend fun stripArchivedWalk(walkId: Long) {
+        routeDao.deleteByWalkId(walkId)
+        waypointDao.deleteByWalkId(walkId)
+        walkEventDao.deleteByWalkId(walkId)
+        activityIntervalDao.deleteByWalkId(walkId)
+        voiceRecordingDao.deleteByWalkId(walkId)
+        walkPhotoDao.deleteByWalkId(walkId)
+        database.honorDao().deleteLiveRows(walkId)
+    }
+
+    /**
+     * Removes the own-walk Way staged for [walkUuid], if any. Only after the
+     * walk's removal has committed: files don't roll back.
+     */
+    suspend fun discardHonorStaging(walkUuid: String) {
+        val store = wayStore ?: return
+        withContext(Dispatchers.IO) { store.discardStaged(walkUuid) }
     }
 
     suspend fun recordLocation(sample: RouteDataSample): Long = routeDao.insert(sample)

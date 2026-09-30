@@ -76,10 +76,17 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
 private const val MODE_TAP_DISSOLVE_MS = 450L
 
 /**
+ * The Honor slot still wears its flag-off look (the Together glyph,
+ * strings, and "coming soon"): its door, the Ways sheet and the overview,
+ * arrives in U21, which reads the release flag here.
+ */
+private const val HONOR_SLOT_OPEN = false
+
+/**
  * The Path tab — Pilgrim's contemplative pre-walk hub. Ports iOS
  * `WalkStartView`'s structure: breathing logo at top, rotating quote
  * (re-rolls on mode change, no timer), moon-phase glyph, 3-mode
- * selector (Wander available; Together / Seek "coming soon"), big
+ * selector (Wander and Seek available; Honor "coming soon"), big
  * primary action button at bottom.
  *
  * Cold-launch behavior: if the controller is already in-progress
@@ -302,7 +309,7 @@ fun WalkStartScreen(
                 // drives the setup ritual on the active-walk surface (iOS
                 // `MainCoordinator.startWalk(mode:)@c1745e8`).
                 onClick = { onEnterActiveWalk(selectedMode) },
-                enabled = selectedMode.isAvailable && !isInProgress,
+                enabled = selectedMode.isAvailable(honorEnabled = HONOR_SLOT_OPEN) && !isInProgress,
                 modifier = Modifier.fillMaxWidth(),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -321,7 +328,7 @@ fun WalkStartScreen(
 @StringRes
 private fun buttonLabelFor(mode: WalkMode): Int = when (mode) {
     WalkMode.Wander -> R.string.path_button_wander
-    WalkMode.Together -> R.string.path_button_together
+    WalkMode.Honor -> R.string.path_button_together
     WalkMode.Seek -> R.string.path_button_seek
 }
 
@@ -336,7 +343,7 @@ internal fun pickRandomQuote(
 ): String {
     val arrayId = when (mode) {
         WalkMode.Wander -> R.array.path_quotes_wander
-        WalkMode.Together -> R.array.path_quotes_together
+        WalkMode.Honor -> R.array.path_quotes_together
         WalkMode.Seek -> R.array.path_quotes_seek
     }
     val quotes = context.resources.getStringArray(arrayId)
@@ -404,10 +411,10 @@ private fun ModeSelector(
         }
         Spacer(Modifier.height(PilgrimSpacing.small))
         AnimatedContent(targetState = selectedMode, label = "mode-subtitle") { mode ->
-            val subtitleId = if (mode.isAvailable) {
+            val subtitleId = if (mode.isAvailable(honorEnabled = HONOR_SLOT_OPEN)) {
                 when (mode) {
                     WalkMode.Wander -> R.string.path_mode_wander_subtitle
-                    WalkMode.Together -> R.string.path_mode_together_subtitle
+                    WalkMode.Honor -> R.string.path_mode_together_subtitle
                     WalkMode.Seek -> R.string.path_mode_seek_subtitle
                 }
             } else {
@@ -462,7 +469,7 @@ internal fun ModeButton(
         // iOS parity `WalkStartView.trailUnderline(for:)@v1.6.0` —
         // selected-tab underline is a horizontal stone gradient that
         // fades toward the row's outer edges so the three tabs read as
-        // one soft band: Wander solid→faded, Together faded both ends,
+        // one soft band: Wander solid→faded, Honor faded both ends,
         // Seek faded→solid. Unselected = transparent.
         val stone = pilgrimColors.stone
         val underline: Brush = if (selected) {
@@ -470,7 +477,7 @@ internal fun ModeButton(
                 WalkMode.Wander -> Brush.horizontalGradient(
                     listOf(stone, stone.copy(alpha = 0.2f)),
                 )
-                WalkMode.Together -> Brush.horizontalGradient(
+                WalkMode.Honor -> Brush.horizontalGradient(
                     listOf(stone.copy(alpha = 0.3f), stone, stone.copy(alpha = 0.3f)),
                 )
                 WalkMode.Seek -> Brush.horizontalGradient(
@@ -492,6 +499,6 @@ internal fun ModeButton(
 @StringRes
 private fun modeLabelFor(mode: WalkMode): Int = when (mode) {
     WalkMode.Wander -> R.string.path_mode_wander
-    WalkMode.Together -> R.string.path_mode_together
+    WalkMode.Honor -> R.string.path_mode_together
     WalkMode.Seek -> R.string.path_mode_seek
 }

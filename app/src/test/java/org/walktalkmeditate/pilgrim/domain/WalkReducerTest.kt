@@ -329,15 +329,19 @@ class WalkReducerTest {
             override val type = type
         }
 
-        assertEquals(WalkMode.Wander, walkModeFromEvents(emptyList()))
+        assertEquals(WalkMode.Wander, walkModeFromEvents(emptyList(), honorEnabled = true))
         assertEquals(
             WalkMode.Wander,
-            walkModeFromEvents(listOf(event(WalkEventType.PAUSED), event(WalkEventType.RESUMED))),
+            walkModeFromEvents(
+                listOf(event(WalkEventType.PAUSED), event(WalkEventType.RESUMED)),
+                honorEnabled = true,
+            ),
         )
         assertEquals(
             WalkMode.Seek,
             walkModeFromEvents(
                 listOf(event(WalkEventType.SEEK_MODE), event(WalkEventType.MEDITATION_START)),
+                honorEnabled = true,
             ),
         )
     }
