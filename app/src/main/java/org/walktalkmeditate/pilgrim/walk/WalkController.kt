@@ -60,6 +60,20 @@ interface WalkController {
      *   event at start.
      */
     suspend fun startWalk(intention: String? = null, mode: WalkMode = WalkMode.Wander): Walk
+
+    /**
+     * A start that may carry the Begin-minted walk uuid and an Honor start.
+     * A controller that cannot carry them refuses such a start rather than
+     * dropping them, since a walk row under another uuid would orphan the
+     * staged Way; every other request is the plain start.
+     */
+    suspend fun startWalk(request: WalkStartRequest): Walk {
+        check(request.walkUuid == null && request.honor == null) {
+            "this controller cannot carry a walk uuid or an Honor start"
+        }
+        return startWalk(request.intention, request.mode)
+    }
+
     suspend fun pauseWalk()
     suspend fun resumeWalk()
     suspend fun startMeditation()

@@ -20,6 +20,9 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
+import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -28,9 +31,12 @@ import org.walktalkmeditate.pilgrim.domain.WalkEffect
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkReducer
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.replayWalkEventTotals
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.domain.walkModeFromEvents
+import org.walktalkmeditate.pilgrim.walk.honor.HonorArrivalRecorder
+import org.walktalkmeditate.pilgrim.walk.honor.honorSourceKind
 
 /**
  * Full implementation of [WalkController]: owns the in-memory state
@@ -48,7 +54,7 @@ class WalkControllerImpl @Inject constructor(
     private val clock: Clock,
     private val stepCounter: org.walktalkmeditate.pilgrim.sensor.StepCounter,
     private val releaseFlags: ReleaseFlags,
-) : WalkController {
+) : WalkController, HonorArrivalRecorder {
     private val _state = MutableStateFlow<WalkState>(WalkState.Idle)
     override val state: StateFlow<WalkState> = _state.asStateFlow()
 
@@ -83,27 +89,51 @@ class WalkControllerImpl @Inject constructor(
      * throws otherwise.
      */
     override suspend fun startWalk(intention: String?, mode: WalkMode): Walk =
+        startWalk(WalkStartRequest(intention = intention, mode = mode))
+
+    /**
+     * An Honor start needs the release flag, a Way, and the uuid its Begin
+     * minted; short of any, the walk starts as a wander, as iOS writes no
+     * marker without a Way (`guard mode == .honor, way != nil`). A Way that
+     * doesn't validate or load, or a uuid already in Room (a redelivered
+     * start), refuses the start before any row is written.
+     */
+    override suspend fun startWalk(request: WalkStartRequest): Walk =
         dispatchMutex.withLock {
             val current = _state.value
             check(current is WalkState.Idle || current is WalkState.Finished) {
                 "startWalk requires Idle or Finished state but controller is currently $current"
             }
+            val honor = request.honor?.takeIf { releaseFlags.honor && request.mode == WalkMode.Honor }
+            val mode = if (request.mode == WalkMode.Honor && honor == null) WalkMode.Wander else request.mode
+            val walkUuid = request.walkUuid
+            if (honor != null) {
+                checkNotNull(walkUuid) { "an Honor start carries the walk uuid its Begin minted" }
+                check(repository.canStartHonorWalk(walkUuid, honor.wayId)) {
+                    "Honor start refused: its Way does not validate or load"
+                }
+            }
+            if (walkUuid != null) {
+                check(repository.walkByUuid(walkUuid) == null) { "a walk with this uuid already exists" }
+            }
             val startedAt = clock.now()
             // Same trim/truncate/blank-check as `setIntention` so a future
             // caller (test, restore, deep-link) passing `"   "` or a 200-char
             // string can't land malformed text in Room.
-            val sanitized = intention?.trim()
+            val sanitized = request.intention?.trim()
                 ?.take(WalkController.MAX_INTENTION_CHARS)
                 ?.takeIf { it.isNotBlank() }
-            val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized)
+            val walk = repository.startWalk(startTimestamp = startedAt, intention = sanitized, uuid = walkUuid)
             stepCounter.start()
-            // A seek Start's effect is the SEEK_MODE marker event (U4/U8);
-            // wander's is None. Applied inside the same mutex hold as the
-            // row insert so the marker can never race a concurrent finish.
-            val (next, effect) = WalkReducer.reduce(
+            // A seek Start's effect is the SEEK_MODE marker event (U4/U8),
+            // an honor Start's the HONOR_MODE marker; wander's is None.
+            // Applied inside the same mutex hold as the row insert so the
+            // marker can never race a concurrent finish.
+            val (reduced, effect) = WalkReducer.reduce(
                 current,
                 WalkAction.Start(walkId = walk.id, at = startedAt, mode = mode),
             )
+            var next = reduced
             // Best effort, like PersistLocation: the walk must start even
             // if the marker row fails. Callers (WalkTrackingService) catch
             // only IllegalStateException around startWalk, so an escaping
@@ -111,7 +141,14 @@ class WalkControllerImpl @Inject constructor(
             // the marker a restored walk re-derives as wander — an
             // acceptable degrade for a walk that still records.
             try {
-                applyEffect(effect)
+                if (honor != null && effect is WalkEffect.PersistEvent) {
+                    repository.recordHonorStart(
+                        marker = WalkEvent(walkId = walk.id, timestamp = effect.timestamp, eventType = effect.eventType),
+                        session = honorSessionRow(walk.id, honor),
+                    )
+                } else {
+                    applyEffect(effect)
+                }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {
@@ -120,6 +157,11 @@ class WalkControllerImpl @Inject constructor(
                     "startWalk effect ${effect::class.simpleName} dropped for walk ${walk.id} " +
                         "(mode=$mode): ${t.message}",
                 )
+                // With neither marker nor session row nothing Honor can run,
+                // so the walk is the wander a restore would derive.
+                if (honor != null && reduced is WalkState.Active) {
+                    next = WalkState.Active(reduced.walk.copy(mode = WalkMode.Wander))
+                }
             }
             _state.value = next
             // Log presence, not content — intentions can carry privacy-sensitive
@@ -267,6 +309,67 @@ class WalkControllerImpl @Inject constructor(
         }
     }
 
+    /**
+     * Under the dispatch mutex, so arrival can't interleave with a finish:
+     * a walk this controller no longer holds in progress refuses it.
+     * iOS places the waypoint at the current fix, else the route's last
+     * point, else skips it while the event still lands
+     * (`ActiveWalkViewModel.swift:440-464@7c200bf`).
+     */
+    override suspend fun recordHonorArrival(
+        walkId: Long,
+        arrival: WayArrival,
+        waypointLabel: String,
+        at: LocationPoint?,
+    ): Boolean = dispatchMutex.withLock {
+        val accumulator = activeAccumulatorOrNull(_state.value)
+            ?.takeIf { it.walkId == walkId } ?: return@withLock false
+        try {
+            val place = (at ?: accumulator.lastLocation)?.let { it.latitude to it.longitude }
+                ?: repository.lastLocationSampleFor(walkId)?.let { it.latitude to it.longitude }
+            val now = clock.now()
+            val waypoint = place?.let { (latitude, longitude) ->
+                Waypoint(
+                    walkId = walkId,
+                    timestamp = now,
+                    latitude = latitude,
+                    longitude = longitude,
+                    label = waypointLabel,
+                    icon = HonorPersistence.ARRIVAL_WAYPOINT_ICON,
+                )
+            }
+            val won = repository.recordHonorArrival(
+                walkId = walkId,
+                theirSeconds = arrival.theirSeconds,
+                yourSeconds = arrival.yourSeconds,
+                eventAt = now,
+                waypoint = waypoint,
+            )
+            Log.i(TAG, "recordHonorArrival walk=$walkId won=$won")
+            won
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "recordHonorArrival failed for walk $walkId", t)
+            false
+        }
+    }
+
+    private fun activeAccumulatorOrNull(state: WalkState): WalkAccumulator? = when (state) {
+        is WalkState.Active -> state.walk
+        is WalkState.Paused -> state.walk
+        is WalkState.Meditating -> state.walk
+        else -> null
+    }
+
+    private fun honorSessionRow(walkId: Long, honor: HonorStart) = HonorSessionEntity(
+        walkId = walkId,
+        wayId = honor.wayId,
+        sourceKind = checkNotNull(honorSourceKind(honor.wayId)) { "a validated Way id names its source" },
+        voicesEnabled = honor.settings.voicesEnabled,
+        softTapEnabled = honor.settings.softTapEnabled,
+    )
+
     override suspend fun recoverStaleWalks(): Long? = dispatchMutex.withLock {
         val all = repository.allWalks()
         val unfinished = all.filter { it.endTimestamp == null }
@@ -284,7 +387,12 @@ class WalkControllerImpl @Inject constructor(
         for (walk in unfinished) {
             val lastSample = repository.lastLocationSampleFor(walk.id)
             val endTs = lastSample?.timestamp ?: (walk.startTimestamp + 1L)
-            val finalized = repository.finishWalkAtomic(walkId = walk.id, endTimestamp = endTs)
+            val finalized = repository.finishWalkAtomic(
+                walkId = walk.id,
+                endTimestamp = endTs,
+                finishKind = HonorFinishKind.RECOVERED,
+            )
+            if (finalized) repository.runHonorFinalize(walk.id)
             if (finalized) {
                 Log.i(
                     TAG,
@@ -529,6 +637,7 @@ class WalkControllerImpl @Inject constructor(
                 val finalized = repository.finishWalkAtomic(
                     walkId = effect.walkId,
                     endTimestamp = effect.endTimestamp,
+                    finishKind = HonorFinishKind.CLEAN,
                 )
                 check(finalized) {
                     "Finalize requested for walk ${effect.walkId}, but no row exists in " +
@@ -537,6 +646,9 @@ class WalkControllerImpl @Inject constructor(
                 // iOS parity Walk.steps: capture step-counter diff at finish.
                 val steps = stepCounter.stop()
                 repository.updateSteps(walkId = effect.walkId, steps = steps)
+                // Before the state flips, so the service's SelfStop can't
+                // cancel it; a step that fails is retried at the next launch.
+                repository.runHonorFinalize(effect.walkId)
             }
 
             is WalkEffect.PurgeWalk -> {

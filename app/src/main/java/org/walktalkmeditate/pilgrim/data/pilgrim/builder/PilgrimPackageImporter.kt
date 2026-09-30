@@ -290,6 +290,9 @@ class PilgrimPackageImporter @Inject constructor(
                 continue
             }
             val isReplacement = alreadyPresent && overwriteByUuid
+            // The delete below cascades the walk's live Honor rows, so a
+            // finished walk's pending Honor step writes its link and marker first.
+            if (isReplacement) walkDao.getByUuid(pilgrimWalk.id)?.let { walkRepository.runHonorFinalize(it.id) }
             val didInsert = try {
                 // Each walk is its OWN top-level transaction. Framework SQLite
                 // does NOT turn nested withTransaction blocks into savepoints —
@@ -387,6 +390,12 @@ class PilgrimPackageImporter @Inject constructor(
         if (entries.isEmpty()) return 0
         val toMark = mutableListOf<Pair<String, Double>>()
         val stripped = mutableListOf<String>()
+        // The strip drops the live Honor rows and the staged Way, so a
+        // finished walk's pending Honor step writes its link, promotion,
+        // and marker first. Outside the batch: the step writes files.
+        for (entry in entries) {
+            database.walkDao().getByUuid(entry.id)?.let { walkRepository.runHonorFinalize(it.id) }
+        }
         database.withTransaction {
             val walkDao = database.walkDao()
             for (entry in entries) {

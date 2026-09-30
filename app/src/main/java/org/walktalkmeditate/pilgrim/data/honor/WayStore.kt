@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data.honor
 
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -37,6 +40,13 @@ data class WayArrival(val theirSeconds: Double, val yourSeconds: Double)
 data class StagedWay(val walkUuid: String, val stagedAtMillis: Long)
 
 /**
+ * A staging folder as the launch sweep sees it: [complete] when its
+ * `way.json` landed, else what a write killed midway left behind.
+ * [lastTouchedMillis] is the newest modification inside it.
+ */
+data class StagingFolder(val walkUuid: String, val lastTouchedMillis: Long, val complete: Boolean)
+
+/**
  * The Ways store, a port of iOS `WayStore.swift@7c200bf` rooted in
  * `noBackupFilesDir`, which the platform never backs up or transfers.
  *
@@ -59,13 +69,16 @@ data class StagedWay(val walkUuid: String, val stagedAtMillis: Long)
  * callers hop to an IO dispatcher. Building the store touches no file
  * (the base is resolved on first use), so a Hilt singleton costs nothing
  * on the thread that happens to construct it. Both processes use the
- * store, so every write lands through a unique temp file, fsync, and an
- * atomic rename, and readers only ever open the final names. Nothing here
- * logs: ids and titles are shared content.
+ * store, so every write lands through a unique temp file, fsync, an
+ * atomic rename, and an fsync of the folder that holds it (so the rename
+ * itself survives a power loss: the Honor marker written after a link
+ * promises the link is there), and readers only ever open the final
+ * names. Nothing here logs: ids and titles are shared content.
  */
 class WayStore(
     resolveBaseDirectory: () -> File,
     private val clock: Clock = Clock.System,
+    private val syncDirectory: (File) -> Boolean = ::fsyncDirectoryBestEffort,
 ) {
 
     val baseDirectory: File by lazy(resolveBaseDirectory)
@@ -239,6 +252,38 @@ class WayStore(
             if (file.isFile) StagedWay(uuid, file.lastModified()) else null
         }
 
+    /** Every staging folder, finished writing or not: what [listStaged] can't see is swept too. */
+    fun listStagingFolders(): List<StagingFolder> =
+        stagingRoot.list().orEmpty().filter(::isValidWalkUuid).mapNotNull { uuid ->
+            val dir = stagingDirectory(uuid)
+            if (!dir.isDirectory) return@mapNotNull null
+            val newest = dir.listFiles().orEmpty().maxOfOrNull { it.lastModified() } ?: 0L
+            StagingFolder(
+                walkUuid = uuid,
+                lastTouchedMillis = maxOf(dir.lastModified(), newest),
+                complete = File(dir, WAY_FILE).isFile,
+            )
+        }
+
+    /**
+     * Deletes the temp files a write killed between its create and its
+     * rename left in `links/` and in each Way's folder, once older than
+     * [olderThanMillis]: a younger one may be another process's write in
+     * flight. Staging folders go whole, through [discardStaged].
+     *
+     * @return how many were deleted.
+     */
+    fun sweepTempFiles(olderThanMillis: Long): Int {
+        val folders = listOf(linksDirectory) +
+            baseDirectory.list().orEmpty().filter(::isValidId).map { File(baseDirectory, it) }
+        return folders.sumOf { folder ->
+            folder.listFiles().orEmpty().count { file ->
+                file.isFile && file.name.startsWith(".") && file.name.endsWith(TEMP_SUFFIX) &&
+                    file.lastModified() < olderThanMillis && file.delete()
+            }
+        }
+    }
+
     private val linksDirectory: File get() = File(baseDirectory, LINKS_DIRECTORY)
 
     private val stagingRoot: File get() = File(baseDirectory, STAGING_DIRECTORY)
@@ -316,6 +361,7 @@ class WayStore(
             temp.delete()
             throw e
         }
+        syncDirectory(target.parentFile ?: return)
     }
 
     @Serializable
@@ -357,4 +403,27 @@ class WayStore(
         private const val INVALID_WAY_ID = "not a valid Way id"
         private const val INVALID_WALK_UUID = "not a valid walk uuid"
     }
+}
+
+/**
+ * fsyncs a folder so a rename inside it is durable. The JVM's `FileChannel`
+ * can't open a folder on Android, so this goes through `android.system.Os`.
+ * Best effort: a filesystem that refuses folder fsync, or a JVM test
+ * runtime with no working `Os`, costs only the durability the write
+ * already had, so the failure is reported as false and not thrown.
+ */
+internal fun fsyncDirectoryBestEffort(dir: File): Boolean = try {
+    val fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
+    try {
+        Os.fsync(fd)
+    } finally {
+        Os.close(fd)
+    }
+    true
+} catch (e: ErrnoException) {
+    false
+} catch (e: RuntimeException) {
+    false
+} catch (e: LinkageError) {
+    false
 }

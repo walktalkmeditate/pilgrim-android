@@ -57,17 +57,21 @@ object WalkReducer {
      * effect channel; restore paths never re-emit it because restore
      * writes state directly without dispatching Start. The event's
      * timestamp is the summary's "seeded at" provenance source (U4).
+     *
+     * An honor walk writes its one HONOR_MODE marker the same way, stamped
+     * with the start instant (iOS `writeHonorMarkerEventIfNeeded`,
+     * `ActiveWalkViewModel+Honor.swift:42-45@7c200bf`, right after the
+     * status flip stamps the start date). The controller only reduces an
+     * Honor start when the release flag is on and a Way came with it.
      */
-    private fun startEffect(action: WalkAction.Start): WalkEffect =
-        if (action.mode == WalkMode.Seek) {
-            WalkEffect.PersistEvent(
-                walkId = action.walkId,
-                eventType = WalkEventType.SEEK_MODE,
-                timestamp = action.at,
-            )
-        } else {
-            WalkEffect.None
+    private fun startEffect(action: WalkAction.Start): WalkEffect {
+        val marker = when (action.mode) {
+            WalkMode.Seek -> WalkEventType.SEEK_MODE
+            WalkMode.Honor -> WalkEventType.HONOR_MODE
+            WalkMode.Wander -> return WalkEffect.None
         }
+        return WalkEffect.PersistEvent(walkId = action.walkId, eventType = marker, timestamp = action.at)
+    }
 
     private fun reduceActive(
         state: WalkState.Active,

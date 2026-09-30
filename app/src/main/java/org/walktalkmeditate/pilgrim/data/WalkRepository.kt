@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.data
 
+import android.util.Log
 import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -24,9 +26,13 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizeOutcome
+import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizer
 
 @Singleton
 open class WalkRepository @Inject constructor(
@@ -54,6 +60,8 @@ open class WalkRepository @Inject constructor(
      * `null` means "no staged Way to discard", never reached in production.
      */
     private val wayStore: WayStore? = null,
+    /** Nullable + defaulted likewise: `null` means "no Honor finalize step". */
+    private val honorFinalizer: HonorFinalizer? = null,
 ) {
     fun observeAllWalks(): Flow<List<Walk>> = walkDao.observeAll()
 
@@ -127,8 +135,15 @@ open class WalkRepository @Inject constructor(
 
     open suspend fun getWalk(id: Long): Walk? = walkDao.getById(id)
 
-    suspend fun startWalk(startTimestamp: Long, intention: String? = null): Walk {
-        val draft = Walk(startTimestamp = startTimestamp, intention = intention)
+    suspend fun walkByUuid(uuid: String): Walk? = walkDao.getByUuid(uuid)
+
+    /** [uuid] is the Honor Begin use case's minted uuid; null mints one here. */
+    suspend fun startWalk(startTimestamp: Long, intention: String? = null, uuid: String? = null): Walk {
+        val draft = if (uuid == null) {
+            Walk(startTimestamp = startTimestamp, intention = intention)
+        } else {
+            Walk(uuid = uuid, startTimestamp = startTimestamp, intention = intention)
+        }
         val id = walkDao.insert(draft)
         return draft.copy(id = id)
     }
@@ -143,13 +158,91 @@ open class WalkRepository @Inject constructor(
      * if the walk row is gone by the time finalize runs (e.g., user
      * deleted the walk from another surface mid-finish). Prefer this over
      * the read+update two-call pattern from [getWalk] + [finishWalk].
+     *
+     * The same transaction records how a walk with Honor ended, so the
+     * Honor step ([runHonorFinalize]) knows whether to write the arrival
+     * numbers. Only the tracker's FinalizeWalk effect is a clean finish;
+     * every other caller finalizes a walk its process lost, hence the
+     * default. The first kind recorded wins.
      */
-    suspend fun finishWalkAtomic(walkId: Long, endTimestamp: Long): Boolean =
+    suspend fun finishWalkAtomic(
+        walkId: Long,
+        endTimestamp: Long,
+        finishKind: HonorFinishKind = HonorFinishKind.RECOVERED,
+    ): Boolean =
         database.withTransaction {
             val walk = walkDao.getById(walkId) ?: return@withTransaction false
             walkDao.update(walk.copy(endTimestamp = endTimestamp))
+            database.honorDao().recordFinishKind(walkId, finishKind)
             true
         }
+
+    /**
+     * The Honor step after [finishWalkAtomic]: link, promotion, marker, and
+     * the live rows last. Never throws but for cancellation; a step that
+     * fails leaves the live rows for [HonorFinalizer.runAtLaunch] to retry.
+     * Also the guard the archive strip and the tended replace run first,
+     * since both drop the live rows a pending step still needs.
+     */
+    suspend fun runHonorFinalize(walkId: Long): HonorFinalizeOutcome {
+        val finalizer = honorFinalizer ?: return HonorFinalizeOutcome.DONE
+        return try {
+            finalizer.finalize(walkId)
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (e: Exception) {
+            Log.w(TAG, "Honor finalize for walk $walkId deferred: ${e::class.simpleName}")
+            HonorFinalizeOutcome.PENDING
+        }
+    }
+
+    /**
+     * Whether an Honor start for [walkUuid] can follow [wayId]: the id passes
+     * the store's allow-list, and the Way loads, staged under the walk's uuid
+     * or listed. The `:tracker` service accepts nothing else.
+     */
+    suspend fun canStartHonorWalk(walkUuid: String, wayId: String): Boolean {
+        val store = wayStore ?: return false
+        if (!WayStore.isValidId(wayId) || !WayStore.isValidWalkUuid(walkUuid)) return false
+        return withContext(Dispatchers.IO) {
+            store.staged(walkUuid)?.id == wayId || store.load(wayId) != null
+        }
+    }
+
+    /** The HONOR_MODE marker and the session row land together or not at all. */
+    suspend fun recordHonorStart(marker: WalkEvent, session: HonorSessionEntity) {
+        database.withTransaction {
+            walkEventDao.insert(marker)
+            database.honorDao().insertSession(session)
+        }
+    }
+
+    /**
+     * Arrival's compare-and-set: on a walk still unfinished, flips the
+     * session's phase once and keeps the arrival numbers for the link, and
+     * only then writes HONOR_ARRIVAL and the reserved waypoint (iOS
+     * `recordHonorArrival`, `ActiveWalkViewModel+Honor.swift:247-252@7c200bf`:
+     * event, then waypoint). A [waypoint] is null when no fix exists yet;
+     * the event still lands, as on iOS.
+     *
+     * @return true only when this call flipped the phase.
+     */
+    suspend fun recordHonorArrival(
+        walkId: Long,
+        theirSeconds: Double,
+        yourSeconds: Double,
+        eventAt: Long,
+        waypoint: Waypoint?,
+    ): Boolean = database.withTransaction {
+        val walk = walkDao.getById(walkId)
+        if (walk == null || walk.endTimestamp != null) return@withTransaction false
+        if (database.honorDao().recordArrival(walkId, theirSeconds, yourSeconds) != 1) {
+            return@withTransaction false
+        }
+        walkEventDao.insert(WalkEvent(walkId = walkId, timestamp = eventAt, eventType = WalkEventType.HONOR_ARRIVAL))
+        if (waypoint != null) waypointDao.insert(waypoint)
+        true
+    }
 
     suspend fun updateWalk(walk: Walk) {
         walkDao.update(walk)
@@ -553,6 +646,10 @@ open class WalkRepository @Inject constructor(
      */
     suspend fun pendingAnalysisPhotosFor(walkId: Long): List<WalkPhoto> =
         walkPhotoDao.getPendingAnalysisForWalk(walkId)
+
+    private companion object {
+        const val TAG = "WalkRepository"
+    }
 }
 
 /**

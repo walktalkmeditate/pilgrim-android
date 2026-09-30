@@ -91,6 +91,24 @@ interface HonorDao {
     @Query("UPDATE honor_sessions SET gate_generation = gate_generation + 1 WHERE walk_id = :walkId")
     suspend fun bumpGateGeneration(walkId: Long): Int
 
+    /**
+     * 1 while [walkId] still has a live session on an unfinished walk, else 0.
+     * Every live-row write checks it inside its own transaction, so nothing
+     * lands after `finishWalkAtomic` or on a walk deleted a moment before.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM honor_sessions s INNER JOIN walks w ON w.id = s.walk_id " +
+            "WHERE s.walk_id = :walkId AND w.end_timestamp IS NULL",
+    )
+    suspend fun countLiveSessionOnUnfinishedWalk(walkId: Long): Int
+
+    /** Walks that finished with their live rows still in place: an Honor step still to run. */
+    @Query(
+        "SELECT s.walk_id FROM honor_sessions s INNER JOIN walks w ON w.id = s.walk_id " +
+            "WHERE w.end_timestamp IS NOT NULL ORDER BY s.walk_id",
+    )
+    suspend fun finishedWalkIdsWithLiveSessions(): List<Long>
+
     @Upsert
     suspend fun upsertMomentState(state: HonorMomentStateEntity)
 
@@ -103,17 +121,25 @@ interface HonorDao {
     /**
      * A card's flags only ever turn on, so each setter writes its own column:
      * a whole-row write from a stale copy could clear the other flag.
+     *
+     * @return false, writing nothing, once the walk is finished or gone: a
+     *   late tap must neither fail on the vanished walk's foreign key nor
+     *   leave a live row behind the finalize step.
      */
     @Transaction
-    suspend fun markCardTouched(walkId: Long, momentId: String) {
+    suspend fun markCardTouched(walkId: Long, momentId: String): Boolean {
+        if (countLiveSessionOnUnfinishedWalk(walkId) == 0) return false
         insertCardStateIfAbsent(HonorCardStateEntity(walkId = walkId, momentId = momentId))
         setCardTouched(walkId, momentId)
+        return true
     }
 
     @Transaction
-    suspend fun markCardDismissed(walkId: Long, momentId: String) {
+    suspend fun markCardDismissed(walkId: Long, momentId: String): Boolean {
+        if (countLiveSessionOnUnfinishedWalk(walkId) == 0) return false
         insertCardStateIfAbsent(HonorCardStateEntity(walkId = walkId, momentId = momentId))
         setCardDismissed(walkId, momentId)
+        return true
     }
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

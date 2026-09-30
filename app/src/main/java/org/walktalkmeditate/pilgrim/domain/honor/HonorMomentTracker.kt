@@ -38,6 +38,9 @@ class HonorMomentTracker(
         val isClosed: Boolean get() = paused || meditating || recording || externalAudio
     }
 
+    /** What a revival needs back: the moments reached, and the voices waiting, in queue order. */
+    data class Snapshot(val reached: Set<String>, val queue: List<String>)
+
     /**
      * By frac, ties by id, with Swift's `==` and `<` on the frac, so -0.0
      * ties 0.0 (`HonorMomentTracker.swift:42@7c200bf`).
@@ -113,6 +116,23 @@ class HonorMomentTracker(
         playing = null
         isVoicePaused = false
         return startNextIfPossible(gates)
+    }
+
+    fun snapshot(): Snapshot = Snapshot(reached = reached.toSet(), queue = queue.map { it.id })
+
+    /**
+     * Restores [snapshot] with nothing playing: a voice that was playing when
+     * its process died is over, never replayed (plan U17). Ids this Way does
+     * not carry are dropped.
+     */
+    fun restore(snapshot: Snapshot) {
+        val byId = moments.associateBy { it.id }
+        reached.clear()
+        snapshot.reached.filterTo(reached) { it in byId }
+        queue.clear()
+        snapshot.queue.mapNotNullTo(queue) { byId[it] }
+        playing = null
+        isVoicePaused = false
     }
 
     private fun startNextIfPossible(gates: Gates): List<Action> {

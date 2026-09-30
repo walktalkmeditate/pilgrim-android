@@ -500,6 +500,39 @@ class WayStoreTest {
         assertEquals(File(context.noBackupFilesDir, "Ways"), provided.baseDirectory)
     }
 
+    // ---- durability ----
+
+    @Test
+    fun `every committed write fsyncs the folder that holds it, so the rename survives a power loss`() {
+        val synced = mutableListOf<File>()
+        val syncing = WayStore({ dir }, Clock { clockMillis }, syncDirectory = { synced += it; true })
+
+        syncing.link(WALK, OWN_ID, WayArrival(1.0, 2.0))
+        syncing.save(way(OWN_ID))
+
+        assertEquals(File(dir, "links"), synced.first())
+        assertTrue(File(dir, OWN_ID) in synced)
+    }
+
+    @Test
+    fun `the platform folder fsync is best effort and never throws`() {
+        fsyncDirectoryBestEffort(folder.root)
+        fsyncDirectoryBestEffort(File(folder.root, "missing"))
+    }
+
+    @Test
+    fun `staging folders are listed whether or not their Way finished writing`() {
+        store.stage(WALK, way(OWN_ID))
+        val half = File(dir, "staging/0e8d6f8a-0000-4000-8000-000000000000").apply { mkdirs() }
+        File(half, ".way.json.tmp").writeText("{")
+
+        val folders = store.listStagingFolders().associateBy { it.walkUuid }
+
+        assertTrue(folders.getValue(WALK).complete)
+        assertFalse(folders.getValue(half.name).complete)
+        assertEquals(listOf(WALK), store.listStaged().map { it.walkUuid })
+    }
+
     @Test
     fun `building the store touches no file`() {
         var resolved = false

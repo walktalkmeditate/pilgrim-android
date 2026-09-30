@@ -14,6 +14,7 @@ import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -39,7 +40,11 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
+import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
+import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkState
+import org.walktalkmeditate.pilgrim.data.honor.WayLink
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity
@@ -57,8 +62,10 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCaching
 import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
+import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.ui.settings.data.WalksSource
+import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizer
 
 /**
  * AF28 (iOS PR #45) + the import data-loss fix.
@@ -474,7 +481,9 @@ class PilgrimPackageImporterTest {
         val store = WayStore({ File(tempDir, "Ways") })
         val honor = HonorWalkState(db, store)
         val uuid = UUID.randomUUID().toString()
-        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        // Still on, so no pending Honor step runs ahead of the batch and
+        // the live rows are the strip's to roll back.
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L))
         honor.seed(walkId, uuid)
         val registry = FakeArchivedWalkRegistry()
         val failingCache = object : WalkMetricsCaching {
@@ -490,6 +499,39 @@ class PilgrimPackageImporterTest {
 
         honor.assertLive(walkId, uuid)
         assertFalse("nothing is marked archived after a rollback", registry.isArchived(uuid))
+    }
+
+    @Test
+    fun `a pending clean Honor step runs before the strip, so its numbers reach the link and its Way is listed`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val honor = HonorWalkState(db, store)
+        val uuid = UUID.randomUUID().toString()
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        db.honorDao().insertSession(
+            HonorSessionEntity(
+                walkId = walkId,
+                wayId = HonorWalkState.WAY_ID,
+                sourceKind = HonorSourceKind.OWN_WALK,
+                voicesEnabled = true,
+                softTapEnabled = false,
+                arrivalTheirSeconds = 2_400.0,
+                arrivalYourSeconds = 2_100.0,
+                finishKind = HonorFinishKind.CLEAN,
+            ),
+        )
+        store.stage(uuid, honor.way())
+        val repository = repository(store, HonorFinalizer(db, store, Clock { 5_000L }, Dispatchers.IO))
+        val importer = PilgrimPackageImporter(
+            db, json, context, FakeArchivedWalkRegistry(), threadsStore, threadsPreferences,
+            WalkMetricsCache(repository, db.walkDao(), db.walkEventDao()), repository,
+        )
+
+        importer.import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+
+        assertEquals(WayLink(HonorWalkState.WAY_ID, 2_400.0, 2_100.0), store.wayLink(uuid))
+        assertNotNull(store.load(HonorWalkState.WAY_ID))
+        assertEquals(HonorFinishKind.CLEAN, db.honorDao().getMarker(uuid)!!.finishKind)
+        assertNull(db.honorDao().getSession(walkId))
     }
 
     @Test
@@ -666,7 +708,7 @@ class PilgrimPackageImporterTest {
         )
     }
 
-    private fun repository(wayStore: WayStore? = null) = WalkRepository(
+    private fun repository(wayStore: WayStore? = null, honorFinalizer: HonorFinalizer? = null) = WalkRepository(
         database = db,
         walkDao = db.walkDao(),
         routeDao = db.routeDataSampleDao(),
@@ -677,6 +719,7 @@ class PilgrimPackageImporterTest {
         voiceRecordingDao = db.voiceRecordingDao(),
         walkPhotoDao = db.walkPhotoDao(),
         wayStore = wayStore,
+        honorFinalizer = honorFinalizer,
     )
 
     private fun goodWalk(
