@@ -6,18 +6,17 @@ import kotlin.math.min
 import org.walktalkmeditate.pilgrim.domain.ArrivalDebounce
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
-import org.walktalkmeditate.pilgrim.domain.haversineMeters
+import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 
 /**
  * Metres between a fix and a point, at the four call sites iOS measures
  * with `CLLocation.distance(from:)`: the moment radii, the two voice drops,
- * and arrival (parity spec B §16.1, D1–D4). Apple does not document that
- * formula, so U16 pins the Android one against the golden corpus.
+ * and arrival (parity spec B §16.1, D1–D4).
  */
 typealias HonorDistance = (from: WayCoordinate, to: WayCoordinate) -> Double
 
-/** Haversine at 6,371 km: Android Seek's stand-in for the same iOS call. */
-val HAVERSINE_HONOR_DISTANCE: HonorDistance = { from, to -> haversineMeters(from.lat, from.lon, to.lat, to.lon) }
+/** `CLLocation.distance(from:)` as the golden traces pin it: see [wgs84MidLatitudeMeters]. */
+val WGS84_HONOR_DISTANCE: HonorDistance = { from, to -> wgs84MidLatitudeMeters(from.lat, from.lon, to.lat, to.lon) }
 
 enum class HonorPhase { WALKING, ARRIVED }
 
@@ -57,7 +56,7 @@ class HonorEngine(
     val softTapEnabled: Boolean,
     voicesEnabled: Boolean,
     private val clock: Clock,
-    private val distance: HonorDistance = HAVERSINE_HONOR_DISTANCE,
+    private val distance: HonorDistance = WGS84_HONOR_DISTANCE,
 ) {
     val geometry = WayGeometry(way.route)
 
