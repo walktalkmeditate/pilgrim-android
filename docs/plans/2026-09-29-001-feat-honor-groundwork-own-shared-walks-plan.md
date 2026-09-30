@@ -13,7 +13,7 @@ origin: docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md
 >
 > **Authority order:** the `/ios-parity port` specs produced in U2, U11, and U26 (Swift quotes pinned at `7c200bf`) outrank this plan wherever they disagree; this plan outranks memory. Requirements: `docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md` (R1–R25, AE1–AE14, post ce-doc-review round 1).
 
-**Goal:** Stage 21-0 ships as Android 1.5.1 (groundwork every walk benefits from); Stage 21-1 lands Honor with your own walks and shared walks on main behind the release flag, proven on the OnePlus 13 in a pocket, with Seek moved onto the same survivable mechanism.
+**Goal:** Stage 21-0 merges to main first (groundwork every walk benefits from, device-checked before Honor builds on it); Stage 21-1 lands Honor with your own walks and shared walks on main behind the release flag, proven on the OnePlus 13 in a pocket, with Seek moved onto the same survivable mechanism. Nothing ships before 2.0.0 (owner decision, 2026-09-29): Stage 21-0 reaches users inside it.
 
 **Architecture:** Honor runs as a session inside the walk's `:tracker` foreground-service process, built like `BackgroundWhisperAutoPlayer`: the Way id and settings arrive on the start intent and are persisted in new live-session Room tables; a pure `HonorEngine` reads the walk's accuracy-gated location stream before the reducer; one in-process arbiter plays the Way voice, holds whisper autoplay, and ducks the soundscape in iOS's order, honoring gates the UI publishes for voice-guide prompts and recordings (the guide stays in the UI); the UI draws the ghost line, pins, and cards from Room; durable Way data lives in files under `noBackupFilesDir`.
 
@@ -24,7 +24,7 @@ origin: docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md
 - Parity pin: `pilgrim-ios` @ `7c200bf` (the v2.0.0 tag). Read iOS with `git -C ../pilgrim-ios show v2.0.0:<path>`. Shipped Swift outranks iOS design docs (R4); iOS defects are matched as shipped and filed upstream (R5).
 - Path aliases used below: `P/` = `app/src/main/java/org/walktalkmeditate/pilgrim/`, `T/` = `app/src/test/java/org/walktalkmeditate/pilgrim/`, `TD/` = `app/src/testDebug/java/org/walktalkmeditate/pilgrim/` (tests of debug-only code, compiled only for the debug variant), `D/` = `app/src/debug/`.
 - SPDX header only (`// SPDX-License-Identifier: GPL-3.0-or-later`); no OutRun references anywhere; package root `org.walktalkmeditate.pilgrim`.
-- **Release flag (U12):** every Honor entry point and surface, every flag-dark change to shipped behavior (Seek into `:tracker`; the audio gates and arbiter that change whisper timing), link routing, and the install-referrer read check the one flag. The App Links filter exists only in `D/AndroidManifest.xml` until the 2.0.0 flip. A flag-off release build behaves exactly like 1.5.1.
+- **Release flag (U12):** every Honor entry point and surface, every flag-dark change to shipped behavior (Seek into `:tracker`; the audio gates and arbiter that change whisper timing), link routing, and the install-referrer read check the one flag. The App Links filter exists only in `D/AndroidManifest.xml` until the 2.0.0 flip. A flag-off release build behaves exactly like 1.5.0 plus Stage 21-0.
 - **`:tracker` rules:** never read UI-process DataStore there for anything the user can change (reads freeze in a cached process); UI→tracker only through `WalkActionPublisher` intents (fire-and-forget, with a stop-if-no-pipeline guard); Honor command and gate intents are never redelivered after a kill; a redelivered Honor start is resolved by the walk uuid its Begin minted — adopted while that walk is unfinished (the OS's redelivery is the main revival after an OEM kill), stopped once the walk or its Honor marker shows it finished, and inserted only when the uuid is new; tracker→UI only through Room; each row type has exactly one writer process (the Honor finalize step's cleanup is the one named exception); tracker DAOs use targeted UPDATEs or upserts, never `REPLACE` (it deletes and cascades); persist before ritual (rows before sounds or haptics); treat a cached `Finished` snapshot as stale per the three existing start gates; collectors run on an injected dispatcher as children of the service scope and are `cancelAndJoin`ed on teardown; new service dependencies are injected as `Provider<T>`; no Mapbox and no WorkManager enqueues in `:tracker`.
 - **Audio:** one focus request per consumer (existing players keep theirs; the arbiter decides who may start), `USAGE_MEDIA`, manual ducks (the OS does not auto-duck our ExoPlayer setup), a manual BECOMING_NOISY receiver when `handleAudioFocus=false`; haptics fire only after playback has actually started.
 - **Map:** runtime layers install idempotently relative to the named route layers, reinstall after the annotation managers on every style reload, and self-heal via a `layerExists` probe; annotation z-order is manager creation order.
@@ -39,7 +39,7 @@ origin: docs/brainstorms/2026-09-28-ios-v200-parity-retarget-requirements.md
 
 ## Summary
 
-The plan builds Honor the way the whisper auto-player is built — a session inside the walk's tracking process that takes its Way and settings from the start intent, writes its state to Room for the UI to draw, and plays voices through one in-process arbiter that honors the UI's guide and recording gates — and proves it on the OnePlus with a debug replayer before the UI, shared walks, and the Seek move build on it. Stage 21-0 (U1–U10) ships first as 1.5.1; Stage 21-1 (U11–U29) lands on main behind the release flag. Stages 21-2, 21-3, and the gate/release get their own plans.
+The plan builds Honor the way the whisper auto-player is built — a session inside the walk's tracking process that takes its Way and settings from the start intent, writes its state to Room for the UI to draw, and plays voices through one in-process arbiter that honors the UI's guide and recording gates — and proves it on the OnePlus with a debug replayer before the UI, shared walks, and the Seek move build on it. Stage 21-0 (U1–U10) merges first, with no release of its own; Stage 21-1 (U11–U29) lands on main behind the release flag. Stages 21-2, 21-3, and the gate/release get their own plans, and everything ships together as 2.0.0.
 
 ---
 
@@ -71,7 +71,7 @@ Origin R1–R25 and AE1–AE14 are the contract. This plan covers:
 | U7 | R7 (About credits), R9 (#221, #225) |
 | U8 | R7 (audits, CombineExt class) |
 | U9 | R18 (worker verification file, interim copy) |
-| U10 | R21 (Stage 21-0 release), R23 |
+| U10 | R21 (Stage 21-0 device pass), R23 |
 | U11 | R22 (own-walk spec), R4, R5, R6 |
 | U12 | R21 (flag, release-variant CI) |
 | U13–U16 | R10, R12, R22, AE2 |
@@ -99,7 +99,7 @@ Deferred to the Stage 21-2, 21-3, and gate/release plans: R13, R14, R15, the gat
 
 - **Stage 21-2 plan** (catalog, packages, ledger, walking a stage): after its port spec; U17's finalize step is where the ledger will hook.
 - **Stage 21-3 plan** (offline tiles): after its port spec; U3's SDK line and U14's storage directory already fit it.
-- **Gate and 2.0.0 release plan:** the R2 re-diff at gate start, the R24 matrix, the flag flip (release field on, App Links filter moved to the main manifest), restoring the worker's honor-page copy, deleting the UI-process Seek path, the install-referrer device check on the first flag-on Play build (the release candidate), the Play listing, and Data Safety, listing every new-to-Android data flow this plan adds: the install referrer (a new no-tap import path), shared-walk import (U26–U29, the first time Android stores another person's route, photos, and voice recordings), and each recording's coordinate in outbound shares (U5, which ships in 1.5.1, so U10 re-checks the listing first).
+- **Gate and 2.0.0 release plan:** the R2 re-diff at gate start, the R24 matrix, the flag flip (release field on, App Links filter moved to the main manifest), restoring the worker's honor-page copy, deleting the UI-process Seek path, the install-referrer device check on the first flag-on Play build (the release candidate), the Play listing, and Data Safety, listing every new-to-Android data flow this plan adds: the install referrer (a new no-tap import path), shared-walk import (U26–U29, the first time Android stores another person's route, photos, and voice recordings), and each recording's coordinate in outbound shares (U5). It also owns an on-device upgrade from a Play-installed 1.5.0 to the release candidate (2.0.0 carries migrations 8→9→10→11 at once), and the what's new, which carries Stage 21-0's user-facing changes too: sittings counted again (totals may grow), long-sitting walks sharing, whole-route framing on small screens, and the returned-to-the-trail block with Share again.
 - **`activity_intervals` after 2.0.0:** once U6 lands, nothing reads it for sittings; it still carries the non-meditation activities iOS packages hold through import and export, so retiring it needs another home for those.
 - **A multi-process DataStore migration** for the preference files both processes read — the lasting fix for frozen `:tracker` preferences.
 - **Android issues to file:** the meditation screen's soundscape mute targets the UI process, where the soundscape never plays (`MeditationOptionsViewModel`); units preferences freeze in a cached `:tracker`; existing command intents such as mark-waypoint replay after a `:tracker` kill; UI recovery plus a redelivered start can create a phantom walk; Android lacks iOS's live voice-guide volume and duck-level preferences.
@@ -170,7 +170,7 @@ Deferred to the Stage 21-2, 21-3, and gate/release plans: R13, R14, R15, the gat
 - **Gates via Binder death links from single observers:** the UI publishes prompt state from the guide's player and recording state from one observer of the recorder's recording flag (walk-end auto-stops included), each with a Binder token and a sequence id; `:tracker` links to its death; "ended", a dead Binder, a `RemoteException` on link, or a stale sequence id clears the gate. Gates are state, so revival cannot rebuild them from Room: each session start and revival bumps a gate generation in the session row, the UI publisher re-sends its current gates with fresh Binders whenever the generation changes, and the arbiter treats both gates as held until that refresh arrives or a short fixed wait passes (a dead UI sends nothing). *Rejected:* bounded timeouts — a long take would unmute voices mid-recording.
 - **Flag-dark by construction:** Seek's `:tracker` placement and the gates' effect on whispers run only with the flag on; placement decisions are pure functions tested with both flag values; new service dependencies are `Provider<T>`, never resolved with the flag off; the mode derivation returns Honor only with the flag on, so flag-off builds render imported honor walks as plain walks; a release-variant CI job asserts the merged manifest and runs the release unit tests.
 - **Own-walk Way staged per honor walk by a Begin use case (U17):** the UI builds the Way and stages it under the walk uuid Begin mints; a clean finalize promotes it by writing the listed Way only if absent (never renaming folders); a discard removes only the staging; recovery leaves it, and a launch sweep removes orphaned staging past a grace period, never on the 5 s start timeout — so the one copy an upstream fix to iOS's recovery could re-link survives recovery. *Rejected:* rebuilding from Room at every start — the source walk can change or be deleted mid-walk.
-- **Migrations:** v9 is U6's #223 repair (ships in 1.5.1), v10 the Honor tables (U14), v11 the Seek tables (U25); each is frozen once merged. U14's migration merges only after 1.5.1's soak ends (U10). From then on, any 1.5.x hotfix cut from main ships v10 (and v11 after U25) to every user, because a migration cannot hide behind the flag, so such a hotfix gets an on-device upgrade from the prior release before dispatch. *Rejected:* one squashed Honor-plus-Seek migration — merged schemas reach the owner's debug install during the device milestones, and editing one after it has opened forces a wipe.
+- **Migrations:** v9 is U6's #223 repair, v10 the Honor tables (U14), v11 the Seek tables (U25); each is frozen once merged, and all three reach users together in 2.0.0. A migration cannot hide behind the flag, so nothing is released from main before 2.0.0: an emergency fix to 1.5.0 is cut from the `v1.5.0` tag. *Rejected:* one squashed Honor-plus-Seek migration — merged schemas reach the owner's debug install during the device milestones, and editing one after it has opened forces a wipe.
 - **Release flag = BuildConfig per build type plus a debug-only manifest filter:** runtime gates read one injected accessor; the App Links filter lives in `D/AndroidManifest.xml` until the flip, which manifest merge adds to `MainActivity` cleanly.
 - **Mapbox `android-ndk27:11.23.1`:** the last line before 11.24's one-tile-store-per-process change, carrying every offline fix Stage 21-3 needs, both ANR fixes, annotation leak fixes, and 16 KB page alignment (Play blocks non-compliant updates from 2027-02-01). Fallback: 11.21.10.
 - **Camera fits:** one pure decision helper; the async `cameraForCoordinates` form that waits for the map size; record a fit only on a non-empty result.
@@ -286,7 +286,7 @@ Where each piece lives:
 
 ## Implementation Units
 
-### Phase A — Stage 21-0: groundwork (ships as 1.5.1)
+### Phase A — Stage 21-0: groundwork (merges first; ships in 2.0.0)
 
 ### U1. Anchor re-pin, versioning rule, fold-in window
 
@@ -418,7 +418,7 @@ Where each piece lives:
 - Error path: the encoded JSON never contains a literal null coordinate.
 
 **Verification:**
-- Tests green; optionally, an Android 1.5.1 share honored on an iOS 2.0.0 phone places voices at their spots (U10).
+- Tests green; optionally, a share from a Stage 21-0 build honored on an iOS 2.0.0 phone places voices at their spots (U10).
 
 ### U6. Honor events in `.pilgrim` and the #223 single source
 
@@ -532,27 +532,26 @@ Where each piece lives:
 **Verification:**
 - Live responses and Google's Digital Asset Links check return both statements, and the release statement matches the Play-installed certificate.
 
-### U10. Stage 21-0 release: device pass and 1.5.1
+### U10. Stage 21-0 device pass
 
-**Goal:** 1.5.1 reaches Play carrying Stage 21-0, with every map screen checked on the new SDK first.
+**Goal:** Every map screen and every Stage 21-0 change is checked on the new SDK before Phase B builds on it. There is no 1.5.1: Stage 21-0 reaches users inside 2.0.0 (owner decision, 2026-09-29).
 
 **Requirements:** R21, R23.
 
-**Dependencies:** U3–U8 merged; U9 deployed.
+**Dependencies:** U3–U8; U9 deployed.
 
 **Files:**
 - Create: `docs/qa/2026-…-stage21-0-map-pass.md`.
-- Create: `app/src/main/play/release-notes/en-US/whatsnew.txt` (fresh copy).
 
 **Approach:**
-- OnePlus 13 pass: active-walk follow and gestures (#219), the summary reveal on a short screen, seek fog and crescent, whisper and cairn pins, lock/unlock and a theme flip, a `.pilgrim` export with a sitting, seal and totals showing sittings after the repair migration, About credits.
-- Re-check the Data Safety form for U5's recording coordinates, then dispatch `production.yml` with `version=1.5.1`; Stage 21-1 merges to main only after this release.
-- 1.5.1 ships U3 with U4–U8 and the forward-only v9 repair, so no single change can be rolled back alone. Its soak ends at full rollout with no open crash cluster; U14's migration waits for that, so a hotfix during the soak (a Mapbox fallback included) ships without the Honor tables.
+- OnePlus 13 pass on a debug build: active-walk follow and gestures (#219), the summary reveal on a short screen, seek fog and crescent, whisper and cairn pins, lock/unlock and a theme flip, a `.pilgrim` export with a sitting, seal and totals showing sittings after the repair migration (upgrading the owner's schema 8 debug install), About credits.
+- Phase B merges to main only after the pass is recorded.
+- What a 1.5.1 would have carried moves to the gate and 2.0.0 release plan: the Data Safety re-check for U5's recording coordinates, the Play notes for Stage 21-0's changes, the Play-installed upgrade, and the staged-rollout soak.
 
-**Test expectation:** none — release and device-QA unit.
+**Test expectation:** none — device-QA unit.
 
 **Verification:**
-- 1.5.1 is in staged rollout and the QA doc is complete; the soak's end is recorded before U14's migration merges.
+- The QA doc is complete before any Phase B merge.
 
 ### Phase B — Stage 21-1a: Honor on your own walks (the proving vertical)
 
@@ -604,7 +603,7 @@ Where each piece lives:
 - Integration: the release-variant job fails when a debug-only permission or component is added to the main manifest.
 
 **Verification:**
-- A release build from main behaves as 1.5.1, and the release-variant job runs on every pull request.
+- A release build from main behaves as 1.5.0 plus Stage 21-0, and the release-variant job runs on every pull request.
 
 ### U13. Way model, geometry, and own-walk builder
 
@@ -642,7 +641,7 @@ Where each piece lives:
 
 **Requirements:** R10, R11 (exclusion), R12, R16, AE12.
 
-**Dependencies:** U12, U13, U6; its migration merges only after 1.5.1's soak ends (U10).
+**Dependencies:** U12, U13, U6.
 
 **Files:**
 - Modify: `P/domain/WalkMode.kt` (Honor takes the Together slot), `P/domain/WalkEventReplay.kt` (HONOR_MODE → Honor only with the flag on), `P/ui/walk/WaypointMarkingSheet.kt` (the arrival icon), `P/data/PilgrimDatabase.kt` (v10 entities and `MIGRATION_9_10`), `P/di/DatabaseModule.kt`, `P/data/WalkRepository.kt` (one walk-delete path), `P/data/pilgrim/builder/PilgrimPackageImporter.kt` (the archive strip covers the new tables).
@@ -797,7 +796,7 @@ Where each piece lives:
 - Gates come from single UI observers (walk-end auto-stops included), carry a Binder token and a sequence id, and clear on "ended", a dead Binder, a `RemoteException` at link time, or a stale sequence id. Every session start and revival bumps the gate generation in the session row; the publisher watches it and re-sends the current prompt and recording state with fresh Binders, and until that refresh arrives or a short fixed wait passes, the arbiter treats both gates as held.
 - Per-consumer focus: the Way voice player holds its own request (`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, `USAGE_MEDIA`, BECOMING_NOISY receiver, iOS's rates 1/1.25/1.5/2, stale-callback guards by player identity); a permanent loss stops it and re-acquires later. It also plays "your reply" on U17's play-reply command, stopping the active voice first.
 - Haptics use `Vibrator` screen-off (the R6 divergence), fired only after playback starts.
-- With the flag off: no gates, no arbiter, and whispers and the guide behave as in 1.5.1. The accepted race — a prompt and a voice starting in the same instant — is recorded for the guide's gate row.
+- With the flag off: no gates, no arbiter, and whispers and the guide behave as they do today. The accepted race — a prompt and a voice starting in the same instant — is recorded for the guide's gate row.
 
 **Patterns to follow:**
 - `P/audio/soundscape/ExoPlayerSoundscapePlayer.kt` (focus model, manual duck).
@@ -816,7 +815,7 @@ Where each piece lives:
 - Integration: the recording observer clears the gate when the walk-end observer auto-stops a take.
 - Edge case: a permanent focus loss → stop, then re-acquire later; a transient loss → pause, then resume; BECOMING_NOISY → pause.
 - Edge case: a haptic never fires for a voice whose playback failed to start.
-- Integration: with the flag off, the guide and whisper autoplay behave as in 1.5.1 and no gate intent is sent.
+- Integration: with the flag off, the guide and whisper autoplay behave as they do today and no gate intent is sent.
 
 **Verification:**
 - Tests pass; the U20 device proof passes, including a phone call and a headphone unplug mid-voice.
@@ -1026,7 +1025,7 @@ Where each piece lives:
 
 ### U25. Seek onto the `:tracker` mechanism
 
-**Goal:** With the flag on, Seek's guidance survives a UI reclaim the way Honor's does; with the flag off, Seek runs exactly as in 1.5.1.
+**Goal:** With the flag on, Seek's guidance survives a UI reclaim the way Honor's does; with the flag off, Seek runs exactly as it does today.
 
 **Requirements:** R21, R24 (Seek row), AE14.
 
@@ -1034,7 +1033,7 @@ Where each piece lives:
 
 **Files:**
 - Modify: `P/walk/seek/SeekOrchestrator.kt`, `P/walk/seek/SeekSessionStore.kt`, `P/di/SeekModule.kt` (the ping gate reads the arbiter and the UI gates), `P/ui/walk/SeekWalkViewModel.kt` (display state from Room), `P/audio/seek/SeekSoundPlayer.kt`, `P/service/WalkTrackingService.kt`, `P/walk/WalkActionPublisher.kt`, `P/data/PilgrimDatabase.kt` (Seek session tables in `MIGRATION_10_11`), `P/di/DatabaseModule.kt`.
-- Test: `T/walk/seek/SeekTrackerPlacementTest.kt`, `T/walk/seek/SeekSessionPersistenceTest.kt`, `T/data/PilgrimDatabaseMigrationTest.kt` (10→11), the existing Seek suites unchanged.
+- Test: `T/walk/seek/SeekTrackerPlacementTest.kt`, `T/walk/seek/SeekSessionPersistenceTest.kt`, `T/data/PilgrimDatabaseMigrationTest.kt` (10→11 and the full 8→11 chain), the existing Seek suites unchanged.
 
 **Approach:**
 - With the flag on:
@@ -1049,6 +1048,7 @@ Where each piece lives:
 - Integration: a watchdog revival → the engine resumes its chain from Room without re-seeding.
 - Edge case: the Begin hand-off from the pre-departure engine plays the sonar once, with no gap and no double.
 - Integration: migration 10→11, built from schema 10 by U6's helper, opens through Room's identity check.
+- Integration: the full chain, the path every 1.5.0 user takes to 2.0.0: a schema 8 database with walks, sittings and cached stats, run through the production array to 11, opens through Room's identity check with its walks, events and stats intact.
 - Integration: with the flag off, the existing Seek suites pass unchanged.
 
 **Verification:**
@@ -1186,7 +1186,7 @@ Where each piece lives:
 - **State lifecycle risks:** cached `:tracker` starts, redelivered starts and commands, phantom walks after UI recovery, gates lost on revival, double finalize, web-editor re-imports under a new Room id, sweeps against a live walk, orphaned staging, and partial downloads — each has a named test in U14, U17, U18, U23, or U28.
 - **API surface parity:** `.pilgrim` event names (iOS), the share payload (the worker's contract), the App Links verification file (the worker), the WalkMode wire value (nav args and service extras), and the Room schema chain (9, 10, 11).
 - **Integration coverage:** U20, U24, and U29 device milestones prove the cross-process paths unit tests cannot; U12's release-variant job proves the flag-off build.
-- **Unchanged invariants:** a flag-off release build behaves as 1.5.1 (UI-process Seek, today's whisper and guide timing, no Honor surface, no honor links claimed, no referrer read); wander walks are unchanged apart from Stage 21-0's fixes; `.pilgrim` stays at schema 1.0; migrations are additive and forward-only.
+- **Unchanged invariants:** a flag-off release build behaves as 1.5.0 plus Stage 21-0 (UI-process Seek, today's whisper and guide timing, no Honor surface, no honor links claimed, no referrer read); wander walks are unchanged apart from Stage 21-0's fixes; `.pilgrim` stays at schema 1.0; migrations are additive and forward-only.
 
 ---
 
@@ -1204,8 +1204,9 @@ Where each piece lives:
 | App Links fail silently (wrong fingerprint) | Med | Med | Fingerprint from a Play-installed certificate checked with Google's tool (U9); release-candidate device check; paste always works |
 | The UI process does not restart promptly after an OEM kill, leaving the guide quiet | Med | Med | Measured in U20; the guide's gate row records the outcome |
 | A prompt and a Way voice start in the same instant and overlap briefly | Low | Low | Accepted with the UI-guide decision; noted for the gate row |
-| Mapbox 11.23.1 regresses a map screen | Low | Med | U10's map pass before release; U3 ships in 1.5.1 with U4–U8 and the v9 repair, so falling back to 11.21.10 means a 1.5.2 that keeps v9 (migrations are forward-only) |
-| A 1.5.x hotfix cut from main after U14 merges ships the Honor tables to every user | Med | High | U14's migration merges only after 1.5.1's soak ends (U10); any later hotfix gets an on-device upgrade from the prior release before dispatch |
+| Mapbox 11.23.1 regresses a map screen | Low | Med | U10's map pass before any Phase B merge, then the device milestones and 2.0.0's staged rollout; no user runs 11.23.1 before 2.0.0, so falling back to 11.21.10 until then is a one-line change |
+| A release cut from main before 2.0.0 ships unfinished migrations to every user | Low | High | Nothing is released from main before 2.0.0 (owner decision, 2026-09-29); an emergency fix to 1.5.0 is cut from the `v1.5.0` tag |
+| 2.0.0 carries migrations 8→9→10→11 to every user at once, with no earlier release to prove v9 | Med | High | Each step's test from its predecessor; U25's full-chain test from schema 8; the release plan's on-device upgrade from a Play-installed 1.5.0; the staged rollout |
 | The flag-dark Seek path drifts before the flip | Med | Med | Flag-off suites plus the release-variant job; the release plan deletes the UI path |
 | Golden traces disagree at thresholds | Med | Low | Distance function pinned per call site, allowances documented (U16) |
 | Walked shares keep the sharer's transcripts past expiry (iOS behavior) | Low | Med | Matched and filed upstream; the owner decides on stripping after iOS answers |
@@ -1214,8 +1215,8 @@ Where each piece lives:
 
 ## Phased Delivery
 
-### Phase A — Stage 21-0 → 1.5.1 (U1–U10)
-Suggested PR clusters: U1; U2; U3; U4; U5 + U7; U6; U8; U9 (worker repo); U10. Ships before any Phase B merge; U14's migration also waits for 1.5.1's soak to end.
+### Phase A — Stage 21-0 (U1–U10)
+Suggested PR clusters: U1; U2; U3; U4; U5 + U7; U6; U8; U9 (worker repo); U10. Merges, with U10's device pass recorded, before any Phase B merge. No release of its own: Stage 21-0 ships in 2.0.0.
 
 ### Phase B — Stage 21-1a, own walks (U11–U24)
 U11 gates U13–U23. U20 is the architecture checkpoint: U21–U23 start only after it passes and the owner has recorded the guide's placement.
@@ -1253,7 +1254,7 @@ flowchart TB
 
 - Port specs land in `docs/parity/` (U2, U11, U26); QA docs in `docs/qa/` (U10, U20, U24, U29).
 - `CLAUDE.md` changes in U1; its phasing note updates as stages close.
-- Owner actions: Play Console fingerprints (U9), the worker deploy (U9), device milestones (U10, U20, U24, U29), the 1.5.1 dispatch and the call that its soak has ended (U10), and the guide-placement decision (U20).
+- Owner actions: Play Console fingerprints (U9), the worker deploy (U9), device milestones (U10, U20, U24, U29), and the guide-placement decision (U20).
 - Capture new learnings with `/ce-compound` after U20 and U29: cross-process audio arbitration, the Binder gates, redelivery semantics, App Links verification, the install referrer, and mock-location playback have no prior entries.
 
 ---

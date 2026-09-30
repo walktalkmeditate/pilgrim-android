@@ -1,6 +1,6 @@
-# Stage 21-0 device pass (1.5.1 release gate)
+# Stage 21-0 device pass (before Phase B merges)
 
-Device: OnePlus 13. Owner: user. Build: the top of the Stage 21-0 stack, debug variant (`org.walktalkmeditate.pilgrim.debug`) unless an item says release candidate. This is plan unit U10: the 1.5.1 dispatch waits on it. The port spec is `docs/parity/2026-09-29-stage21-0-groundwork-port.md`.
+Device: OnePlus 13. Owner: user. Build: the top of the Stage 21-0 stack, debug variant (`org.walktalkmeditate.pilgrim.debug`). This is plan unit U10: Phase B's first merge waits on it. There is no 1.5.1; Stage 21-0 reaches users inside 2.0.0, whose release plan owns the Play-side checks. The port spec is `docs/parity/2026-09-29-stage21-0-groundwork-port.md`.
 
 ## A. Maps on Mapbox `android-ndk27:11.23.1` (U3, U4)
 
@@ -13,11 +13,11 @@ Device: OnePlus 13. Owner: user. Build: the top of the Stage 21-0 stack, debug v
 - [ ] **Seek:** fog and crescent render and animate; the arrival glyph draws.
 - [ ] **Pins:** whisper, cairn, photo, and waypoint pins draw at their spots, in order, on both the active and summary maps.
 - [ ] **Lock/unlock, and a theme flip** (`adb shell cmd uimode night yes/no`) mid-walk and on a summary: routes, pins and fog reinstall, and the camera doesn't jump.
-- [ ] **16 KB pages.** On a 16 KB-page emulator image (Android 15+ "16 KB page size" system image), install the release candidate and open a map. It must not crash. On the OnePlus 13 (4 KB), the release candidate opens maps normally.
+- [ ] **16 KB pages.** On a 16 KB-page emulator image (Android 15+ "16 KB page size" system image), install this build and open a map. It must not crash.
 
 ## B. Sittings, one source (#223, U6)
 
-- [ ] **Upgrade, not fresh install.** Install 1.5.0 from Play (or keep your current install), then install this build over it so migration 8→9 runs.
+- [ ] **Upgrade, not fresh install.** Keep your current debug install (schema 8, built before this stack), then install this build over it so migration 8→9 runs. The debug build is a separate package, so it can't upgrade a Play install; the Play 1.5.0 → 2.0.0 upgrade is the release plan's check.
 - [ ] **Totals.** Before upgrading, note the meditation total in Settings and on the journal, and the Longest Meditation seal state. After upgrading and a minute on the home screen (the backfill runs at launch), totals include your Android-recorded sittings. They should grow if you meditate on walks. The Longest Meditation seal can now be earned.
 - [ ] **A walk with a sitting:** its summary's meditation figure matches its timeline, and never exceeds the walk's active time.
 - [ ] **Export.** Export a `.pilgrim` containing a walk with a sitting. Open the JSON: that walk's `activities` has a `"meditation"` entry, and `stats.meditateDuration` is non-zero.
@@ -36,8 +36,6 @@ Device: OnePlus 13. Owner: user. Build: the top of the Stage 21-0 stack, debug v
 - [ ] **#225, expired share.** You need a share past its expiry. Either use an old share, or share with the shortest option and set the device date forward (Settings → System → Date & time; revert afterwards). The summary shows the returned-to-the-trail block: icon, "This walk has returned to the trail", "Shared for …", a divider, and "Share again". Share again opens a fresh share form. Judge the icon visually (an undo arrow in a thin ring); swap it if it reads wrong.
 - [ ] **#221, reliquary.** Revoke photo access for Pilgrim, then turn on Walk Reliquary in Settings and deny the prompt. The switch returns to off and the denied note stays. Grant on the next try: the switch stays on.
 
-## E. Release
+## E. Record
 
-- [ ] **Data Safety.** Recording coordinates now ride inside the interactive share, which already carries the route (location shared with the share service). Confirm the Play Data Safety form already declares location shared for the share feature; if it doesn't, update it before dispatch.
-- [ ] **Play notes.** `app/src/main/play/release-notes/en-US/whatsnew.txt` reads right, and says totals may grow.
-- [ ] **Dispatch** `production.yml` with `version=1.5.1`. U14's migration waits until this release's soak ends: full rollout with no open crash cluster. Record that date here.
+- [ ] **Record the pass** here: date, build SHA, and anything filed. Phase B merges after it.

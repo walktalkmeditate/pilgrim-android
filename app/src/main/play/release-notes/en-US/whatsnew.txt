@@ -1,5 +1,0 @@
-• Your sittings count again: meditations on walks recorded with Pilgrim for Android now reach your seals, totals, milestones and exports, so your totals may grow after this update
-• A walk with a long sitting now shares without an error, and shared walks carry where each recording was spoken
-• Walk summaries frame the whole route, even on small screens
-• An expired share now says it has returned to the trail, with Share again
-• Walk well.
