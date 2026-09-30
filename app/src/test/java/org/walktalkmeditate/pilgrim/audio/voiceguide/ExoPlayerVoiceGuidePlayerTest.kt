@@ -62,13 +62,19 @@ class ExoPlayerVoiceGuidePlayerTest {
      * fixed pass count) keeps the assertion strict while removing the
      * batch-isolation flake (ExoPlayerVoiceGuidePlayerTest passes 3/3
      * solo; failed 1/2080 only in CI ordering).
+     *
+     * The listener callback comes from ExoPlayer's own playback thread,
+     * so the budget is wall-clock time with a short sleep between
+     * passes: back-to-back passes finish in microseconds, before a
+     * loaded run's playback thread has delivered anything.
      */
     private fun drainMainUntil(condition: () -> Boolean) {
-        repeat(50) {
+        val deadline = System.nanoTime() + DRAIN_BUDGET_NANOS
+        while (true) {
             shadowOf(android.os.Looper.getMainLooper()).idle()
-            if (condition()) return
+            if (condition() || System.nanoTime() > deadline) return
+            Thread.sleep(DRAIN_PAUSE_MILLIS)
         }
-        shadowOf(android.os.Looper.getMainLooper()).idle()
     }
 
     @Test fun `play constructs ExoPlayer + focus request without crashing`() {
@@ -159,5 +165,10 @@ class ExoPlayerVoiceGuidePlayerTest {
         player.release()
         drainMainUntil { player.state.value is VoiceGuidePlayer.State.Idle }
         assertTrue(player.state.value is VoiceGuidePlayer.State.Idle)
+    }
+
+    private companion object {
+        const val DRAIN_BUDGET_NANOS = 10_000_000_000L
+        const val DRAIN_PAUSE_MILLIS = 5L
     }
 }
