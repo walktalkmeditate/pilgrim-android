@@ -1540,8 +1540,21 @@ class WalkViewModel @Inject constructor(
         viewModelScope.launch { controller.resumeWalk() }
     }
 
+    /**
+     * A recording never runs into a sitting: an in-flight take is stopped
+     * and saved first, as iOS's `startMeditation()` does
+     * (`ActiveWalkViewModel.swift:473-481@7c200bf`). Otherwise talk and
+     * meditation overlap, and a share of the walk sends more meditate +
+     * talk than active time, which the share worker rejects.
+     */
     fun startMeditation() {
-        viewModelScope.launch { controller.startMeditation() }
+        viewModelScope.launch {
+            if (_voiceRecorderState.value is VoiceRecorderUiState.Recording) {
+                // Stop blocks until the capture loop drains its last buffer.
+                withContext(Dispatchers.IO) { stopRecording() }
+            }
+            controller.startMeditation()
+        }
     }
 
     /**
