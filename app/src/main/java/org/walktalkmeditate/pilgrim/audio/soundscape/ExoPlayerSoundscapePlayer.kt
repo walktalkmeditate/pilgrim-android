@@ -68,12 +68,16 @@ import kotlinx.coroutines.flow.asStateFlow
  * (Stage 5-E lesson — ExoPlayer's built-in noisy receiver is
  * part of its focus handling and gets disabled with
  * `handleAudioFocus = false`).
+ *
+ * A Way voice's duck ([WayVoiceSoundscapeDuck]) is iOS's, an absolute
+ * level ramped over 0.5 s and held while the may-duck dip above stands
+ * aside; [SoundscapeLevel] decides every volume.
  */
 @Singleton
 class ExoPlayerSoundscapePlayer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val audioManager: AudioManager,
-) : SoundscapePlayer {
+) : SoundscapePlayer, WayVoiceSoundscapeDuck {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -106,16 +110,23 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     /**
      * The user's currently-configured soundscape volume in [0, 1],
-     * applied at play time and used as the "full" reference for ducking.
-     * Driven by [SoundscapeOrchestrator] from
+     * applied at play time and used as the "full" reference for ducking,
+     * and a Way voice's duck. Driven by [SoundscapeOrchestrator] from
      * [org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository.soundscapeVolume].
-     * `@Volatile` because [setVolume] is callable from any thread —
-     * the orchestrator's volume-collector runs on the orchestrator's
-     * playback scope, not the main thread; the player listener +
-     * focus listener run on main. The actual ExoPlayer.volume write
-     * is still posted to the main handler.
+     * Its volume writes run on the main handler, where ExoPlayer lives.
      */
-    @Volatile private var userVolume: Float = FULL_VOLUME
+    private val volumes = SoundscapeLevel(
+        mainHandler,
+        object : SoundscapeLevel.Knob {
+            override fun get(): Float? = player?.volume
+
+            override fun set(volume: Float) {
+                player?.volume = volume
+            }
+        },
+    )
+
+    override val targetVolume: Float get() = volumes.targetVolume
 
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -220,7 +231,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             val uri = Uri.fromFile(file)
             p.setMediaItems(listOf(MediaItem.fromUri(uri), MediaItem.fromUri(uri)))
             p.repeatMode = Player.REPEAT_MODE_ALL
-            p.volume = userVolume
+            volumes.onPlay()
             p.prepare()
             p.play()
             registerNoisyReceiver()
@@ -250,6 +261,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     override fun release() {
         mainHandler.post {
+            volumes.cancelRamp()
             val p = player
             player = null
             p?.removeListener(playerListener)
@@ -263,6 +275,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     /** Must be called on main thread. */
     private fun internalStop() {
+        volumes.cancelRamp()
         player?.stop()
         unregisterNoisyReceiver()
         _state.value = SoundscapePlayer.State.Idle
@@ -278,40 +291,27 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
      * of reusing an ExoPlayer that's already terminated.
      */
     private fun discardPlayer() {
+        volumes.cancelRamp()
         val p = player ?: return
         player = null
         mainHandler.post { p.release() }
     }
 
-    /**
-     * Dip ExoPlayer volume for duckable transient focus loss. Main thread.
-     * Ducks to [DUCK_FRACTION] of the user's configured [userVolume],
-     * so users running at low volume don't get whip-sawed up before
-     * being ducked back down.
-     */
-    private fun duckVolume() {
-        player?.volume = (userVolume * DUCK_FRACTION).coerceIn(0f, 1f)
-    }
+    override fun holdDuck(level: Float) = volumes.holdDuck(level.coerceIn(0f, 1f))
 
-    /** Restore ExoPlayer volume when focus returns. Main thread. */
-    private fun restoreVolume() {
-        player?.volume = userVolume
-    }
+    override fun releaseDuck(level: Float) = volumes.releaseDuck(level.coerceIn(0f, 1f))
 
     override fun setVolume(volume: Float) {
-        val clamped = volume.coerceIn(0f, 1f)
-        userVolume = clamped
-        // Apply live to the running player. Posted to the main handler
-        // because ExoPlayer access must happen on its build thread.
+        // Applied live to the running player on the main handler, because
+        // ExoPlayer access must happen on its build thread.
         //
         // We deliberately do NOT inspect the duck-state and re-scale
         // here: ducking events are short (sub-second voice-guide
         // prompt) and the next focus event re-applies the right
-        // amplitude via [duckVolume] / [restoreVolume], both of
-        // which now read the updated [userVolume]. A null player
-        // just means no playback in progress; the next [play] picks
-        // up the new userVolume.
-        mainHandler.post { player?.volume = clamped }
+        // amplitude from the updated level. A null player just means
+        // no playback in progress; the next [play] picks up the new
+        // level.
+        volumes.setUserVolume(volume.coerceIn(0f, 1f))
     }
 
     /** Pause for transient focus loss — keep focus request, mark resumable. */
@@ -389,11 +389,11 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
                         // standalone AudioFocusRequest + handleAudioFocus
                         // = false on ExoPlayer. Dip the ExoPlayer volume
                         // manually. Stage 5-G lesson.
-                        mainHandler.post { duckVolume() }
+                        mainHandler.post { volumes.onMayDuck(true) }
                     }
                     AudioManager.AUDIOFOCUS_GAIN -> {
                         mainHandler.post {
-                            restoreVolume()
+                            volumes.onMayDuck(false)
                             resumeFromTransientLoss()
                         }
                     }
@@ -402,11 +402,15 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             .build()
         val result = audioManager.requestAudioFocus(request)
         val granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        if (granted) activeFocusRequest.set(request)
+        if (granted) {
+            activeFocusRequest.set(request)
+            volumes.onFocusReset()
+        }
         return granted
     }
 
     private fun abandonFocus() {
+        volumes.onFocusReset()
         val req = activeFocusRequest.getAndSet(null) ?: return
         audioManager.abandonAudioFocusRequest(req)
     }
@@ -435,23 +439,5 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     private companion object {
         const val TAG = "SoundscapePlayer"
-
-        /**
-         * Default user volume when no preference has been written
-         * (e.g., before [setVolume] runs the first time). The
-         * orchestrator wires the actual default (0.4 — iOS parity)
-         * via [SoundscapePlayer.setVolume] before the first [play].
-         */
-        const val FULL_VOLUME = 1.0f
-
-        /**
-         * Fraction of [userVolume] used when voice-guide (or any
-         * app) requests `GAIN_TRANSIENT_MAY_DUCK`. iOS uses ~0.3
-         * absolute with a 0.5s fade — we match the proportion
-         * relative to the user's chosen volume so a low-volume
-         * user doesn't get whip-sawed up before being ducked back
-         * down. Fade curve can come later.
-         */
-        const val DUCK_FRACTION = 0.3f
     }
 }
