@@ -27,6 +27,7 @@ Device: OnePlus 13. Owner: user. Build: the top of the Stage 21-0 stack, debug v
 
 - [ ] **Caption.** In Share Journey, turn on Interactive: the first line reads "Anyone with the link can walk it there." Turn it off: the line is gone.
 - [ ] **A walk with a long sitting shares.** Take a walk that is mostly sitting plus a recording, for example 20 minutes with a 10-minute sitting and 3 minutes of talk. Before this fix the worker rejected that with a 400. It must now share, and the page's walking, meditation and talk times must add up to the walk's active time.
+- [ ] **A sitting stops the recording.** Mid-walk, start a recording, then start a sitting while it runs. The recording stops and is saved before the sitting begins, as on iOS. After the walk, its row is in the summary's recordings, and the walk shares.
 - [ ] **Recording coordinates.** Share a walk with recordings, Interactive and Trim on. Optional cross-platform check: honor that share on an iPhone running iOS 2.0.0. Voices play where they were spoken, and a recording made in the trimmed doorstep has no pin of its own.
 
 ## D. Small fixes (U7)
