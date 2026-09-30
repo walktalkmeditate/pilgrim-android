@@ -189,34 +189,42 @@ The two stage-only defects (E-15, E-16) are left for the Stage 21-2 spec.
 
 ---
 
-## Decisions for the owner
+## Owner decisions (decided 2026-09-30)
 
-Each of these has no iOS behavior to match, or iOS's behavior can't carry over to Android's architecture. The recommendation holds unless the owner decides otherwise, and the gate dates each one.
+None of these has iOS behavior to match, or iOS's behavior can't carry over to Android's architecture. On 2026-09-30 the owner accepted every recommendation. Each is a dated Android decision for the parity gate, and the column after each says where it's built.
 
-1. **Pause is an Android-only state** (B §14, D §8.1, E resolution 14). iOS has no reachable pause at the pin. *Recommended:*
-   - the engine clock and the companion freeze for the whole pause, including the pause in progress (the engine's own intent, and the plan's test);
-   - "Sit?" does nothing while paused, since Android's reducer already ignores a sitting start then.
-2. **Headphones unplugged, and resuming after a call** (C §11, open questions). iOS has neither. *Recommended:* keep Android's platform handlers as R6 platform equivalents, recorded at the gate:
+1. **Pause is an Android-only state** (B §14, D §8.1, E resolution 14). iOS has no reachable pause at the pin.
+   - The engine clock and the companion freeze for the whole pause, including the pause in progress. That's the engine's own intent and the plan's test. *Built:* U17 (#253).
+   - "Sit?" does nothing while paused, because Android's reducer already ignores a sitting start then. *Lands:* U22's card.
+2. **Headphones unplugged, and resuming after a call** (C §11, open questions). iOS has neither. Android keeps its platform handlers as R6 platform equivalents:
    - pause on becoming-noisy;
-   - pause, then resume, on a transient focus loss;
+   - pause on a transient focus loss, then resume;
    - stop on a permanent loss.
 
-   [pilgrim-ios #102](https://github.com/walktalkmeditate/pilgrim-ios/issues/102) asks iOS to resume after a call.
-3. **A deleted Way's line on the seal** (G §6, open questions). iOS caches the seal image forever, so the line stays; Android draws seals live. *Recommended:* draw live, so the line goes when the link does, recorded as a rendering-architecture difference. [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) asks whether the frozen line is intended.
-4. **Android-only data gaps** (A open questions 1–2). Android photos can lack a capture time or coordinates, and Android waypoints can lack a label or icon. iOS never has these gaps. *Recommended:*
-   - skip a photo with no capture time;
-   - place a photo with no coordinates at the route sample nearest its time;
-   - a waypoint with no icon draws `mappin`, iOS's own fallback;
-   - a waypoint with no label shows no kicker.
-5. **Android-only hosts and copy** (F open questions). *Recommended:* the widget-opened summary shows "walk this again", since iOS's rule is "hosts that can present the overview show the door". U21's two Begin refusals (staging failed, the Way deleted while the overview was open) need copy the owner writes, because iOS has no string for either.
-6. **The sitting GPS tier** (B open question 3). iOS thins fixes while sitting (100 m accuracy, 50 m filter), which delays arrival and voice drops for a walker who sits. *Recommended:* keep Android's full-rate fixes and record the difference at the gate.
-7. **Layer order after a theme switch** (E §5). iOS reinstalls the Honor layers before the route on a style reload, so the companion lands under the route until the next flush. Android's standing rule reinstalls runtime layers after the annotation managers, which restores iOS's first-appearance stack. *Recommended:* keep Android's rule, recorded at the gate. The glitch is filed as [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111).
-8. **Follow versus fly-to** (E open question 2): decided at U22, once iOS's behavior is checked on an iPhone.
-9. **The Mapbox logo and attribution on the overview** (F §9). On iOS the overview card covers them, and Mapbox's terms require them to stay visible on the map view. *Recommended:* keep them visible above the card, recorded at the gate. [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) asks iOS to lift them.
+   *Built:* U18 (#259). [pilgrim-ios #102](https://github.com/walktalkmeditate/pilgrim-ios/issues/102) asks iOS to resume after a call.
+3. **A deleted Way's line on the seal** (G §6, open questions). iOS caches the seal image forever, so the line stays. Android draws seals live, so the line goes when the link does. That's a rendering-architecture difference. *Lands:* U23. [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) asks whether the frozen line is intended.
+4. **Android-only data gaps** (A open questions 1–2). Android photos can lack a capture time or coordinates, and Android waypoints can lack a label or icon; iOS never has these gaps. *Built:* U13 (#249).
+   - A photo with no capture time is skipped.
+   - A photo with no coordinates sits at the route sample nearest its time.
+   - A waypoint with no icon draws `mappin`, iOS's own fallback.
+   - A waypoint with no label shows no kicker.
+5. **Android-only hosts and copy** (F open questions). *Lands:* U21, and U23 for the summary door.
+   - The widget-opened summary shows "walk this again", following iOS's rule that "hosts that can present the overview show the door".
+   - The two Begin refusals, which iOS has no string for, use this copy. The title is iOS's picker alert, so there's one voice for "you can't walk this":
+
+   | Refusal | Title | Body |
+   |---|---|---|
+   | Staging the Way failed | Can't walk this one again | Pilgrim couldn't get this walk ready to follow. Try again. |
+   | The Way (or its source walk) went away while the overview was open | Can't walk this one again | This walk isn't here to follow anymore. Try another. |
+6. **The sitting GPS tier** (B open question 3). iOS thins fixes while sitting (100 m accuracy, 50 m filter), which delays arrival and voice drops for a walker who sits. Android keeps full-rate fixes. *Nothing to build:* a gate row records the difference.
+7. **Layer order after a theme switch** (E §5). iOS reinstalls the Honor layers before the route on a style reload, so the companion lands under the route until the next flush. Android keeps its standing rule of reinstalling runtime layers after the annotation managers, which restores iOS's first-appearance stack. *Lands:* U22. The glitch is filed as [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111).
+8. **Follow versus fly-to** (E open question 2). *Still open.* It's decided at U22, once iOS's behavior is checked on an iPhone.
+9. **The Mapbox logo and attribution on the overview** (F §9). On iOS the overview card covers them, but Mapbox's terms require them to stay visible on the map view. Android keeps them visible above the card. *Lands:* U21. [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) asks iOS to lift them.
+10. **A failed link write is retried** (added from U17, #253). iOS drops the error (`try?`), so a walk whose link write fails reads "a way that has been removed". Android keeps the walk's live rows and retries the link at the next launch. That's invisible when nothing fails. *Built:* U17 (#253).
 
 ## Open questions iOS leaves open
 
-- **What `CLLocation.distance` computes.** Apple doesn't document it. U16 measures it against haversine over the corpus before pinning Android's function (B open question 1).
+- **What `CLLocation.distance` computes: resolved in U16 (#252).** It uses WGS84 radii of curvature at the pair's mean latitude, with longitudes moved into 0–360°. It caches the radii while the first point's latitude stays within 0.005°, so iOS's own result shifts slightly with call history (about 3 cm at 300 m). Android pins the history-free value, `wgs84MidLatitudeMeters`. That's within 3.9e-16 of Apple's fresh value, and within 7.5 mm of what iOS's engine received over the golden corpus.
 - **Which appearance the ghost's colours resolve to on the dark map** (E and G open questions). Keep the ghost on the same three values Android's route line already uses.
 - **The overlap order of two Way pins.** iOS sets no sort key, so there's no rule to match (E open question 3).
 - **Two platform facts worth one iPhone check before the gate's audio rows are written** (C open questions). First, that the system pauses an `AVAudioPlayer` on a call even under `.mixWithOthers`. Second, that it doesn't pause on a route loss.
