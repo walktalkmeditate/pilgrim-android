@@ -20,6 +20,7 @@ adb logcat -s HonorDebug WayReplayer HonorSession UiAudioGate WalkTrackingServic
 - **Before a replay ends,** finish the walk: when the replay stops, real GPS takes over and puts you back at the desk.
 - **Useful at any point:**
   - `adb shell am broadcast -p $P -a ${A}DUMP --es walk <new walk id>` dumps the session (ids, fracs, phases).
+  - `adb shell am broadcast -p $P -a ${A}COMMAND --es cmd toggle|skip|rate|reply [--es moment voice-2]` sends the chip and card commands U22's UI will send. `toggle` and `reply` act on the held voice unless a moment is named.
   - `adb shell pidof $P` and `adb shell pidof $P:tracker` give the process ids.
   - Kill the UI process: `adb shell 'run-as org.walktalkmeditate.pilgrim.debug kill -9 $(pidof org.walktalkmeditate.pilgrim.debug)'`
   - Kill `:tracker`: `adb shell 'run-as org.walktalkmeditate.pilgrim.debug kill -9 $(pidof org.walktalkmeditate.pilgrim.debug:tracker)'`
@@ -48,7 +49,7 @@ Record each result in the Result column: date, what you saw, and the log timesta
 
 | # | Check | Result |
 |---|---|---|
-| C1 | During a walk, tap the chip's pause and play, skip a voice, change the rate, and start and stop a recording. Then kill `:tracker` (the setup's command). **Record which path revived it**: the OS's START redelivery (`WalkTrackingService` logs soon after) or the watchdog (`WalkTrackingWatchdog` about a minute later). Also record the exit reason from `exit-info`. | |
+| C1 | During a walk, send the chip commands (the setup's `COMMAND`): `toggle` twice (pause, then resume), `skip`, and `rate` twice. Also start and stop a recording from the walk screen. Then kill `:tracker` (the setup's command). **Record which path revived it**: the OS's START redelivery (`WalkTrackingService` logs soon after) or the watchdog (`WalkTrackingWatchdog` about a minute later). Also record the exit reason from `exit-info`. | |
 | C2 | After the revival: **no voice replays, no command replays** (the rate stays as set, and skipped voices stay skipped), and no gate replays. The dump shows the same anchor and progress. The next voice plays at its spot. | |
 | C3 | Repeat C1 until you've seen **both** revival paths at least once (if the OS's redelivery always wins, kill `:tracker` again just after it restarts: Android backs off repeated restarts, which gives the watchdog its turn). | |
 | C4 | Kill `:tracker` **while a recording is in progress**, with the UI alive. After revival, no Way voice plays until the recording ends (U18's 3 s hold, then the UI's re-sent gate). | |
