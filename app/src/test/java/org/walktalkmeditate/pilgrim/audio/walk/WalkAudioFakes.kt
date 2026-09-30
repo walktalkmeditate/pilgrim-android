@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio.walk
 
+import android.os.DeadObjectException
+import android.os.IBinder
+import android.os.IInterface
+import android.os.Parcel
 import java.io.File
+import java.io.FileDescriptor
 import java.util.Collections
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -115,7 +120,59 @@ internal class AudibleWhisperPlayer(private val log: AudioLog) : FakeWhisperPlay
         audible.value = false
         log += "stop whisper"
     }
+
+    override fun cut() {
+        super.cut()
+        audible.value = false
+        log += "stop whisper"
+    }
 }
+
+/**
+ * A gate token whose process the test can kill: [die] delivers every
+ * linked death notice, and a dead token refuses a link as a dead proxy does.
+ */
+internal class FakeUiBinder(dead: Boolean = false) : IBinder {
+
+    @Volatile var dead: Boolean = dead
+        private set
+    private val recipients = Collections.synchronizedList(mutableListOf<IBinder.DeathRecipient>())
+    val linked: Int get() = recipients.size
+
+    fun die() {
+        dead = true
+        val notified = recipients.toList()
+        recipients.clear()
+        notified.forEach { it.binderDied() }
+    }
+
+    override fun linkToDeath(recipient: IBinder.DeathRecipient, flags: Int) {
+        if (dead) throw DeadObjectException()
+        recipients += recipient
+    }
+
+    override fun unlinkToDeath(recipient: IBinder.DeathRecipient, flags: Int): Boolean = recipients.remove(recipient)
+
+    override fun getInterfaceDescriptor(): String? = null
+
+    override fun pingBinder(): Boolean = !dead
+
+    override fun isBinderAlive(): Boolean = !dead
+
+    override fun queryLocalInterface(descriptor: String): IInterface? = null
+
+    override fun dump(fd: FileDescriptor, args: Array<out String>?) = Unit
+
+    override fun dumpAsync(fd: FileDescriptor, args: Array<out String>?) = Unit
+
+    override fun transact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean = false
+}
+
+internal fun started(kind: UiAudioGateKind, seq: Long, token: IBinder?) =
+    UiAudioGateSignal(kind = kind, held = true, seq = seq, token = token)
+
+internal fun ended(kind: UiAudioGateKind, seq: Long) =
+    UiAudioGateSignal(kind = kind, held = false, seq = seq, token = null)
 
 internal class FakeUiAudioGates : UiAudioGateSource {
 

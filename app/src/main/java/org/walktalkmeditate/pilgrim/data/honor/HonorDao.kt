@@ -42,6 +42,17 @@ data class HonorVoiceState(
 )
 
 /**
+ * What the UI's audio gates read of the walk in progress (plan U18): its
+ * Honor session's gate generation and the voice its player holds, both
+ * null on a walk without Honor.
+ */
+data class WalkInProgressAudio(
+    @ColumnInfo(name = "walk_id") val walkId: Long,
+    @ColumnInfo(name = "gate_generation") val gateGeneration: Long?,
+    @ColumnInfo(name = "playing_moment_id") val playingMomentId: String?,
+)
+
+/**
  * The live Honor tables and the walk marker. Session and moment rows are
  * written by `:tracker` only, card rows by the UI only. Every write is an
  * insert, a targeted UPDATE, or an upsert: never `REPLACE`, which deletes
@@ -90,6 +101,15 @@ interface HonorDao {
 
     @Query("UPDATE honor_sessions SET gate_generation = gate_generation + 1 WHERE walk_id = :walkId")
     suspend fun bumpGateGeneration(walkId: Long): Int
+
+    /** The latest unfinished walk, if any; `:tracker` reaches the UI through Room only. */
+    @Query(
+        "SELECT w.id AS walk_id, s.gate_generation AS gate_generation, " +
+            "s.playing_moment_id AS playing_moment_id " +
+            "FROM walks w LEFT JOIN honor_sessions s ON s.walk_id = w.id " +
+            "WHERE w.end_timestamp IS NULL ORDER BY w.id DESC LIMIT 1",
+    )
+    fun observeWalkInProgressAudio(): Flow<WalkInProgressAudio?>
 
     /**
      * 1 while [walkId] still has a live session on an unfinished walk, else 0.

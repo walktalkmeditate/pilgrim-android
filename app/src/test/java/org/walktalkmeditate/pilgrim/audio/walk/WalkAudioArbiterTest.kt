@@ -163,6 +163,37 @@ class WalkAudioArbiterTest {
     }
 
     @Test
+    fun `a whisper still downloading when a voice starts parks once it lands, and plays after the run`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            whispers.holdFetches = true
+            arbiter.requestWhisper(whisper("w1"))
+
+            arbiter.play(voiceA, 1f, RecordingVoiceListener())
+            whispers.landHeldFetches()
+            assertEquals("iOS parks it on landing (WhisperPlayer.swift:142-156@7c200bf)", emptyList<String>(), whispers.played)
+
+            arbiter.endNaturally(player.plays.last())
+            settleRun()
+            assertEquals(listOf("w1"), whispers.played)
+        }
+
+    @Test
+    fun `a whisper still downloading when a prompt starts parks once it lands, and plays when the prompt ends`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            whispers.holdFetches = true
+            arbiter.requestWhisper(whisper("w1"))
+
+            ui.value = UiAudioGates(prompt = true)
+            whispers.landHeldFetches()
+            assertEquals(emptyList<String>(), whispers.played)
+
+            ui.value = UiAudioGates()
+            assertEquals(listOf("w1"), whispers.played)
+        }
+
+    @Test
     fun `when a prompt ends with a voice and a whisper parked, the voice goes first and the whisper keeps waiting`() =
         runTest(UnconfinedTestDispatcher()) {
             val arbiter = arbiter()

@@ -20,9 +20,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -63,6 +65,15 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
  * `isPlaying` StateFlow tracks the PREVIEW channel only — the
  * WhisperPlacementSheet UI gates its stop-button on this. Main-channel
  * playback (proximity / tap) is fire-and-forget from the UI's view.
+ *
+ * With the release flag on, in-walk whispers go through a one-slot queue
+ * (`:tracker`'s walk audio arbiter, the UI's `UiWhisperQueue`) the way
+ * iOS's go through `AudioPriorityQueue`: [fetch] downloads first and hands
+ * the queue the landed whisper, the queue decides to [play] or park it,
+ * and a higher voice [cut]s the audible one. A download still in flight
+ * survives a cut and reaches the queue when it lands, as iOS's
+ * `WhisperPlayer.play` only calls `playWhisper` after its download
+ * (`WhisperPlayer.swift:142-156@7c200bf`, parity spec C §5.1).
  */
 @Singleton
 open class WhisperPlayer @Inject constructor(
@@ -79,6 +90,7 @@ open class WhisperPlayer @Inject constructor(
     @Volatile private var previewPlayer: MediaPlayer? = null
     @Volatile private var playJob: Job? = null
     @Volatile private var previewJob: Job? = null
+    @Volatile private var fetchJob: Job? = null
     private val audioManager: AudioManager? =
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val audioAttrs = AudioAttributes.Builder()
@@ -133,8 +145,38 @@ open class WhisperPlayer @Inject constructor(
                 startMediaPlayer(file, PLAY_VOLUME) { player ->
                     playPlayer = player
                 }
+                // A cut or stop that landed while `prepare()` blocked found no
+                // player to stop; it must still win over this start.
+                if (!currentCoroutineContext().isActive) stopPlay()
             }
         }
+    }
+
+    /**
+     * Downloads [definition] if it isn't cached, then calls [onLanded] from
+     * a background thread, where a queue decides whether it plays now. A
+     * newer fetch replaces one still downloading, as a newer [play] does;
+     * [cut] leaves it downloading, and only [stop] drops it. No-op when
+     * `soundsEnabled` is false.
+     */
+    open fun fetch(definition: WhisperDefinition, onLanded: (WhisperDefinition) -> Unit) {
+        if (!soundsPreferences.soundsEnabled.value) return
+        fetchJob?.cancel()
+        fetchJob = scope.launch {
+            ensureCached(definition.audioFileName) ?: return@launch
+            onLanded(definition)
+        }
+    }
+
+    /**
+     * The main channel's half of iOS `interruptForVoiceGuide()` and
+     * `interruptForWayVoice()` (`AudioPriorityQueue.swift:66-84@7c200bf`):
+     * the audible whisper, or one about to start, is gone, never re-parked;
+     * a [fetch] still downloading is left to land.
+     */
+    open fun cut() {
+        playJob?.cancel()
+        stopPlay()
     }
 
     /**
@@ -164,6 +206,7 @@ open class WhisperPlayer @Inject constructor(
      * [WalkViewModel.stopWhisperPreview].
      */
     open fun stop() {
+        fetchJob?.cancel()
         playJob?.cancel()
         previewJob?.cancel()
         stopPlay()

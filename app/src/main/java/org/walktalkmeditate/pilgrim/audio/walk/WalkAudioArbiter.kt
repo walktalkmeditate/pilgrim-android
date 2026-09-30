@@ -82,9 +82,10 @@ interface UiAudioGateSource {
  * arbiter also publishes the engine's two outside gates ([HonorGatePort]):
  * the UI's recording, and a whisper actually playing here.
  *
- * Android's whisper player downloads inside `play`, so cutting a whisper
- * also cancels one still downloading; iOS would park that one once its
- * download lands (`WhisperPlayer.swift:142-156@7c200bf`).
+ * A whisper reaches the slot only once its file is on disk, and a cut
+ * stops only the audible one: a whisper still downloading when a voice or
+ * a prompt starts parks when its download lands, as iOS's does
+ * (`WhisperPlayer.swift:142-156@7c200bf`).
  *
  * Every step runs on [scope], the main thread in production, so the
  * players' state is read where it changes. Only `:tracker` with the
@@ -189,8 +190,17 @@ class WalkAudioArbiter internal constructor(
         if (loaded == null) endRunSoon()
     }
 
-    /** A whisper from `:tracker`'s autoplay: iOS `AudioPriorityQueue.playWhisper` (`AudioPriorityQueue.swift:45-52@7c200bf`). */
-    fun requestWhisper(definition: WhisperDefinition) = onArbiter {
+    /**
+     * A whisper from `:tracker`'s autoplay. iOS's `WhisperPlayer.play`
+     * downloads first and only then calls `AudioPriorityQueue.playWhisper`
+     * (`AudioPriorityQueue.swift:45-52@7c200bf`), so the slot decides when
+     * the file lands.
+     */
+    fun requestWhisper(definition: WhisperDefinition) {
+        whisperPlayer.fetch(definition) { landed -> onArbiter { admitWhisper(landed) } }
+    }
+
+    private fun admitWhisper(definition: WhisperDefinition) {
         if (ui.prompt || voiceHoldsWhispers()) {
             parkedWhisper = definition
         } else {
@@ -215,7 +225,7 @@ class WalkAudioArbiter internal constructor(
         runEnding = null
         // `interruptForWayVoice()`: an audible whisper is gone, never re-parked;
         // a parked one outlives the whole run (`AudioPriorityQueue.swift:75-84@7c200bf`).
-        whisperPlayer.stop()
+        whisperPlayer.cut()
         if (voiceBefore == null) takeDuck()
         val next = Loaded(request.listener)
         loaded = next
@@ -292,7 +302,7 @@ class WalkAudioArbiter internal constructor(
     private fun promptStarted() {
         // `interruptForVoiceGuide()` (`AudioPriorityQueue.swift:66-73@7c200bf`).
         parkedWhisper = null
-        whisperPlayer.stop()
+        whisperPlayer.cut()
         handOverToGuide()
     }
 
