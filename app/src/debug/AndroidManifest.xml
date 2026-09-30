@@ -11,8 +11,20 @@ receiver invoked via
   adb shell am broadcast -a org.walktalkmeditate.pilgrim.debug.RUN_SENSES_FIELD_REPORT
 
 See ThreadsFieldReport.kt (src/debug/kotlin) for the harness itself.
+
+Also the Honor desk harness (plan U19): mock locations for the Way
+replayer, and its two adb triggers, one in the UI process and one in
+:tracker beside the walk. HonorDebugReceiver.kt lists every command.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Lint's MockLocation check flags this even here, the debug-only
+         manifest it asks for; ReleaseBuildContentsTest proves release
+         never requests it. -->
+    <uses-permission
+        android:name="android.permission.ACCESS_MOCK_LOCATION"
+        tools:ignore="MockLocation" />
 
     <application>
         <receiver
@@ -21,6 +33,29 @@ See ThreadsFieldReport.kt (src/debug/kotlin) for the harness itself.
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="org.walktalkmeditate.pilgrim.debug.RUN_SENSES_FIELD_REPORT" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="org.walktalkmeditate.pilgrim.debug.honor.HonorDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_LIST" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_BEGIN" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_EXPORT_GPX" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_DUMP" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="org.walktalkmeditate.pilgrim.debug.honor.HonorReplayReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:process=":tracker">
+            <intent-filter>
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_START" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_STOP" />
             </intent-filter>
         </receiver>
     </application>

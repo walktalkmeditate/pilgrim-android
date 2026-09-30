@@ -23,6 +23,8 @@ bin/
 gen/
 out/
 release/
+# The release source set is code, not build output.
+!/app/src/release/
 
 # Native
 .externalNativeBuild/
