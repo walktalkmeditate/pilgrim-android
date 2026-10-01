@@ -122,8 +122,9 @@ interface MockLocationClient {
 /**
  * The fused provider's mock mode. It needs this app chosen as the mock
  * location app (see [HonorDebugReceiver]); mock mode then feeds every fused
- * client on the device, the walk's own included, and lasts only while this
- * process's connection does.
+ * client on the device, the walk's own included. It belongs to the client
+ * that turned it on, and outlives that client's process: see
+ * [WayReplayer.releaseMockMode].
  */
 class FusedMockLocationClient @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -188,13 +189,13 @@ class WayReplayer internal constructor(
         lock.withLock {
             val running = replay
             replay = null
-            if (running?.isActive == true) running.cancelAndJoin() else turnMockModeOff()
+            if (running?.isActive == true) running.cancelAndJoin() else releaseMockMode()
         }
     }
 
     override fun onTrackerStart() {
         scope.launch {
-            lock.withLock { if (replay?.isActive != true) turnMockModeOff() }
+            lock.withLock { if (replay?.isActive != true) releaseMockMode() }
         }
     }
 
@@ -224,6 +225,24 @@ class WayReplayer internal constructor(
         } finally {
             withContext(NonCancellable) { turnMockModeOff() }
         }
+    }
+
+    /**
+     * Play services ties mock mode to the client that turned it on and keeps
+     * it on when that process dies, so a `:tracker` killed mid-replay leaves
+     * the whole device's fused location mocked. An "off" from the next
+     * process alone is ignored (seen on the OnePlus 13, 2026-10-01). With no
+     * replay of its own running, this client takes mock mode, then lets it go.
+     */
+    private suspend fun releaseMockMode() {
+        try {
+            client.setMockMode(true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "taking mock mode to release it failed (${e::class.simpleName})")
+        }
+        turnMockModeOff()
     }
 
     private suspend fun turnMockModeOff() {
