@@ -38,6 +38,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -50,11 +51,12 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.wayGlyphVector
 object WayMomentCopy {
 
     /**
-     * Null for a waypoint saved without a label, which shows no kicker
-     * (owner decision 4). Minutes always read "minutes", as iOS ships them
-     * (pilgrim-ios #109, matched).
+     * Null for a waypoint the walker saved without a label, which shows no
+     * kicker (owner decision 4); with [keepsEmpty], on any other Way, it is
+     * iOS's empty kicker line (shared spec S4 §10.2). Minutes always read
+     * "minutes", as iOS ships them (pilgrim-ios #109, matched).
      */
-    fun kicker(resources: Resources, moment: WayMoment): String? = when (val kind = moment.kind) {
+    fun kicker(resources: Resources, moment: WayMoment, keepsEmpty: Boolean = false): String? = when (val kind = moment.kind) {
         is WayMomentKind.Voice -> resources.getString(
             if (kind.kind == VoiceKind.AMBIENT) {
                 R.string.honor_moment_ambient_kicker
@@ -68,7 +70,7 @@ object WayMomentCopy {
             if (kind.isEstimate) R.string.honor_moment_sit_estimate_kicker else R.string.honor_moment_sit_kicker,
             count(kind.minutes),
         )
-        is WayMomentKind.Waypoint -> kind.label.takeIf { it.isNotEmpty() }
+        is WayMomentKind.Waypoint -> kind.label.takeIf { it.isNotEmpty() || keepsEmpty }
     }
 
     /**
@@ -178,7 +180,7 @@ fun WayMomentHeader(
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
-            WayMomentCopy.kicker(resources, moment)?.let {
+            WayMomentCopy.kicker(resources, moment, keepsEmpty = way.source !is WaySource.OwnWalk)?.let {
                 Text(text = it, style = pilgrimType.heading, color = pilgrimColors.ink)
             }
             Text(
@@ -204,6 +206,7 @@ fun WayMomentCompactHeader(
     moment: WayMoment,
     subline: String?,
     tick: Double?,
+    keepsEmptyKicker: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val resources = LocalResources.current
@@ -227,7 +230,7 @@ fun WayMomentCompactHeader(
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
-            WayMomentCopy.kicker(resources, moment)?.let {
+            WayMomentCopy.kicker(resources, moment, keepsEmpty = keepsEmptyKicker)?.let {
                 Text(text = it, style = pilgrimType.body, color = pilgrimColors.ink)
             }
             WayMomentCopy.localName(resources, moment)?.let {

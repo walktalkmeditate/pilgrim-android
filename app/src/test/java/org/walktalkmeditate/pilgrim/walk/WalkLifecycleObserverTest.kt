@@ -52,6 +52,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.TheirSitting
 import java.time.Instant
 
 /**
@@ -83,6 +84,7 @@ class WalkLifecycleObserverTest {
     private val waysDirectory by lazy { java.io.File(context.filesDir, "lifecycle-observer-ways") }
     private val store by lazy { WayStore({ waysDirectory }) }
     private val replies by lazy { HonorReplies(store) }
+    private val theirSitting = TheirSitting()
     private val testClock = object : Clock {
         @Volatile var current: Long = 0L
         override fun now(): Long = current
@@ -141,6 +143,7 @@ class WalkLifecycleObserverTest {
             orphanSweeper = sweeper,
             seekSessionStore = seekSessionStore,
             honorReplies = replies,
+            theirSitting = theirSitting,
         )
         // The observer's `init { scope.launch { walkState.collect } }`
         // subscribes asynchronously on its scope dispatcher and swallows
@@ -428,6 +431,21 @@ class WalkLifecycleObserverTest {
 
             assertEquals(1 to emptyMap<Int, String>(), repository.voiceRecordingsFor(walkId).size to store.replies(OWN_WAY_ID))
         }
+
+    // ─── A card's "Sit?" offer (parity spec E §12) ───────────────────────────
+
+    @Test
+    fun `a sitting ended from the notification withdraws the card's offer, as every end does on iOS`() = runBlocking {
+        val walk = WalkAccumulator(walkId = 7L, startedAt = 0L)
+        transitionTo(WalkState.Active(walk))
+        theirSitting.offer(walkId = 7L, minutes = 5, nowMillis = 1_000L)
+
+        transitionTo(WalkState.Meditating(walk, meditationStartedAt = 2_000L))
+        val duringTheSitting = theirSitting.offer.value
+        transitionTo(WalkState.Active(walk))
+
+        assertEquals(5 to null, duringTheSitting?.minutes to theirSitting.offer.value)
+    }
 
     @Test
     fun `terminal transitions retire a pending seek session`() = runBlocking {

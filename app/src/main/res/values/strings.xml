@@ -1346,8 +1346,7 @@
     <string name="honor_arrival_places">%1$s places passed</string>
     <string name="honor_arrival_whole_way">the whole way, in their steps</string>
     <string name="honor_arrival_continue">continue</string>
-    <plurals name="honor_meditation_they_sat">
-        <item quantity="one">they sat here %1$s minute</item>
-        <item quantity="other">they sat here %1$s minutes</item>
-    </plurals>
+    <!-- iOS picks the word by `minutes == 1`, whatever the phone's plural rules. -->
+    <string name="honor_meditation_they_sat_one">they sat here %1$s minute</string>
+    <string name="honor_meditation_they_sat" tools:ignore="PluralsCandidate">they sat here %1$s minutes</string>
 </resources>

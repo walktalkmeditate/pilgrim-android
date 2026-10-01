@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -14,15 +15,20 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -183,6 +189,14 @@ class HonorOnWalkSemanticsTest {
     }
 
     @Test
+    fun `the waveform's bars stand 32 dp tall, as iOS frames them`() {
+        showCard(voiceCard())
+
+        val height = composeRule.onNodeWithContentDescription("Their voice; drag to move through it").getBoundsInRoot().height
+        assertEquals(32f, height.value, 0.5f)
+    }
+
+    @Test
     fun `before its bars are read the waveform is a silent placeholder`() {
         showCard(voiceCard(media = null))
 
@@ -339,6 +353,20 @@ class HonorOnWalkSemanticsTest {
     }
 
     @Test
+    fun `the arrival card is as wide as its widest line, not the screen`() {
+        show {
+            HonorArrivalCard(
+                summary = HonorArrivalSummary("the long way", voicesHeard = 1, placesPassed = 2),
+                onContinue = {},
+                modifier = Modifier.testTag(ARRIVAL_TAG),
+            )
+        }
+
+        val width = composeRule.onNodeWithTag(ARRIVAL_TAG).getBoundsInRoot().width
+        assertTrue("got $width of the 400 dp screen", width < 300.dp)
+    }
+
+    @Test
     fun `a share walked without its voices counts only the places passed`() {
         show {
             HonorArrivalCard(summary = HonorArrivalSummary("Obradoiro → Rúa do Franco", 0, 1), onContinue = {})
@@ -360,13 +388,30 @@ class HonorOnWalkSemanticsTest {
     }
 
     @Test
-    fun `the Walk stats value leads with the intention the bar doesn't show`() {
+    fun `the Walk stats value leads with the intention`() {
         showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = null), intention = "for her")
 
         val value = "for her. ${WalkFormat.duration(90_000L)}, ${WalkFormat.distance(250.0)}, " +
             "${WalkFormat.distance(650.0)} remaining"
         composeRule.onNodeWithContentDescription("Walk stats")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, value))
+    }
+
+    @Test
+    fun `the bar shows the intention above the stats while no voice is held`() {
+        showSheet(HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = null), intention = "for her")
+
+        composeRule.onNodeWithText("for her", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a held voice's chip takes the intention's place`() {
+        showSheet(
+            HonorSheetStats(remainingMeters = 650.0, softTapMeters = null, listening = HonorListening(5.0, false)),
+            intention = "for her",
+        )
+
+        composeRule.onAllNodesWithText("for her", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
@@ -408,6 +453,22 @@ class HonorOnWalkSemanticsTest {
 
     @Test
     fun `one minute reads in the singular there`() {
+        showMeditation(theirSittingMinutes = 1)
+
+        composeRule.onNodeWithText("they sat here 1 minute").assertExists()
+    }
+
+    @Test
+    @Config(qualifiers = "fr")
+    fun `zero reads in the plural even where the phone's rules count it as one`() {
+        showMeditation(theirSittingMinutes = 0)
+
+        composeRule.onNodeWithText("they sat here 0 minutes").assertExists()
+    }
+
+    @Test
+    @Config(qualifiers = "ja")
+    fun `one reads in the singular even where the phone's rules have no singular`() {
         showMeditation(theirSittingMinutes = 1)
 
         composeRule.onNodeWithText("they sat here 1 minute").assertExists()
@@ -461,6 +522,10 @@ class HonorOnWalkSemanticsTest {
 
     private fun isButton() = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)
 
+    private companion object {
+        const val ARRIVAL_TAG = "arrival-card"
+    }
+
     private fun actions(
         onFly: () -> Unit = {},
         onDismiss: () -> Unit = {},
@@ -498,6 +563,7 @@ class HonorOnWalkSemanticsTest {
         ),
         pendingCount = pendingCount,
         isStage = false,
+        keepsEmptyKicker = false,
         distanceMeters = distance,
         tick = null,
         isFocused = isFocused,
@@ -512,6 +578,7 @@ class HonorOnWalkSemanticsTest {
         moment = moment,
         pendingCount = 0,
         isStage = false,
+        keepsEmptyKicker = false,
         distanceMeters = null,
         tick = null,
         isFocused = false,

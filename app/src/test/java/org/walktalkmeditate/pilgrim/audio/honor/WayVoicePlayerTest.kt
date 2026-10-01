@@ -107,14 +107,27 @@ class WayVoicePlayerTest {
     }
 
     @Test
+    fun `a transient loss reports the voice held, and the regain reports it sounding again`() {
+        val reports = Reports()
+        player.play(file, 0.8f, reports)
+
+        focus().listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        focus().listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+
+        assertEquals(listOf(true, false), reports.held)
+    }
+
+    @Test
     fun `a pause during a transient loss is the caller's word, so the regain leaves it paused`() {
-        player.play(file, 0.8f, Reports())
+        val reports = Reports()
+        player.play(file, 0.8f, reports)
         focus().listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
 
         player.pause()
         focus().listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
 
         assertTrue(tracks.single().paused)
+        assertEquals("the hold ends with the caller's pause", listOf(true, false), reports.held)
     }
 
     @Test
@@ -147,11 +160,13 @@ class WayVoicePlayerTest {
 
     @Test
     fun `becoming noisy pauses the voice, and nothing but a resume starts it again`() {
-        player.play(file, 0.8f, Reports())
+        val reports = Reports()
+        player.play(file, 0.8f, reports)
 
         context.sendBroadcast(Intent(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         idle()
         assertTrue(tracks.single().paused)
+        assertEquals("the pause is reported, so the chip reads paused", 1, reports.pausedForRoute)
 
         focus().listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
         assertTrue(tracks.single().paused)
@@ -221,9 +236,21 @@ class WayVoicePlayerTest {
         assertEquals("never inside play", 0, reports.failed)
         idle()
 
-        assertEquals(1, reports.failed)
+        assertEquals(listOf(true), reports.failedBeforeSound)
         assertTrue(tracks.isEmpty())
         assertFalse(player.isPlaying)
+    }
+
+    @Test
+    fun `a track's failure says whether any sound came first`() {
+        val early = Reports()
+        player.play(file, 0.8f, early)
+        tracks.last().events.onFailed(beforeSound = true)
+        val midway = Reports()
+        player.play(file, 0.8f, midway)
+        tracks.last().events.onFailed(beforeSound = false)
+
+        assertEquals(listOf(true) to listOf(false), early.failedBeforeSound to midway.failedBeforeSound)
     }
 
     @Test
@@ -264,13 +291,25 @@ class WayVoicePlayerTest {
     private class Reports : WayVoicePlaybackListener {
         var ended = 0
         var failed = 0
+        val failedBeforeSound = mutableListOf<Boolean>()
+        val held = mutableListOf<Boolean>()
+        var pausedForRoute = 0
 
         override fun onEnded() {
             ended += 1
         }
 
-        override fun onFailed() {
+        override fun onFailed(beforeSound: Boolean) {
             failed += 1
+            failedBeforeSound += beforeSound
+        }
+
+        override fun onHeld(held: Boolean) {
+            this.held += held
+        }
+
+        override fun onPausedForRoute() {
+            pausedForRoute += 1
         }
     }
 

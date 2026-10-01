@@ -283,13 +283,14 @@ class HonorSession internal constructor(
         data object Tick : Input
         class Fix(val point: LocationPoint) : Input
         class Command(val seq: Long, val command: HonorCommand) : Input
-        class VoiceEnded(val token: Long, val failed: Boolean) : Input
+        class VoiceEnded(val token: Long, val end: HonorVoiceEnd) : Input
+        class VoicePausedForRoute(val token: Long) : Input
         class Barrier(val done: CompletableDeferred<Unit>) : Input
     }
 
     /** A side effect, performed only after the rows that record its cause commit. */
     private sealed interface Ritual {
-        class Play(val file: File, val gain: Float, val token: Long) : Ritual
+        class Play(val file: File, val gain: Float, val token: Long, val byEngine: Boolean) : Ritual
         class PlayReply(val file: File, val token: Long) : Ritual
         data object Pause : Ritual
         data object Resume : Ritual
@@ -326,6 +327,9 @@ class HonorSession internal constructor(
         private var ducked = false
         private var latestState: WalkState = walkState.value
         private var appliedGates: HonorMomentTracker.Gates? = null
+
+        /** The arbiter's last word on the voice handed over: silent behind a prompt or a call, though not paused. */
+        private var voiceHeld = false
 
         @Volatile
         var ended = false
@@ -393,7 +397,11 @@ class HonorSession internal constructor(
                 }
                 is Input.VoiceEnded -> {
                     applyGates()
-                    voiceEnded(input.token, input.failed)
+                    voiceEnded(input.token, input.end)
+                }
+                is Input.VoicePausedForRoute -> {
+                    applyGates()
+                    voicePausedForRoute(input.token)
                 }
                 is Input.Barrier -> try {
                     applyGates()
@@ -452,16 +460,21 @@ class HonorSession internal constructor(
             honorEngineSeconds(latestState, clock.now())?.let(engine::updateActiveDuration)
         }
 
+        /** The voice's hold first, which no engine gate reads (spec C §3.6–§3.7), then the engine's gates. */
         private suspend fun applyGates() {
-            val gates = currentGates()
+            val external = gatePort.gates.value
+            if (external.wayVoiceHeld != voiceHeld) {
+                voiceHeld = external.wayVoiceHeld
+                commitAndPerform(Plan(clock.now()))
+            }
+            val gates = currentGates(external)
             if (gates == appliedGates) return
             appliedGates = gates
             step { engine.setGates(gates) }
         }
 
         /** A sitting leaves the walk recording, so it is not "paused" (spec B §2.4). */
-        private fun currentGates(): HonorMomentTracker.Gates {
-            val external = gatePort.gates.value
+        private fun currentGates(external: HonorExternalGates = gatePort.gates.value): HonorMomentTracker.Gates {
             return HonorMomentTracker.Gates(
                 paused = latestState is WalkState.Paused,
                 meditating = latestState is WalkState.Meditating,
@@ -525,18 +538,26 @@ class HonorSession internal constructor(
             }
             hold.active?.let { replaced -> plan.endVoice(replaced, HonorVoiceEnd.REPLACED) }
             plan.startVoice(moment)
-            plan.play(file, moment.voiceGain())
+            plan.play(file, moment.voiceGain(), byEngine = true)
         }
 
         /** iOS `onFinished` (`ActiveWalkViewModel+Honor.swift:64-71@7c200bf`): the chip clears, then the engine gets its turn. */
-        private suspend fun voiceEnded(token: Long, failed: Boolean) {
+        private suspend fun voiceEnded(token: Long, end: HonorVoiceEnd) {
             if (token != playerToken) return
             playerToken = null
             val plan = Plan(clock.now())
-            hold.active?.let { plan.endVoice(it, if (failed) HonorVoiceEnd.FAILED else HonorVoiceEnd.FINISHED) }
+            hold.active?.let { plan.endVoice(it, end) }
             hold = hold.released()
             plan.rituals += Ritual.Restore
             planEvents(plan, engine.voiceDidFinish(), fix = null)
+            commitAndPerform(plan)
+        }
+
+        /** The headphones went and the player paused: the walker's pause, so the chip reads paused and one tap resumes. */
+        private suspend fun voicePausedForRoute(token: Long) {
+            if (token != playerToken || hold.active == null || hold.paused) return
+            val plan = Plan(clock.now())
+            hold = hold.pausedAt(plan.now)
             commitAndPerform(plan)
         }
 
@@ -545,13 +566,17 @@ class HonorSession internal constructor(
             val plan = Plan(clock.now())
             when (command) {
                 is HonorCommand.TogglePlayback -> planToggle(plan, command.momentId)
+                is HonorCommand.PauseResume -> if (isHeld(command.momentId)) planPauseResume(plan)
                 is HonorCommand.Scrub -> planScrub(plan, command.momentId, command.fraction)
-                HonorCommand.Skip -> planSkip(plan)
+                is HonorCommand.Skip -> if (isHeld(command.momentId)) planSkip(plan)
                 HonorCommand.CycleRate -> planRate(plan)
                 is HonorCommand.PlayReply -> planReply(plan, command.momentId)
             }
             commitAndPerform(plan)
         }
+
+        /** Whether [momentId] is still the voice held, as it was when the walker tapped. */
+        private fun isHeld(momentId: String): Boolean = hold.active?.id == momentId
 
         /**
          * iOS `togglePlayback(of:)` (`ActiveWalkViewModel+Honor.swift:384-403@7c200bf`). A
@@ -561,20 +586,25 @@ class HonorSession internal constructor(
         private fun planToggle(plan: Plan, momentId: String) {
             val moment = momentsById[momentId] ?: return
             if (moment == hold.active) {
-                if (hold.paused) {
-                    hold = hold.resumedAt(plan.now)
-                    plan.rituals += Ritual.Resume
-                } else {
-                    hold = hold.pausedAt(plan.now)
-                    plan.rituals += Ritual.Pause
-                }
+                planPauseResume(plan)
                 return
             }
             val file = media.voiceFile(way.id, moment) ?: return
             hold.active?.let { replaced -> plan.endVoice(replaced, HonorVoiceEnd.REPLACED) }
             plan.stopPlayer()
             plan.startVoice(moment)
-            plan.play(file, moment.voiceGain())
+            plan.play(file, moment.voiceGain(), byEngine = false)
+        }
+
+        /** A pause during a guide's or a call's hold becomes the walker's own pause, where the voice was held (spec C §3.6). */
+        private fun planPauseResume(plan: Plan) {
+            if (hold.paused) {
+                hold = hold.resumedAt(plan.now)
+                plan.rituals += Ritual.Resume
+            } else {
+                hold = hold.pausedAt(plan.now)
+                plan.rituals += Ritual.Pause
+            }
         }
 
         /** iOS `seekVoice` (`ActiveWalkViewModel+Honor.swift:405-411@7c200bf`). */
@@ -621,6 +651,7 @@ class HonorSession internal constructor(
         }
 
         private suspend fun commitAndPerform(plan: Plan) {
+            hold = hold.heldIf(voiceHeld, plan.now)
             val snapshot = engine.snapshot()
             planTracker(plan, snapshot.tracker)
             val engineState = snapshot.toEngineState(walkId)
@@ -676,8 +707,8 @@ class HonorSession internal constructor(
         private suspend fun perform(rituals: List<Ritual>) {
             for (ritual in rituals) {
                 when (ritual) {
-                    is Ritual.Play -> voice.play(ritual.file, ritual.gain, Listener(ritual.token))
-                    is Ritual.PlayReply -> voice.playReply(ritual.file, Listener(ritual.token))
+                    is Ritual.Play -> voice.play(ritual.file, ritual.gain, Listener(ritual.token, ritual.byEngine))
+                    is Ritual.PlayReply -> voice.playReply(ritual.file, Listener(ritual.token, byEngine = false))
                     Ritual.Pause -> voice.pause()
                     Ritual.Resume -> voice.resume()
                     Ritual.Stop -> voice.stop()
@@ -728,12 +759,16 @@ class HonorSession internal constructor(
             fun endVoice(moment: WayMoment, how: HonorVoiceEnd) =
                 update(moment.id) { it.copy(voiceEndedAt = now, voiceEnd = how) }
 
-            /** Replacing a play keeps the duck; only an empty player takes one (spec C resolution 9). */
-            fun play(file: File, gain: Float) {
+            /**
+             * Replacing a play keeps the duck; only an empty player takes one
+             * (spec C resolution 9). [byEngine] for the engine's own voice,
+             * whose card only a start failure raises again (spec C §10.2).
+             */
+            fun play(file: File, gain: Float, byEngine: Boolean) {
                 val token = ++nextToken
                 playerToken = token
                 rituals += Ritual.Duck
-                rituals += Ritual.Play(file, gain, token)
+                rituals += Ritual.Play(file, gain, token, byEngine)
             }
 
             fun playReply(file: File) {
@@ -751,13 +786,18 @@ class HonorSession internal constructor(
             }
         }
 
-        private inner class Listener(private val token: Long) : WayVoiceListener {
+        private inner class Listener(private val token: Long, private val byEngine: Boolean) : WayVoiceListener {
             override fun onFinished() {
-                inputs.trySend(Input.VoiceEnded(token, failed = false))
+                inputs.trySend(Input.VoiceEnded(token, HonorVoiceEnd.FINISHED))
             }
 
-            override fun onFailed() {
-                inputs.trySend(Input.VoiceEnded(token, failed = true))
+            override fun onFailed(atHandOff: Boolean) {
+                val end = if (atHandOff && byEngine) HonorVoiceEnd.FAILED_AT_START else HonorVoiceEnd.FAILED
+                inputs.trySend(Input.VoiceEnded(token, end))
+            }
+
+            override fun onPausedForRoute() {
+                inputs.trySend(Input.VoicePausedForRoute(token))
             }
         }
     }

@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -53,8 +52,9 @@ object HonorArrivalCopy {
  * iOS `HonorArrivalCardView` for an own or shared Way (`WayPlaceCard.swift:350-375@7c200bf`,
  * parity spec E §11): the title, the Way's title, the counting line, and
  * "continue", the only way out, on the place card's shell with no swipe
- * and no ×. It outranks every place card while it is up. The closing line
- * and its reply row are a stage's.
+ * and no ×. It outranks every place card while it is up. Unlike the place
+ * card, nothing widens it: it is as wide as its widest line. The closing
+ * line and its reply row are a stage's.
  */
 @Composable
 fun HonorArrivalCard(
@@ -64,7 +64,6 @@ fun HonorArrivalCard(
 ) {
     Column(
         modifier = modifier
-            .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(pilgrimColors.parchmentSecondary)
             .padding(PilgrimSpacing.normal),

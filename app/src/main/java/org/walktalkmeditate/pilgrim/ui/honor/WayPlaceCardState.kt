@@ -8,6 +8,7 @@ import kotlin.math.roundToLong
 import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
+import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.Way
@@ -33,9 +34,9 @@ const val HONOR_ARRIVAL_CARD_ID = "arrival"
 const val CARD_RETIRE_MILLIS = 20_000L
 
 /**
- * What the walker did to cards in this UI process that Room can't order
- * against the moment rows: when a pin was tapped and when a card was
- * dismissed. Touches are kept here too until their row lands.
+ * What the walker did to cards in this UI process: when a pin was tapped,
+ * which only this process orders against the moment rows, and the
+ * dismissals and touches it made, kept here until their rows land.
  */
 @Immutable
 data class CardTouches(
@@ -69,16 +70,19 @@ object HonorCards {
      * - a tapped pin goes to the front, at its tap.
      *
      * So the queue is the fronted cards, latest first, then the appended
-     * ones in reach order. A dismissed card stays out until it is fronted
-     * again; a dismissal an earlier UI process made is final unless a pin
-     * is tapped in this one. A voice card retires 20 s after its voice ended
-     * on its own or failed, unless touched or playing again; skipped,
-     * dropped, replaced, and reply-interrupted voices never retire, nor does
-     * any other card (pilgrim-ios #106, matched).
+     * ones in reach order. A dismissal takes the card out until something
+     * raises it after the dismissal: its voice starting, its pin tapped, or
+     * its place reached, which iOS appends whatever the walker did with it
+     * before; a pin tapped earlier is spent by the dismissal. Dismissals
+     * keep their time in Room, so a restarted UI orders them the same.
      *
-     * A voice that failed to play sits above the voice it handed its turn
-     * to, as iOS's synchronous start failure raises the failed card last
-     * (pilgrim-ios #106, matched).
+     * A voice card retires 20 s after its voice ended on its own or failed,
+     * unless touched or playing again; skipped, dropped, replaced, and
+     * reply-interrupted voices never retire, nor does any other card
+     * (pilgrim-ios #106, matched). An engine voice the player refused at
+     * its start sits above the voice it handed its turn to, as iOS's
+     * synchronous start failure raises the failed card last (pilgrim-ios
+     * #106, matched); any other failure leaves the card where it was.
      */
     fun queue(
         way: Way,
@@ -95,11 +99,12 @@ object HonorCards {
         var nextChange: Long? = null
         way.moments.forEachIndexed { index, moment ->
             val row = rowById[moment.id]
-            val tappedAt = local.taps[moment.id]
+            val dismissedAt = listOfNotNull(local.dismissals[moment.id], cardById[moment.id]?.dismissedAt).maxOrNull()
+            val tappedAt = local.taps[moment.id]?.takeIf { dismissedAt == null || it > dismissedAt }
             val front = frontKey(moment, row, tappedAt)
             val appendAt = if (moment.isVoice) null else row?.reachedAt
-            if (front == null && appendAt == null) return@forEachIndexed
-            if (isDismissed(moment.id, front, tappedAt, cardById[moment.id], local)) return@forEachIndexed
+            val raisedAt = listOfNotNull(front?.raisedAt, appendAt).maxOrNull() ?: return@forEachIndexed
+            if (dismissedAt != null && raisedAt <= dismissedAt) return@forEachIndexed
             val touched = moment.id in local.touched || cardById[moment.id]?.touched == true
             val retireAt = retireAt(moment, row, touched, playingMomentId)
             if (retireAt != null) {
@@ -120,7 +125,12 @@ object HonorCards {
         return HonorCardQueue(order.map { way.moments[it].id }, nextChange)
     }
 
-    private data class FrontKey(val atMillis: Long, val rank: Int)
+    /**
+     * Where a fronted card sorts ([atMillis], then [rank]), and [raisedAt],
+     * when iOS raised it, which a dismissal is weighed against: a failed
+     * start sorts at its failure but was raised with its voice.
+     */
+    private data class FrontKey(val atMillis: Long, val rank: Int, val raisedAt: Long = atMillis)
 
     private fun frontKey(moment: WayMoment, row: HonorMomentStateEntity?, tappedAt: Long?): FrontKey? {
         val voiceKey = row?.takeIf { moment.isVoice }?.voiceKey()
@@ -130,34 +140,25 @@ object HonorCards {
 
     private fun HonorMomentStateEntity.voiceKey(): FrontKey? {
         val start = voiceStartedAt ?: return null
-        val failedAt = voiceEndedAt?.takeIf { voiceEnd == HonorVoiceEnd.FAILED }
-        return if (failedAt != null) FrontKey(maxOf(start, failedAt), rank = 1) else FrontKey(start, rank = 0)
-    }
-
-    private fun isDismissed(
-        momentId: String,
-        front: FrontKey?,
-        tappedAt: Long?,
-        card: HonorCardStateEntity?,
-        local: CardTouches,
-    ): Boolean {
-        val dismissedHere = local.dismissals[momentId]
-        if (dismissedHere != null) return front == null || front.atMillis <= dismissedHere
-        return card?.dismissed == true && tappedAt == null
+        val failedAt = voiceEndedAt?.takeIf { voiceEnd == HonorVoiceEnd.FAILED_AT_START }
+        return if (failedAt != null) FrontKey(maxOf(start, failedAt), rank = 1, raisedAt = start) else FrontKey(start, rank = 0)
     }
 
     /** iOS `retireCardLater`, scheduled only from `onFinished`: a natural end or a failure. */
     private fun retireAt(moment: WayMoment, row: HonorMomentStateEntity?, touched: Boolean, playingMomentId: String?): Long? {
         if (!moment.isVoice || row == null || touched || playingMomentId == moment.id) return null
-        if (row.voiceEnd != HonorVoiceEnd.FINISHED && row.voiceEnd != HonorVoiceEnd.FAILED) return null
+        if (row.voiceEnd !in RETIRING_ENDS) return null
         return row.voiceEndedAt?.plus(CARD_RETIRE_MILLIS)
     }
+
+    private val RETIRING_ENDS = setOf(HonorVoiceEnd.FINISHED, HonorVoiceEnd.FAILED, HonorVoiceEnd.FAILED_AT_START)
 }
 
 /**
  * The voice the player holds, as the session row records it (iOS
  * `activeVoice`, `isVoicePaused`, `voiceRate`): null [playingMomentId]
- * while nothing plays, or while a reply does.
+ * while nothing plays, or while a reply does. With no [startedAtMillis]
+ * the voice is held still, behind a guide prompt or a call, and not paused.
  */
 @Immutable
 data class HonorVoiceView(
@@ -182,6 +183,8 @@ data class HonorVoiceView(
     fun resumedAt(nowMillis: Long) =
         copy(paused = false, startedAtMillis = nowMillis, startOffsetMillis = positionMillis(nowMillis), pauseOffsetMillis = null)
 
+    fun pausedOrResumedAt(nowMillis: Long) = if (paused) resumedAt(nowMillis) else pausedAt(nowMillis)
+
     fun playing(momentId: String, nowMillis: Long, offsetMillis: Long = 0L) = copy(
         playingMomentId = momentId,
         paused = false,
@@ -190,8 +193,12 @@ data class HonorVoiceView(
         pauseOffsetMillis = null,
     )
 
-    fun movedTo(offsetMillis: Long, nowMillis: Long) =
-        if (paused) copy(pauseOffsetMillis = offsetMillis) else copy(startedAtMillis = nowMillis, startOffsetMillis = offsetMillis)
+    /** A voice held still moves and stays held, as `:tracker`'s does. */
+    fun movedTo(offsetMillis: Long, nowMillis: Long) = if (paused) {
+        copy(pauseOffsetMillis = offsetMillis)
+    } else {
+        copy(startedAtMillis = startedAtMillis?.let { nowMillis }, startOffsetMillis = offsetMillis)
+    }
 
     fun released() = HonorVoiceView(null, paused = false, null, null, null, rate)
 

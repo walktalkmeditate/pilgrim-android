@@ -83,13 +83,19 @@ class WalkActionPublisher internal constructor(
                     putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_TOGGLE_PLAYBACK)
                     putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
                 }
+                is HonorCommand.PauseResume -> {
+                    putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_PAUSE_RESUME)
+                    putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
+                }
                 is HonorCommand.Scrub -> {
                     putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_SCRUB)
                     putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
                     putExtra(WalkTrackingService.EXTRA_HONOR_SCRUB_FRACTION, command.fraction)
                 }
-                HonorCommand.Skip ->
+                is HonorCommand.Skip -> {
                     putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_SKIP)
+                    putExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID, command.momentId)
+                }
                 HonorCommand.CycleRate ->
                     putExtra(WalkTrackingService.EXTRA_HONOR_COMMAND, WalkTrackingService.HONOR_COMMAND_CYCLE_RATE)
                 is HonorCommand.PlayReply -> {

@@ -417,11 +417,12 @@ private fun MinimizedContent(
 
 /**
  * iOS's minimized bar on an honor walk (`WalkStatsSheet.swift:328-449@7c200bf`):
- * the listening chip above the stats while a Way voice is held, then time,
- * distance, and "Remaining" (or the soft-tap caption in its place). The
- * stats are one TalkBack element, "Walk stats", whose value names all three
- * and the intention, which the bar itself doesn't show; the chip's controls
- * stay reachable apart from it. A tap anywhere but a chip control expands.
+ * the listening chip above the stats while a Way voice is held, else the
+ * walker's intention on one line, then time, distance, and "Remaining" (or
+ * the soft-tap caption in its place). The intention and the stats are one
+ * TalkBack element, "Walk stats", whose value names the intention and all
+ * three; the chip's controls stay reachable apart from it. A tap anywhere
+ * but a chip control expands.
  */
 @Composable
 private fun HonorMinimizedContent(
@@ -455,7 +456,7 @@ private fun HonorMinimizedContent(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         honor.listening?.let { ListeningChip(listening = it, onPauseResume = onPauseResume, onSkip = onSkip) }
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clearAndSetSemantics {
@@ -464,21 +465,37 @@ private fun HonorMinimizedContent(
                     role = Role.Button
                     onClick(label = expand) { currentOnTap(); true }
                 },
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            StatColumn(value = duration, label = stringResource(R.string.walk_stat_time))
-            StatColumn(value = distance, label = stringResource(R.string.walk_stat_distance))
-            if (caption != null) {
+            val shownIntention = intention?.takeIf { honor.listening == null && it.isNotEmpty() }
+            if (shownIntention != null) {
                 Text(
-                    text = caption,
+                    text = shownIntention,
                     style = pilgrimType.caption,
-                    color = pilgrimColors.fog,
-                    maxLines = 2,
-                    textAlign = TextAlign.Center,
+                    color = pilgrimColors.fog.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            } else {
-                StatColumn(value = remaining, label = stringResource(R.string.honor_stat_remaining))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatColumn(value = duration, label = stringResource(R.string.walk_stat_time))
+                StatColumn(value = distance, label = stringResource(R.string.walk_stat_distance))
+                if (caption != null) {
+                    Text(
+                        text = caption,
+                        style = pilgrimType.caption,
+                        color = pilgrimColors.fog,
+                        maxLines = 2,
+                        textAlign = TextAlign.Center,
+                    )
+                } else {
+                    StatColumn(value = remaining, label = stringResource(R.string.honor_stat_remaining))
+                }
             }
         }
     }

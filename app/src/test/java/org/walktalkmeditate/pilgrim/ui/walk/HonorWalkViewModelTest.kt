@@ -46,11 +46,13 @@ import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
+import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceState
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
@@ -438,7 +440,7 @@ class HonorWalkViewModelTest {
 
         vm.dismissTopCard()
 
-        assertTrue(db.honorDao().getCardStates(liveWalkId).single { it.momentId == "rest-1" }.dismissed)
+        assertEquals(clock.now(), db.honorDao().getCardStates(liveWalkId).single { it.momentId == "rest-1" }.dismissedAt)
     }
 
     @Test
@@ -542,7 +544,7 @@ class HonorWalkViewModelTest {
         vm.toggleListening()
         vm.skipVoice()
 
-        assertEquals(listOf(HonorCommand.TogglePlayback("voice-1"), HonorCommand.Skip), sentCommands)
+        assertEquals(listOf(HonorCommand.PauseResume("voice-1"), HonorCommand.Skip("voice-1")), sentCommands)
     }
 
     @Test
@@ -567,6 +569,75 @@ class HonorWalkViewModelTest {
         repeat(3) { stepOneSecond() }
 
         assertEquals(3.0, vm.sheet.value!!.listening!!.elapsedSeconds, 1e-9)
+    }
+
+    @Test
+    fun `the chip's clock stands still while the tracker holds the voice, and runs on from where it stood`() =
+        runTest(dispatcher) {
+            presentVoices()
+            startLiveWalk(
+                session = { it.copy(playingMomentId = "voice-1", voiceStartedAt = null, voiceStartOffsetMillis = 7_000L) },
+                rows = listOf(started("voice-1", at = T0)),
+            )
+            val vm = viewModel()
+            collectCards(vm)
+            vm.sheet.awaitValue { it?.listening != null }
+
+            repeat(3) { stepOneSecond() }
+            val held = vm.sheet.value!!.listening!!
+            db.honorDao().updateVoiceState(
+                HonorVoiceState(
+                    walkId = liveWalkId, playingMomentId = "voice-1", voicePaused = false, voiceStartedAt = clock.now(),
+                    voiceStartOffsetMillis = 7_000L, voicePauseOffsetMillis = null, voiceRate = 1.0,
+                ),
+            )
+            repeat(2) { stepOneSecond() }
+
+            assertEquals(HonorListening(elapsedSeconds = 7.0, paused = false), held)
+            assertEquals(9.0, vm.sheet.value!!.listening!!.elapsedSeconds, 1e-9)
+        }
+
+    @Test
+    fun `the clock ends at the voice's length, never past it`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        repeat(25) { stepOneSecond() }
+
+        assertEquals(20.0 to 20.0, vm.sheet.value!!.listening!!.elapsedSeconds to vm.cards.value!!.place!!.elapsedSeconds)
+    }
+
+    @Test
+    fun `the chip's pause and skip send nothing once no voice is held`() = runTest(dispatcher) {
+        presentVoices()
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+
+        vm.toggleListening()
+        vm.skipVoice()
+
+        assertEquals(emptyList<HonorCommand>(), sentCommands)
+    }
+
+    @Test
+    fun `a card whose voice isn't held starts it, and a card whose voice is pauses it`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
+        val playing = vm.cards.awaitValue { it?.place?.isPlaying == true }!!.place!!.moment
+        vm.togglePlayback(playing)
+        stepOneSecond()
+        vm.onWayPinTap("voice-2")
+        val other = vm.cards.awaitValue { it?.place?.moment?.id == "voice-2" }!!.place!!.moment
+
+        vm.togglePlayback(other)
+
+        assertEquals(listOf(HonorCommand.PauseResume("voice-1"), HonorCommand.TogglePlayback("voice-2")), sentCommands)
     }
 
     @Test
@@ -607,6 +678,27 @@ class HonorWalkViewModelTest {
         collectCards(vm)
 
         assertTrue(vm.cards.awaitValue { it?.place?.media != null }!!.place!!.media!!.hasEarlierReply)
+    }
+
+    @Test
+    fun `a reply filed while its voice's card is up offers your reply at once`() = runTest(dispatcher) {
+        presentVoices()
+        store.save(way())
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+        val before = vm.cards.awaitValue { it?.place?.media != null }!!.place!!.media!!.hasEarlierReply
+        replies.arm(walkId = liveWalkId, wayId = OWN_WAY_ID, momentId = "voice-1")
+        presentFile("recordings/reply.wav")
+
+        replies.fileIfPending(
+            VoiceRecording(
+                walkId = liveWalkId, startTimestamp = T0, endTimestamp = T0 + 5_000L, durationMillis = 5_000L,
+                fileRelativePath = "recordings/reply.wav",
+            ),
+        )
+
+        assertEquals(false to true, before to vm.cards.awaitValue { it?.place?.media?.hasEarlierReply == true }!!.place!!.media!!.hasEarlierReply)
     }
 
     @Test
@@ -750,7 +842,7 @@ class HonorWalkViewModelTest {
     @Test
     fun `after a restart an arrival card already continued past stays down`() = runTest(dispatcher) {
         startLiveWalk(session = { it.copy(phase = HonorPhase.ARRIVED) })
-        db.honorDao().markCardDismissed(liveWalkId, HONOR_ARRIVAL_CARD_ID)
+        db.honorDao().markCardDismissed(liveWalkId, HONOR_ARRIVAL_CARD_ID, atMillis = T0)
         val vm = viewModel()
         collectCards(vm)
 
@@ -896,13 +988,13 @@ class HonorWalkViewModelTest {
 
         assertEquals(
             listOf(
-                HonorCommand.TogglePlayback("voice-1"),
-                HonorCommand.TogglePlayback("voice-1"),
+                HonorCommand.PauseResume("voice-1"),
+                HonorCommand.PauseResume("voice-1"),
                 HonorCommand.CycleRate,
                 HonorCommand.Scrub("voice-1", 0.5),
                 HonorCommand.PlayReply("voice-1"),
                 HonorCommand.TogglePlayback("voice-1"),
-                HonorCommand.Skip,
+                HonorCommand.Skip("voice-1"),
             ),
             startedCommandIntents(),
         )

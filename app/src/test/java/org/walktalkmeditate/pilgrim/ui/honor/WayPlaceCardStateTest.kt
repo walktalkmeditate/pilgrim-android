@@ -136,7 +136,7 @@ class WayPlaceCardStateTest {
 
     @Test
     fun `a dismissal an earlier UI process made stays`() {
-        val queue = queue(rows = listOf(reached("rest-1", at = T)), cards = listOf(card("rest-1", dismissed = true)))
+        val queue = queue(rows = listOf(reached("rest-1", at = T)), cards = listOf(card("rest-1", dismissedAt = T + 1)))
 
         assertEquals(emptyList<String>(), queue.momentIds)
     }
@@ -246,13 +246,92 @@ class WayPlaceCardStateTest {
     fun `a voice that failed to play sits above the voice it handed its turn to (pilgrim-ios #106, matched)`() {
         val queue = queue(
             rows = listOf(
-                started("voice-1", at = T, end = HonorVoiceEnd.FAILED, endedAt = T + 3),
+                started("voice-1", at = T, end = HonorVoiceEnd.FAILED_AT_START, endedAt = T + 3),
                 started("voice-2", at = T + 3),
             ),
             now = T + 4,
         )
 
         assertEquals(listOf("voice-1", "voice-2"), queue.momentIds)
+    }
+
+    @Test
+    fun `a voice that broke off midway stays under the voice that follows it, as a natural end does`() {
+        val queue = queue(
+            rows = listOf(
+                started("voice-1", at = T, end = HonorVoiceEnd.FAILED, endedAt = T + 3),
+                started("voice-2", at = T + 3),
+            ),
+            now = T + 4,
+        )
+
+        assertEquals(listOf("voice-2", "voice-1"), queue.momentIds)
+    }
+
+    @Test
+    fun `a dismissed voice card stays gone when its voice breaks off`() {
+        val queue = queue(
+            rows = listOf(started("voice-1", at = T, end = HonorVoiceEnd.FAILED, endedAt = T + 5)),
+            local = CardTouches(dismissals = mapOf("voice-1" to T + 2)),
+            now = T + 6,
+        )
+
+        assertEquals(emptyList<String>(), queue.momentIds)
+    }
+
+    @Test
+    fun `a failed start never undoes a dismissal made after its voice started`() {
+        val queue = queue(
+            rows = listOf(started("voice-1", at = T, end = HonorVoiceEnd.FAILED_AT_START, endedAt = T + 5)),
+            local = CardTouches(dismissals = mapOf("voice-1" to T + 2)),
+            now = T + 6,
+        )
+
+        assertEquals(emptyList<String>(), queue.momentIds)
+    }
+
+    // ---- Dismissed, then raised again (iOS appends a reached place) --------
+
+    @Test
+    fun `a place tapped ahead and dismissed still rises when it is reached, behind the cards before it`() {
+        val queue = queue(
+            rows = listOf(reached("sit-1", at = T + 1), reached("rest-1", at = T + 5)),
+            local = CardTouches(taps = mapOf("rest-1" to T), dismissals = mapOf("rest-1" to T + 2)),
+        )
+
+        assertEquals(listOf("sit-1", "rest-1"), queue.momentIds)
+    }
+
+    @Test
+    fun `a pin tapped before a dismissal is spent by it`() {
+        val queue = queue(local = CardTouches(taps = mapOf("rest-1" to T), dismissals = mapOf("rest-1" to T + 2)))
+
+        assertEquals(emptyList<String>(), queue.momentIds)
+    }
+
+    @Test
+    fun `after a restart, a place dismissed ahead of its reach rises when it is reached`() {
+        val queue = queue(rows = listOf(reached("rest-1", at = T + 5)), cards = listOf(card("rest-1", dismissedAt = T + 2)))
+
+        assertEquals(listOf("rest-1"), queue.momentIds)
+    }
+
+    @Test
+    fun `after a restart, a voice played again after its card was dismissed shows again`() {
+        val queue = queue(rows = listOf(started("voice-1", at = T + 5)), cards = listOf(card("voice-1", dismissedAt = T + 2)))
+
+        assertEquals(listOf("voice-1"), queue.momentIds)
+    }
+
+    @Test
+    fun `after a restart, a pin tapped since the dismissal brings the card back`() {
+        val queue = queue(
+            rows = listOf(reached("rest-1", at = T)),
+            cards = listOf(card("rest-1", dismissedAt = T + 2)),
+            local = CardTouches(taps = mapOf("rest-1" to T + 4)),
+        )
+
+        assertEquals(listOf("rest-1"), queue.momentIds)
     }
 
     // ---- Rebuilt after a UI restart, from Room alone (AE1) -----------------
@@ -266,7 +345,7 @@ class WayPlaceCardStateTest {
                 started("voice-2", at = T - 10_000, end = HonorVoiceEnd.FINISHED, endedAt = T - 5_000),
                 reached("sit-1", at = T - 1_000),
             ),
-            cards = listOf(card("rest-1", dismissed = true)),
+            cards = listOf(card("rest-1", dismissedAt = T - 35_000)),
             now = T,
         )
 
@@ -409,8 +488,8 @@ class WayPlaceCardStateTest {
 
     @Test
     fun `the meditation caption has its singular, unlike the card's kicker`() {
-        val one = resources.getQuantityString(R.plurals.honor_meditation_they_sat, 1, "1")
-        val zero = resources.getQuantityString(R.plurals.honor_meditation_they_sat, 0, "0")
+        val one = resources.getString(R.string.honor_meditation_they_sat_one, "1")
+        val zero = resources.getString(R.string.honor_meditation_they_sat, "0")
 
         assertEquals("they sat here 1 minute" to "they sat here 0 minutes", one to zero)
     }
@@ -445,7 +524,14 @@ class WayPlaceCardStateTest {
     }
 
     @Test
-    fun `an unlabelled shared waypoint shows the same empty kicker slot as Android's own`() {
+    fun `an unlabelled shared waypoint keeps iOS's empty kicker line`() {
+        val waypoint = WayMoment("m", 0.5, null, WayMomentKind.Waypoint(label = "", icon = ""))
+
+        assertEquals("", WayMomentCopy.kicker(resources, waypoint, keepsEmpty = true))
+    }
+
+    @Test
+    fun `the walker's own unlabelled waypoint has no kicker (owner decision 4)`() {
         assertNull(kicker(WayMomentKind.Waypoint(label = "", icon = "")))
     }
 
@@ -507,8 +593,8 @@ class WayPlaceCardStateTest {
             heard = true,
         )
 
-    private fun card(momentId: String, dismissed: Boolean = false, touched: Boolean = false) =
-        HonorCardStateEntity(walkId = 1, momentId = momentId, dismissed = dismissed, touched = touched)
+    private fun card(momentId: String, dismissedAt: Long? = null, touched: Boolean = false) =
+        HonorCardStateEntity(walkId = 1, momentId = momentId, dismissedAtMillis = dismissedAt ?: 0, touched = touched)
 
     private fun session() = HonorSessionEntity(
         walkId = 1,

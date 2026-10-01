@@ -7,6 +7,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.walk.honor.voiceOriginIndex
@@ -52,6 +53,11 @@ class HonorReplies internal constructor(
     private val _pending = MutableStateFlow<PendingReply?>(null)
     val pending: StateFlow<PendingReply?> = _pending.asStateFlow()
 
+    private val _filed = MutableStateFlow(0L)
+
+    /** Counts the replies written into a Way's folder, so the card showing their voice reads its reply again. */
+    val filed: StateFlow<Long> = _filed.asStateFlow()
+
     /** iOS `replyHere(to:)`'s first step. An ordinary take already recording becomes the reply (pilgrim-ios #99, matched). */
     fun arm(walkId: Long, wayId: String, momentId: String) {
         _pending.value = PendingReply(walkId, wayId, momentId, listed = isListed(wayId))
@@ -82,6 +88,7 @@ class HonorReplies internal constructor(
         if (!origin.listed) return
         try {
             setReply(origin.wayId, n, recording.fileRelativePath)
+            _filed.update { it + 1 }
         } catch (_: IOException) {
             // iOS `try?`: the reply's recording stays an ordinary walk recording.
         } catch (_: IllegalArgumentException) {
@@ -100,7 +107,8 @@ class HonorReplies internal constructor(
  * `suggestedMeditationMinutes`, parity spec E §12). Only "Sit?" offers
  * them, so a sitting started from the sheet shows no caption; the offer is
  * for the first sitting that begins after it on the same walk, and is
- * withdrawn when a sitting ends.
+ * withdrawn when any sitting ends, from the screen or the notification
+ * (iOS `finalizeMeditation`, `ActiveWalkViewModel.swift:502-503@7c200bf`).
  */
 @Singleton
 class TheirSitting @Inject constructor() {

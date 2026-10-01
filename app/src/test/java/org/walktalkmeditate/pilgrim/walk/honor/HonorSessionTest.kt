@@ -186,6 +186,34 @@ class HonorSessionTest {
     }
 
     @Test
+    fun `an engine voice the player refuses as it is handed over ends failed at its start`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+
+        ports.failLatest(atHandOff = true)
+        session.awaitIdle()
+
+        assertEquals(HonorVoiceEnd.FAILED_AT_START, row(walk, "voice-1").voiceEnd)
+    }
+
+    @Test
+    fun `a replay the player refuses at hand-off ends plainly failed, as iOS's togglePlayback raises no card`() =
+        runBlocking {
+            val walk = h.startHonorWalk(way)
+            val ports = FakePorts()
+            val session = h.newSession(ports)
+            session.begin(walk, trailhead())
+            session.send(1, HonorCommand.TogglePlayback("voice-3"))
+
+            ports.failLatest(atHandOff = true)
+            session.awaitIdle()
+
+            assertEquals(HonorVoiceEnd.FAILED, row(walk, "voice-3").voiceEnd)
+        }
+
+    @Test
     fun `a moment reached persists, then vibrates`() = runBlocking {
         val walk = h.startHonorWalk(way)
         val ports = FakePorts()
@@ -248,6 +276,127 @@ class HonorSessionTest {
         session.awaitIdle()
 
         assertEquals(listOf("pause", "resume"), ports.voiceCalls())
+    }
+
+    // The voice held still behind a prompt or a call (spec C §3.6–§3.7)
+
+    @Test
+    fun `a voice held behind a prompt keeps listening with its clock still, and runs on from there`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+        ports.clear()
+
+        h.clock.millis += 5_000
+        ports.holdVoice(true)
+        session.awaitIdle()
+        val held = dao.getSession(walk.id)!!
+        h.clock.millis += 30_000
+        ports.holdVoice(false)
+        session.awaitIdle()
+        val released = dao.getSession(walk.id)!!
+
+        assertEquals(
+            listOf("voice-1", false, null, 5_000L),
+            listOf(held.playingMomentId, held.voicePaused, held.voiceStartedAt, held.voiceStartOffsetMillis),
+        )
+        assertEquals(h.clock.millis to 5_000L, released.voiceStartedAt to released.voiceStartOffsetMillis)
+        assertEquals("the arbiter holds the voice; the session only stops its clock", emptyList<String>(), ports.voiceCalls())
+    }
+
+    @Test
+    fun `a voice handed over while the player holds its voice stands at its start until it sounds`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+        ports.holdVoice(true)
+        session.awaitIdle()
+
+        session.send(1, HonorCommand.TogglePlayback("voice-3"))
+        h.clock.millis += 4_000
+        val parked = dao.getSession(walk.id)!!
+        ports.holdVoice(false)
+        session.awaitIdle()
+
+        assertEquals(null to 0L, parked.voiceStartedAt to parked.voiceStartOffsetMillis)
+        assertEquals(h.clock.millis to 0L, dao.getSession(walk.id)!!.let { it.voiceStartedAt to it.voiceStartOffsetMillis })
+    }
+
+    @Test
+    fun `a pause during the hold pauses where the voice was held, and the hold ending leaves it paused`() =
+        runBlocking {
+            val walk = h.startHonorWalk(way)
+            val ports = FakePorts()
+            val session = h.newSession(ports)
+            session.begin(walk, trailhead())
+            h.clock.millis += 5_000
+            ports.holdVoice(true)
+            session.awaitIdle()
+
+            h.clock.millis += 10_000
+            session.send(1, HonorCommand.PauseResume("voice-1"))
+            ports.holdVoice(false)
+            session.awaitIdle()
+
+            val paused = dao.getSession(walk.id)!!
+            assertEquals(true to 5_000L, paused.voicePaused to paused.voicePauseOffsetMillis)
+        }
+
+    @Test
+    fun `the headphones going pause the voice where it stood, and one tap resumes it`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+        ports.clear()
+
+        h.clock.millis += 6_000
+        ports.pauseLatestForRoute()
+        session.awaitIdle()
+        val paused = dao.getSession(walk.id)!!
+        session.send(1, HonorCommand.PauseResume("voice-1"))
+
+        assertEquals(true to 6_000L, paused.voicePaused to paused.voicePauseOffsetMillis)
+        assertEquals("the player paused itself; the tap resumes it", listOf("resume"), ports.voiceCalls())
+        assertFalse(dao.getSession(walk.id)!!.voicePaused)
+    }
+
+    // Commands about the voice held name the voice the walker saw
+
+    @Test
+    fun `a pause or skip for a voice no longer held changes nothing`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+        session.walkTo(0.001, 0.002, 0.003, 0.004, 0.005)
+        ports.finishLatest()
+        session.awaitIdle()
+        ports.clear()
+
+        session.send(1, HonorCommand.PauseResume("voice-1"))
+        session.send(2, HonorCommand.Skip("voice-1"))
+
+        assertEquals(emptyList<String>(), ports.voiceCalls())
+        val held = dao.getSession(walk.id)!!
+        assertEquals("voice-2" to false, held.playingMomentId to held.voicePaused)
+    }
+
+    @Test
+    fun `a pause that arrives after its voice ended never starts it again`() = runBlocking {
+        val walk = h.startHonorWalk(way)
+        val ports = FakePorts()
+        val session = h.newSession(ports)
+        session.begin(walk, trailhead())
+        ports.finishLatest()
+        session.awaitIdle()
+        ports.clear()
+
+        session.send(1, HonorCommand.PauseResume("voice-1"))
+
+        assertEquals(emptyList<String>() to null, ports.voiceCalls() to dao.getSession(walk.id)!!.playingMomentId)
     }
 
     // Revival and cached processes
@@ -446,12 +595,12 @@ class HonorSessionTest {
         session.walkTo(0.001, 0.002, 0.003, 0.004, 0.005)
         ports.clear()
 
-        session.send(1, HonorCommand.Skip)
+        session.send(1, HonorCommand.Skip("voice-1"))
         assertEquals(listOf("stop", "restore", "duck", "play voice-2 1.0"), ports.voiceCalls())
         assertEquals(HonorVoiceEnd.SKIPPED, row(walk, "voice-1").voiceEnd)
         ports.clear()
 
-        session.send(1, HonorCommand.Skip)
+        session.send(1, HonorCommand.Skip("voice-2"))
         session.send(0, HonorCommand.CycleRate)
         assertEquals(emptyList<String>(), ports.voiceCalls())
         assertEquals(1L, dao.getSession(walk.id)!!.lastCommandSeq)

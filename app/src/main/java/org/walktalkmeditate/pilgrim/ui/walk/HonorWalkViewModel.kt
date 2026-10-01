@@ -40,11 +40,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.walktalkmeditate.pilgrim.audio.WaveformGenerator
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
@@ -60,6 +62,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
@@ -77,7 +80,6 @@ import org.walktalkmeditate.pilgrim.ui.honor.WayRelation
 import org.walktalkmeditate.pilgrim.ui.honor.heldOver
 import org.walktalkmeditate.pilgrim.ui.honor.softTapCaptionMeters
 import org.walktalkmeditate.pilgrim.ui.honor.voiceDurationSeconds
-import org.walktalkmeditate.pilgrim.ui.recordings.WaveformLoader
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.wayPins
@@ -127,9 +129,10 @@ data class HonorAnchor(
 
 /**
  * The files behind the top card, resolved once each time a card comes to
- * the top and again after each saved recording (iOS `resolveFiles(for:)`,
- * `ActiveWalkView+Honor.swift:113-133@7c200bf`): a file that lands while
- * the card shows appears only when it next comes to the top.
+ * the top and again after each saved recording and each reply filed (iOS
+ * `resolveFiles(for:)`, `ActiveWalkView+Honor.swift:113-133@7c200bf`): any
+ * other file that lands while the card shows appears only when it next
+ * comes to the top.
  */
 class HonorCardMedia(
     val momentId: String,
@@ -147,6 +150,12 @@ data class HonorPlaceCard(
     val moment: WayMoment,
     val pendingCount: Int,
     val isStage: Boolean,
+    /**
+     * A waypoint without a label keeps iOS's empty kicker line on any Way
+     * but the walker's own, whose label-less waypoints drop it (owner
+     * decision 4; shared spec S4 §10.2).
+     */
+    val keepsEmptyKicker: Boolean,
     /** Straight-line metres from the walker's last fix; null before the first fix. */
     val distanceMeters: Double?,
     /** Degrees from the walker's heading to the place; null without both a fix and a settled compass. */
@@ -225,7 +234,7 @@ class HonorWalkViewModel internal constructor(
     private val ioDispatcher: CoroutineDispatcher,
     /** iOS's walk duration tick, the companion's and the player clock's read cadence. */
     private val tickMillis: Long,
-    private val loadWaveform: (File) -> FloatArray? = ::cardWaveform,
+    private val loadWaveform: suspend (File) -> FloatArray? = ::cardWaveform,
 ) : ViewModel() {
 
     @Inject
@@ -436,20 +445,25 @@ class HonorWalkViewModel internal constructor(
      * returns before anything is touched.
      */
     fun togglePlayback(moment: WayMoment) {
-        voiceCommand(HonorCommand.TogglePlayback(moment.id), mustPlay = moment) { shown, now ->
-            when {
-                shown.playingMomentId != moment.id -> shown.playing(moment.id, now)
-                shown.paused -> shown.resumedAt(now)
-                else -> shown.pausedAt(now)
-            }
+        voiceCommand(
+            command = { shown ->
+                if (shown.playingMomentId == moment.id) {
+                    HonorCommand.PauseResume(moment.id)
+                } else {
+                    HonorCommand.TogglePlayback(moment.id)
+                }
+            },
+            mustPlay = moment,
+        ) { shown, now ->
+            if (shown.playingMomentId == moment.id) shown.pausedOrResumedAt(now) else shown.playing(moment.id, now)
         }
     }
 
     /** The chip's pause or resume, of whatever voice is held. */
     fun toggleListening() {
-        val live = latestLive ?: return
-        val active = shownVoice(live, clock.now()).playingMomentId ?: return
-        live.loaded.way.moments.firstOrNull { it.id == active }?.let(::togglePlayback)
+        voiceCommand(command = { shown -> shown.playingMomentId?.let(HonorCommand::PauseResume) }, mustPlay = null) { shown, now ->
+            shown.pausedOrResumedAt(now)
+        }
     }
 
     /**
@@ -470,24 +484,24 @@ class HonorWalkViewModel internal constructor(
         }
         heldScrub = null
         scrubJob = viewModelScope.launch {
-            voiceCommandNow(scrub.command, mustPlay = moment, expect = scrub::applyTo)
+            voiceCommandNow({ scrub.command }, mustPlay = moment, expect = scrub::applyTo)
             delay(SCRUB_SEND_MILLIS)
             val last = heldScrub ?: return@launch
             heldScrub = null
-            voiceCommandNow(last.command, mustPlay = null, expect = last::applyTo)
+            voiceCommandNow({ last.command }, mustPlay = null, expect = last::applyTo)
         }
     }
 
     /** The chip's skip (iOS `skipVoice`): nothing without a held voice. */
     fun skipVoice() {
-        val live = latestLive ?: return
-        if (shownVoice(live, clock.now()).playingMomentId == null) return
-        voiceCommand(HonorCommand.Skip, mustPlay = null) { shown, _ -> shown.released() }
+        voiceCommand(command = { shown -> shown.playingMomentId?.let(HonorCommand::Skip) }, mustPlay = null) { shown, _ ->
+            shown.released()
+        }
     }
 
     /** iOS `cycleVoiceRate`: 1× → 1.25× → 1.5× → 2× → 1×, the pill reading the walk's own rate, 1× at every Start. */
     fun cycleRate() {
-        voiceCommand(HonorCommand.CycleRate, mustPlay = null) { shown, now ->
+        voiceCommand(command = { HonorCommand.CycleRate }, mustPlay = null) { shown, now ->
             val rebased = if (shown.playingMomentId != null && !shown.paused) {
                 shown.movedTo(shown.positionMillis(now), now)
             } else {
@@ -503,11 +517,11 @@ class HonorWalkViewModel internal constructor(
      * neither held nor heard, so the chip hides while it plays.
      */
     fun playReply(moment: WayMoment) {
-        voiceCommand(HonorCommand.PlayReply(moment.id), mustPlay = null) { shown, _ -> shown.released() }
+        voiceCommand(command = { HonorCommand.PlayReply(moment.id) }, mustPlay = null) { shown, _ -> shown.released() }
     }
 
     private fun voiceCommand(
-        command: HonorCommand,
+        command: (shown: HonorVoiceView) -> HonorCommand?,
         mustPlay: WayMoment?,
         expect: (shown: HonorVoiceView, nowMillis: Long) -> HonorVoiceView,
     ) {
@@ -515,18 +529,24 @@ class HonorWalkViewModel internal constructor(
         viewModelScope.launch { voiceCommandNow(command, mustPlay, expect) }
     }
 
-    /** One command at a time, so commands leave in the order they were made and each one's result builds on the last. */
+    /**
+     * One command at a time, so commands leave in the order they were made
+     * and each one's result builds on the last. [command] is built from the
+     * voice as the walker sees it, so it names the voice they saw held.
+     */
     private suspend fun voiceCommandNow(
-        command: HonorCommand,
+        command: (shown: HonorVoiceView) -> HonorCommand?,
         mustPlay: WayMoment?,
         expect: (shown: HonorVoiceView, nowMillis: Long) -> HonorVoiceView,
     ) = commandMutex.withLock {
         val live = latestLive ?: return@withLock
-        val starting = mustPlay?.takeIf { shownVoice(live, clock.now()).playingMomentId != it.id }
+        val shown = shownVoice(live, clock.now())
+        val next = command(shown) ?: return@withLock
+        val starting = mustPlay?.takeIf { shown.playingMomentId != it.id }
         if (starting != null && withContext(ioDispatcher) { mediaFiles.voiceFile(live.loaded.way.id, starting) } == null) {
             return@withLock
         }
-        sendCommand(command)
+        sendCommand(next)
         showOptimistically(expect)
     }
 
@@ -544,8 +564,9 @@ class HonorWalkViewModel internal constructor(
     }
 
     private fun dismiss(walkId: Long, cardId: String) {
-        updateTouches(walkId) { it.copy(dismissals = it.dismissals + (cardId to clock.now())) }
-        viewModelScope.launch(ioDispatcher) { honorDao.markCardDismissed(walkId, cardId) }
+        val now = clock.now()
+        updateTouches(walkId) { it.copy(dismissals = it.dismissals + (cardId to now)) }
+        viewModelScope.launch(ioDispatcher) { honorDao.markCardDismissed(walkId, cardId, now) }
     }
 
     private fun updateTouches(walkId: Long, change: (CardTouches) -> CardTouches) {
@@ -636,22 +657,25 @@ class HonorWalkViewModel internal constructor(
     /**
      * The held voice as the walker sees it: the persisted voice columns,
      * under a command's result while it holds. The clock ticks once a
-     * second while the voice plays, as iOS's player clock does.
+     * second while the voice sounds, as iOS's player clock does, stands
+     * still while `:tracker` holds it behind a prompt or a call, and never
+     * reads past the voice's recorded length.
      */
-    private fun voiceFlow(): Flow<VoiceNow?> =
-        combine(live.map { it?.session?.let { session -> HonorVoiceView.of(session) } }.distinctUntilChanged(), pendingCommand) { persisted, pending ->
-            persisted?.let { it to pending }
-        }
+    private fun voiceFlow(): Flow<VoiceNow?> {
+        val persisted = live
+            .map { live -> live?.let { PersistedVoice(HonorVoiceView.of(it.session), it.loaded.way) } }
+            .distinctUntilChanged { a, b -> a?.view == b?.view && a?.way === b?.way }
+        return combine(persisted, pendingCommand) { voice, pending -> voice?.let { it to pending } }
             .flatMapLatest { inputs ->
                 if (inputs == null) return@flatMapLatest flowOf<VoiceNow?>(null)
-                val (persisted, pending) = inputs
+                val (voice, pending) = inputs
                 flow<VoiceNow?> {
                     while (true) {
                         val now = clock.now()
-                        val held = pending.heldOver(persisted, now)
-                        val shown = held?.expected ?: persisted
-                        emit(VoiceNow(shown, shown.positionMillis(now) / MILLIS_PER_SECOND))
-                        val ticking = shown.playingMomentId != null && !shown.paused
+                        val held = pending.heldOver(voice.view, now)
+                        val shown = held?.expected ?: voice.view
+                        emit(VoiceNow(shown, voice.elapsedSeconds(shown, now)))
+                        val ticking = shown.playingMomentId != null && !shown.paused && shown.startedAtMillis != null
                         val untilExpiry = held?.let { it.sentAtMillis + COMMAND_CONFIRM_WINDOW_MILLIS - now }
                         val wait = listOfNotNull(untilExpiry, tickMillis.takeIf { ticking }).minOrNull() ?: break
                         delay(wait.coerceAtLeast(1L))
@@ -659,7 +683,14 @@ class HonorWalkViewModel internal constructor(
                 }
             }
             .distinctUntilChanged()
+    }
 
+    /**
+     * A reply is filed after its recording's row lands, so the card reads
+     * its files again on both: iOS sets the count and files the reply in
+     * one main-queue turn before the card's lookup re-runs
+     * (`ActiveWalkViewModel.swift:600-603@7c200bf`).
+     */
     private fun mediaFlow(): Flow<HonorCardMedia?> {
         val recordingCounts = live.map { it?.walkId }.distinctUntilChanged().flatMapLatest { walkId ->
             if (walkId == null) flowOf(0) else repository.observeVoiceRecordings(walkId).map { it.size }
@@ -667,13 +698,13 @@ class HonorWalkViewModel internal constructor(
         val tops = combine(live.map { it?.loaded }.distinctUntilChanged { a, b -> a === b }, queue.map { it?.top }) { loaded, top ->
             loaded?.let { l -> top?.let { id -> l.way.moments.firstOrNull { it.id == id } }?.let { l.way to it } }
         }.distinctUntilChanged { a, b -> a?.first === b?.first && a?.second?.id == b?.second?.id }
-        return combine(tops, recordingCounts) { top, count -> top?.let { Triple(it.first, it.second, count) } }
-            .mapLatest { key -> key?.let { (way, moment, _) -> withContext(ioDispatcher) { resolveMedia(way, moment) } } }
+        return combine(tops, recordingCounts, replies.filed) { top, _, _ -> top }
+            .mapLatest { top -> top?.let { (way, moment) -> withContext(ioDispatcher) { resolveMedia(way, moment) } } }
             .onStart { emit(null) }
     }
 
-    private fun resolveMedia(way: Way, moment: WayMoment): HonorCardMedia {
-        val waveform = if (moment.isVoice) mediaFiles.voiceFile(way.id, moment)?.let(loadWaveform) else null
+    private suspend fun resolveMedia(way: Way, moment: WayMoment): HonorCardMedia {
+        val waveform = if (moment.isVoice) mediaFiles.voiceFile(way.id, moment)?.let { loadWaveform(it) } else null
         val photoUri = when (val media = (moment.kind as? WayMomentKind.Photo)?.media) {
             is WayMedia.PhotoAsset -> media.localIdentifier
             is WayMedia.File -> wayStore.mediaFile(way.id, media.path)?.takeIf { it.isFile }?.let { Uri.fromFile(it).toString() }
@@ -704,7 +735,7 @@ class HonorWalkViewModel internal constructor(
         val way = live.loaded.way
         val touches = placement.touches.forWalk(live.walkId)
         val arrivalDismissed = HONOR_ARRIVAL_CARD_ID in touches.dismissals ||
-            live.cardRows.any { it.momentId == HONOR_ARRIVAL_CARD_ID && it.dismissed }
+            live.cardRows.any { it.momentId == HONOR_ARRIVAL_CARD_ID && it.dismissedAt != null }
         val arrival = if (live.session.phase == HonorPhase.ARRIVED && !arrivalDismissed) {
             HonorArrival.summary(way, live.rows, live.arrivedAtMillis)
         } else {
@@ -719,6 +750,7 @@ class HonorWalkViewModel internal constructor(
                 moment = moment,
                 pendingCount = queue.pendingCount,
                 isStage = way.isPilgrimageStage,
+                keepsEmptyKicker = way.source !is WaySource.OwnWalk,
                 distanceMeters = placement.here?.let { wgs84MidLatitudeMeters(it.lat, it.lon, there.lat, there.lon) },
                 tick = WayRelation.tick(placement.here, placement.heading, there),
                 isFocused = placement.focus != null,
@@ -796,6 +828,16 @@ class HonorWalkViewModel internal constructor(
     )
 
     private data class VoiceNow(val view: HonorVoiceView, val elapsedSeconds: Double)
+
+    /** The session's voice columns, and the Way whose moments give each voice its length. */
+    private class PersistedVoice(val view: HonorVoiceView, val way: Way) {
+        /** iOS's player clock, `currentTime`, never passes the file's end. */
+        fun elapsedSeconds(shown: HonorVoiceView, nowMillis: Long): Double {
+            val elapsed = shown.positionMillis(nowMillis) / MILLIS_PER_SECOND
+            val length = way.moments.firstOrNull { it.id == shown.playingMomentId }?.voiceDurationSeconds ?: 0.0
+            return if (length > 0) min(elapsed, length) else elapsed
+        }
+    }
 
     private data class Placement(
         val here: WayCoordinate?,
@@ -913,12 +955,13 @@ private class Scrub(val command: HonorCommand.Scrub, val offsetMillis: Long) {
 }
 
 /**
- * iOS's card waveform: 150 bars read from the voice's file
- * (`WaveformGenerator.generateSamples`, `WaveformGenerator.swift:5@7c200bf`);
- * a file that doesn't read as audio shows the placeholder bar.
+ * iOS's card waveform: 150 bars, each its stretch's peak, scaled so the
+ * loudest reaches the top (`WaveformGenerator.generateSamples`,
+ * `WaveformGenerator.swift:5-43@7c200bf`); a file that doesn't read as
+ * audio, or reads as silence, shows the placeholder bar.
  */
-private fun cardWaveform(file: File): FloatArray? =
-    WaveformLoader.load(file, CARD_WAVEFORM_BARS).takeIf { samples -> samples.any { it > 0f } }
+private suspend fun cardWaveform(file: File): FloatArray? =
+    WaveformGenerator.generate(file, CARD_WAVEFORM_BARS)?.takeIf { samples -> samples.any { it > 0f } }
 
 private const val CARD_WAVEFORM_BARS = 150
 

@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
@@ -240,6 +241,7 @@ private fun CardHeaderButton(card: HonorPlaceCard, units: UnitSystem, onFly: () 
             moment = card.moment,
             subline = subline,
             tick = card.tick,
+            keepsEmptyKicker = card.keepsEmptyKicker,
             modifier = Modifier.clearAndSetSemantics {},
         )
     }
@@ -312,22 +314,30 @@ private fun TransportRow(card: HonorPlaceCard, durationSeconds: Double, actions:
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
             val waveform = card.media?.waveform
             if (waveform != null) {
-                WaveformBar(
-                    samples = waveform,
-                    progress = progress,
-                    inactiveColor = pilgrimColors.fog.copy(alpha = 0.4f),
-                    activeColor = pilgrimColors.stone,
-                    onSeek = { actions.onTouch(); actions.onSeek(it) },
-                    contentDescription = stringResource(R.string.honor_card_waveform_a11y),
-                    accessibilityValue = stringResource(
-                        R.string.honor_moment_position_value,
-                        count((progress * PERCENT).roundToInt()),
-                    ),
-                    accessibilitySteps = WAVEFORM_ADJUST_STEPS,
+                // iOS frames its 32 pt bars in a 28 pt slot, so they reach 2 pt past it each way.
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(WAVEFORM_HEIGHT),
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    WaveformBar(
+                        samples = waveform,
+                        progress = progress,
+                        inactiveColor = pilgrimColors.fog.copy(alpha = 0.4f),
+                        activeColor = pilgrimColors.stone,
+                        onSeek = { actions.onTouch(); actions.onSeek(it) },
+                        contentDescription = stringResource(R.string.honor_card_waveform_a11y),
+                        accessibilityValue = stringResource(
+                            R.string.honor_moment_position_value,
+                            count((progress * PERCENT).roundToInt()),
+                        ),
+                        accessibilitySteps = WAVEFORM_ADJUST_STEPS,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .requiredHeight(WAVEFORM_BAR_HEIGHT),
+                    )
+                }
             } else {
                 Box(
                     Modifier
@@ -570,6 +580,7 @@ private val GLYPH_BODY = 17.dp
 private val GLYPH_CAPTION = 12.dp
 private val GLYPH_DISPLAY = 28.dp
 private val WAVEFORM_HEIGHT = 28.dp
+private val WAVEFORM_BAR_HEIGHT = 32.dp
 private val CARD_PHOTO_MAX_HEIGHT = 110.dp
 private const val MAX_PIPS = 4
 private const val TRANSCRIPT_LINES = 2

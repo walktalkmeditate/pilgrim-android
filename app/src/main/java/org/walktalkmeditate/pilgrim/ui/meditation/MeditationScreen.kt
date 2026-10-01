@@ -842,11 +842,15 @@ internal fun MeditationScreenContent(
  * parity spec E §12): how long the honored walker sat here, never a
  * countdown. It has no "about", even for a shared Way's estimate (shared
  * spec S4 §10, pilgrim-ios #109, matched), and TalkBack reads it as shown.
+ * "minute" only for exactly one, as iOS writes it in any locale.
  */
 @Composable
 private fun TheirSittingCaption(minutes: Int) {
     Text(
-        text = pluralStringResource(R.plurals.honor_meditation_they_sat, minutes, String.format(Locale.US, "%d", minutes)),
+        text = stringResource(
+            if (minutes == 1) R.string.honor_meditation_they_sat_one else R.string.honor_meditation_they_sat,
+            String.format(Locale.US, "%d", minutes),
+        ),
         style = pilgrimType.caption,
         color = pilgrimColors.fog.copy(alpha = 0.4f),
     )

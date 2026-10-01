@@ -3,14 +3,28 @@ package org.walktalkmeditate.pilgrim.audio.honor
 
 import java.io.File
 
-/** How one play handed to [WayVoicePlayer] ended; called at most once, on the main thread. */
+/**
+ * How one play handed to [WayVoicePlayer] ended, and the pauses the
+ * platform made in it, on the main thread. [onEnded] and [onFailed] come
+ * at most once between them.
+ */
 interface WayVoicePlaybackListener {
 
     /** The file played to its end, or the player gave the voice up to another app for good. */
     fun onEnded()
 
-    /** The file would not open, decode, or start, before or during playback. */
-    fun onFailed()
+    /** The file would not open, decode, or start ([beforeSound]), or it broke off during playback. */
+    fun onFailed(beforeSound: Boolean)
+
+    /**
+     * A call took the audio and paused the play, to resume it when the call
+     * ends ([held]); false once it sounds again, or once a pause or resume
+     * from the caller, or the headphones going, means it won't.
+     */
+    fun onHeld(held: Boolean)
+
+    /** The headphones went and the play paused; only a resume starts it again. */
+    fun onPausedForRoute()
 }
 
 /**

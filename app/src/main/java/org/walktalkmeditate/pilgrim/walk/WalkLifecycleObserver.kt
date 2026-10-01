@@ -14,6 +14,7 @@ import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.TheirSitting
 import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
 
 /**
@@ -55,18 +56,26 @@ class WalkLifecycleObserver @Inject constructor(
     private val repository: WalkRepository,
     private val orphanSweeper: OrphanRecordingSweeper,
     private val seekSessionStore: SeekSessionStore,
-    // A default keeps the test constructions source-compatible; Hilt
-    // ignores it and injects the app's one instance.
+    // Defaults keep the test constructions source-compatible; Hilt
+    // ignores them and injects the app's one instance of each.
     private val honorReplies: HonorReplies = HonorReplies.inert(),
+    private val theirSitting: TheirSitting = TheirSitting(),
 ) {
     init {
         scope.launch {
             var firstEmission = true
+            var wasSitting = false
             walkState.collect { state ->
                 if (firstEmission) {
                     firstEmission = false
+                    wasSitting = state is WalkState.Meditating
                     return@collect
                 }
+                // A card's "Sit?" offer lasts one sitting, however it ends:
+                // the notification's End ends it without the meditation screen.
+                val sitting = state is WalkState.Meditating
+                if (wasSitting && !sitting) theirSitting.withdraw()
+                wasSitting = sitting
 
                 // Both Finished and Idle are unconditional: the recorder
                 // returns NoActiveRecording (gracefully handled below)

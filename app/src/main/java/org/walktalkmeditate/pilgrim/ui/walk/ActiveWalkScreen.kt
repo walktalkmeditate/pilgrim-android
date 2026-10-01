@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -367,9 +368,10 @@ fun ActiveWalkScreen(
     } else {
         SHEET_HEIGHT_MINIMIZED_DP
     }
-    // The sheet's measured height in either detent: an honor card sits 8 dp
-    // clear of it, chip and all (iOS `mapBottomInset`). Read only while a
-    // card shows, so no other walk recomposes when the sheet changes size.
+    // The sheet's measured height in either detent (iOS `mapBottomInset`):
+    // an honor card sits 8 dp clear of it, chip and all, and the map's
+    // camera clears it too. Read only on a begun honor walk, so no other
+    // walk recomposes when the sheet changes size.
     var measuredSheetHeightPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     // "reply here" asks for the microphone first, as the Talk button does.
@@ -850,8 +852,14 @@ fun ActiveWalkScreen(
             chronologicalSegmentOrder = true,
             initialCamera = initialCameraSeed,
             // Match map bottom-inset to the visible sheet height so the
-            // user puck stays just above the sheet in BOTH detents.
-            bottomInsetDp = sheetInsetDp,
+            // user puck stays just above the sheet in BOTH detents; on an
+            // honor walk the measured one, so the listening chip moves the
+            // camera as it does on iOS (`PilgrimMapView.swift:242-243@7c200bf`).
+            bottomInsetDp = if (honor?.session != null) {
+                honorSheetInset(measuredSheetHeightPx, sheetInsetDp, density)
+            } else {
+                sheetInsetDp
+            },
             waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
             // Seek fog + pulse ring + crescent (U9 feeds the U6/U7
@@ -1197,6 +1205,9 @@ fun ActiveWalkScreen(
         // branch — there it shows the Start button, here it shows zero
         // stats above it).
         val isPreWalk = navWalkState is WalkState.Idle || navWalkState is WalkState.Finished
+        val cards = honorCards
+        val walkInProgress = navWalkState is WalkState.Active || navWalkState is WalkState.Paused
+        val showsHonorCard = honor?.session != null && walkInProgress && cards != null && cards.isShowingCard
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
@@ -1247,8 +1258,13 @@ fun ActiveWalkScreen(
             honor = honorSheet,
             onHonorPauseResume = honorWalkViewModel::toggleListening,
             onHonorSkip = honorWalkViewModel::skipVoice,
+            // iOS stacks the card under the sheet and over the ambient row
+            // (`ActiveWalkView.swift:160-167@7c200bf`); the sparkline paints
+            // over the sheet here (manual-QA B1), so while a card shows the
+            // sheet rises over both, and covers the card as it moves.
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .zIndex(if (showsHonorCard) SHEET_OVER_HONOR_CARD_Z else 0f)
                 .onSizeChanged { measuredSheetHeightPx = it.height },
         )
         // iOS parity `ActiveWalkView.swift:120-146` — the ambient
@@ -1265,9 +1281,7 @@ fun ActiveWalkScreen(
         // over the ambient row and the sparkline, only on an honor walk that
         // has begun, and only while it carries a card, so every other touch
         // is the map's. Declared after the sparkline so it draws over it.
-        val cards = honorCards
-        val walkInProgress = navWalkState is WalkState.Active || navWalkState is WalkState.Paused
-        if (honor?.session != null && walkInProgress && cards != null && cards.isShowingCard) {
+        if (showsHonorCard && cards != null) {
             HonorCardLayer(
                 cards = cards,
                 units = distanceUnits,
@@ -1290,7 +1304,7 @@ fun ActiveWalkScreen(
                 onContinue = honorWalkViewModel::dismissArrival,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = honorCardBottom(measuredSheetHeightPx, sheetInsetDp, density))
+                    .padding(bottom = honorSheetInset(measuredSheetHeightPx, sheetInsetDp, density) + PilgrimSpacing.small)
                     .padding(horizontal = PilgrimSpacing.normal),
             )
         }
@@ -1386,11 +1400,12 @@ fun ActiveWalkScreen(
 /** A card's "reply here", held while the microphone permission is asked. */
 private data class ReplyRequest(val walkId: Long, val wayId: String, val momentId: String)
 
-/** 8 dp above the sheet's measured top, or its detent's height before the first measure. */
-private fun honorCardBottom(measuredSheetHeightPx: Int, sheetInsetDp: Dp, density: Density): Dp {
-    val sheet = if (measuredSheetHeightPx > 0) with(density) { measuredSheetHeightPx.toDp() } else sheetInsetDp
-    return sheet + PilgrimSpacing.small
-}
+/** The sheet's measured height, or its detent's before the first measure. */
+private fun honorSheetInset(measuredSheetHeightPx: Int, sheetInsetDp: Dp, density: Density): Dp =
+    if (measuredSheetHeightPx > 0) with(density) { measuredSheetHeightPx.toDp() } else sheetInsetDp
+
+/** Above the honor card layer, which is declared after the sheet. */
+private const val SHEET_OVER_HONOR_CARD_Z = 1f
 
 /**
  * iOS `SeekSetupFlowModifier.swift:53-62@c1745e8` — the two seek-setup

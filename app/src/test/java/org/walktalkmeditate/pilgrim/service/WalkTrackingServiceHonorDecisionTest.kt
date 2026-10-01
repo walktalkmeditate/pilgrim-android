@@ -144,8 +144,12 @@ class WalkTrackingServiceHonorDecisionTest {
             WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_SCRUB, "voice-2", 0.25),
         )
         assertEquals(
-            HonorCommand.Skip,
-            WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_SKIP, null, 0.0),
+            HonorCommand.PauseResume("voice-1"),
+            WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_PAUSE_RESUME, "voice-1", 0.0),
+        )
+        assertEquals(
+            HonorCommand.Skip("voice-1"),
+            WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_SKIP, "voice-1", 0.0),
         )
         assertEquals(
             HonorCommand.CycleRate,
@@ -163,5 +167,7 @@ class WalkTrackingServiceHonorDecisionTest {
         assertNull(WalkTrackingService.honorCommandFromExtras(null, null, 0.0))
         assertNull(WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_TOGGLE_PLAYBACK, null, 0.0))
         assertNull(WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_PLAY_REPLY, null, 0.0))
+        assertNull(WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_PAUSE_RESUME, null, 0.0))
+        assertNull(WalkTrackingService.honorCommandFromExtras(WalkTrackingService.HONOR_COMMAND_SKIP, null, 0.0))
     }
 }

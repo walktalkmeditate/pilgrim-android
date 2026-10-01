@@ -61,6 +61,19 @@ class HonorRepliesTest {
     }
 
     @Test
+    fun `each reply written counts as filed, so its card reads it again, and a lost one doesn't`() {
+        store.save(way(OWN_WAY_ID))
+        replies.arm(walkId = WALK, wayId = OWN_WAY_ID, momentId = "voice-2")
+        replies.fileIfPending(recording("recordings/w/reply.wav"))
+        val afterListed = replies.filed.value
+        replies.arm(walkId = WALK, wayId = "walk:$LIVE_UUID", momentId = "voice-2")
+
+        replies.fileIfPending(recording("recordings/w/second.wav"))
+
+        assertEquals(1L to 1L, afterListed to replies.filed.value)
+    }
+
+    @Test
     fun `a later reply to the same voice replaces the earlier one`() {
         store.save(way(OWN_WAY_ID))
         store.setReply(OWN_WAY_ID, originN = 2, relativePath = "recordings/old/reply.wav")

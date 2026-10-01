@@ -20,16 +20,22 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceModel
 /**
  * A walker's command from a card or the listening chip (parity spec D §6),
  * which the UI sends and `:tracker` applies once, by its sequence number.
+ * A command about the voice held names the voice the walker saw held, and
+ * `:tracker` drops it once another voice, or none, is: iOS judges the tap
+ * one main-queue hop after it lands, Android a process hop and a Room read.
  */
 sealed interface HonorCommand {
 
     /** Pause or resume the voice the player holds, or play another voice outside the queue (iOS `togglePlayback(of:)`). */
     data class TogglePlayback(val momentId: String) : HonorCommand
 
+    /** `togglePlayback(of:)` on the voice held, from the chip or its own card: never starts one. */
+    data class PauseResume(val momentId: String) : HonorCommand
+
     /** Scrub to [fraction] of a voice, starting it first if it isn't the one held (iOS `seekVoice`). */
     data class Scrub(val momentId: String, val fraction: Double) : HonorCommand
 
-    data object Skip : HonorCommand
+    data class Skip(val momentId: String) : HonorCommand
 
     /** 1× → 1.25× → 1.5× → 2× → 1× (iOS `cycleVoiceRate`). */
     data object CycleRate : HonorCommand
@@ -159,7 +165,8 @@ internal fun HonorEngine.Snapshot.toEngineState(walkId: Long) = HonorEngineState
  * which is what the chip and the card draw: a replayed voice while the
  * engine still counts its own, or nothing while a reply plays. The file
  * position is what the UI needs to draw progress, estimated from when
- * the voice last started or resumed at [rate].
+ * the voice last started or resumed at [rate]; with no start time it is
+ * held still at [startOffsetMillis], neither paused nor sounding.
  */
 internal data class VoiceHold(
     val active: WayMoment? = null,
@@ -171,8 +178,21 @@ internal data class VoiceHold(
 ) {
     fun positionMillis(nowMillis: Long): Long {
         pauseOffsetMillis?.let { return it }
-        val started = startedAtMillis ?: return 0L
+        val started = startedAtMillis ?: return startOffsetMillis ?: 0L
         return (startOffsetMillis ?: 0L) + ((nowMillis - started).coerceAtLeast(0) * rate).roundToLong()
+    }
+
+    /**
+     * Still where the voice stands while the player holds it silent with no
+     * pause (a guide prompt, a call), and running on from there once it
+     * sounds again. A paused voice is the walker's or the engine's, and
+     * keeps its own pause.
+     */
+    fun heldIf(held: Boolean, nowMillis: Long): VoiceHold = when {
+        active == null || paused -> this
+        held && startedAtMillis != null -> copy(startedAtMillis = null, startOffsetMillis = positionMillis(nowMillis))
+        !held && startedAtMillis == null -> copy(startedAtMillis = nowMillis)
+        else -> this
     }
 
     fun started(moment: WayMoment, nowMillis: Long) =
@@ -183,10 +203,11 @@ internal data class VoiceHold(
     fun resumedAt(nowMillis: Long) =
         copy(paused = false, startedAtMillis = nowMillis, startOffsetMillis = positionMillis(nowMillis), pauseOffsetMillis = null)
 
+    /** A held voice moves and stays held, as iOS's `seek` sets the clock of a paused player. */
     fun movedTo(offsetMillis: Long, nowMillis: Long) = if (paused) {
         copy(pauseOffsetMillis = offsetMillis)
     } else {
-        copy(startedAtMillis = nowMillis, startOffsetMillis = offsetMillis)
+        copy(startedAtMillis = startedAtMillis?.let { nowMillis }, startOffsetMillis = offsetMillis)
     }
 
     fun released() = VoiceHold(rate = rate)

@@ -80,7 +80,9 @@ interface UiAudioGateSource {
  * Walker plays (card, chip, scrub, reply) share the one entry, so only a
  * prompt parks them; the engine's gates never do (spec C §4.4). The
  * arbiter also publishes the engine's two outside gates ([HonorGatePort]):
- * the UI's recording, and a whisper actually playing here.
+ * the UI's recording, and a whisper actually playing here; and, after
+ * every step, whether the voice handed over is held silent without a
+ * pause, so the session can stop its clock.
  *
  * A whisper reaches the slot only once its file is on disk, and a cut
  * stops only the audible one: a whisper still downloading when a voice or
@@ -214,11 +216,15 @@ class WalkAudioArbiter internal constructor(
             parked = request
             return
         }
-        startVoice(request)
+        startVoice(request, handedOver = true)
     }
 
-    /** iOS `start(url:volume:)` (`WayVoicePlayer.swift:145-178@7c200bf`). */
-    private fun startVoice(request: Request) {
+    /**
+     * iOS `start(url:volume:)` (`WayVoicePlayer.swift:145-178@7c200bf`).
+     * [handedOver] when it starts as the session hands it over, not after
+     * waiting behind a prompt.
+     */
+    private fun startVoice(request: Request, handedOver: Boolean) {
         parked = null
         pausedByGuide = false
         runEnding?.cancel()
@@ -227,7 +233,7 @@ class WalkAudioArbiter internal constructor(
         // a parked one outlives the whole run (`AudioPriorityQueue.swift:75-84@7c200bf`).
         whisperPlayer.cut()
         if (voiceBefore == null) takeDuck()
-        val next = Loaded(request.listener)
+        val next = Loaded(request.listener, handedOver)
         loaded = next
         voicePlayer.play(request.file, request.volume, next)
     }
@@ -332,7 +338,7 @@ class WalkAudioArbiter internal constructor(
         }
         val waiting = parked
         if (waiting != null) {
-            startVoice(waiting)
+            startVoice(waiting, handedOver = false)
         } else if (pausedByGuide) {
             pausedByGuide = false
             resumeVoice()
@@ -356,21 +362,58 @@ class WalkAudioArbiter internal constructor(
     }
 
     private fun publishGates() {
-        externalGates.value = HonorExternalGates(recording = ui.recording, externalAudio = whisperAudible)
+        externalGates.value = HonorExternalGates(
+            recording = ui.recording,
+            externalAudio = whisperAudible,
+            wayVoiceHeld = wayVoiceHeld(),
+        )
+    }
+
+    /**
+     * The newest voice the session handed over is silent, though nobody
+     * paused it: parked behind a prompt, held by one (until the walker
+     * resumes it over the prompt), or held by a call.
+     */
+    private fun wayVoiceHeld(): Boolean {
+        if (parked != null) return true
+        val play = loaded ?: return false
+        return play.heldByCall || (pausedByGuide && !voicePlayer.isPlaying)
     }
 
     private fun onArbiter(step: () -> Unit) {
-        scope.launch { step() }
+        scope.launch {
+            step()
+            publishGates()
+        }
     }
 
     private class Request(val file: File, val volume: Float, val listener: WayVoiceListener)
 
     /** One play; the player's report counts only while it is still [loaded]. */
-    private inner class Loaded(val listener: WayVoiceListener) : WayVoicePlaybackListener {
+    private inner class Loaded(
+        val listener: WayVoiceListener,
+        private val handedOver: Boolean,
+    ) : WayVoicePlaybackListener {
+
+        var heldByCall = false
 
         override fun onEnded() = onArbiter { voiceLeft(this@Loaded) { it.onFinished() } }
 
-        override fun onFailed() = onArbiter { voiceLeft(this@Loaded) { it.onFailed() } }
+        override fun onFailed(beforeSound: Boolean) = onArbiter {
+            voiceLeft(this@Loaded) { it.onFailed(atHandOff = handedOver && beforeSound) }
+        }
+
+        override fun onHeld(held: Boolean) = onArbiter {
+            if (loaded === this@Loaded) heldByCall = held
+        }
+
+        /** Like the walker's own pause (iOS `pause()`): a prompt ending won't resume it. */
+        override fun onPausedForRoute() = onArbiter {
+            if (loaded !== this@Loaded) return@onArbiter
+            pausedByGuide = false
+            heldByCall = false
+            listener.onPausedForRoute()
+        }
     }
 
     companion object {
