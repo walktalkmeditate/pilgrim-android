@@ -137,7 +137,10 @@ class WalkTrackingHonorPipelineTest {
             scope = scope,
             releaseFlags = FixedReleaseFlags(honor = true),
             unitsPreferences = FakeUnitsPreferencesRepository(UnitSystem.Imperial),
-        )
+        ).apply {
+            // The row lands on real IO threads; 5 s timed out under a loaded full-suite run.
+            startAwaitTimeoutMillis = 30_000L
+        }
     }
 
     // Starting

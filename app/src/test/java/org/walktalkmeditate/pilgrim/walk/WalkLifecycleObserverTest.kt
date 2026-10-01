@@ -408,7 +408,7 @@ class WalkLifecycleObserverTest {
 
         transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
         transitionTo(WalkState.Finished(WalkAccumulator(walkId = walkId, startedAt = 0L), endedAt = 100_000L))
-        awaitReplyTaken()
+        awaitReplyFiled()
 
         assertEquals(
             mapOf(2 to repository.voiceRecordingsFor(walkId).single().fileRelativePath),
@@ -487,6 +487,15 @@ class WalkLifecycleObserverTest {
     }
 
     /** The walk-end take is saved, then its reply origin taken, in that order. */
+    /** The origin clears before the mapping is written, so a filed reply is awaited on the write itself. */
+    private fun awaitReplyFiled() {
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (replies.filed.value == 0L && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+        }
+        assertEquals("the walk-end take never filed its reply", 1L, replies.filed.value)
+    }
+
     private fun awaitReplyTaken() {
         val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
         while (replies.pending.value != null && System.currentTimeMillis() < deadline) {

@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -137,8 +138,13 @@ class WalkSummaryViewModelPromptsTest {
         // Room flows; leaving them subscribed past `db.close()` would
         // throw IllegalStateException onto whichever test runs next in
         // the JVM.
-        for (vm in createdViewModels) {
-            vm.viewModelScope.coroutineContext[Job]?.cancel()
+        // Join, not just cancel: buildState hops to Dispatchers.Default,
+        // so a cancelled VM can still reach Room after db.close() and
+        // land in a later test as an uncaught exception.
+        kotlinx.coroutines.runBlocking {
+            for (vm in createdViewModels) {
+                vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            }
         }
         createdViewModels.clear()
         persistenceScope.coroutineContext[Job]?.cancel()
