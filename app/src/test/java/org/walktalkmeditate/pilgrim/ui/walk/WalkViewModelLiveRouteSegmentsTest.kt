@@ -110,6 +110,7 @@ class WalkViewModelLiveRouteSegmentsTest {
             soundscapeUiController = FakeWalkSoundscapeUiController(),
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
+            honorPreferences = { error("no honor start in this test") },
         )
     }
 

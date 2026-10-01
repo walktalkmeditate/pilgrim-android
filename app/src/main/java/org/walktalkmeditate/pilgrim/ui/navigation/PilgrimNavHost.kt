@@ -42,6 +42,7 @@ import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
+import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
@@ -81,15 +82,34 @@ object Routes {
      * pattern-less navigate falls back to the Wander default argument.
      */
     const val ACTIVE_WALK_ARG_MODE = "mode"
-    const val ACTIVE_WALK = "active_walk?$ACTIVE_WALK_ARG_MODE={$ACTIVE_WALK_ARG_MODE}"
-    fun activeWalk(mode: WalkMode): String =
-        "active_walk?$ACTIVE_WALK_ARG_MODE=${mode.name}"
+
+    /** The walk an Honor walk follows, from the overview's Begin; absent for every other mode. */
+    const val ACTIVE_WALK_ARG_HONOR_SOURCE = "honorSource"
+    const val ACTIVE_WALK =
+        "active_walk?$ACTIVE_WALK_ARG_MODE={$ACTIVE_WALK_ARG_MODE}" +
+            "&$ACTIVE_WALK_ARG_HONOR_SOURCE={$ACTIVE_WALK_ARG_HONOR_SOURCE}"
+    fun activeWalk(mode: WalkMode, honorSourceWalkId: Long? = null): String =
+        "active_walk?$ACTIVE_WALK_ARG_MODE=${mode.name}" +
+            (honorSourceWalkId?.let { "&$ACTIVE_WALK_ARG_HONOR_SOURCE=$it" } ?: "")
     const val FEEDBACK = "feedback"
     const val GOSHUIN = "goshuin"
     const val MEDITATION = "meditation"
     private const val WALK_SUMMARY_PREFIX = "walk_summary"
-    const val WALK_SUMMARY_PATTERN = "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}"
-    fun walkSummary(walkId: Long): String = "$WALK_SUMMARY_PREFIX/$walkId"
+
+    /** Whether the summary's host can open the Honor overview, so it shows "walk this again". */
+    const val WALK_SUMMARY_ARG_WALK_AGAIN = "walkAgain"
+    const val WALK_SUMMARY_PATTERN =
+        "$WALK_SUMMARY_PREFIX/{${WalkSummaryViewModel.ARG_WALK_ID}}" +
+            "?$WALK_SUMMARY_ARG_WALK_AGAIN={$WALK_SUMMARY_ARG_WALK_AGAIN}"
+    fun walkSummary(walkId: Long, walkAgainDoor: Boolean = false): String =
+        "$WALK_SUMMARY_PREFIX/$walkId" + if (walkAgainDoor) "?$WALK_SUMMARY_ARG_WALK_AGAIN=true" else ""
+
+    /** The Ways sheet, the "Walk again" picker, and the overview: reachable only with Honor on. */
+    const val HONOR_WAYS = "honor_ways"
+    const val HONOR_OWN_WALKS = "honor_own_walks"
+    private const val HONOR_OVERVIEW_PREFIX = "honor_overview"
+    const val HONOR_OVERVIEW_PATTERN = "$HONOR_OVERVIEW_PREFIX/{${HonorOverviewViewModel.ARG_SOURCE_WALK_ID}}"
+    fun honorOverview(sourceWalkId: Long): String = "$HONOR_OVERVIEW_PREFIX/$sourceWalkId"
 
     const val SETTINGS = "settings"
     const val VOICE_GUIDE_PICKER = "voice_guides"
@@ -152,6 +172,8 @@ fun PilgrimNavHost(
      * required perms are already granted).
      */
     welcomeCompleted: Boolean = true,
+    /** The 2.0.0 release flag: off, no Honor route exists and no door leads to one (AE12). */
+    honorEnabled: Boolean = false,
 ) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
@@ -214,6 +236,12 @@ fun PilgrimNavHost(
                         launchSingleTop = true
                     }
                 },
+                onChooseWay = {
+                    if (honorEnabled) {
+                        navController.navigate(Routes.HONOR_WAYS) { launchSingleTop = true }
+                    }
+                },
+                honorEnabled = honorEnabled,
             )
         }
         composable(Routes.HOME) {
@@ -226,7 +254,7 @@ fun PilgrimNavHost(
                     // stacking. A different walkId still pushes a new
                     // entry, so Home → Summary(1) → Home → Summary(2)
                     // behaves normally.
-                    navController.navigate(Routes.walkSummary(walkId)) {
+                    navController.navigate(Routes.walkSummary(walkId, walkAgainDoor = honorEnabled)) {
                         launchSingleTop = true
                     }
                 },
@@ -357,13 +385,22 @@ fun PilgrimNavHost(
                     type = NavType.StringType
                     defaultValue = WalkMode.Wander.name
                 },
+                navArgument(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE) {
+                    type = NavType.LongType
+                    defaultValue = NO_HONOR_SOURCE
+                },
             ),
         ) { backStackEntry ->
-            val walkMode = WalkMode.fromWire(
-                backStackEntry.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE),
+            val honorSource = backStackEntry.arguments
+                ?.getLong(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE)
+                ?.takeIf { honorEnabled && it != NO_HONOR_SOURCE }
+            val walkMode = activeWalkMode(
+                WalkMode.fromWire(backStackEntry.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE)),
+                honorSource,
             )
             ActiveWalkScreen(
                 mode = walkMode,
+                honorSourceWalkId = honorSource,
                 onFinished = { walkId ->
                     // Stage 9.5-A: a walk launched from Path leaves HOME
                     // off the back stack. popUpTo(HOME) would no-op +
@@ -371,7 +408,7 @@ fun PilgrimNavHost(
                     // effective root) so [PATH, walkSummary] is the
                     // resulting stack — Done returns to PATH which is
                     // adjacent to the Journal tab.
-                    navController.navigate(Routes.walkSummary(walkId)) {
+                    navController.navigate(Routes.walkSummary(walkId, walkAgainDoor = honorEnabled)) {
                         popUpTo(Routes.PATH) { inclusive = false }
                         launchSingleTop = true
                     }
@@ -433,9 +470,15 @@ fun PilgrimNavHost(
             route = Routes.WALK_SUMMARY_PATTERN,
             arguments = listOf(
                 navArgument(WalkSummaryViewModel.ARG_WALK_ID) { type = NavType.LongType },
+                navArgument(Routes.WALK_SUMMARY_ARG_WALK_AGAIN) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
             ),
         ) { entry ->
             val walkId = entry.arguments?.getLong(WalkSummaryViewModel.ARG_WALK_ID) ?: 0L
+            val hostOffersWalkAgain = honorEnabled &&
+                entry.arguments?.getBoolean(Routes.WALK_SUMMARY_ARG_WALK_AGAIN) == true
             // Stage 5: present Walk Summary as a Dialog so the host screen
             // (Home / Path / Recordings / Goshuin) stays behind it instead
             // of being replaced — matches iOS .sheet semantics. The Dialog's
@@ -511,6 +554,22 @@ fun PilgrimNavHost(
                             launchSingleTop = true
                         }
                     },
+                    // iOS `walkAgain`: the summary closes, then the overview
+                    // opens over whatever hosted it, never over the summary;
+                    // a walk with no Way only closes it (F §6.2, F-1 matched).
+                    onWalkAgain = if (hostOffersWalkAgain) {
+                        { result ->
+                            if (result.built) {
+                                sheetScope.launch { sheetState.hide() }.invokeOnCompletion {
+                                    navController.openHonorOverviewFromSummary(result.sourceWalkId)
+                                }
+                            } else {
+                                dismissAndDone()
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -541,12 +600,15 @@ fun PilgrimNavHost(
                     // so the stack is always [Goshuin, Summary(N)] —
                     // correct for double-tap races AND for sequential
                     // browsing (Summary(A) → back → Summary(B)).
-                    navController.navigate(Routes.walkSummary(walkId)) {
+                    navController.navigate(Routes.walkSummary(walkId, walkAgainDoor = honorEnabled)) {
                         launchSingleTop = true
                         popUpTo(Routes.GOSHUIN) { inclusive = false }
                     }
                 },
             )
+        }
+        if (honorEnabled) {
+            honorRoutes(navController)
         }
         }
 
@@ -565,6 +627,7 @@ fun PilgrimNavHost(
             currentRoute in noNebulaeRoutes -> false
             currentRoute.startsWith("walk_summary") -> false
             currentRoute.startsWith("walk_share") -> false
+            currentRoute.startsWith("honor_overview") -> false
             else -> true
         }
         org.walktalkmeditate.pilgrim.ui.design
@@ -669,7 +732,7 @@ fun PilgrimNavHost(
                 // summary lands on Path; Done navigates to HOME via
                 // navigateToTab. HOME may not be on the back stack
                 // (cold-launch with widget tap → only PATH is there).
-                navController.navigate(Routes.walkSummary(link.walkId)) {
+                navController.navigate(Routes.walkSummary(link.walkId, walkAgainDoor = honorEnabled)) {
                     popUpTo(Routes.PATH) { saveState = false }
                     launchSingleTop = true
                 }
@@ -684,6 +747,78 @@ fun PilgrimNavHost(
             }
         }
         onDeepLinkConsumed()
+    }
+}
+
+/** The `honorSource` default: no Way to follow. */
+internal const val NO_HONOR_SOURCE = -1L
+
+/**
+ * An Honor walk needs the walk it follows; one without (a redirect into a
+ * running walk, a flag-off build) is a plain walk screen, whose running
+ * walk's mode lives on the accumulator anyway.
+ */
+internal fun activeWalkMode(mode: WalkMode, honorSourceWalkId: Long?): WalkMode =
+    if (mode == WalkMode.Honor && honorSourceWalkId == null) WalkMode.Wander else mode
+
+/**
+ * The Ways sheet → "Walk again" picker → overview → walk screen chain
+ * (parity spec F §2–§12). Each step leaves the one before it: the sheets
+ * are gone before the overview opens, and Back from the overview never
+ * lands on a sheet. Begin closes the overview and opens the walk screen
+ * before its Start.
+ */
+private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHostController) {
+    composable(Routes.HONOR_WAYS) {
+        org.walktalkmeditate.pilgrim.ui.honor.HonorWaysSheetRoute(
+            onClosed = { navController.popBackStack(Routes.HONOR_WAYS, inclusive = true) },
+            onOpenOwnWalks = {
+                navController.navigate(Routes.HONOR_OWN_WALKS) { launchSingleTop = true }
+            },
+        )
+    }
+    composable(Routes.HONOR_OWN_WALKS) {
+        org.walktalkmeditate.pilgrim.ui.honor.OwnWalkPickerRoute(
+            onClosed = { navController.popBackStack(Routes.HONOR_OWN_WALKS, inclusive = true) },
+            onOpenOverview = { sourceWalkId ->
+                navController.navigate(Routes.honorOverview(sourceWalkId)) {
+                    popUpTo(Routes.HONOR_WAYS) { inclusive = true }
+                    launchSingleTop = true
+                }
+            },
+        )
+    }
+    composable(
+        route = Routes.HONOR_OVERVIEW_PATTERN,
+        arguments = listOf(
+            navArgument(HonorOverviewViewModel.ARG_SOURCE_WALK_ID) { type = NavType.LongType },
+        ),
+    ) {
+        org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewScreen(
+            onClose = navController::closeHonorOverview,
+            onBegin = navController::beginHonorWalk,
+        )
+    }
+}
+
+/** "walk this again" built a Way: the overview takes the summary's place over its host (F §6.2). */
+internal fun NavController.openHonorOverviewFromSummary(sourceWalkId: Long) {
+    navigate(Routes.honorOverview(sourceWalkId)) {
+        popUpTo(Routes.WALK_SUMMARY_PATTERN) { inclusive = true }
+        launchSingleTop = true
+    }
+}
+
+/** Close returns to whatever hosted the overview; system Back does the same. */
+internal fun NavController.closeHonorOverview() {
+    popBackStack(Routes.HONOR_OVERVIEW_PATTERN, inclusive = true)
+}
+
+/** Begin takes the overview's place with the walk screen, before its Start (spec correction 1). */
+internal fun NavController.beginHonorWalk(sourceWalkId: Long) {
+    navigate(Routes.activeWalk(WalkMode.Honor, sourceWalkId)) {
+        popUpTo(Routes.HONOR_OVERVIEW_PATTERN) { inclusive = true }
+        launchSingleTop = true
     }
 }
 

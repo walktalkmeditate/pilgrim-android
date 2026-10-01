@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,6 +99,10 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhaseSaver
 import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummarySection
+import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainDoor
+import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainResult
+import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainViewModel
+import org.walktalkmeditate.pilgrim.ui.honor.walkAgainDoorShows
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SmoothStepEasing
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
 import org.walktalkmeditate.pilgrim.ui.walk.summary.computeBoundsForTimeRange
@@ -165,8 +170,15 @@ internal fun photoMapAnnotations(
 fun WalkSummaryScreen(
     onDone: () -> Unit,
     onShareJourney: () -> Unit = {},
+    /**
+     * Set by the hosts that can open the Honor overview afterwards (iOS
+     * `onWalkAgain`, `WalkSummaryView.swift:9-11@7c200bf`); the Recordings
+     * list leaves it null. It gets the built-or-not answer for the tap.
+     */
+    onWalkAgain: ((WalkAgainResult) -> Unit)? = null,
     viewModel: WalkSummaryViewModel = hiltViewModel(),
     modelDownloadViewModel: ModelDownloadViewModel = hiltViewModel(),
+    walkAgainViewModel: WalkAgainViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val recordings by viewModel.recordings.collectAsStateWithLifecycle()
@@ -207,6 +219,11 @@ fun WalkSummaryScreen(
     var showModelDownloadSheet by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.runStartupSweep() }
+
+    val currentOnWalkAgain by rememberUpdatedState(onWalkAgain)
+    LaunchedEffect(walkAgainViewModel) {
+        walkAgainViewModel.results.collect { result -> currentOnWalkAgain?.invoke(result) }
+    }
 
     // Stage 7-D: VM events drive snackbar feedback + chooser-intent dispatch.
     // `LocalActivity.current` is non-null in practice — MainActivity hosts
@@ -908,6 +925,22 @@ fun WalkSummaryScreen(
                             cachedShare = cachedShare,
                             onCachedShareEngaged = viewModel::markCurrentWalkShared,
                         )
+                        // Last in the column, after the share card, and
+                        // centred by iOS's default VStack alignment (iOS
+                        // `shareCard`, `WalkSummaryView.swift:676-691@7c200bf`).
+                        if (
+                            walkAgainDoorShows(
+                                honorEnabled = walkAgainViewModel.honorEnabled,
+                                hostOffersDoor = onWalkAgain != null,
+                                routePointCount = s.summary.routePoints.size,
+                            )
+                        ) {
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            WalkAgainDoor(
+                                modifier = Modifier.align(Alignment.CenterHorizontally),
+                                onClick = { walkAgainViewModel.walkAgain(s.summary.walk.id) },
+                            )
+                        }
                     }
                 }
 

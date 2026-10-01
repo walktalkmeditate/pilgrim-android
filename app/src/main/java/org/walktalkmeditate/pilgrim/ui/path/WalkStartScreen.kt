@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.path
 import android.app.Activity
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.annotation.ArrayRes
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -17,12 +18,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
@@ -35,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -42,7 +46,11 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -61,6 +69,7 @@ import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
 import org.walktalkmeditate.pilgrim.ui.design.BreathingLogo
 import org.walktalkmeditate.pilgrim.ui.design.LocalReduceMotion
 import org.walktalkmeditate.pilgrim.ui.design.MoonPhaseGlyph
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -75,19 +84,21 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkViewModel
  */
 private const val MODE_TAP_DISSOLVE_MS = 450L
 
-/**
- * The Honor slot still wears its flag-off look (the Together glyph,
- * strings, and "coming soon"): its door, the Ways sheet and the overview,
- * arrives in U21, which reads the release flag here.
- */
-private const val HONOR_SLOT_OPEN = false
+/** iOS `.fog.opacity(0.55)` for an unselected mode label (`WalkStartView.swift:331@7c200bf`, since `cbd24fc`). */
+internal const val UNSELECTED_MODE_LABEL_ALPHA = 0.55f
+
+internal const val PATH_START_BUTTON_TAG = "start_walk_button"
+
+private const val START_SHADOW_ALPHA = 0.2f
 
 /**
  * The Path tab — Pilgrim's contemplative pre-walk hub. Ports iOS
  * `WalkStartView`'s structure: breathing logo at top, rotating quote
  * (re-rolls on mode change, no timer), moon-phase glyph, 3-mode
- * selector (Wander and Seek available; Honor "coming soon"), big
- * primary action button at bottom.
+ * selector, big primary action button at bottom. With [honorEnabled]
+ * the middle slot is Honor and its button opens the Ways sheet through
+ * [onChooseWay] (iOS `MainTabView.swift:22-28@7c200bf`); without it the
+ * slot keeps the 1.5.0 Together look and "coming soon" (AE12).
  *
  * Cold-launch behavior: if the controller is already in-progress
  * (crash-recovery via [WalkViewModel.restoreActiveWalk]), the screen
@@ -101,6 +112,8 @@ private const val HONOR_SLOT_OPEN = false
 @Composable
 fun WalkStartScreen(
     onEnterActiveWalk: (WalkMode) -> Unit,
+    onChooseWay: () -> Unit,
+    honorEnabled: Boolean,
     walkViewModel: WalkViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -125,7 +138,7 @@ fun WalkStartScreen(
 
     var selectedMode by rememberSaveable { mutableStateOf(WalkMode.Wander) }
     var currentQuote by rememberSaveable(selectedMode) {
-        mutableStateOf(pickRandomQuote(context, selectedMode))
+        mutableStateOf(pickRandomQuote(context, selectedMode, honorEnabled = honorEnabled))
     }
     // Re-keyed on the calendar day so when the screen recomposes
     // (e.g., on tab return or config change), the moon phase
@@ -230,6 +243,7 @@ fun WalkStartScreen(
         PathBackgroundLayers(
             selectedMode = selectedMode,
             reduceMotion = reduceMotion,
+            honorEnabled = honorEnabled,
             modifier = Modifier.matchParentSize(),
         )
         // iOS-parity recovery banner: shows when a walk was auto-finalized
@@ -298,39 +312,129 @@ fun WalkStartScreen(
             }
             ModeSelector(
                 selectedMode = selectedMode,
+                honorEnabled = honorEnabled,
                 onSelect = { selectedMode = it },
             )
             Spacer(Modifier.height(PilgrimSpacing.normal))
-            Button(
-                // iOS parity: button navigates to the active-walk surface
-                // in its "ready" state. The walk does NOT start recording
-                // until the user taps the Start button on that screen.
-                // The selected mode rides the nav argument — for Seek it
-                // drives the setup ritual on the active-walk surface (iOS
-                // `MainCoordinator.startWalk(mode:)@c1745e8`).
-                onClick = { onEnterActiveWalk(selectedMode) },
-                enabled = selectedMode.isAvailable(honorEnabled = HONOR_SLOT_OPEN) && !isInProgress,
-                modifier = Modifier.fillMaxWidth(),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = pilgrimColors.stone,
-                    contentColor = pilgrimColors.parchment,
-                    disabledContainerColor = pilgrimColors.fog.copy(alpha = 0.2f),
-                    disabledContentColor = pilgrimColors.parchment.copy(alpha = 0.6f),
-                ),
-            ) {
-                Text(stringResource(buttonLabelFor(selectedMode)))
-            }
+            PathStartButton(
+                label = stringResource(pathModeCopy(selectedMode, honorEnabled).button),
+                enabled = selectedMode.isAvailable(honorEnabled = honorEnabled) && !isInProgress,
+                // iOS parity: Wander and Seek open the active-walk surface
+                // in its "ready" state, and the walk starts only at that
+                // screen's Start; the selected mode rides the nav argument
+                // (for Seek it drives the setup ritual, iOS
+                // `MainCoordinator.startWalk(mode:)@c1745e8`). Honor opens
+                // the Ways sheet instead (F §3.5).
+                onClick = {
+                    when (pathButtonAction(selectedMode, honorEnabled)) {
+                        PathButtonAction.EnterWalk -> onEnterActiveWalk(selectedMode)
+                        PathButtonAction.ChooseWay -> onChooseWay()
+                    }
+                },
+            )
         }
     }
 }
 
-@StringRes
-private fun buttonLabelFor(mode: WalkMode): Int = when (mode) {
-    WalkMode.Wander -> R.string.path_button_wander
-    WalkMode.Honor -> R.string.path_button_together
-    WalkMode.Seek -> R.string.path_button_seek
+/**
+ * iOS's one button for every mode (`WalkStartView.swift:198-215@7c200bf`).
+ * TalkBack reads "Begin your journey", never the visible mode name.
+ *
+ * iOS's stone shadow (`.stone.opacity(0.2), radius: 8, y: 3`, none while
+ * disabled) is an elevation shadow in stone. Its second shadow, a glow
+ * centred on the button that breathes with the logo, has no elevation
+ * equivalent (Android's shadows fall away from the light), so it isn't drawn.
+ */
+@Composable
+internal fun PathStartButton(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val journey = stringResource(R.string.path_start_a11y)
+    val shape = RoundedCornerShape(PilgrimCornerRadius.normal)
+    val shadowColor = pilgrimColors.stone.copy(alpha = if (enabled) START_SHADOW_ALPHA else 0f)
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(elevation = 8.dp, shape = shape, ambientColor = shadowColor, spotColor = shadowColor)
+            .testTag(PATH_START_BUTTON_TAG)
+            .semantics { contentDescription = journey },
+        shape = shape,
+        contentPadding = PaddingValues(vertical = 12.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = pilgrimColors.stone,
+            contentColor = pilgrimColors.parchment,
+            disabledContainerColor = pilgrimColors.fog.copy(alpha = 0.2f),
+            disabledContentColor = pilgrimColors.parchment.copy(alpha = 0.6f),
+        ),
+    ) {
+        Text(label, modifier = Modifier.clearAndSetSemantics {})
+    }
 }
+
+/** What the Path tab shows for one mode slot. */
+internal data class PathModeCopy(
+    @param:StringRes val label: Int,
+    @param:StringRes val subtitle: Int,
+    @param:StringRes val button: Int,
+    @param:ArrayRes val quotes: Int,
+    /** TalkBack's name for the slot; null reads the visible label, as 1.5.0 did. */
+    @param:StringRes val talkBackLabel: Int?,
+)
+
+/**
+ * With [honorEnabled] the slots read as iOS's (`WalkMode.swift:3-31@7c200bf`),
+ * TalkBack naming each by its lowercase raw value (F §17.1). Without it the
+ * middle slot keeps the 1.5.0 Together copy, "coming soon", and visible-text
+ * labels (AE12).
+ */
+internal fun pathModeCopy(mode: WalkMode, honorEnabled: Boolean): PathModeCopy =
+    when (mode) {
+        WalkMode.Wander -> PathModeCopy(
+            label = R.string.path_mode_wander,
+            subtitle = R.string.path_mode_wander_subtitle,
+            button = R.string.path_button_wander,
+            quotes = R.array.path_quotes_wander,
+            talkBackLabel = R.string.path_mode_wander_a11y.takeIf { honorEnabled },
+        )
+        WalkMode.Honor -> if (honorEnabled) {
+            PathModeCopy(
+                label = R.string.path_mode_honor,
+                subtitle = R.string.path_mode_honor_subtitle,
+                button = R.string.path_button_honor,
+                quotes = R.array.path_quotes_honor,
+                talkBackLabel = R.string.path_mode_honor_a11y,
+            )
+        } else {
+            PathModeCopy(
+                label = R.string.path_mode_together,
+                subtitle = R.string.path_mode_unavailable_subtitle,
+                button = R.string.path_button_together,
+                quotes = R.array.path_quotes_together,
+                talkBackLabel = null,
+            )
+        }
+        WalkMode.Seek -> PathModeCopy(
+            label = R.string.path_mode_seek,
+            subtitle = R.string.path_mode_seek_subtitle,
+            button = R.string.path_button_seek,
+            quotes = R.array.path_quotes_seek,
+            talkBackLabel = R.string.path_mode_seek_a11y.takeIf { honorEnabled },
+        )
+    }
+
+internal enum class PathButtonAction { EnterWalk, ChooseWay }
+
+/**
+ * iOS routes `onStartWalk(.honor)` to `chooseWay()`, every other mode to a
+ * walk (`MainTabView.swift:22-28@7c200bf`).
+ */
+internal fun pathButtonAction(mode: WalkMode, honorEnabled: Boolean): PathButtonAction =
+    if (mode == WalkMode.Honor && honorEnabled) PathButtonAction.ChooseWay else PathButtonAction.EnterWalk
 
 /**
  * Picks a random quote from the per-mode string-array. The [random]
@@ -340,12 +444,9 @@ internal fun pickRandomQuote(
     context: Context,
     mode: WalkMode,
     random: Random = Random.Default,
+    honorEnabled: Boolean = false,
 ): String {
-    val arrayId = when (mode) {
-        WalkMode.Wander -> R.array.path_quotes_wander
-        WalkMode.Honor -> R.array.path_quotes_together
-        WalkMode.Seek -> R.array.path_quotes_seek
-    }
+    val arrayId = pathModeCopy(mode, honorEnabled).quotes
     val quotes = context.resources.getStringArray(arrayId)
     if (quotes.isEmpty()) {
         // Defensive: a future translation could ship an empty array;
@@ -360,6 +461,7 @@ internal fun pickRandomQuote(
 @Composable
 private fun ModeSelector(
     selectedMode: WalkMode,
+    honorEnabled: Boolean,
     onSelect: (WalkMode) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -405,23 +507,15 @@ private fun ModeSelector(
                             onSelect(mode)
                         }
                     },
+                    honorEnabled = honorEnabled,
                     modifier = Modifier.weight(1f),
                 )
             }
         }
         Spacer(Modifier.height(PilgrimSpacing.small))
         AnimatedContent(targetState = selectedMode, label = "mode-subtitle") { mode ->
-            val subtitleId = if (mode.isAvailable(honorEnabled = HONOR_SLOT_OPEN)) {
-                when (mode) {
-                    WalkMode.Wander -> R.string.path_mode_wander_subtitle
-                    WalkMode.Honor -> R.string.path_mode_together_subtitle
-                    WalkMode.Seek -> R.string.path_mode_seek_subtitle
-                }
-            } else {
-                R.string.path_mode_unavailable_subtitle
-            }
             Text(
-                stringResource(subtitleId),
+                stringResource(pathModeCopy(mode, honorEnabled).subtitle),
                 style = pilgrimType.caption,
                 color = pilgrimColors.fog.copy(alpha = 0.5f),
             )
@@ -436,34 +530,48 @@ internal fun ModeButton(
     footprintActive: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    honorEnabled: Boolean = false,
 ) {
+    val copy = pathModeCopy(mode, honorEnabled)
+    val talkBackLabel = copy.talkBackLabel?.let { stringResource(it) }
     // indication = null suppresses the default Material ripple — the
     // mode tabs use a selected-underline as their tap feedback; the
     // bounded grey ripple over the label area reads as broken UX.
     val interactionSource = remember { MutableInteractionSource() }
     Column(
-        // selectable (not clickable) so TalkBack announces the tab role +
-        // the selected state — the selection is otherwise conveyed only by
-        // text color + the underline gradient (AF58).
-        modifier = modifier.selectable(
-            selected = selected,
-            interactionSource = interactionSource,
-            indication = null,
-            role = Role.Tab,
-            onClick = onClick,
-        ),
+        // selectable (not clickable) so TalkBack announces the selected
+        // state — the selection is otherwise conveyed only by text color +
+        // the underline gradient (AF58). With Honor on it is iOS's Button
+        // plus Selected (F §17.1); flag-off keeps 1.5.0's tab role.
+        modifier = modifier
+            .selectable(
+                selected = selected,
+                interactionSource = interactionSource,
+                indication = null,
+                role = if (honorEnabled) Role.Button else Role.Tab,
+                onClick = onClick,
+            )
+            .then(
+                if (talkBackLabel != null) {
+                    Modifier.semantics { contentDescription = talkBackLabel }
+                } else {
+                    Modifier
+                },
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         PathFootprints(
             mode = mode,
             isActive = footprintActive,
+            honorEnabled = honorEnabled,
         )
         Spacer(Modifier.height(PilgrimSpacing.small))
         Text(
-            text = stringResource(modeLabelFor(mode)),
+            text = stringResource(copy.label),
             style = pilgrimType.button,
-            color = if (selected) pilgrimColors.stone else pilgrimColors.fog.copy(alpha = 0.3f),
+            color = if (selected) pilgrimColors.stone else pilgrimColors.fog.copy(alpha = UNSELECTED_MODE_LABEL_ALPHA),
             maxLines = 1,
+            modifier = if (talkBackLabel != null) Modifier.clearAndSetSemantics {} else Modifier,
         )
         Spacer(Modifier.height(PilgrimSpacing.xs))
         // iOS parity `WalkStartView.trailUnderline(for:)@v1.6.0` —
@@ -494,11 +602,4 @@ internal fun ModeButton(
                 .background(underline),
         )
     }
-}
-
-@StringRes
-private fun modeLabelFor(mode: WalkMode): Int = when (mode) {
-    WalkMode.Wander -> R.string.path_mode_wander
-    WalkMode.Honor -> R.string.path_mode_together
-    WalkMode.Seek -> R.string.path_mode_seek
 }

@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -34,11 +35,18 @@ private val FRAME_WIDTH = 60.dp
 private val FRAME_HEIGHT = 40.dp
 
 /**
+ * iOS's shared glyph frame for every mode (`WalkStartView.swift:233@7c200bf`);
+ * 1.5.0 kept the shorter [FRAME_HEIGHT].
+ */
+private val IOS_FRAME_HEIGHT = 50.dp
+
+/**
  * Per-mode footstep glyph above each `ModeButton` label — verbatim port
  * of iOS `WalkStartView.footprintForMode`. Wander = two prints rotated
- * outward; Honor, until its staff glyph lands, keeps the earlier
- * Together glyph of three pairs orbiting; Seek = single print + a
- * stack of dissolving dots. Frame is 60×40 dp to match iOS.
+ * outward; Honor = one print and a staff (with [honorEnabled]; without
+ * it the 1.5.0 Together glyph of three pairs orbiting); Seek = single
+ * print + a stack of dissolving dots. The frame is iOS's 60×50 with
+ * [honorEnabled], and 1.5.0's 60×40 without.
  *
  * Active mode renders fully opaque + a subtle 1.01× breath scale; the
  * inactive modes render at 0 opacity (slot reserved so the underline
@@ -49,6 +57,7 @@ fun PathFootprints(
     mode: WalkMode,
     isActive: Boolean,
     modifier: Modifier = Modifier,
+    honorEnabled: Boolean = false,
 ) {
     val reduceMotion = LocalReduceMotion.current
     val breathScale by animateFloatAsState(
@@ -67,7 +76,7 @@ fun PathFootprints(
     )
     Box(
         modifier = modifier
-            .size(width = FRAME_WIDTH, height = FRAME_HEIGHT)
+            .size(width = FRAME_WIDTH, height = if (honorEnabled) IOS_FRAME_HEIGHT else FRAME_HEIGHT)
             .graphicsLayer {
                 alpha = opacity
                 scaleX = breathScale
@@ -77,7 +86,11 @@ fun PathFootprints(
     ) {
         when (mode) {
             WalkMode.Wander -> WanderFootprints()
-            WalkMode.Honor -> TogetherFootprints(reduceMotion = reduceMotion)
+            WalkMode.Honor -> if (honorEnabled) {
+                HonorFootprints()
+            } else {
+                TogetherFootprints(reduceMotion = reduceMotion)
+            }
             WalkMode.Seek -> SeekFootprints(reduceMotion = reduceMotion)
         }
     }
@@ -99,6 +112,58 @@ private fun WanderFootprints() {
             rotationDegrees = 12f,
         )
     }
+}
+
+/**
+ * One print and a staff beside it: dōgyō ninin, two traveling together
+ * (iOS `honorFootprints`, `WalkStartView.swift:253-265@7c200bf`). Still,
+ * apart from the shared breath.
+ */
+@Composable
+private fun HonorFootprints() {
+    val ink = pilgrimColors.ink
+    Row(
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        FootprintGlyph(16.dp, 26.dp, ink.copy(alpha = 0.08f), -12f, mirror = true)
+        StaffGlyph(
+            color = ink.copy(alpha = 0.10f),
+            strokeWidth = 2.dp,
+            modifier = Modifier.size(width = 10.dp, height = 34.dp),
+        )
+    }
+}
+
+/**
+ * A walking staff: one leaning stroke with a short crossbar near the top
+ * (iOS `StaffGlyph`, `WalkStartView.swift:416-427@7c200bf`). The crossbar's
+ * tilt is [crossbarTilt] at every size, as iOS's `± 2` points are absolute.
+ */
+@Composable
+internal fun StaffGlyph(
+    color: Color,
+    strokeWidth: Dp,
+    modifier: Modifier = Modifier,
+    roundCap: Boolean = true,
+    crossbarTilt: Dp = 2.dp,
+) {
+    Canvas(modifier = modifier) {
+        val lines = staffGlyphLines(size.width, size.height, crossbarTilt.toPx())
+        val cap = if (roundCap) StrokeCap.Round else StrokeCap.Butt
+        lines.forEach { (start, end) ->
+            drawLine(color = color, start = start, end = end, strokeWidth = strokeWidth.toPx(), cap = cap)
+        }
+    }
+}
+
+/** The staff's two strokes in a [width] × [height] box: the leaning shaft, then the crossbar. */
+internal fun staffGlyphLines(width: Float, height: Float, tilt: Float): List<Pair<Offset, Offset>> {
+    val barY = height * 0.18f
+    return listOf(
+        Offset(width * 0.65f, 0f) to Offset(width * 0.35f, height),
+        Offset(0f, barY + tilt) to Offset(width, barY - tilt),
+    )
 }
 
 @Composable

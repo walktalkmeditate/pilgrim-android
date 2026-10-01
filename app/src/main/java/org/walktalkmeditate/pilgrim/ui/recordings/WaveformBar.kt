@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 
 /**
  * Compose Canvas waveform with continuous tap+drag seek.
@@ -26,6 +27,11 @@ import androidx.compose.ui.semantics.setProgress
  * draw in [inactiveColor]. The caller passes the theme-tinted colors —
  * typically `pilgrimColors.stone` for active and `pilgrimColors.fog.copy(alpha = 0.4f)`
  * for inactive. Empty [samples] composes to an empty Canvas (no draw, no crash).
+ *
+ * [accessibilityValue] replaces TalkBack's own percent reading, and
+ * [accessibilitySteps] sets the adjust step: 9 steps is iOS's ±10 % per
+ * swipe (`RecordingsListView.swift:568-593@7c200bf`); 0 keeps TalkBack's
+ * default increment.
  */
 @Composable
 fun WaveformBar(
@@ -36,6 +42,8 @@ fun WaveformBar(
     onSeek: (Float) -> Unit,
     contentDescription: String,
     modifier: Modifier = Modifier,
+    accessibilityValue: String? = null,
+    accessibilitySteps: Int = 0,
 ) {
     Canvas(
         modifier = modifier
@@ -46,7 +54,8 @@ fun WaveformBar(
             // progressBarRangeInfo + setProgress is the slider-semantics contract.
             .semantics {
                 this.contentDescription = contentDescription
-                progressBarRangeInfo = ProgressBarRangeInfo(progress.coerceIn(0f, 1f), 0f..1f)
+                progressBarRangeInfo = ProgressBarRangeInfo(progress.coerceIn(0f, 1f), 0f..1f, accessibilitySteps)
+                if (accessibilityValue != null) stateDescription = accessibilityValue
                 setProgress { target -> onSeek(target.coerceIn(0f, 1f)); true }
             }
             .pointerInput(samples) {

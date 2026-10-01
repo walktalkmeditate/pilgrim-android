@@ -47,7 +47,9 @@ import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
+import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -133,8 +135,9 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePauseController,
     private val soundscapeUiController: WalkSoundscapeUiController,
     private val releaseFlags: ReleaseFlags,
-    /** Resolved only for an honor start, so a flag-off build never builds it. */
+    /** These two are resolved only for an honor start, so a flag-off build never builds them. */
     private val beginHonorWalk: Provider<BeginHonorWalk>,
+    private val honorPreferences: Provider<HonorPreferencesRepository>,
     // A default keeps the many named test constructions source-compatible;
     // Hilt ignores defaults and always injects the queue in production.
     private val whisperQueue: org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue =
@@ -222,6 +225,17 @@ class WalkViewModel @Inject constructor(
      * either retries [startWalk] or surfaces a Settings deep-link.
      */
     val locationPermissionRequired: SharedFlow<String?> = _locationPermissionRequired.asSharedFlow()
+
+    private val _honorStartRefusals = MutableSharedFlow<HonorStartRefused>(extraBufferCapacity = 1)
+
+    /**
+     * An honor Start that started nothing; the walk screen shows why as an
+     * alert and puts the intention back, so "Try again" starts with it.
+     */
+    val honorStartRefusals: SharedFlow<HonorStartRefused> = _honorStartRefusals.asSharedFlow()
+
+    /** Set while a Start builds or starts its walk, so a second tap starts nothing. */
+    private val startInFlight = AtomicBoolean(false)
 
     /**
      * iOS parity `ActiveWalkView.swift:handleProximityEvent@db4196e`.
@@ -1420,23 +1434,26 @@ class WalkViewModel @Inject constructor(
     }
 
     /**
-     * Start on an honor walk of the walker's own walk [sourceWalkId]
-     * (plan U17; the U19 harness and U21's overview call it). The Begin
-     * use case builds and stages the Way and starts the walk through the
-     * same path as [startWalk], so the permission check, weather, and
-     * greeting run as for any walk. [honorVoicesEnabled] is the overview's
-     * "walk with their voice" (iOS default on), AND-ed with Sounds. A
-     * refusal ends as a controller refusal does: no walk, nothing shown.
+     * The walk screen's Start on an honor walk of the walker's own walk
+     * [sourceWalkId] (parity spec correction 1: the overview's Begin only
+     * navigates here). The Begin use case builds and stages the Way and
+     * starts the walk through the same path as [startWalk], so the
+     * permission check, weather, and greeting run as for any walk.
+     * [honorVoicesEnabled] is the overview's sticky "walk with their voice";
+     * null reads the stored preference here, off the disk, and either way
+     * it is AND-ed with Sounds, as iOS reads both at Start
+     * (`ActiveWalkViewModel+Honor.swift:58@7c200bf`). A refusal starts
+     * nothing and emits [honorStartRefusals].
      */
     fun startHonorWalk(
         sourceWalkId: Long,
         intention: String? = null,
-        honorVoicesEnabled: Boolean = true,
+        honorVoicesEnabled: Boolean? = null,
     ) {
         if (!releaseFlags.honor) return
         launchWalkStart(intention) {
             val settings = HonorSettings.atStart(
-                honorVoicesEnabled = honorVoicesEnabled,
+                honorVoicesEnabled = honorVoicesEnabled ?: honorPreferences.get().awaitVoicesEnabled(),
                 soundsEnabled = soundsPreferences.soundsEnabled.value,
             )
             val request = BeginHonorWalk.Request(sourceWalkId, intention, settings)
@@ -1444,81 +1461,98 @@ class WalkViewModel @Inject constructor(
                 is BeginHonorWalk.Result.Started -> result.walk
                 is BeginHonorWalk.Result.Refused -> {
                     Log.w(TAG, "honor walk refused: ${result.reason}")
+                    HonorStartRefusal.of(result.reason)?.let {
+                        _honorStartRefusals.emit(HonorStartRefused(it, intention))
+                    }
                     null
                 }
             }
         }
     }
 
-    /** [start] returns the walk it started, or null when it refused before starting one. */
+    /**
+     * [start] returns the walk it started, or null when it refused before
+     * starting one. A Start while another is still building or starting
+     * its walk is ignored: an honor Start reads and stages a whole Way
+     * before the walk exists, so a double tap would otherwise build two.
+     */
     private fun launchWalkStart(intention: String?, start: suspend () -> Walk?) {
+        if (!startInFlight.compareAndSet(false, true)) return
         viewModelScope.launch {
-            // AF45: don't begin a doomed walk without location permission —
-            // the :tracker service would hit SecurityException on
-            // requestLocationUpdates and finish the walk with no feedback.
-            // Hand the intention to the UI so it can request the permission
-            // and retry (or deep-link to Settings on a hard denial). The
-            // retry re-invokes with the screen's own mode value (the mode
-            // is a nav-arg constant for the surface, so it doesn't need to
-            // ride the event payload).
-            if (!PermissionChecks.isFineLocationGranted(context)) {
-                // Suspending emit (we're already in a coroutine) so the event
-                // is never dropped by the 1-slot buffer; the UI collector is
-                // always subscribed (the Start control lives on the same screen).
-                _locationPermissionRequired.emit(intention)
-                return@launch
-            }
-            // Two separate try blocks with different semantics. Catching
-            // both in one block would let an IllegalStateException from
-            // the controller trigger the service-start rollback, which
-            // would finish a walk that's ALREADY running — effectively
-            // cancelling a legitimate earlier startWalk call.
-            val started = try {
-                start()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (e: IllegalStateException) {
-                // Controller rejects start from non-Idle/non-Finished
-                // state — usually a double-tap race where the first
-                // startWalk already succeeded. Treat as a no-op and let
-                // the first call's state transition drive the UI.
-                Log.d(TAG, "startWalk ignored — controller is not idle: ${e.message}")
-                return@launch
-            } ?: return@launch
-            // Stage 12-A: schedule the +2s/+10s weather fetch as soon
-            // as we have the new walkId. Runs independently of the
-            // foreground-service start below — even if the service
-            // refuses to start (rollback path), the +2s delay's
-            // CancellationException from the rollback's transition
-            // through Finished tears the weatherJob down before any
-            // fetch is issued.
-            scheduleWeatherFetch(started.id)
-            // Compute celestial greeting text once per walk start. Cheap
-            // (pure math); cleared on terminal transition by the
-            // controller-state observer below.
             try {
-                val snapshot = org.walktalkmeditate.pilgrim.core.celestial
-                    .CelestialSnapshotCalc.snapshot(
-                        atEpochMillis = started.startTimestamp,
-                    )
-                _activeCelestialGreeting.value =
-                    celestialGreetingText(snapshot, context.resources)
-                _activeCelestialSnapshot.value = snapshot
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (t: Throwable) {
-                Log.w(TAG, "celestial greeting compute failed", t)
+                runWalkStart(intention, start)
+            } finally {
+                startInFlight.set(false)
             }
-            // No explicit startForegroundService call here under the
-            // `:tracker` process split — [UiWalkController.startWalk]
-            // fires ACTION_START via [WalkActionPublisher] inside the
-            // controller, which is the same channel notification-button
-            // taps already use. The 5s await inside that call gives the
-            // tracker process time to spin up + insert the walk row;
-            // a timeout there bubbles as IllegalStateException which
-            // the catch above handles identically to the same-process
-            // start-rejection path.
         }
+    }
+
+    private suspend fun runWalkStart(intention: String?, start: suspend () -> Walk?) {
+        // AF45: don't begin a doomed walk without location permission —
+        // the :tracker service would hit SecurityException on
+        // requestLocationUpdates and finish the walk with no feedback.
+        // Hand the intention to the UI so it can request the permission
+        // and retry (or deep-link to Settings on a hard denial). The
+        // retry re-invokes with the screen's own mode value (the mode
+        // is a nav-arg constant for the surface, so it doesn't need to
+        // ride the event payload).
+        if (!PermissionChecks.isFineLocationGranted(context)) {
+            // Suspending emit (we're already in a coroutine) so the event
+            // is never dropped by the 1-slot buffer; the UI collector is
+            // always subscribed (the Start control lives on the same screen).
+            _locationPermissionRequired.emit(intention)
+            return
+        }
+        // Two separate try blocks with different semantics. Catching
+        // both in one block would let an IllegalStateException from
+        // the controller trigger the service-start rollback, which
+        // would finish a walk that's ALREADY running — effectively
+        // cancelling a legitimate earlier startWalk call.
+        val started = try {
+            start()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (e: IllegalStateException) {
+            // Controller rejects start from non-Idle/non-Finished
+            // state — usually a double-tap race where the first
+            // startWalk already succeeded. Treat as a no-op and let
+            // the first call's state transition drive the UI.
+            Log.d(TAG, "startWalk ignored — controller is not idle: ${e.message}")
+            return
+        } ?: return
+        // Stage 12-A: schedule the +2s/+10s weather fetch as soon
+        // as we have the new walkId. Runs independently of the
+        // foreground-service start below — even if the service
+        // refuses to start (rollback path), the +2s delay's
+        // CancellationException from the rollback's transition
+        // through Finished tears the weatherJob down before any
+        // fetch is issued.
+        scheduleWeatherFetch(started.id)
+        // Compute celestial greeting text once per walk start. Cheap
+        // (pure math); cleared on terminal transition by the
+        // controller-state observer below.
+        try {
+            val snapshot = org.walktalkmeditate.pilgrim.core.celestial
+                .CelestialSnapshotCalc.snapshot(
+                    atEpochMillis = started.startTimestamp,
+                )
+            _activeCelestialGreeting.value =
+                celestialGreetingText(snapshot, context.resources)
+            _activeCelestialSnapshot.value = snapshot
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "celestial greeting compute failed", t)
+        }
+        // No explicit startForegroundService call here under the
+        // `:tracker` process split — [UiWalkController.startWalk]
+        // fires ACTION_START via [WalkActionPublisher] inside the
+        // controller, which is the same channel notification-button
+        // taps already use. The 5s await inside that call gives the
+        // tracker process time to spin up + insert the walk row;
+        // a timeout there bubbles as IllegalStateException which
+        // the catch above handles identically to the same-process
+        // start-rejection path.
     }
 
     /**
@@ -2174,6 +2208,9 @@ sealed class PlacementEvent {
 }
 
 enum class PlacementKind { Whisper, Stone }
+
+/** An honor Start that started nothing, with the intention it carried, for the walk screen to put back. */
+data class HonorStartRefused(val refusal: HonorStartRefusal, val intention: String?)
 
 /**
  * iOS `MapCameraSeed.Seed` (`MapCameraSeed.swift:14-17@7c200bf`): where the
