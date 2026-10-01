@@ -12,6 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
+import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitPaddingDp
 import org.walktalkmeditate.pilgrim.ui.walk.map.easeOutCameraAnimation
 import org.walktalkmeditate.pilgrim.ui.walk.map.fitPaddingPx
@@ -107,6 +108,28 @@ class PilgrimMapCameraBuildersTest {
     fun `a seed carries no padding`() {
         // iOS `CameraOptions(center: seed.center, zoom: seed.zoom)`.
         assertNull(buildSeedCamera(MapCameraSeed(fix(3.0, 4.0), 14.0)).padding)
+    }
+
+    @Test
+    fun `a fly-to lands on the moment at the follow zoom`() {
+        val camera = buildFocusCamera(WayCoordinate(lat = 3.0, lon = 4.0), bottomInsetPx = 300.0)
+
+        assertEquals(
+            listOf(3.0, 4.0, 16.0),
+            listOf(camera.center!!.latitude(), camera.center!!.longitude(), camera.zoom),
+        )
+    }
+
+    @Test
+    fun `a fly-to keeps the sheet's height as its bottom padding`() {
+        val padding = buildFocusCamera(WayCoordinate(lat = 3.0, lon = 4.0), bottomInsetPx = 300.0).padding
+
+        assertEquals(listOf(0.0, 0.0, 300.0, 0.0), listOf(padding!!.top, padding.left, padding.bottom, padding.right))
+    }
+
+    @Test
+    fun `a fly-to with no sheet sets no padding`() {
+        assertNull(buildFocusCamera(WayCoordinate(lat = 3.0, lon = 4.0), bottomInsetPx = 0.0).padding)
     }
 
     @Test

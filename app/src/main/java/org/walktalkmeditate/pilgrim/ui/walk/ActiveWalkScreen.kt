@@ -87,6 +87,7 @@ import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
+import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMapPins
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
@@ -263,6 +264,7 @@ fun ActiveWalkScreen(
     viewModel: WalkViewModel = hiltViewModel(),
     seekSetupViewModel: SeekSetupViewModel = hiltViewModel(),
     seekWalkViewModel: SeekWalkViewModel = hiltViewModel(),
+    honorWalkViewModel: HonorWalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     // Navigation observer reads the passthrough flow, NOT uiState's
@@ -282,6 +284,16 @@ fun ActiveWalkScreen(
     val seekPendingSession by seekWalkViewModel.pendingSession.collectAsStateWithLifecycle()
     val seekSonarEnabled by seekWalkViewModel.sonarEnabled.collectAsStateWithLifecycle()
     val seekSonarVolume by seekWalkViewModel.sonarVolume.collectAsStateWithLifecycle()
+    // The Way (parity spec E §1–§6): drawn from the pre-walk screen on, as
+    // iOS draws it from the moment the walk screen appears; the companion
+    // and the fly-to only once the walk runs. Null on every other walk.
+    val honor by honorWalkViewModel.state.collectAsStateWithLifecycle()
+    val honorCompanion by honorWalkViewModel.companion.collectAsStateWithLifecycle()
+    val honorFocus by honorWalkViewModel.focus.collectAsStateWithLifecycle()
+    LaunchedEffect(honorWalkViewModel, mode, honorSourceWalkId) {
+        if (mode == WalkMode.Honor && honorSourceWalkId != null) honorWalkViewModel.showWay(honorSourceWalkId)
+    }
+    val honorMapPins = rememberWayMapPins(honor?.pins.orEmpty())
     val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
@@ -821,6 +833,11 @@ fun ActiveWalkScreen(
                     }
                 }
             },
+            honorWay = honor?.line,
+            wayPins = honorMapPins,
+            onWayPinTap = honorWalkViewModel::onWayPinTap,
+            companion = honorCompanion,
+            honorFocus = honorFocus,
         )
         tappedCairn?.let { cairn ->
             CairnDetailSheet(
