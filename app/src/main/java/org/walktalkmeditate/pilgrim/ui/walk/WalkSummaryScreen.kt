@@ -98,6 +98,8 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhaseSaver
 import org.walktalkmeditate.pilgrim.ui.walk.summary.rememberRevealAlpha
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
+import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
+import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummarySection
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummarySection
 import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainDoor
 import org.walktalkmeditate.pilgrim.ui.honor.WalkAgainResult
@@ -201,6 +203,8 @@ fun WalkSummaryScreen(
     // (`WalkSharingButtons.swift:148-159@7c200bf`). Expired records
     // persist, as on iOS, so the returned block keeps rendering.
     val cachedShare by viewModel.cachedShareFlow.collectAsStateWithLifecycle()
+    // U23: the Honor section and the map's ghost line (parity spec G §2–§3).
+    val honorSummary by viewModel.honorSummary.collectAsStateWithLifecycle()
     // Stage 13-XZ: AI Prompts surface state. Sheet stays Closed until
     // the user taps the section-17 row; transitions through Loading →
     // Listing → Detail / Editor.
@@ -454,6 +458,8 @@ fun WalkSummaryScreen(
                             walkAnnotations = combinedAnnotations,
                             walkAnnotationColors = walkAnnotationColors,
                             zoomTargetBounds = zoomTargetBounds,
+                            honorWay = honorSummary?.ghost,
+                            honorArrivalGlyph = viewModel.honorEnabled,
                         )
                         Spacer(Modifier.height(PilgrimSpacing.normal))
 
@@ -496,6 +502,15 @@ fun WalkSummaryScreen(
                         s.summary.seekSummary?.let { seek ->
                             Spacer(Modifier.height(PilgrimSpacing.normal))
                             SeekSummarySection(data = seek)
+                        }
+
+                        // 3c. Honor story (U23 — iOS WalkSummaryView.swift:86-100
+                        // @7c200bf: right after the Seek section, before the
+                        // elevation profile, no reveal alpha). A walk carrying
+                        // both events shows both, Seek first.
+                        honorSummary?.let { honor ->
+                            Spacer(Modifier.height(PilgrimSpacing.normal))
+                            HonorSummarySection(data = honor.data)
                         }
 
                         // Stage 13-XZ: per-section reveal stagger replaces the
@@ -1057,6 +1072,8 @@ private fun SummaryMap(
     walkAnnotations: List<WalkMapAnnotation>,
     walkAnnotationColors: WalkAnnotationColors,
     zoomTargetBounds: MapCameraBounds?,
+    honorWay: HonorWayLine?,
+    honorArrivalGlyph: Boolean,
 ) {
     // Mapbox MapView renders into a SurfaceView by default — a separate
     // hardware window that punches through Compose graphics layers and
@@ -1098,6 +1115,11 @@ private fun SummaryMap(
                     // TextureView so the Canvas radial-gradient mask
                     // actually covers map pixels at the corners.
                     textureBackend = true,
+                    // The Way's ghost line alone, inside the same mask: no
+                    // companion and no Way pins after the walk (parity spec
+                    // correction 23). The camera still fits the walk only.
+                    honorWay = honorWay,
+                    honorArrivalGlyph = honorArrivalGlyph,
                 )
             }
             // Radial-gradient frame overlay. Inner 30% fully transparent

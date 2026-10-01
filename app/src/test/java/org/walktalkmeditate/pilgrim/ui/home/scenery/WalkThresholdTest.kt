@@ -47,6 +47,20 @@ class WalkThresholdTest {
     }
 
     @Test
+    fun `an honor threshold stands at the seeking gate, counted apart from seek arrivals`() {
+        // iOS HomeViewModel.swift:279-296@7c200bf: the first Way walked to
+        // its end, and the walk crossing 10, earn the same gate a seek does.
+        val walks = (1L..14L).map { ref(it) }
+        val honorArrivals = (3L..12L).associateWith { 1 }
+        val thresholds = WalkThresholds.compute(walks, foundPlacesByWalkId = mapOf(2L to 1), honorArrivalsByWalkId = honorArrivals)
+        assertEquals("the first seek arrival", WalkThreshold.Seeking, thresholds[2L])
+        assertEquals("the first Honor arrival, despite a seek arrival before it", WalkThreshold.Seeking, thresholds[3L])
+        assertNull("an arrival with no crossing", thresholds[4L])
+        assertEquals("the tenth Way walked", WalkThreshold.Seeking, thresholds[12L])
+        assertNull(thresholds[13L])
+    }
+
+    @Test
     fun `arrivals without a crossing earn no gate`() {
         // Walk 2 carries the first arrival (FirstUnknown); walk 3 adds one
         // more with arrivalsBefore = 1 — no milestone, no gate.

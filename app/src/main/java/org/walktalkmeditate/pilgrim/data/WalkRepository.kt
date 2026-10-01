@@ -115,6 +115,16 @@ open class WalkRepository @Inject constructor(
         walkEventDao.walkIdsWithEvent(WalkEventType.SEEK_MODE.name).toSet()
 
     /**
+     * Ids of all walks that honored a Way (one `HONOR_MODE` event at
+     * recording start), in a single query, as [seekWalkIds] does for
+     * seeks (iOS `fetchWalkIDs(withEvent: .honorMode)`,
+     * `HomeViewModel.swift:153-167@7c200bf`). Whatever the release flag
+     * says: callers gate on it.
+     */
+    open suspend fun honorWalkIds(): Set<Long> =
+        walkEventDao.walkIdsWithEvent(WalkEventType.HONOR_MODE.name).toSet()
+
+    /**
      * Icon strings of every icon-carrying waypoint, grouped by walk id,
      * in a single query (no N+1). Feeds
      * `GoshuinMilestones.arrivalCounts` — the pure pass that turns

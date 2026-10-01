@@ -34,6 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
@@ -44,6 +45,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.WalkPhoto
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.photo.BitmapLoader
 import org.walktalkmeditate.pilgrim.data.practice.FakePracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
@@ -51,6 +53,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -135,6 +138,8 @@ class PromptsCoordinatorTest {
                 context,
                 org.walktalkmeditate.pilgrim.core.threads.WordNetLexicon(context, json),
             ),
+        honorEnabled: Boolean = false,
+        wayStore: WayStore = WayStore({ File(context.cacheDir, "prompts-ways-${System.nanoTime()}") }),
         defaultDispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcher,
     ): PromptsCoordinator = PromptsCoordinator(
         repository = repository,
@@ -148,6 +153,8 @@ class PromptsCoordinatorTest {
         threadsDossierBuilder = threadsDossierBuilder,
         mlKitLanguageIdClient = mlKitLanguageIdClient,
         threadsAnalysisEnvironment = threadsAnalysisEnvironment,
+        releaseFlags = FixedReleaseFlags(honor = honorEnabled),
+        honorWalkRecords = honorWalkRecordsForTests(db, context, wayStore),
         defaultDispatcher = defaultDispatcher,
     )
 
@@ -623,6 +630,53 @@ class PromptsCoordinatorTest {
             listOf(testStartTimestamp + 600_000L, testStartTimestamp + 1_200_000L),
             ctx.seekStory?.arrivalTimes,
         )
+    }
+
+    @Test
+    fun `buildContext honor walk carries its Way's title and arrival`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordHonorEvents(walk, arrived = true)
+        val store = WayStore({ File(context.cacheDir, "prompts-ways-${System.nanoTime()}") })
+        val way = org.walktalkmeditate.pilgrim.data.honor.HonorWalkState(db, store).way()
+        store.save(way)
+        store.link(walk.uuid, way.id, arrival = null)
+
+        val ctx = newCoordinator(honorEnabled = true, wayStore = store).buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals(PracticeMode.Honor, ctx.mode)
+        assertEquals(HonorStoryContext(wayTitle = "Morning loop", arrived = true), ctx.honorStory)
+    }
+
+    @Test
+    fun `buildContext honor walk whose Way is gone has no title`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordHonorEvents(walk, arrived = false)
+
+        val ctx = newCoordinator(honorEnabled = true).buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals(HonorStoryContext(wayTitle = null, arrived = false), ctx.honorStory)
+    }
+
+    @Test
+    fun `buildContext honor walk is a wander with the flag off`() = runTest(dispatcher) {
+        val walk = insertWalkRow()
+        recordHonorEvents(walk, arrived = true)
+
+        val ctx = newCoordinator(honorEnabled = false).buildContext(walkId = walk.id, zone = nyZone)!!
+
+        assertEquals(PracticeMode.Wander, ctx.mode)
+        assertNull(ctx.honorStory)
+    }
+
+    private suspend fun recordHonorEvents(walk: Walk, arrived: Boolean) {
+        repository.recordEvent(
+            WalkEvent(walkId = walk.id, timestamp = testStartTimestamp, eventType = WalkEventType.HONOR_MODE),
+        )
+        if (arrived) {
+            repository.recordEvent(
+                WalkEvent(walkId = walk.id, timestamp = testStartTimestamp + 900_000L, eventType = WalkEventType.HONOR_ARRIVAL),
+            )
+        }
     }
 
     @Test

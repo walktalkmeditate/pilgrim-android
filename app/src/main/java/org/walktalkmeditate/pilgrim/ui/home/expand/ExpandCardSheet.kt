@@ -215,9 +215,9 @@ private fun HeaderRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        // iOS InkScrollView.swift:354-357@c1745e8 — the quick-view
-        // glyph speaks the walk's mode (wander pair vs seek trail).
-        WalkModeFootprints(isSeek = snapshot.isSeek, color = footprintColor)
+        // iOS InkScrollView.swift:349-358@7c200bf — the quick-view
+        // glyph speaks the walk's mode (wander pair, honor staff, seek trail).
+        WalkModeFootprints(mode = snapshot.mode, color = footprintColor)
         snapshot.favicon?.let { key ->
             WalkFavicon.fromRawValue(key)?.let { fav ->
                 Icon(

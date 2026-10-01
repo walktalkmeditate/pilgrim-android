@@ -438,7 +438,8 @@ fun HomeScreen(
                                         // behind the dot. Keyed on the
                                         // whole snapshot: the placement
                                         // also depends on threshold /
-                                        // foundPlaces / isSeek (U14).
+                                        // foundPlaces / isSeek (U14) and
+                                        // isHonor / honorArrivals.
                                         val scenery = remember(snap) {
                                             SceneryGenerator.pick(snap)
                                         }
@@ -795,13 +796,14 @@ fun HomeScreen(
  * Gates and cairns speak their own touch — same decision order as
  * SceneryGenerator.pick's deterministic branch, duplicated exactly as
  * iOS duplicates it in configureHaptics
- * (InkScrollView.swift:692-696@c1745e8). DotHapticKindLockstepTest pins
- * the two sites against each other so a one-sided edit can't ship a
- * gate haptic with no gate on screen.
+ * (InkScrollView.swift:692-697@7c200bf). The staffs share the cairn's
+ * touch. DotHapticKindLockstepTest pins the two sites against each other
+ * so a one-sided edit can't ship a gate haptic with no gate on screen.
  */
 internal fun dotHapticKind(snapshot: WalkSnapshot): DotHapticKind = when {
     snapshot.threshold != null -> DotHapticKind.Gate
     snapshot.isSeek && snapshot.foundPlaces > 0 -> DotHapticKind.Cairn
+    snapshot.isHonor && snapshot.honorArrivals > 0 -> DotHapticKind.Cairn
     else -> DotHapticKind.Plain
 }
 

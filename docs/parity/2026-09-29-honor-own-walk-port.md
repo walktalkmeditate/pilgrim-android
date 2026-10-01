@@ -235,6 +235,9 @@ None of these has iOS behavior to match, or iOS's behavior can't carry over to A
 - **2026-10-01, U21. R6 platform equivalent: a denied location permission goes through the walk screen's existing permission flow at Start** (F §12.1, §13.4). That stands in for iOS's "Location Required" alert after Begin.
 - **2026-10-01, U21. Drift fixes that ship regardless of the flag** (F §3.6, iOS `cbd24fc`). The unselected mode label is at 0.55, and the start button reads "Begin your journey".
 - **2026-10-01, U21. One iPhone check for the final pass: whether the Ways sheet's section headers render in uppercase** (F §4). Android shows them as the source literals are written.
+- **2026-10-01, U23. Drift fix that ships regardless of the flag: the walk's own ghost-route line on every seal** (G §6). It closes a Stage 4-A deferral rather than adding an Honor surface; only the Way's line beneath it waits on the flag, with the honor section, staffs, staff glyph, honor milestones, the lexicon, and the arrival signpost on the maps.
+- **2026-10-01, U23. R5 window with no iOS counterpart: before the Honor step has run, or after it failed** (G §1, plan U17). The summary section, its ghost line, and the seal's Way line render from the live session row and the Way it names (the staged build on a clean own-walk finish, else the listed Way); the delta joins once the link lands. iOS writes its link before any surface opens.
+- **2026-10-01, U23. The journal gate keeps the uuid tie-break the goshuin uses** (G §4, G-D6, pilgrim-ios #112). iOS's journal counts "before" in Core Data fetch order, which leaves walks with the same start date in no defined order; Android's journal already shared the goshuin's order for Seek, and Honor follows it, so the two never disagree.
 
 ---
 

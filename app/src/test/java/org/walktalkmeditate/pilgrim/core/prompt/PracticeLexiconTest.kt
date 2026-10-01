@@ -57,6 +57,7 @@ class PracticeLexiconTest {
     private fun context(
         mode: PracticeMode = PracticeMode.Wander,
         seekStory: SeekStoryContext? = null,
+        honorStory: HonorStoryContext? = null,
     ): ActivityContext = ActivityContext(
         recordings = emptyList(),
         meditations = emptyList(),
@@ -78,6 +79,7 @@ class PracticeLexiconTest {
         pauses = emptyList(),
         ascentMeters = null,
         descentMeters = null,
+        honorStory = honorStory,
     )
 
     private fun assembled(context: ActivityContext): String = PromptAssembler.assemble(
@@ -177,6 +179,7 @@ class PracticeLexiconTest {
     fun `walk practice model no seek event is wander`() {
         val practice = WalkPracticeModel.practice(
             listOf(TestEvent(WalkEventType.WAYPOINT_MARKED, start)),
+            honorEnabled = true,
         )
         assertEquals(PracticeMode.Wander, practice.mode)
         assertNull(practice.seekStory)
@@ -192,6 +195,7 @@ class PracticeLexiconTest {
                 TestEvent(WalkEventType.SEEK_ARRIVAL, late),
                 TestEvent(WalkEventType.SEEK_ARRIVAL, early),
             ),
+            honorEnabled = true,
         )
         assertEquals(PracticeMode.Seek, practice.mode)
         assertEquals(listOf(early, late), practice.seekStory?.arrivalTimes)
@@ -199,7 +203,10 @@ class PracticeLexiconTest {
 
     @Test
     fun `walk practice model seek without arrivals keeps empty story`() {
-        val practice = WalkPracticeModel.practice(listOf(TestEvent(WalkEventType.SEEK_MODE, start)))
+        val practice = WalkPracticeModel.practice(
+            listOf(TestEvent(WalkEventType.SEEK_MODE, start)),
+            honorEnabled = true,
+        )
         assertEquals(PracticeMode.Seek, practice.mode)
         assertEquals(emptyList<Long>(), practice.seekStory?.arrivalTimes)
     }
@@ -218,6 +225,120 @@ class PracticeLexiconTest {
             zone = nyZone,
         )
         assertTrue("custom carries lexicon: $text", text.contains("**About this practice:**"))
+    }
+
+    // --- Honor: one form for own and shared walks (parity spec G §8,
+    // correction 21; iOS `PromptAssembler.swift:170-201@7c200bf`) ---
+
+    @Test
+    fun `honor walk with its Way present and arrived reads iOS's lexicon verbatim`() {
+        val text = PromptAssembler.practiceLexicon(
+            context(
+                mode = PracticeMode.Honor,
+                honorStory = HonorStoryContext(wayTitle = "Morning loop", arrived = true),
+            ),
+            nyZone,
+        )
+        assertEquals(
+            "**About this practice:** This walk was an Honor. The walker followed a Way another walker " +
+                "laid down, hearing their voices where they were spoken. Two traveling together; the line " +
+                "was traced, not raced. The Way: Morning loop. The end of the Way was reached.",
+            text,
+        )
+    }
+
+    @Test
+    fun `honor walk whose Way is gone and left before its end drops the title`() {
+        val text = PromptAssembler.practiceLexicon(
+            context(
+                mode = PracticeMode.Honor,
+                honorStory = HonorStoryContext(wayTitle = null, arrived = false),
+            ),
+            nyZone,
+        )
+        assertEquals(
+            "**About this practice:** This walk was an Honor. The walker followed a Way another walker " +
+                "laid down, hearing their voices where they were spoken. Two traveling together; the line " +
+                "was traced, not raced. The Way was left before its end, which the practice honors too.",
+            text,
+        )
+    }
+
+    @Test
+    fun `a shared Way's title enters raw, arrow and all`() {
+        val text = PromptAssembler.practiceLexicon(
+            context(
+                mode = PracticeMode.Honor,
+                honorStory = HonorStoryContext(wayTitle = "Rúa Nova → Praza do Obradoiro", arrived = true),
+            ),
+            nyZone,
+        )
+        assertTrue(
+            "shared title: $text",
+            text.endsWith(" The Way: Rúa Nova → Praza do Obradoiro. The end of the Way was reached."),
+        )
+    }
+
+    @Test
+    fun `honor without a story is the base sentence alone`() {
+        val text = PromptAssembler.practiceLexicon(context(mode = PracticeMode.Honor), nyZone)
+        assertEquals(
+            "**About this practice:** This walk was an Honor. The walker followed a Way another walker " +
+                "laid down, hearing their voices where they were spoken. Two traveling together; the line " +
+                "was traced, not raced.",
+            text,
+        )
+    }
+
+    @Test
+    fun `the honor lexicon rides the assembled prompt`() {
+        val text = assembled(
+            context(
+                mode = PracticeMode.Honor,
+                honorStory = HonorStoryContext(wayTitle = "Morning loop", arrived = true),
+            ),
+        )
+        assertTrue("lexicon in prompt: $text", text.contains("This walk was an Honor."))
+    }
+
+    @Test
+    fun `walk practice model honor event is honor with its arrival, untitled`() {
+        val practice = WalkPracticeModel.practice(
+            listOf(
+                TestEvent(WalkEventType.HONOR_MODE, start),
+                TestEvent(WalkEventType.HONOR_ARRIVAL, start + 1_800_000L),
+            ),
+            honorEnabled = true,
+        )
+        assertEquals(PracticeMode.Honor, practice.mode)
+        assertNull(practice.seekStory)
+        assertEquals(HonorStoryContext(wayTitle = null, arrived = true), practice.honorStory)
+    }
+
+    @Test
+    fun `walk practice model honor wins over seek on one walk`() {
+        val practice = WalkPracticeModel.practice(
+            listOf(TestEvent(WalkEventType.SEEK_MODE, start), TestEvent(WalkEventType.HONOR_MODE, start)),
+            honorEnabled = true,
+        )
+        assertEquals(PracticeMode.Honor, practice.mode)
+        assertEquals(HonorStoryContext(wayTitle = null, arrived = false), practice.honorStory)
+    }
+
+    @Test
+    fun `walk practice model honor walk with the flag off is the walk without its marker`() {
+        val wander = WalkPracticeModel.practice(
+            listOf(TestEvent(WalkEventType.HONOR_MODE, start)),
+            honorEnabled = false,
+        )
+        assertEquals(PracticeMode.Wander, wander.mode)
+        assertNull(wander.honorStory)
+
+        val seek = WalkPracticeModel.practice(
+            listOf(TestEvent(WalkEventType.SEEK_MODE, start), TestEvent(WalkEventType.HONOR_MODE, start)),
+            honorEnabled = false,
+        )
+        assertEquals(PracticeMode.Seek, seek.mode)
     }
 
     @Test

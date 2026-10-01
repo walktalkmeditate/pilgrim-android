@@ -50,29 +50,42 @@ object WalkThresholds {
      * `Seeking` when the walk's own arrivals produce any seeking
      * milestone against the arrivals accumulated over strictly-earlier
      * walks (self excluded — a walk's own count joins the accumulator
-     * only after its threshold is decided). Else `Practice` for walk #1
-     * and every 10th. Mystery outranks routine: a tenth walk that also
-     * found its first unknown stands at a seeking gate.
+     * only after its threshold is decided), or its Way arrivals any
+     * honor milestone the same way ([honorArrivalsByWalkId], the
+     * [GoshuinMilestones.honorArrivalCounts] output): an honor threshold
+     * stands at the same gate (`HomeViewModel.swift:279-296@7c200bf`).
+     * Else `Practice` for walk #1 and every 10th. Mystery outranks
+     * routine: a tenth walk that also found its first unknown stands at
+     * a seeking gate.
      */
     fun compute(
         walks: List<WalkRef>,
         foundPlacesByWalkId: Map<Long, Int>,
+        honorArrivalsByWalkId: Map<Long, Int> = emptyMap(),
     ): Map<Long, WalkThreshold> {
         val thresholds = mutableMapOf<Long, WalkThreshold>()
         var arrivalsBefore = 0
+        var honorArrivalsBefore = 0
         walks.sortedWith(chronological).forEachIndexed { index, walk ->
             val walkNumber = index + 1
             val foundPlaces = foundPlacesByWalkId[walk.walkId] ?: 0
+            val honorArrivals = honorArrivalsByWalkId[walk.walkId] ?: 0
             val crossesSeekingMilestone = GoshuinMilestones.seekingMilestones(
                 arrivalsInWalk = foundPlaces,
                 arrivalsBefore = arrivalsBefore,
             ).isNotEmpty()
+            val crossesHonorMilestone = GoshuinMilestones.honorMilestones(
+                arrivalsInWalk = honorArrivals,
+                arrivalsBefore = honorArrivalsBefore,
+            ).isNotEmpty()
             when {
-                crossesSeekingMilestone -> thresholds[walk.walkId] = WalkThreshold.Seeking
+                crossesSeekingMilestone || crossesHonorMilestone ->
+                    thresholds[walk.walkId] = WalkThreshold.Seeking
                 walkNumber == 1 || walkNumber % 10 == 0 ->
                     thresholds[walk.walkId] = WalkThreshold.Practice
             }
             arrivalsBefore += foundPlaces
+            honorArrivalsBefore += honorArrivals
         }
         return thresholds
     }

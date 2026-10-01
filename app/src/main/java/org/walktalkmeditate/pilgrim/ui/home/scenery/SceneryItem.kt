@@ -110,6 +110,10 @@ internal fun SceneryItem(
             tintColor = tintColor,
             walkDateMs = snapshot.startMs,
         )
+        SceneryType.Staffs -> StaffsScenery(
+            sizeDp = sizeDp,
+            tintColor = tintColor,
+        )
     }
 }
 

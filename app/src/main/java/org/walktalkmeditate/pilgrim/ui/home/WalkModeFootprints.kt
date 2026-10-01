@@ -15,7 +15,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.ui.design.scenery.footprintPath
+import org.walktalkmeditate.pilgrim.ui.path.StaffGlyph
 
 /**
  * One dot of the seek trail. [x]/[y] are frame fractions (y grows
@@ -58,17 +60,18 @@ internal fun walkModeTrailDots(): List<TrailDot> = listOf(
 
 /**
  * Static miniature of the path screen's mode language, for compact
- * rows (the journal quick view). Wander: the grounded pair. Seek: one
- * print beside a trail of dots dissolving upward into the unknown. No
- * animation — these are glances, not scenes; the drifting versions
- * live on the path screen only (`ui/path/PathFootprints.kt`).
+ * rows (the journal quick view). Wander: the grounded pair. Honor: one
+ * print beside the staff of the walker whose Way is being followed.
+ * Seek: one print beside a trail of dots dissolving upward into the
+ * unknown. No animation — these are glances, not scenes; the drifting
+ * versions live on the path screen only (`ui/path/PathFootprints.kt`).
  *
- * Port of iOS `WalkModeFootprints.swift@c1745e8`. Decorative:
+ * Port of iOS `WalkModeFootprints.swift:8-42@7c200bf`. Decorative:
  * semantics cleared, exactly like iOS `.accessibilityHidden(true)`.
  */
 @Composable
 fun WalkModeFootprints(
-    isSeek: Boolean,
+    mode: WalkMode,
     color: Color,
     modifier: Modifier = Modifier,
 ) {
@@ -78,15 +81,22 @@ fun WalkModeFootprints(
         modifier = modifier.clearAndSetSemantics { },
     ) {
         FootprintGlyph(color = color, rotationDegrees = -12f, mirror = true)
-        if (isSeek) {
-            DissolvingTrail(
+        when (mode) {
+            WalkMode.Seek -> DissolvingTrail(
                 color = color,
                 modifier = Modifier
                     .size(width = 10.dp, height = 18.dp)
                     .rotate(12f),
             )
-        } else {
-            FootprintGlyph(
+            // Stroked at 1 in an unrotated 8×14 frame, butt caps (iOS
+            // sets no cap), in the print's own colour: no second step.
+            WalkMode.Honor -> StaffGlyph(
+                color = color,
+                strokeWidth = 1.dp,
+                roundCap = false,
+                modifier = Modifier.size(width = 8.dp, height = 14.dp),
+            )
+            WalkMode.Wander -> FootprintGlyph(
                 color = color.copy(alpha = color.alpha * 0.75f),
                 rotationDegrees = 12f,
             )

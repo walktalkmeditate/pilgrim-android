@@ -96,6 +96,7 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
 import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitApplier
 import org.walktalkmeditate.pilgrim.ui.walk.map.DEFAULT_CAMERA_FIT_EASE_MS
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
 import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayRenderer
@@ -216,6 +217,10 @@ internal fun PilgrimMap(
     // the follow viewport. As on iOS, the follow viewport is not idled
     // (owner decision 8, still open, is checked at the final device pass).
     honorFocus: WayCoordinate? = null,
+    // The honor arrival waypoint as its reserved `signpost.right.fill`,
+    // 18 pt in stone, like any waypoint (parity spec G §3, correction 23).
+    // Off, it falls back to the plain pin it was in 1.5.0 (the release flag).
+    honorArrivalGlyph: Boolean = false,
 ) {
     // Mapbox's `MapView(context, initOptions)` constructor throws
     // `MapboxConfigurationException` synchronously when no access
@@ -298,6 +303,7 @@ internal fun PilgrimMap(
     // heart / chair / sparkles / flag / pin), not one shared solid dot.
     val waypointBitmaps = rememberWaypointBitmaps(
         org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.stone,
+        honorArrival = honorArrivalGlyph,
     )
     // iOS parity `MapGlyphImageBuilder@9a418e4` — whisper/cairn map
     // markers are the U13 vector masters: one wisp bitmap per mood
@@ -1510,10 +1516,12 @@ internal fun PilgrimMap(
  * A fixed (constant) number of `rememberVectorPainter` calls — one per
  * known [iconKeyToVector] key — keyed into a map; an unknown / null
  * `Waypoint.iconKey` falls back to the "mappin" glyph at the call
- * site. Rebuilt only when the resolved [stoneColor] changes.
+ * site. With [honorArrival] the honor arrival's reserved icon joins the
+ * map (iOS draws it through the same branch, `PilgrimMapView.swift:510-526@7c200bf`).
+ * Rebuilt only when the resolved [stoneColor] or [honorArrival] changes.
  */
 @Composable
-internal fun rememberWaypointBitmaps(stoneColor: Color): Map<String, Bitmap> {
+internal fun rememberWaypointBitmaps(stoneColor: Color, honorArrival: Boolean = false): Map<String, Bitmap> {
     val leaf = rememberVectorPainter(iconKeyToVector("leaf"))
     val eye = rememberVectorPainter(iconKeyToVector("eye"))
     val heart = rememberVectorPainter(iconKeyToVector("heart"))
@@ -1521,8 +1529,9 @@ internal fun rememberWaypointBitmaps(stoneColor: Color): Map<String, Bitmap> {
     val sparkles = rememberVectorPainter(iconKeyToVector("sparkles"))
     val flag = rememberVectorPainter(iconKeyToVector("flag.fill"))
     val pin = rememberVectorPainter(iconKeyToVector("mappin"))
-    return remember(stoneColor, leaf, eye, heart, seated, sparkles, flag, pin) {
-        mapOf(
+    val signpost = rememberVectorPainter(iconKeyToVector(HonorPersistence.ARRIVAL_WAYPOINT_ICON))
+    return remember(stoneColor, honorArrival, leaf, eye, heart, seated, sparkles, flag, pin, signpost) {
+        val painters = mapOf(
             "leaf" to leaf,
             "eye" to eye,
             "heart" to heart,
@@ -1530,7 +1539,9 @@ internal fun rememberWaypointBitmaps(stoneColor: Color): Map<String, Bitmap> {
             "sparkles" to sparkles,
             "flag.fill" to flag,
             "mappin" to pin,
-        ).mapValues { (_, painter) -> renderWaypointGlyphBitmap(painter, stoneColor) }
+        )
+        val withHonor = if (honorArrival) painters + (HonorPersistence.ARRIVAL_WAYPOINT_ICON to signpost) else painters
+        withHonor.mapValues { (_, painter) -> renderWaypointGlyphBitmap(painter, stoneColor) }
     }
 }
 

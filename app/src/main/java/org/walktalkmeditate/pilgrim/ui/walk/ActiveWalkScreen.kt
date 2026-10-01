@@ -884,6 +884,8 @@ fun ActiveWalkScreen(
             onWayPinTap = honorWalkViewModel::onWayPinTap,
             companion = honorCompanion,
             honorFocus = honorFocus,
+            // The arrival's signpost, the same mark the summary draws for it.
+            honorArrivalGlyph = honor != null,
         )
         tappedCairn?.let { cairn ->
             CairnDetailSheet(

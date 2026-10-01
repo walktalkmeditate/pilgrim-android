@@ -20,6 +20,8 @@ class SceneryGeneratorTest {
         isSeek: Boolean = false,
         foundPlaces: Int = 0,
         threshold: WalkThreshold? = null,
+        isHonor: Boolean = false,
+        honorArrivals: Int = 0,
     ) = WalkSnapshot(
         id = 1L,
         uuid = uuid,
@@ -36,6 +38,8 @@ class SceneryGeneratorTest {
         isSeek = isSeek,
         foundPlaces = foundPlaces,
         threshold = threshold,
+        isHonor = isHonor,
+        honorArrivals = honorArrivals,
     )
 
     /** 800 varied deterministic snapshots for lottery-distribution sweeps. */
@@ -43,6 +47,8 @@ class SceneryGeneratorTest {
         isSeek: Boolean = false,
         foundPlaces: Int = 0,
         threshold: WalkThreshold? = null,
+        isHonor: Boolean = false,
+        honorArrivals: Int = 0,
     ): List<WalkSnapshot> = (0 until 800).map { i ->
         snap(
             uuid = "00000000-0000-0000-0000-" + i.toString().padStart(12, '0'),
@@ -52,6 +58,8 @@ class SceneryGeneratorTest {
             isSeek = isSeek,
             foundPlaces = foundPlaces,
             threshold = threshold,
+            isHonor = isHonor,
+            honorArrivals = honorArrivals,
         )
     }
 
@@ -191,6 +199,83 @@ class SceneryGeneratorTest {
         assertEquals(SceneryGenerator.pick(cairnWalk), SceneryGenerator.pick(cairnWalk))
     }
 
+    // --- U23: the staffs (iOS SceneryGenerator.swift:96-119@7c200bf, parity
+    // spec G §5 and correction 20) ---
+
+    @Test
+    fun `honor walk with an arrival always raises the staffs, stone at the cairn's depth`() {
+        for (s in lotterySweep(isHonor = true, honorArrivals = 1).take(50)) {
+            val placement = SceneryGenerator.pick(s)
+            assertEquals(SceneryType.Staffs, placement?.type)
+            assertEquals("stone", placement?.tintTokenName)
+            assertNull(placement?.gateKind)
+        }
+    }
+
+    @Test
+    fun `honor walk left before its end rolls the ordinary lottery`() {
+        for (s in lotterySweep(isHonor = true, honorArrivals = 0)) {
+            val placement = SceneryGenerator.pick(s)
+            assertNotEquals("no staffs without an arrival", SceneryType.Staffs, placement?.type)
+            assertEquals("the lottery is untouched", SceneryGenerator.pick(s.copy(isHonor = false)), placement)
+        }
+    }
+
+    @Test
+    fun `arrival waypoints without the honor event raise no staffs`() {
+        for (s in lotterySweep(isHonor = false, honorArrivals = 2).take(200)) {
+            assertNotEquals(SceneryType.Staffs, SceneryGenerator.pick(s)?.type)
+        }
+    }
+
+    @Test
+    fun `the staffs rank below the Seek cairn and gates outrank both`() {
+        val both = snap(isSeek = true, foundPlaces = 1, isHonor = true, honorArrivals = 1)
+        assertEquals("a Seek cairn wins over the staffs", SceneryType.Cairn, SceneryGenerator.pick(both)?.type)
+
+        val gated = snap(isHonor = true, honorArrivals = 1, threshold = WalkThreshold.Seeking)
+        assertEquals(
+            "the first Honor arrival (and every honor threshold) stands at a gate",
+            SceneryType.Torii,
+            SceneryGenerator.pick(gated)?.type,
+        )
+        assertEquals(
+            SceneryType.Torii,
+            SceneryGenerator.pick(snap(isHonor = true, honorArrivals = 1, threshold = WalkThreshold.Practice))?.type,
+        )
+    }
+
+    @Test
+    fun `the staffs keep the walk's side and offset`() {
+        for (s in lotterySweep().take(100)) {
+            val staffs = SceneryGenerator.pick(s.copy(isHonor = true, honorArrivals = 1))!!
+            val gate = SceneryGenerator.pick(s.copy(threshold = WalkThreshold.Seeking))!!
+            assertEquals(gate.side, staffs.side)
+            assertEquals(gate.offset, staffs.offset, 0f)
+        }
+    }
+
+    @Test
+    fun `staffs geometry is iOS's shape`() {
+        val geometry = staffsGeometry(androidx.compose.ui.geometry.Size(100f, 100f), minStrokePx = 1f)
+        assertEquals(androidx.compose.ui.geometry.Offset(20f, 100f), geometry.leftStaff.first)
+        assertEquals(55f, geometry.leftStaff.second.x, 1e-4f)
+        assertEquals(8f, geometry.leftStaff.second.y, 1e-4f)
+        assertEquals(androidx.compose.ui.geometry.Offset(80f, 100f), geometry.rightStaff.first)
+        assertEquals(45f, geometry.rightStaff.second.x, 1e-4f)
+        assertEquals(42f, geometry.knot.left, 1e-4f)
+        assertEquals(0f, geometry.knot.top, 1e-4f)
+        assertEquals(16f, geometry.knot.width, 1e-4f)
+        assertEquals(10f, geometry.knot.height, 1e-4f)
+        assertEquals(8f, geometry.strokeWidth, 1e-4f)
+        assertEquals(
+            "the stroke floors at iOS's 1 pt",
+            3f,
+            staffsGeometry(androidx.compose.ui.geometry.Size(10f, 10f), minStrokePx = 3f).strokeWidth,
+            1e-4f,
+        )
+    }
+
     // --- The lottery itself ---
 
     @Test
@@ -199,6 +284,7 @@ class SceneryGeneratorTest {
             val placement = SceneryGenerator.pick(s) ?: continue
             assertNotEquals("the lottery must never mint a gate", SceneryType.Torii, placement.type)
             assertNotEquals("the lottery must never raise a cairn", SceneryType.Cairn, placement.type)
+            assertNotEquals("the lottery must never raise the staffs", SceneryType.Staffs, placement.type)
         }
     }
 
@@ -300,6 +386,7 @@ class SceneryGeneratorTest {
             SceneryType.Tree to 8f,
             SceneryType.Lantern to 9f,
             SceneryType.Cairn to 9f,
+            SceneryType.Staffs to 9f,
             SceneryType.Grass to 12f,
             SceneryType.Butterfly to 14f,
             SceneryType.Drift to 16f,

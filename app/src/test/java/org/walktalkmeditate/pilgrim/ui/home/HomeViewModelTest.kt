@@ -125,6 +125,8 @@ class HomeViewModelTest {
             cachedShareStore = cachedShareStore,
             practicePreferences = FakePracticePreferencesRepository(),
             archivedRegistry = org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context),
             defaultDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         ).also { vm = it }

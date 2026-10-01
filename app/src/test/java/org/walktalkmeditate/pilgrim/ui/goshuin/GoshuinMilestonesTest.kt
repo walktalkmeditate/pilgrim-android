@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 
 class GoshuinMilestonesTest {
@@ -20,6 +21,7 @@ class GoshuinMilestonesTest {
         latitude: Double = 0.0,
         foundPlaceCount: Int = 0,
         uuid: String = "uuid-$id",
+        honorArrivalCount: Int = 0,
     ): WalkMilestoneInput {
         val ts = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         return WalkMilestoneInput(
@@ -30,6 +32,7 @@ class GoshuinMilestonesTest {
             meditateDurationMillis = meditateDurationMillis,
             latitude = latitude,
             foundPlaceCount = foundPlaceCount,
+            honorArrivalCount = honorArrivalCount,
         )
     }
 
@@ -328,6 +331,9 @@ class GoshuinMilestonesTest {
         assertEquals("First of Winter", GoshuinMilestones.label(GoshuinMilestone.FirstOfSeason(Season.Winter)))
         assertEquals("First Unknown", GoshuinMilestones.label(GoshuinMilestone.FirstUnknown))
         assertEquals("25 Unknowns", GoshuinMilestones.label(GoshuinMilestone.UnknownsFound(25)))
+        assertEquals("First Honor", GoshuinMilestones.label(GoshuinMilestone.FirstHonor))
+        assertEquals("10 Ways Walked", GoshuinMilestones.label(GoshuinMilestone.HonorsWalked(10)))
+        assertEquals("100 Ways Walked", GoshuinMilestones.label(GoshuinMilestone.HonorsWalked(100)))
     }
 
     // --- U12: seeking thresholds ------------------------------------
@@ -522,6 +528,122 @@ class GoshuinMilestonesTest {
         assertEquals(
             GoshuinMilestone.UnknownsFound(25),
             GoshuinMilestones.detect(walkIndex = 0, walk = crossing, allFinished = list),
+        )
+    }
+
+    // --- U23: honor thresholds (parity spec G §7, iOS
+    // GoshuinMilestones.swift:35-67,148-159@7c200bf) ---------------------
+
+    @Test fun `honorMilestones - the first Way arrival earns FirstHonor and nothing for no arrival`() {
+        assertEquals(
+            setOf<GoshuinMilestone>(GoshuinMilestone.FirstHonor),
+            GoshuinMilestones.honorMilestones(arrivalsInWalk = 1, arrivalsBefore = 0),
+        )
+        assertTrue(GoshuinMilestones.honorMilestones(arrivalsInWalk = 0, arrivalsBefore = 0).isEmpty())
+        assertTrue(GoshuinMilestones.honorMilestones(arrivalsInWalk = 1, arrivalsBefore = 3).isEmpty())
+    }
+
+    @Test fun `honorMilestones - crossing 10 earns 10 Ways Walked, and each threshold once`() {
+        assertEquals(
+            setOf<GoshuinMilestone>(GoshuinMilestone.HonorsWalked(10)),
+            GoshuinMilestones.honorMilestones(arrivalsInWalk = 1, arrivalsBefore = 9),
+        )
+        assertTrue(GoshuinMilestones.honorMilestones(arrivalsInWalk = 1, arrivalsBefore = 10).isEmpty())
+        assertEquals(
+            setOf<GoshuinMilestone>(
+                GoshuinMilestone.HonorsWalked(25),
+                GoshuinMilestone.HonorsWalked(50),
+                GoshuinMilestone.HonorsWalked(100),
+            ),
+            GoshuinMilestones.honorMilestones(arrivalsInWalk = 80, arrivalsBefore = 24),
+        )
+    }
+
+    @Test fun `honorArrivalCounts - counts the honor icon only, not the seek one`() {
+        val counts = GoshuinMilestones.honorArrivalCounts(
+            mapOf(
+                1L to listOf(HonorPersistence.ARRIVAL_WAYPOINT_ICON, "leaf", HonorPersistence.ARRIVAL_WAYPOINT_ICON),
+                2L to listOf(SeekPersistence.ARRIVAL_WAYPOINT_ICON, null),
+                3L to listOf(HonorPersistence.ARRIVAL_WAYPOINT_ICON),
+            ),
+        )
+        assertEquals(mapOf(1L to 2, 3L to 1), counts)
+    }
+
+    @Test fun `detect - the first honor arrival presses First Honor`() {
+        val pad = paddingWalk()
+        val honor = walk(1L, LocalDate.of(2026, 1, 2), honorArrivalCount = 1)
+        val list = listOf(honor, pad)
+        assertEquals(
+            GoshuinMilestone.FirstHonor,
+            GoshuinMilestones.detect(walkIndex = 0, walk = honor, allFinished = list),
+        )
+    }
+
+    @Test fun `detect - the walk whose arrivals cross 10 presses 10 Ways Walked`() {
+        val pad = paddingWalk()
+        val earlier = (1L..9L).map { id -> walk(id, LocalDate.of(2026, 1, 1 + id.toInt()), honorArrivalCount = 1) }
+        val tenth = walk(10L, LocalDate.of(2026, 1, 20), honorArrivalCount = 1)
+        val list = listOf(tenth) + earlier.reversed() + pad
+        assertEquals(
+            GoshuinMilestone.HonorsWalked(10),
+            GoshuinMilestones.detect(walkIndex = 0, walk = tenth, allFinished = list),
+        )
+    }
+
+    @Test fun `detect - wander arrivals before a walk never count towards its honor`() {
+        val pad = paddingWalk()
+        val seek = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 9)
+        val honor = walk(2L, LocalDate.of(2026, 1, 4), honorArrivalCount = 1)
+        val list = listOf(honor, seek, pad)
+        assertEquals(
+            "seek arrivals and Way arrivals count apart",
+            GoshuinMilestone.FirstHonor,
+            GoshuinMilestones.detect(walkIndex = 0, walk = honor, allFinished = list),
+        )
+    }
+
+    @Test fun `primaryMilestone - a full tie between seek and honor goes to the seek`() {
+        assertEquals(
+            GoshuinMilestone.FirstUnknown,
+            GoshuinMilestones.primaryMilestone(setOf(GoshuinMilestone.FirstHonor, GoshuinMilestone.FirstUnknown)),
+        )
+        assertEquals(
+            GoshuinMilestone.UnknownsFound(10),
+            GoshuinMilestones.primaryMilestone(
+                setOf(GoshuinMilestone.HonorsWalked(10), GoshuinMilestone.UnknownsFound(10)),
+            ),
+        )
+    }
+
+    @Test fun `primaryMilestone - the larger count wins across seek and honor, and iOS's examples hold`() {
+        assertEquals(
+            GoshuinMilestone.HonorsWalked(25),
+            GoshuinMilestones.primaryMilestone(
+                setOf(GoshuinMilestone.UnknownsFound(10), GoshuinMilestone.HonorsWalked(25)),
+            ),
+        )
+        assertEquals(
+            GoshuinMilestone.FirstHonor,
+            GoshuinMilestones.primaryMilestone(setOf(GoshuinMilestone.FirstHonor, GoshuinMilestone.NthWalk(10))),
+        )
+        assertEquals(
+            GoshuinMilestone.FirstHonor,
+            GoshuinMilestones.primaryMilestone(setOf(GoshuinMilestone.FirstHonor, GoshuinMilestone.HonorsWalked(10))),
+        )
+        assertEquals(
+            GoshuinMilestone.FirstWalk,
+            GoshuinMilestones.primaryMilestone(setOf(GoshuinMilestone.FirstHonor, GoshuinMilestone.FirstWalk)),
+        )
+    }
+
+    @Test fun `detect - one walk crossing both a seek and an honor threshold captions the seek`() {
+        val pad = paddingWalk()
+        val both = walk(1L, LocalDate.of(2026, 1, 2), foundPlaceCount = 1, honorArrivalCount = 1)
+        val list = listOf(both, pad)
+        assertEquals(
+            GoshuinMilestone.FirstUnknown,
+            GoshuinMilestones.detect(walkIndex = 0, walk = both, allFinished = list),
         )
     }
 }
