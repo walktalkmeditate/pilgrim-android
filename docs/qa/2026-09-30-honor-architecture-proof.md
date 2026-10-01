@@ -82,11 +82,11 @@ From B2's measured UI-restart behavior, record where the voice guide lives:
 - [ ] **Stays in the UI process.** Its gate row at the parity gate becomes a dated re-justify, noting how long the guide is quiet after a UI kill.
 - [ ] **Moves into `:tracker`.** A U18 follow-up, before U21. Only U18 depends on this choice.
 
-Decision, date, and reason:
+Decision, date, and reason: **stays in the UI process** (2026-10-01). B2 measured the UI process restarting by itself in about 2 s after a kill, so the guide is quiet only that long; the parity gate records it as a dated re-justify. The owner can still move it into `:tracker`, which would be a U18 follow-up.
 
 Also confirmed in run 1: the clean-finish finalize. The link file holds `walk:a39cff08…` with the arrival numbers, the marker is `CLEAN`, the promoted `way.json` and `accepted.json` are in place, the live rows are deleted and the staging is removed.
 
 ## Sign-off
 
-- [ ] Every item passes, or its finding is fixed in U17/U18 and re-checked here.
-- [ ] Date, build SHA, and anything filed:
+- [x] **Closed 2026-10-01 by the owner.** Passed: A3, B1, B2, B3, C2, and the clean-finish finalize. C1 passed with a note: the watchdog revives after about 3 minutes, and the OS never restarted the service itself on this OnePlus. The owner waived the rest on 2026-10-01: A1 with the screen off (voices did play with the screen on), A2, C3–C5, D1–D6 and E1–E3. The parity gate's pocket-bar rows re-check them on device before 2.0.0.
+- [x] Builds: `faa57315` (run 1), then `eadeb07b`. Found and fixed: Play services keeps a killed process's mock mode on (`eadeb07b`).
