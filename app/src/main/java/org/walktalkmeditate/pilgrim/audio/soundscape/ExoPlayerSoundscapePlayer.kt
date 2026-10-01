@@ -95,11 +95,14 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
      * `play()` so a future refactor that drops the duplicated
      * MediaItem or flips back to REPEAT_MODE_ONE fails the suite
      * instead of silently regressing the audible loop boundary.
-     * Returns null when no player is active.
+     * Captured when `play()` configures the player, so a playback error
+     * that discards the player afterwards can't erase it. Null before
+     * the first configured play.
      */
     @androidx.annotation.VisibleForTesting
-    internal fun playbackInvariantSnapshot(): Pair<Int, Int>? =
-        player?.let { it.mediaItemCount to it.repeatMode }
+    internal fun playbackInvariantSnapshot(): Pair<Int, Int>? = configuredInvariants
+
+    @Volatile private var configuredInvariants: Pair<Int, Int>? = null
 
     // Cross-thread publication: focus listener fires on the handler
     // thread (we pass mainHandler) but the write happens there too,
@@ -231,6 +234,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
             val uri = Uri.fromFile(file)
             p.setMediaItems(listOf(MediaItem.fromUri(uri), MediaItem.fromUri(uri)))
             p.repeatMode = Player.REPEAT_MODE_ALL
+            configuredInvariants = p.mediaItemCount to p.repeatMode
             volumes.onPlay()
             p.prepare()
             p.play()
