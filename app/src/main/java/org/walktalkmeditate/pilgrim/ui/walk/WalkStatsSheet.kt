@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -53,12 +54,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,6 +80,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.isInProgress
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
+import org.walktalkmeditate.pilgrim.ui.honor.ListeningChip
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimType
@@ -121,6 +129,12 @@ fun WalkStatsSheet(
     // minimized sheet 6dp and settles back. Caller bumps it once when
     // the walk transitions ready/waiting → recording.
     peekHintTrigger: Int = 0,
+    // An honor walk's minimized bar (parity spec E §10): the listening chip,
+    // and "Remaining" or the soft-tap caption as its third stat. Null on
+    // every other walk, which keeps its bar as it was.
+    honor: HonorSheetStats? = null,
+    onHonorPauseResume: () -> Unit = {},
+    onHonorSkip: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val canDrag = walkState is WalkState.Active
@@ -266,13 +280,26 @@ fun WalkStatsSheet(
             SheetContentSwitcher(
                 state = state,
                 minimizedContent = {
-                    MinimizedContent(
-                        totalElapsedMillis = totalElapsedMillis,
-                        distanceMeters = distanceMeters,
-                        units = units,
-                        steps = steps,
-                        onTap = { onStateChange(SheetState.Expanded) },
-                    )
+                    if (honor != null) {
+                        HonorMinimizedContent(
+                            honor = honor,
+                            totalElapsedMillis = totalElapsedMillis,
+                            distanceMeters = distanceMeters,
+                            units = units,
+                            intention = intention,
+                            onPauseResume = onHonorPauseResume,
+                            onSkip = onHonorSkip,
+                            onTap = { onStateChange(SheetState.Expanded) },
+                        )
+                    } else {
+                        MinimizedContent(
+                            totalElapsedMillis = totalElapsedMillis,
+                            distanceMeters = distanceMeters,
+                            units = units,
+                            steps = steps,
+                            onTap = { onStateChange(SheetState.Expanded) },
+                        )
+                    }
                 },
                 expandedContent = {
                     ExpandedContent(
@@ -385,6 +412,75 @@ private fun MinimizedContent(
             value = WalkFormat.steps(steps),
             label = stringResource(R.string.walk_stat_steps),
         )
+    }
+}
+
+/**
+ * iOS's minimized bar on an honor walk (`WalkStatsSheet.swift:328-449@7c200bf`):
+ * the listening chip above the stats while a Way voice is held, then time,
+ * distance, and "Remaining" (or the soft-tap caption in its place). The
+ * stats are one TalkBack element, "Walk stats", whose value names all three
+ * and the intention, which the bar itself doesn't show; the chip's controls
+ * stay reachable apart from it. A tap anywhere but a chip control expands.
+ */
+@Composable
+private fun HonorMinimizedContent(
+    honor: HonorSheetStats,
+    totalElapsedMillis: Long,
+    distanceMeters: Double,
+    units: UnitSystem,
+    intention: String?,
+    onPauseResume: () -> Unit,
+    onSkip: () -> Unit,
+    onTap: () -> Unit,
+) {
+    val duration = WalkFormat.duration(totalElapsedMillis)
+    val distance = WalkFormat.distance(distanceMeters, units)
+    val remaining = honor.remainingMeters?.let { WalkFormat.distance(it, units) }
+        ?: stringResource(R.string.honor_stat_remaining_unknown)
+    val caption = honor.softTapMeters?.let { stringResource(R.string.honor_soft_tap_caption, it.toString()) }
+    val third = caption ?: stringResource(R.string.honor_stats_a11y_remaining, remaining)
+    val stats = stringResource(R.string.honor_stats_a11y_value, duration, distance, third)
+    val value = intention?.takeIf { it.isNotEmpty() }
+        ?.let { stringResource(R.string.honor_stats_a11y_with_intention, it, stats) } ?: stats
+    val label = stringResource(R.string.honor_stats_a11y_label)
+    val expand = stringResource(R.string.honor_stats_a11y_expand)
+    val currentOnTap by rememberUpdatedState(onTap)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) { detectTapGestures { currentOnTap() } }
+            .padding(horizontal = PilgrimSpacing.big, vertical = PilgrimSpacing.small),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        honor.listening?.let { ListeningChip(listening = it, onPauseResume = onPauseResume, onSkip = onSkip) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clearAndSetSemantics {
+                    contentDescription = label
+                    stateDescription = value
+                    role = Role.Button
+                    onClick(label = expand) { currentOnTap(); true }
+                },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatColumn(value = duration, label = stringResource(R.string.walk_stat_time))
+            StatColumn(value = distance, label = stringResource(R.string.walk_stat_distance))
+            if (caption != null) {
+                Text(
+                    text = caption,
+                    style = pilgrimType.caption,
+                    color = pilgrimColors.fog,
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                StatColumn(value = remaining, label = stringResource(R.string.honor_stat_remaining))
+            }
+        }
     }
 }
 

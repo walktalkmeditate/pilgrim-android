@@ -62,15 +62,20 @@ private const val PLATE_REQUEST_SIZE_PX = 900
  * iOS `WayPhotoPlate` (`WayPlaceCard.swift:274-325@7c200bf`, parity spec E
  * §13): the photo fit to the width up to [maxHeight], 4 dp corners, in a
  * 6 dp parchment mat. While it loads, or when it never does (a photo since
- * deleted), a plain parchment block stands in, not tappable and silent to
- * TalkBack. A tap opens [WayPhotoViewer].
+ * deleted, or a shared photo not on this phone: a null [photoUri]), a
+ * plain parchment block stands in, not tappable and silent to TalkBack. A
+ * tap opens [WayPhotoViewer].
  */
 @Composable
 fun WayPhotoPlate(
-    photoUri: String,
+    photoUri: String?,
     maxHeight: Dp,
     modifier: Modifier = Modifier,
 ) {
+    if (photoUri == null) {
+        Box(modifier = modifier.fillMaxWidth()) { WayPhotoPlaceholder(maxHeight) }
+        return
+    }
     var enlarged by rememberSaveable(photoUri) { mutableStateOf(false) }
     val request = ImageRequest.Builder(LocalContext.current)
         .data(photoUri)

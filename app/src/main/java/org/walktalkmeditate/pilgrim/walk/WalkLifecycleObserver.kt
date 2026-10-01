@@ -13,6 +13,7 @@ import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorderError
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
 
 /**
@@ -54,6 +55,9 @@ class WalkLifecycleObserver @Inject constructor(
     private val repository: WalkRepository,
     private val orphanSweeper: OrphanRecordingSweeper,
     private val seekSessionStore: SeekSessionStore,
+    // A default keeps the test constructions source-compatible; Hilt
+    // ignores it and injects the app's one instance.
+    private val honorReplies: HonorReplies = HonorReplies.inert(),
 ) {
     init {
         scope.launch {
@@ -112,7 +116,11 @@ class WalkLifecycleObserver @Inject constructor(
         when {
             stopResult.isSuccess && commitRow -> {
                 try {
-                    repository.recordVoice(stopResult.getOrThrow())
+                    val recording = stopResult.getOrThrow()
+                    repository.recordVoice(recording)
+                    // A reply still recording at walk end is filed now, as
+                    // iOS's pre-snapshot flush hands it to the same listener.
+                    honorReplies.fileIfPending(recording)
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (t: Throwable) {

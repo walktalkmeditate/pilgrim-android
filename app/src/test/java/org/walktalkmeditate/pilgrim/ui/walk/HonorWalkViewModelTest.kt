@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -39,6 +40,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
@@ -49,11 +51,14 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
+import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceState
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
@@ -66,11 +71,21 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
+import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
+import org.walktalkmeditate.pilgrim.service.WalkTrackingService
+import org.walktalkmeditate.pilgrim.ui.honor.CARD_RETIRE_MILLIS
+import org.walktalkmeditate.pilgrim.ui.honor.COMMAND_CONFIRM_WINDOW_MILLIS
+import org.walktalkmeditate.pilgrim.ui.honor.HONOR_ARRIVAL_CARD_ID
+import org.walktalkmeditate.pilgrim.ui.honor.HonorArrivalSummary
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayGlyph
 import org.walktalkmeditate.pilgrim.ui.walk.map.WayPinTint
 import org.walktalkmeditate.pilgrim.walk.BellTrigger
+import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
+import org.walktalkmeditate.pilgrim.walk.honor.HonorMediaFiles
 
 /**
  * The walk screen's Honor state (parity spec E §1–§6): the Way before
@@ -123,6 +138,7 @@ class HonorWalkViewModelTest {
         }
         db.close()
         storeDirectory.deleteRecursively()
+        filesRoot.deleteRecursively()
         Dispatchers.resetMain()
     }
 
@@ -153,11 +169,12 @@ class HonorWalkViewModelTest {
         val vm = viewModel()
         vm.showWay(insertSourceWalk())
         backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
         vm.state.awaitValue { it != null }
 
         vm.onWayPinTap("waypoint-1")
 
-        assertNull(vm.tappedMomentId.value)
+        assertNull(vm.cards.value)
     }
 
     // ---- Rebuilt from Room after a UI restart (AE1) ----------------------
@@ -332,27 +349,30 @@ class HonorWalkViewModelTest {
     // ---- Pin taps and the fly-to -----------------------------------------
 
     @Test
-    fun `a pin tapped during the walk records its moment for the card host`() = runTest(dispatcher) {
-        startLiveWalk()
+    fun `a pin tapped during the walk raises its card above the waiting ones`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
         val vm = viewModel()
         backgroundScope.launch { vm.state.collect {} }
-        vm.state.awaitValue { it?.session != null }
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
 
         vm.onWayPinTap("voice-2")
 
-        assertEquals("voice-2", vm.tappedMomentId.value)
+        val place = vm.cards.value!!.place!!
+        assertEquals("voice-2" to 1, place.moment.id to place.pendingCount)
     }
 
     @Test
-    fun `a tap on a moment the Way doesn't carry records nothing`() = runTest(dispatcher) {
+    fun `a tap on a moment the Way doesn't carry raises nothing`() = runTest(dispatcher) {
         startLiveWalk()
         val vm = viewModel()
         backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
         vm.state.awaitValue { it?.session != null }
 
         vm.onWayPinTap("voice-9")
 
-        assertNull(vm.tappedMomentId.value)
+        assertNull(vm.cards.awaitValue { it != null }!!.place)
     }
 
     @Test
@@ -394,19 +414,632 @@ class HonorWalkViewModelTest {
         assertEquals(null to null, vm.state.value to vm.companion.value)
     }
 
+    // ---- The card queue (parity spec E §7, D §5) --------------------------
+
+    @Test
+    fun `dismissing the top card brings the next one up`() = runTest(dispatcher) {
+        presentVoices()
+        startLiveWalk(rows = listOf(started("voice-1", at = T0), reachedAt("rest-1", at = T0 + 1)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place?.moment?.id == "voice-1" }
+
+        vm.dismissTopCard()
+
+        assertEquals("rest-1", vm.cards.value?.place?.moment?.id)
+    }
+
+    @Test
+    fun `a dismissal is written to the UI's own card row`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+
+        vm.dismissTopCard()
+
+        assertTrue(db.honorDao().getCardStates(liveWalkId).single { it.momentId == "rest-1" }.dismissed)
+    }
+
+    @Test
+    fun `dismissing a card that flew the map brings the map home`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
+        val card = vm.cards.awaitValue { it?.place != null }!!.place!!
+        vm.flyTo(card.moment)
+
+        vm.dismissTopCard()
+
+        assertNull(vm.focus.value)
+    }
+
+    @Test
+    fun `an untouched voice card retires 20 s after its voice ends`() = runTest(dispatcher) {
+        presentVoices()
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+
+        advanceTimeBy(CARD_RETIRE_MILLIS)
+        runCurrent()
+
+        assertNull(vm.cards.value?.place)
+    }
+
+    @Test
+    fun `a touched voice card waits for the walker`() = runTest(dispatcher) {
+        presentVoices()
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+
+        vm.touch("voice-1")
+        advanceTimeBy(CARD_RETIRE_MILLIS * 2)
+        runCurrent()
+
+        assertEquals("voice-1", vm.cards.value?.place?.moment?.id)
+    }
+
+    // ---- The voice controls (correction 16, D §6) ------------------------
+
+    @Test
+    fun `a pause tap shows paused at once`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        vm.toggleListening()
+
+        assertEquals(true, vm.sheet.value?.listening?.paused)
+    }
+
+    @Test
+    fun `a pause tap stays paused when Room confirms it`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        vm.toggleListening()
+        db.honorDao().updateVoiceState(
+            HonorVoiceState(
+                walkId = liveWalkId, playingMomentId = "voice-1", voicePaused = true, voiceStartedAt = null,
+                voiceStartOffsetMillis = null, voicePauseOffsetMillis = 0L, voiceRate = 1.0,
+            ),
+        )
+        advanceTimeBy(COMMAND_CONFIRM_WINDOW_MILLIS * 2)
+        runCurrent()
+
+        assertEquals(true, vm.sheet.value?.listening?.paused)
+    }
+
+    @Test
+    fun `a command that never lands gives way to the persisted state after the window`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        vm.toggleListening()
+        advanceTimeBy(COMMAND_CONFIRM_WINDOW_MILLIS)
+        runCurrent()
+
+        assertEquals(false, vm.sheet.value?.listening?.paused)
+    }
+
+    @Test
+    fun `the chip's pause and skip go to the tracker as commands`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        vm.toggleListening()
+        vm.skipVoice()
+
+        assertEquals(listOf(HonorCommand.TogglePlayback("voice-1"), HonorCommand.Skip), sentCommands)
+    }
+
+    @Test
+    fun `a skip hides the chip at once`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        vm.skipVoice()
+
+        assertNull(vm.sheet.value?.listening)
+    }
+
+    @Test
+    fun `the chip's clock ticks once a second from the voice's start`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it?.listening != null }
+
+        repeat(3) { stepOneSecond() }
+
+        assertEquals(3.0, vm.sheet.value!!.listening!!.elapsedSeconds, 1e-9)
+    }
+
+    @Test
+    fun `a voice whose file is gone plays nothing and sends nothing`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+        vm.onWayPinTap("voice-2")
+        val card = vm.cards.awaitValue { it?.place?.moment?.id == "voice-2" }!!.place!!
+
+        vm.togglePlayback(card.moment)
+
+        assertEquals(emptyList<HonorCommand>() to false, sentCommands to vm.cards.value!!.place!!.isPlaying)
+    }
+
+    @Test
+    fun `a card's rate pill starts at 1x on every walk and steps the ladder`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel()
+        collectCards(vm)
+        val before = vm.cards.awaitValue { it?.place != null }!!.place!!.rate
+
+        vm.cycleRate()
+
+        assertEquals(1f to 1.25f, before to vm.cards.value!!.place!!.rate)
+    }
+
+    @Test
+    fun `on a later honoring a voice with an earlier reply offers your reply`() = runTest(dispatcher) {
+        presentVoices()
+        presentFile("recordings/reply.wav")
+        store.save(way())
+        store.setReply(OWN_WAY_ID, originN = 1, relativePath = "recordings/reply.wav")
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertTrue(vm.cards.awaitValue { it?.place?.media != null }!!.place!!.media!!.hasEarlierReply)
+    }
+
+    @Test
+    fun `your reply is sent as the play-reply command`() = runTest(dispatcher) {
+        presentVoices()
+        presentFile("recordings/reply.wav")
+        store.save(way())
+        store.setReply(OWN_WAY_ID, originN = 1, relativePath = "recordings/reply.wav")
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+        val card = vm.cards.awaitValue { it?.place?.media?.hasEarlierReply == true }!!.place!!
+
+        vm.playReply(card.moment)
+
+        assertEquals(listOf(HonorCommand.PlayReply("voice-1")), sentCommands)
+    }
+
+    @Test
+    fun `an earlier reply whose recording is gone offers none`() = runTest(dispatcher) {
+        presentVoices()
+        store.save(way())
+        store.setReply(OWN_WAY_ID, originN = 1, relativePath = "recordings/deleted.wav")
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertFalse(vm.cards.awaitValue { it?.place?.media != null }!!.place!!.media!!.hasEarlierReply)
+    }
+
+    @Test
+    fun `a voice that failed to play shows the plain not-playing state`() = runTest(dispatcher) {
+        presentVoices()
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FAILED)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        val card = vm.cards.awaitValue { it?.place != null }!!.place!!
+
+        assertEquals(Triple("voice-1", false, 0.0), Triple(card.moment.id, card.isPlaying, card.elapsedSeconds))
+    }
+
+    @Test
+    fun `a voice that failed to play retires 20 s later, untouched`() = runTest(dispatcher) {
+        presentVoices()
+        startLiveWalk(rows = listOf(started("voice-1", at = T0, end = HonorVoiceEnd.FAILED)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+
+        advanceTimeBy(CARD_RETIRE_MILLIS)
+        runCurrent()
+
+        assertNull(vm.cards.value?.place)
+    }
+
+    // ---- The card's place (E §9) ------------------------------------------
+
+    @Test
+    fun `the card's distance runs from the walker's last fix`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
+        controller.state.value = WalkState.Active(accumulator().copy(lastLocation = fixAt(lat = 0.0, lon = 0.004)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        val distance = vm.cards.awaitValue { it?.place != null }!!.place!!.distanceMeters!!
+
+        assertEquals(wgs84MidLatitudeMeters(0.0, 0.004, REST_PLACE.lat, REST_PLACE.lon), distance, 1e-9)
+    }
+
+    @Test
+    fun `the tick points from the compass heading to the place`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
+        controller.state.value = WalkState.Active(accumulator().copy(lastLocation = fixAt(lat = 0.0, lon = 0.004)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.place != null }
+
+        heading.value = 90.0
+
+        val bearing = WayGeometry.bearing(WayCoordinate(0.0, 0.004), REST_PLACE)
+        assertEquals((bearing - 90.0 + 360) % 360, vm.cards.value!!.place!!.tick!!, 1e-9)
+    }
+
+    @Test
+    fun `with no settled compass there is no tick`() = runTest(dispatcher) {
+        startLiveWalk(rows = listOf(reachedAt("rest-1", at = T0)))
+        controller.state.value = WalkState.Active(accumulator().copy(lastLocation = fixAt(lat = 0.0, lon = 0.004)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertNull(vm.cards.awaitValue { it?.place != null }!!.place!!.tick)
+    }
+
+    // ---- The arrival card (E §11) -----------------------------------------
+
+    @Test
+    fun `after a restart a landed arrival card counts what was heard and passed before it`() = runTest(dispatcher) {
+        startLiveWalk(
+            session = { it.copy(phase = HonorPhase.ARRIVED) },
+            rows = listOf(
+                started("voice-1", at = T0, end = HonorVoiceEnd.FINISHED),
+                reachedAt("rest-1", at = T0 + 1_000),
+                started("voice-2", at = T0 + 9_000),
+            ),
+        )
+        repository.recordEvent(
+            org.walktalkmeditate.pilgrim.data.entity.WalkEvent(
+                walkId = liveWalkId, timestamp = T0 + 5_000, eventType = WalkEventType.HONOR_ARRIVAL,
+            ),
+        )
+        val vm = viewModel()
+        collectCards(vm)
+
+        val arrival = vm.cards.awaitValue { it?.arrival != null }!!.arrival
+
+        assertEquals(HonorArrivalSummary(wayTitle = "the long way", voicesHeard = 1, placesPassed = 1), arrival)
+    }
+
+    @Test
+    fun `the arrival card outranks every place card`() = runTest(dispatcher) {
+        startLiveWalk(session = { it.copy(phase = HonorPhase.ARRIVED) }, rows = listOf(reachedAt("rest-1", at = T0)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertNull(vm.cards.awaitValue { it?.arrival != null }!!.place)
+    }
+
+    @Test
+    fun `continue lets the waiting place cards show`() = runTest(dispatcher) {
+        startLiveWalk(session = { it.copy(phase = HonorPhase.ARRIVED) }, rows = listOf(reachedAt("rest-1", at = T0)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.cards.awaitValue { it?.arrival != null }
+
+        vm.dismissArrival()
+
+        assertEquals(null to "rest-1", vm.cards.value!!.arrival to vm.cards.value!!.place?.moment?.id)
+    }
+
+    @Test
+    fun `after a restart an arrival card already continued past stays down`() = runTest(dispatcher) {
+        startLiveWalk(session = { it.copy(phase = HonorPhase.ARRIVED) })
+        db.honorDao().markCardDismissed(liveWalkId, HONOR_ARRIVAL_CARD_ID)
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertNull(vm.cards.awaitValue { it != null }!!.arrival)
+    }
+
+    // ---- The stats sheet (E §10) ------------------------------------------
+
+    @Test
+    fun `Remaining is the Way's distance left`() = runTest(dispatcher) {
+        startLiveWalk(session = { it.copy(progressFrac = 0.4) })
+        val vm = viewModel()
+        collectCards(vm)
+
+        val remaining = vm.sheet.awaitValue { it?.remainingMeters != null }!!.remainingMeters!!
+
+        assertEquals(0.6 * WayGeometry(route).totalMeters, remaining, 1e-6)
+    }
+
+    @Test
+    fun `before Start the honor walk's Remaining is unknown`() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.showWay(insertSourceWalk())
+        collectCards(vm)
+
+        val sheet = vm.sheet.awaitValue { it != null }!!
+
+        assertNull(sheet.remainingMeters)
+    }
+
+    @Test
+    fun `with the soft tap off nothing on screen comments on deviation`() = runTest(dispatcher) {
+        startLiveWalk(session = { it.copy(softTapArmed = true) })
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it != null }
+
+        disarmSoftTap()
+
+        assertNull(vm.sheet.value!!.softTapMeters)
+    }
+
+    @Test
+    fun `a soft tap borrows the stat's slot with the metres off the Way, for 20 s`() = runTest(dispatcher) {
+        startLiveWalk(session = { it.copy(softTapEnabled = true, softTapArmed = true) })
+        controller.state.value = WalkState.Active(accumulator().copy(lastLocation = fixAt(lat = 0.003, lon = 0.002)))
+        val vm = viewModel()
+        collectCards(vm)
+        vm.sheet.awaitValue { it != null }
+
+        disarmSoftTap()
+        val shown = vm.sheet.value!!.softTapMeters
+        advanceTimeBy(20_000L)
+        runCurrent()
+
+        assertEquals((0.003 * 111_320).toLong() to null, shown to vm.sheet.value!!.softTapMeters)
+    }
+
+    // ---- Shared walks (shared spec S4 §10) ----------------------------------
+
+    @Test
+    fun `a shared voice whose media never arrived opens from its pin with the placeholder bar`() = runTest(dispatcher) {
+        startSharedWalk()
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+        collectCards(vm)
+        vm.state.awaitValue { it?.session != null }
+
+        vm.onWayPinTap("voice-1")
+
+        assertNull(vm.cards.awaitValue { it?.place?.media != null }!!.place!!.media!!.waveform)
+    }
+
+    @Test
+    fun `a shared photo not on this phone shows the plain plate`() = runTest(dispatcher) {
+        startSharedWalk(rows = listOf(reachedAt("photo-1", at = T0)))
+        val vm = viewModel()
+        collectCards(vm)
+
+        assertNull(vm.cards.awaitValue { it?.place?.media != null }!!.place!!.media!!.photoUri)
+    }
+
+    @Test
+    fun `a photo that lands while its card shows appears only when the card next comes to the top`() =
+        runTest(dispatcher) {
+            startSharedWalk(rows = listOf(reachedAt("photo-1", at = T0)))
+            val vm = viewModel()
+            backgroundScope.launch { vm.state.collect {} }
+            collectCards(vm)
+            vm.cards.awaitValue { it?.place?.media != null }
+            val landed = store.mediaFile(SHARE_WAY_ID, "photos/0.jpg")!!.apply {
+                parentFile?.mkdirs()
+                writeBytes(ByteArray(16))
+            }
+            val whileShowing = vm.cards.value!!.place!!.media!!.photoUri
+
+            vm.onWayPinTap("voice-1")
+            vm.dismissTopCard()
+            val photo = vm.cards.awaitValue { it?.place?.media?.photoUri != null }!!.place!!.media!!.photoUri
+
+            assertEquals(null to android.net.Uri.fromFile(landed).toString(), whileShowing to photo)
+        }
+
+    @Test
+    fun `a share walked without its voices arrives counting only what played`() = runTest(dispatcher) {
+        startSharedWalk(
+            session = { it.copy(phase = HonorPhase.ARRIVED) },
+            rows = listOf(
+                HonorMomentStateEntity(walkId = 0L, momentId = "voice-1", reachedAt = T0),
+                reachedAt("photo-1", at = T0),
+            ),
+        )
+        val vm = viewModel()
+        collectCards(vm)
+
+        val arrival = vm.cards.awaitValue { it?.arrival != null }!!.arrival!!
+
+        assertEquals(0 to 1, arrival.voicesHeard to arrival.placesPassed)
+    }
+
+    // ---- The real command intents (house builder rule) -------------------
+
+    @Test
+    fun `the chip and card commands leave as the tracker's own intents`() = runTest(dispatcher) {
+        context.getSharedPreferences("honor_commands", Context.MODE_PRIVATE).edit().clear().commit()
+        presentVoices()
+        presentFile("recordings/reply.wav")
+        store.save(way())
+        store.setReply(OWN_WAY_ID, originN = 1, relativePath = "recordings/reply.wav")
+        startPlayingVoiceOne()
+        val vm = viewModel(send = WalkActionPublisher(context)::sendHonorCommand)
+        collectCards(vm)
+        val card = vm.cards.awaitValue { it?.place?.media?.hasEarlierReply == true }!!.place!!
+
+        vm.toggleListening()
+        vm.togglePlayback(card.moment)
+        vm.cycleRate()
+        vm.scrub(card.moment, 0.5f)
+        vm.playReply(card.moment)
+        advanceTimeBy(1_000L)
+        vm.togglePlayback(card.moment)
+        vm.skipVoice()
+
+        assertEquals(
+            listOf(
+                HonorCommand.TogglePlayback("voice-1"),
+                HonorCommand.TogglePlayback("voice-1"),
+                HonorCommand.CycleRate,
+                HonorCommand.Scrub("voice-1", 0.5),
+                HonorCommand.PlayReply("voice-1"),
+                HonorCommand.TogglePlayback("voice-1"),
+                HonorCommand.Skip,
+            ),
+            startedCommandIntents(),
+        )
+    }
+
+    @Test
+    fun `with the release flag off no command leaves`() = runTest(dispatcher) {
+        startPlayingVoiceOne()
+        val vm = viewModel(honorEnabled = false)
+        collectCards(vm)
+
+        vm.toggleListening()
+        vm.cycleRate()
+
+        assertEquals(emptyList<HonorCommand>(), sentCommands)
+    }
+
     // ---- Harness ----------------------------------------------------------
 
-    private fun viewModel(honorEnabled: Boolean = true) = HonorWalkViewModel(
+    private suspend fun startPlayingVoiceOne() {
+        presentVoices()
+        startLiveWalk(
+            session = {
+                it.copy(playingMomentId = "voice-1", voiceStartedAt = T0, voiceStartOffsetMillis = 0L)
+            },
+            rows = listOf(started("voice-1", at = T0)),
+        )
+    }
+
+    private suspend fun startSharedWalk(
+        session: (HonorSessionEntity) -> HonorSessionEntity = { it },
+        rows: List<HonorMomentStateEntity> = emptyList(),
+    ) {
+        store.save(sharedWay())
+        startLiveWalk(
+            way = null,
+            session = { session(it.copy(wayId = SHARE_WAY_ID, sourceKind = HonorSourceKind.SHARE)) },
+            rows = rows,
+        )
+    }
+
+    private fun sharedWay() = way(
+        id = SHARE_WAY_ID,
+        source = WaySource.Share(id = "AbCdEf1234", pageUrl = "https://walk.pilgrimapp.org/AbCdEf1234"),
+        moments = listOf(
+            WayMoment(
+                id = "voice-1", frac = 0.2, at = null,
+                kind = WayMomentKind.Voice(0.25, 0.0, VoiceKind.SPOKEN, WayMedia.File("audio/0.m4a")),
+                place = "Rúa do Franco",
+            ),
+            WayMoment(id = "photo-1", frac = 0.5, at = null, kind = WayMomentKind.Photo(WayMedia.File("photos/0.jpg"))),
+        ),
+    )
+
+    /** `:tracker` disarming the soft tap as it fires, through its own targeted update. */
+    private suspend fun disarmSoftTap() {
+        val session = db.honorDao().getSession(liveWalkId)!!
+        db.honorDao().updateEngineState(
+            org.walktalkmeditate.pilgrim.data.honor.HonorEngineState(
+                walkId = liveWalkId, startFrac = session.startFrac, anchoredByFallback = session.anchoredByFallback,
+                anchorActiveSeconds = session.anchorActiveSeconds, companionT0Seconds = session.companionT0Seconds,
+                progressFrac = session.progressFrac, progressHighWater = session.progressHighWater,
+                walkedFrac = session.walkedFrac, offWaySince = session.offWaySince,
+                offWayActiveSeconds = session.offWayActiveSeconds, lastReacquireAttempt = session.lastReacquireAttempt,
+                softTapSince = null, softTapArmed = false, arrivalInsideFixes = session.arrivalInsideFixes,
+            ),
+        )
+    }
+
+    private fun fixAt(lat: Double, lon: Double) = LocationPoint(timestamp = T0, latitude = lat, longitude = lon)
+
+    /** Every Honor command intent the production publisher started, read back through the service's own decoder. */
+    private fun startedCommandIntents(): List<HonorCommand?> = generateSequence {
+        shadowOf(context as Application).nextStartedService
+    }.filter { it.action == WalkTrackingService.ACTION_HONOR_COMMAND }.map { intent ->
+        WalkTrackingService.honorCommandFromExtras(
+            kind = intent.getStringExtra(WalkTrackingService.EXTRA_HONOR_COMMAND),
+            momentId = intent.getStringExtra(WalkTrackingService.EXTRA_HONOR_MOMENT_ID),
+            fraction = intent.getDoubleExtra(WalkTrackingService.EXTRA_HONOR_SCRUB_FRACTION, 0.0),
+        )
+    }.toList()
+
+    private fun viewModel(
+        honorEnabled: Boolean = true,
+        send: (HonorCommand) -> Unit = { sentCommands += it },
+    ) = HonorWalkViewModel(
         controller = controller,
         honorDao = db.honorDao(),
         repository = repository,
         wayStore = store,
         ownWalkWays = OwnWalkWays(repository, VoiceRecordingFileSystem(context), dispatcher, { UTC }, { Locale.US }),
+        mediaFiles = HonorMediaFiles({ filesRoot }, store),
+        replies = replies,
+        headings = { heading },
+        sendCommand = send,
         releaseFlags = FixedReleaseFlags(honor = honorEnabled),
         clock = clock,
         ioDispatcher = dispatcher,
         tickMillis = 1_000L,
+        loadWaveform = { FloatArray(150) { 0.5f } },
     ).also { viewModels += it }
+
+    private val sentCommands = mutableListOf<HonorCommand>()
+    private val heading = MutableStateFlow<Double?>(null)
+    private val filesRoot = File(context.filesDir, "honor-walk-vm-files")
+    private val replies by lazy { HonorReplies(store) }
+
+    /** The own walk's recordings, as the Way's `recordings/…` paths name them. */
+    private fun presentFile(relativePath: String): File =
+        File(filesRoot, relativePath).apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(64))
+        }
+
+    private fun presentVoices() {
+        presentFile("recordings/v1.wav")
+        presentFile("recordings/v2.wav")
+    }
+
+    private fun started(momentId: String, at: Long, end: HonorVoiceEnd? = null, endedAt: Long? = null) =
+        HonorMomentStateEntity(
+            walkId = 0L,
+            momentId = momentId,
+            voiceStartedAt = at,
+            voiceEndedAt = endedAt ?: at.takeIf { end != null },
+            voiceEnd = end,
+            heard = true,
+        )
+
+    private fun reachedAt(momentId: String, at: Long) =
+        HonorMomentStateEntity(walkId = 0L, momentId = momentId, reachedAt = at)
+
+    private fun TestScope.collectCards(vm: HonorWalkViewModel) {
+        backgroundScope.launch { vm.cards.collect {} }
+        backgroundScope.launch { vm.sheet.collect {} }
+        backgroundScope.launch { vm.replyingToMomentId.collect {} }
+    }
 
     private var liveWalkId = 0L
 
