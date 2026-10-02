@@ -104,6 +104,15 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
 
     @Volatile private var configuredInvariants: Pair<Int, Int>? = null
 
+    /**
+     * Test-only: the looper ExoPlayer's playback thread runs on. A test
+     * holding it paused keeps placeholder bytes from ever being decoded,
+     * so no asynchronous decode error races its assertions. Null in
+     * production: ExoPlayer makes its own.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal var playbackLooperForTest: Looper? = null
+
     // Cross-thread publication: focus listener fires on the handler
     // thread (we pass mainHandler) but the write happens there too,
     // so @Volatile is mostly defensive. Keep it for clarity.
@@ -348,6 +357,7 @@ class ExoPlayerSoundscapePlayer @Inject constructor(
         return ExoPlayer.Builder(context)
             // handleAudioFocus = false — our standalone request owns focus.
             .setAudioAttributes(attrs, /* handleAudioFocus = */ false)
+            .apply { playbackLooperForTest?.let { setPlaybackLooper(it) } }
             .build()
             .also { it.addListener(playerListener) }
     }
