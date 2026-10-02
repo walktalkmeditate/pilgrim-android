@@ -6,6 +6,7 @@ import android.content.Context
 import android.location.Location
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.content.edit
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import dagger.Binds
@@ -146,6 +147,31 @@ class FusedMockLocationClient @Inject constructor(
 }
 
 /**
+ * Whether a replay may have left mock mode on. It outlives the process
+ * that took mock mode, as mock mode itself does; the tests fake it.
+ */
+interface MockModeMarker {
+    var taken: Boolean
+}
+
+/** [MockModeMarker] in `:tracker`'s own preferences file, written at once so a kill can't drop it. */
+class PreferencesMockModeMarker @Inject constructor(
+    @ApplicationContext private val context: Context,
+) : MockModeMarker {
+
+    private val prefs by lazy { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+
+    override var taken: Boolean
+        get() = prefs.getBoolean(KEY_TAKEN, false)
+        set(value) = prefs.edit(commit = true) { putBoolean(KEY_TAKEN, value) }
+
+    private companion object {
+        const val PREFS_NAME = "honor_replay"
+        const val KEY_TAKEN = "mock_taken"
+    }
+}
+
+/**
  * Walks a Way's route from a desk (plan U19): mock fixes through the fused
  * provider at the recorded pace, in `:tracker`, where the walk reads its
  * fixes. Each fix waits out its recorded gap from the one before, so a
@@ -153,21 +179,25 @@ class FusedMockLocationClient @Inject constructor(
  *
  * Mock mode goes off on every way a replay ends (played out, stopped,
  * replaced, refused, or failed) and, defensively, at the next `:tracker`
- * service start when this process runs no replay (a process killed
- * mid-replay never reaches its own cleanup). The log prints walk ids,
- * counts, and fracs only.
+ * service start when this process runs no replay and the [MockModeMarker]
+ * says one may have left it on (a process killed mid-replay never reaches
+ * its own cleanup). Only then: taking and releasing mock mode empties the
+ * device's cached fix, which the Honor overview reads. The log prints walk
+ * ids, counts, and fracs only.
  */
 @Singleton
 class WayReplayer internal constructor(
     private val client: MockLocationClient,
+    private val marker: MockModeMarker,
     private val scope: CoroutineScope,
     private val wallClockMillis: () -> Long,
     private val elapsedRealtimeNanos: () -> Long,
 ) : MockLocationReplay {
 
     @Inject
-    constructor(client: MockLocationClient) : this(
+    constructor(client: MockLocationClient, marker: MockModeMarker) : this(
         client = client,
+        marker = marker,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         wallClockMillis = System::currentTimeMillis,
         elapsedRealtimeNanos = SystemClock::elapsedRealtimeNanos,
@@ -195,7 +225,7 @@ class WayReplayer internal constructor(
 
     override fun onTrackerStart() {
         scope.launch {
-            lock.withLock { if (replay?.isActive != true) releaseMockMode() }
+            lock.withLock { if (replay?.isActive != true && marker.taken) releaseMockMode() }
         }
     }
 
@@ -205,6 +235,7 @@ class WayReplayer internal constructor(
         var played = 0
         var previousOffset = 0L
         try {
+            marker.taken = true
             client.setMockMode(true)
             for (step in steps) {
                 delay(step.offsetMillis - previousOffset)
@@ -248,6 +279,7 @@ class WayReplayer internal constructor(
     private suspend fun turnMockModeOff() {
         try {
             client.setMockMode(false)
+            marker.taken = false
             Log.i(TAG, "mock mode off")
         } catch (e: CancellationException) {
             throw e
@@ -276,4 +308,7 @@ abstract class WayReplayerModule {
 
     @Binds
     abstract fun bindMockLocationClient(impl: FusedMockLocationClient): MockLocationClient
+
+    @Binds
+    abstract fun bindMockModeMarker(impl: PreferencesMockModeMarker): MockModeMarker
 }

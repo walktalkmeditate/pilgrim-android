@@ -9,6 +9,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
@@ -25,8 +26,10 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -127,6 +130,9 @@ class WalkViewModelTest {
     private lateinit var collectiveRepository: CollectiveRepository
     private lateinit var fakeWidgetRefreshScheduler: FakeWidgetRefreshScheduler
     private val dispatcher = UnconfinedTestDispatcher()
+    private val viewModels = mutableListOf<WalkViewModel>()
+
+    private fun WalkViewModel.tracked(): WalkViewModel = also { viewModels += it }
 
     @Before
     fun setUp() {
@@ -220,11 +226,18 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
     }
 
     @After
     fun tearDown() {
+        // A view model's IO flows (the walk's voice recordings among them)
+        // outlive the test unless its scope is joined before the database
+        // closes; a late query then fails the NEXT test with "connection
+        // pool has been closed" as UncaughtExceptionsBeforeTest.
+        runBlocking {
+            withTimeout(10_000L) { viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
+        }
         db.close()
         hemisphereScope.coroutineContext[Job]?.cancel()
         collectiveScope.coroutineContext[Job]?.cancel()
@@ -870,7 +883,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
 
         controller.startWalk(intention = null)
         val walkId = requireActiveWalkId()
@@ -919,7 +932,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
 
         controller.startWalk(intention = null)
         viewModel.toggleRecording()
@@ -1041,7 +1054,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
 
         // iOS MapCameraSeed.forActiveWalk@7c200bf: a current fix → zoom 16.
         val seen = vm.initialCameraSeed.first { it != null }
@@ -1086,7 +1099,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
 
         val seen = vm.initialCameraSeed.first { it != null }
         // Cascade should pick the LAST sample chronologically — where
@@ -1160,7 +1173,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
         controller.startWalk(intention = null)
         // Must not propagate the SecurityException. The repository's
         // internal try/catch is what absorbs it; this test guards
@@ -1353,7 +1366,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
     }
 
     private fun newHonorViewModel(
@@ -1385,7 +1398,7 @@ class WalkViewModelTest {
         releaseFlags = FixedReleaseFlags(honor = honorEnabled),
         beginHonorWalk = beginHonorWalk,
         honorPreferences = honorPreferences,
-    )
+    ).tracked()
 
     private fun newViewModelWithSoundscape(
         soundscape: FakeWalkSoundscapeUiController,
@@ -1409,7 +1422,7 @@ class WalkViewModelTest {
         releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
         beginHonorWalk = { error("no honor start in this test") },
         honorPreferences = { error("no honor start in this test") },
-    )
+    ).tracked()
 
     @Test
     fun `onToggleSoundscape flips optimistic state and routes the command`() = runTest(dispatcher) {
@@ -1477,7 +1490,7 @@ class WalkViewModelTest {
             releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
             beginHonorWalk = { error("no honor start in this test") },
             honorPreferences = { error("no honor start in this test") },
-        )
+        ).tracked()
         assertTrue(vm.beginWithIntention.value)
         prefs.setBeginWithIntention(false)
         assertEquals(false, vm.beginWithIntention.value)

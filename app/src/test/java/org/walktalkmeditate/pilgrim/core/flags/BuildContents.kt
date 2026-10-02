@@ -25,6 +25,8 @@ internal object BuildContents {
         "org.walktalkmeditate.pilgrim.debug.honor.WayReplayTimeline",
         "org.walktalkmeditate.pilgrim.debug.honor.MockLocationClient",
         "org.walktalkmeditate.pilgrim.debug.honor.FusedMockLocationClient",
+        "org.walktalkmeditate.pilgrim.debug.honor.MockModeMarker",
+        "org.walktalkmeditate.pilgrim.debug.honor.PreferencesMockModeMarker",
         "org.walktalkmeditate.pilgrim.debug.honor.WayReplayer",
         "org.walktalkmeditate.pilgrim.debug.honor.WayReplayerModule",
         "org.walktalkmeditate.pilgrim.debug.honor.HonorDebugReceiver",

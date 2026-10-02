@@ -38,4 +38,15 @@ Device: OnePlus 13. Owner: user. Build: the top of the Stage 21-0 stack, debug v
 
 ## E. Record
 
-- [ ] **Record the pass** here: date, build SHA, and anything filed. Phase B merges after it.
+- [x] **Record the pass** here: date, build SHA, and anything filed. Phase B merges after it.
+  - **2026-10-02, OnePlus 13**, builds `e95005d4` then `c66f19ae` (the top of the Stage 21-1 stack, which includes Stage 21-0). It was run in the same sitting as U24 and U29.
+  - **Passed:** D About (the maps paragraph and both credits); C, the Interactive caption; D #221, the reliquary switch.
+  - **Reported good by the owner at close:** the summary reveal, segment taps and rotation (A).
+  - **Migration:** installed over a schema-10 debug build, the database migrated to 11 with all walks intact. The 8→9 sittings backfill was confirmed on device during U20 (2026-10-01).
+  - **Waived by the owner on 2026-10-02:**
+    - the active-walk follow and gestures, the live-walk seed, Seek, pins and the lock/theme flip on a walk;
+    - Remove animations and 16 KB pages;
+    - a long-sitting share, a sitting stopping a recording, recording coordinates, and #225's expired share.
+
+    The parity gate re-checks the map rows on a device before 2.0.0.
+  - **Found and fixed:** a map style race that could leave the overview's ghost line and framing unset (see the U24 record). It also touches every map, which now loads only Pilgrim's style.

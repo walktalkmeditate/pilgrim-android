@@ -176,6 +176,12 @@ internal interface HonorWayStyle {
  * [dark] is read at install time, as iOS reads the map's trait. The
  * companion moves wherever it is handed: its 2 s cadence is the walk's
  * view model's (`HonorWalkViewModel`).
+ *
+ * Once our style's load callback has run, the layers go in whatever
+ * `isStyleLoaded` says, as iOS's `styleHasLoaded` latch lets them
+ * (`PilgrimMapView.swift:166-172,679-682@7c200bf`): the annotation managers'
+ * new sources flip it back to false while they settle, and the overview has
+ * no later pass to try again on.
  */
 internal class HonorWayRenderer(
     private val style: HonorWayStyle,
@@ -188,12 +194,19 @@ internal class HonorWayRenderer(
     /** Where the installed dot stands; null while none is installed. */
     private var appliedCompanion: WayCoordinate? = null
 
+    private var styleHasLoaded = false
+
     fun apply(line: HonorWayLine?, companion: WayCoordinate? = null) {
         pendingLine = line
         pendingCompanion = companion
-        if (!style.isStyleLoaded()) return
+        if (!styleHasLoaded && !style.isStyleLoaded()) return
         applyGhostLine(line)
         applyCompanion(companion)
+    }
+
+    /** Just before a style load: the layers wait for its callback. */
+    fun onStyleLoadStarted() {
+        styleHasLoaded = false
     }
 
     /**
@@ -202,6 +215,7 @@ internal class HonorWayRenderer(
      * the companion goes straight above it (owner decision 7).
      */
     fun onStyleReloaded() {
+        styleHasLoaded = true
         appliedWayId = null
         appliedCompanion = null
         apply(pendingLine, pendingCompanion)

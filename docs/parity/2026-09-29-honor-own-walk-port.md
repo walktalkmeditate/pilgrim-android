@@ -126,6 +126,7 @@ The plan was written before these reads. Where it disagrees with iOS, iOS as shi
 - There's no Honor-specific intention step.
 - Accessibility labels to pin: F resolution 7 and §17.
 - Existing Android drift in the same slot, fixed in U21: the unselected mode label's alpha is 0.3 where iOS uses 0.55, and the start button lacks its "Begin your journey" description.
+- The Mapbox logo and attribution stay at the map's default bottom position, under the card, as on iOS (owner decision 9, reversed 2026-10-02). Settings → Data Sources credits Mapbox and OpenStreetMap (U7).
 
 **U22 — on-walk UI and map layers** (E, D §5)
 - The ghost line (E §2): width 4, round cap and join, colour by span (dawn, rust, moss), opacity 0.22 on the light map and 0.4 on the dark, under the route casing.
@@ -182,12 +183,14 @@ These are iOS defects. Android ports each one exactly as iOS ships it, the parit
 | [pilgrim-ios #108](https://github.com/walktalkmeditate/pilgrim-ios/issues/108) | Accessibility: the card header's label hides its content; pins and previews are unreachable; the journal doesn't name the mode; the chip's buttons are glyph-sized; "Back to where you are" on the wrong card | E-3, F-6, G-D5, E-14, E-4 |
 | [pilgrim-ios #109](https://github.com/walktalkmeditate/pilgrim-ios/issues/109) | Copy and units: the off-the-way caption is always metres; "1 minutes" and "0 minutes"; own-walk copy speaks of another walker; the lock screen says "off the way" on the approach; the voices toggle shows on while sounds are off; the overview's temperature ignores units; Settings → Ways says own-walk voices returned to the trail; the soft tap has no switch | E-5, E-6, G-D2, D-6, F-3, F-4, A-D4, A-D2 |
 | [pilgrim-ios #110](https://github.com/walktalkmeditate/pilgrim-ios/issues/110) | Doors that lead nowhere: "walk this again" on a route under 20 m; the picker lists archived walks; a failed link's error on an own-walk overview; the preview's hour zone | F-1, F-2, F-7, F-8 |
-| [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) | On the map: the companion under the route after a theme switch; the fly-to may fight follow; the tick spins the long way; the overview card covers the Mapbox logo; the summary map clips the ghost; a deleted Way's line stays on the seal | E-1, E-2, B-5, E-7, F-5, G-D4, G-D3 |
+| [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) | On the map: the companion under the route after a theme switch; the fly-to may fight follow; the tick spins the long way; the overview card covers the Mapbox logo (withdrawn 2026-10-02); the summary map clips the ghost; a deleted Way's line stays on the seal | E-1, E-2, B-5, E-7, F-5, G-D4, G-D3 |
 | [pilgrim-ios #112](https://github.com/walktalkmeditate/pilgrim-ios/issues/112) | Smaller: the latent pause clock; the photo viewer's zoom and pan; the journal gate and goshuin disagreeing on ties; two comments that disagree with the code | B-4, E-13, G-D6, C-D11 |
 
 The two stage-only defects (E-15, E-16) are left for the Stage 21-2 spec.
 
 Android differs on two items, each recorded: #111's G-D3 by owner decision 3, where a deleted Way's line goes from the seal with its link; and #112's G-D6 at the gate (2026-10-01, U23), where the journal gate keeps the goshuin's uuid tie-break, so the two never disagree.
+
+#111's item 4 (F-5, the overview card covering the Mapbox logo and attribution) was withdrawn on 2026-10-02, when the owner reversed decision 9. iOS credits Mapbox and OpenStreetMap in its About screen, and Android does the same in Settings → Data Sources, so there's nothing left to ask iOS to change.
 
 ---
 
@@ -221,7 +224,7 @@ None of these has iOS behavior to match, or iOS's behavior can't carry over to A
 6. **The sitting GPS tier** (B open question 3). iOS thins fixes while sitting (100 m accuracy, 50 m filter), which delays arrival and voice drops for a walker who sits. Android keeps full-rate fixes. *Nothing to build:* a gate row records the difference.
 7. **Layer order after a theme switch** (E §5). iOS reinstalls the Honor layers before the route on a style reload, so the companion lands under the route until the next flush. Android keeps its standing rule of reinstalling runtime layers after the annotation managers, which restores iOS's first-appearance stack. *Lands:* U22. The glitch is filed as [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111).
 8. **Follow versus fly-to** (E open question 2). *Still open.* It's decided at U22, once iOS's behavior is checked on an iPhone.
-9. **The Mapbox logo and attribution on the overview** (F §9). On iOS the overview card covers them, but Mapbox's terms require them to stay visible on the map view. Android keeps them visible above the card. *Lands:* U21. [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111) asks iOS to lift them.
+9. **The Mapbox logo and attribution on the overview** (F §9). On iOS the overview card covers them. The owner first chose to keep them visible above the card on Android, then reversed that on 2026-10-02: Android matches iOS, and the card covers them. Mapbox and OpenStreetMap are credited in Settings → Data Sources (U7). *Lands:* U21. Item 4 of [pilgrim-ios #111](https://github.com/walktalkmeditate/pilgrim-ios/issues/111), which asked iOS to lift them, was withdrawn.
 10. **A failed link write is retried** (added from U17, #253). iOS drops the error (`try?`), so a walk whose link write fails reads "a way that has been removed". Android keeps the walk's live rows and retries the link at the next launch. That's invisible when nothing fails. *Built:* U17 (#253).
 
 ## Open questions iOS leaves open
@@ -12357,7 +12360,7 @@ In numbers: padding top 40, left 30, right 30, bottom `40 + min(cardHeight, mapH
 ```
 > Pilgrim/Views/PilgrimMapView.swift:145-152@7c200bf
 
-The inset pads only the camera; the ornaments keep their bottom-leading position, under the card. So the Mapbox logo and the attribution button are covered on the overview. The plan's divergence (keep them visible, lifted above the card) stands; this is the quote for the iOS issue.
+The inset pads only the camera; the ornaments keep their bottom-leading position, under the card. So the Mapbox logo and the attribution button are covered on the overview. The plan's divergence (keep them visible, lifted above the card) was reversed by the owner on 2026-10-02 (owner decision 9): Android leaves them at the map's default position under the card, as iOS does.
 
 Android: the fit is U4's pure camera decision helper; the ghost line is cluster E's renderer (`HonorWayState`), reinstalled on style reload.
 
@@ -13348,7 +13351,7 @@ Hidden (`WalkModeFootprints.swift:41@7c200bf`); Android already clears its seman
    - Whether U21 ships section 1 with its empty copy, or starts the sheet at "Your own walks", is the plan's staging call. iOS always shows section 1 first.
 4. **`HonorOverviewView`.**
    - Layout tree §8. Strings and formats §10: title, long-date departure line, `distance · Nh Mm · counts`, weather line, distance-to-start line, toggle `"walk with their voice"`, and `"Begin"` (VoiceOver `"Begin honoring this way"`).
-   - Framing §9. The card's measured height goes in as `bottomInset`. The fit pads 40 (top), 30 (left and right), and `40 + min(cardHeight, mapHeight − 240)` (bottom). It refits only when the bounds or inset change, eases over 0.4 s, and records the fit only once it lands. `maxZoom` is nil; rotate and pitch are off; the camera never follows the puck. The ornaments stay under the card on iOS.
+   - Framing §9. The card's measured height goes in as `bottomInset`. The fit pads 40 (top), 30 (left and right), and `40 + min(cardHeight, mapHeight − 240)` (bottom). It refits only when the bounds or inset change, eases over 0.4 s, and records the fit only once it lands. `maxZoom` is nil; rotate and pitch are off; the camera never follows the puck. The ornaments stay under the card, on both platforms (owner decision 9, reversed 2026-10-02).
    - States §11. An own walk has no loading, error, or empty screen. Missing weather or fix drops that row, and no voices gives `"a quiet way"` and a disabled toggle.
    - Begin flow §12. Begin parks the Way, closes the overview, then opens the walk screen in its pre-walk state with `mode: .honor` and the Way value. Nothing else is handed over, and nothing is confirmed.
    - The walk itself (the Honor marker event, the engine, voices) starts at the walk screen's **Start** tap (`startRecording`), not at Begin. So iOS's counterpart of the plan's "Begin mints the uuid and starts through `WalkViewModel.startWalk`" is the Start tap. The overview's Begin only navigates. Android already has this two-step shape (§12.3).
@@ -13442,6 +13445,8 @@ Candidates for upstream issues; none filed.
 > Pilgrim/Views/PilgrimMapView.swift:152@7c200bf
 
    Impact: Mapbox's terms require the ornaments to stay visible on the map view.
+
+   Withdrawn on 2026-10-02 (pilgrim-ios #111, item 4): the owner reversed decision 9, so Android matches iOS here. Both apps credit Mapbox and OpenStreetMap in their settings.
 
 6. **The moment previews are unreachable with VoiceOver, and the card reads its separators.** The Way pins are point annotations with no accessibility element, so the only way into a preview is a visual tap. The stats row's `"·"` texts are separate elements. The preview header's glyph is not hidden.
 

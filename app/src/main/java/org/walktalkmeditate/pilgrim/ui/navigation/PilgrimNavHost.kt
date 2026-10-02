@@ -42,6 +42,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.walktalkmeditate.pilgrim.domain.WalkMode
@@ -1020,7 +1021,7 @@ private fun NavController.hasBackStackEntry(route: String): Boolean = try {
  * before its Start.
  */
 private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHostController) {
-    composable(Routes.HONOR_WAYS) {
+    honorSheet(Routes.HONOR_WAYS) {
         org.walktalkmeditate.pilgrim.ui.honor.HonorWaysSheetRoute(
             onClosed = { navController.popBackStack(Routes.HONOR_WAYS, inclusive = true) },
             onOpenOwnWalks = {
@@ -1029,7 +1030,7 @@ private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHo
             onOpenOverview = navController::openStoredWayOverview,
         )
     }
-    composable(Routes.HONOR_OWN_WALKS) {
+    honorSheet(Routes.HONOR_OWN_WALKS) {
         org.walktalkmeditate.pilgrim.ui.honor.OwnWalkPickerRoute(
             onClosed = { navController.popBackStack(Routes.HONOR_OWN_WALKS, inclusive = true) },
             onOpenOverview = { sourceWalkId ->
@@ -1049,6 +1050,18 @@ private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHo
             onBegin = navController::beginHonorWalk,
         )
     }
+}
+
+/**
+ * The Ways sheet and its picker: dialog routes, so the screen beneath them
+ * (the Path tab) stays composed behind the sheet, as iOS's sheet sits over
+ * its tab view. Each draws its own sheet in its own window over the route's.
+ */
+internal fun androidx.navigation.NavGraphBuilder.honorSheet(
+    route: String,
+    content: @Composable (androidx.navigation.NavBackStackEntry) -> Unit,
+) {
+    dialog(route, content = content)
 }
 
 /** "walk this again" built a Way: the overview takes the summary's place over its host (F §6.2). */

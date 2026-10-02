@@ -241,6 +241,43 @@ class HonorWayRendererTest {
     }
 
     @Test
+    fun `the reload installs the layers while new sources leave the style reading not loaded`() {
+        // The annotation managers' GeoJSON sources, added in the same
+        // callback, make isStyleLoaded read false while they settle.
+        val style = FakeStyle(loaded = false)
+        style.addManagerLayers()
+        val renderer = HonorWayRenderer(style) { false }
+        renderer.apply(HonorWayLine.of(way()), here)
+
+        renderer.onStyleReloaded()
+
+        assertTrue(style.ghostLineExists() && style.companionExists())
+    }
+
+    @Test
+    fun `after the style's callback a pass installs while the style reads not loaded`() {
+        val style = FakeStyle(loaded = false)
+        val renderer = HonorWayRenderer(style) { false }
+        renderer.onStyleReloaded()
+
+        renderer.apply(HonorWayLine.of(way()))
+
+        assertTrue(style.ghostLineExists())
+    }
+
+    @Test
+    fun `a style load that starts holds the layers until its callback`() {
+        val style = FakeStyle(loaded = false)
+        val renderer = HonorWayRenderer(style) { false }
+        renderer.onStyleReloaded()
+
+        renderer.onStyleLoadStarted()
+        renderer.apply(HonorWayLine.of(way()), here)
+
+        assertTrue(style.lineInstalls.isEmpty() && style.companionInstalls.isEmpty())
+    }
+
+    @Test
     fun `a layer lost without a style event is reinstalled on the next pass`() {
         val style = FakeStyle()
         val renderer = HonorWayRenderer(style) { false }

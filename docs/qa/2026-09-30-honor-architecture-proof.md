@@ -15,7 +15,7 @@ adb logcat -s HonorDebug WayReplayer HonorSession UiAudioGate WalkTrackingServic
 ```
 
 - **Mock location:** on Developer options → Location → **Select mock location app**, choose Pilgrim. The OnePlus 13 refuses `appops set … mock_location` from the shell, because the shell lacks `MANAGE_APP_OPS_MODES`. Confirm with `adb shell appops get $P android:mock_location`, which should read `allow`.
-- **If the phone's location ever seems stuck** at a walk's position after a `:tracker` kill, send `adb shell am broadcast -p $P -a ${A}REPLAY_STOP`. Play services keeps a killed process's mock mode on. Since the 2026-10-01 fix, the harness also releases it at every `:tracker` start.
+- **If the phone's location ever seems stuck** at a walk's position after a `:tracker` kill, send `adb shell am broadcast -p $P -a ${A}REPLAY_STOP`. Play services keeps a killed process's mock mode on. Since the 2026-10-01 fix, the harness also releases it at the next `:tracker` start after a replay that may have left it on (from 2026-10-02, only then: releasing it empties the phone's cached fix, which the Honor overview reads).
 - **Source walk:** pick one of your own walks with **at least two voice recordings**, a route of a few hundred metres or more, and ideally a sitting. The harness can't make a synthetic one. List candidates with `adb shell am broadcast -p $P -a ${A}LIST` and note its id as `W`.
 - **Starting an Honor walk.** Begin needs the app in the foreground. Run `adb shell monkey -p $P 1`, then `adb shell am broadcast -p $P -a ${A}REPLAY_START --es walk $W` and `adb shell am broadcast -p $P -a ${A}BEGIN --es walk $W`.
 - **Before a replay ends,** finish the walk: when the replay stops, real GPS takes over and puts you back at the desk.
