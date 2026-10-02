@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio
 
+import java.io.File
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,9 +27,18 @@ class FakeVoicePlaybackController : VoicePlaybackController {
     val setSpeedCalls: MutableList<Float> = Collections.synchronizedList(mutableListOf())
     val seekCalls: MutableList<Float> = Collections.synchronizedList(mutableListOf())
 
+    /** The file each [playFile] asked for, in order. */
+    val playedFiles: MutableList<File> = Collections.synchronizedList(mutableListOf())
+
     override fun play(recording: VoiceRecording) {
         playCalls.add(recording.id)
         _state.value = PlaybackState.Playing(recording.id)
+    }
+
+    override fun playFile(playbackId: Long, file: File) {
+        playCalls.add(playbackId)
+        playedFiles.add(file)
+        _state.value = PlaybackState.Playing(playbackId)
     }
 
     override fun pause() {

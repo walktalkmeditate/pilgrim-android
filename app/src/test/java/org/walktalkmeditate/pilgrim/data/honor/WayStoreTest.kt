@@ -31,9 +31,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 
 /**
- * Port of iOS `WayStoreTests.swift@7c200bf`, less its two sweep tests
- * (`sweepExpired`, `retireMany`), which arrive with shared walks (U28),
- * plus Android's link files and staging. Robolectric only for the
+ * Port of iOS `WayStoreTests.swift@7c200bf`, less its sweep tests
+ * (`sweepExpired` is [WayStoreSweepTest]'s; `retireMany` is Stage 21-2's),
+ * plus Android's link files, staging, and media gathering. Robolectric only for the
  * module's `noBackupFilesDir` root; every other test runs on a temp folder.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -401,10 +401,123 @@ class WayStoreTest {
         assertEquals(own, store.load(OWN_ID))
         assertFalse(store.hasMedia(OWN_ID))
         assertEquals(
-            File(dir, OWN_ID).listFiles()!!.filter { it.isFile }.sumOf { it.length() },
+            File(dir, OWN_ID).listFiles()!!.filter { it.isFile }.sumOf(::allocatedBytesOf),
             store.diskUsage(OWN_ID),
         )
         assertEquals(setOf("way.json", "accepted.json"), File(dir, OWN_ID).list()!!.toSet())
+    }
+
+    // Owner decision 4: iOS's `totalFileAllocatedSize`, so a small file costs its block.
+    @Test
+    fun `a Way's size is the allocated bytes of its files, a download still gathering left out`() {
+        val blocks = WayStore({ dir }, Clock { clockMillis }, syncDirectory = { true }, allocatedBytes = { 4_096L })
+        blocks.save(way("share:aaaaaaaaaa"))
+        File(dir, "share:aaaaaaaaaa/media/audio/1.m4a").apply { parentFile!!.mkdirs() }.writeBytes(ByteArray(10))
+        blocks.mediaPartialFile("share:aaaaaaaaaa", "audio/2.m4a")!!.writeBytes(ByteArray(10))
+
+        assertEquals("way.json, accepted.json, and one voice", 3 * 4_096L, blocks.diskUsage("share:aaaaaaaaaa"))
+    }
+
+    @Test
+    fun `allocated size counts whole blocks, and a file with none its length`() {
+        val file = folder.newFile("one-byte").apply { writeBytes(byteArrayOf(1)) }
+
+        val allocated = allocatedBytesOf(file)
+
+        assertTrue(allocated == 1L || (allocated >= 512 && allocated % 512 == 0L))
+    }
+
+    @Test
+    fun `a gathering file sits in the Way's folder outside media, named for its path`() {
+        store.save(way("share:aaaaaaaaaa"))
+
+        val partial = store.mediaPartialFile("share:aaaaaaaaaa", "photos/12.jpg")!!
+
+        assertEquals(File(dir, "share:aaaaaaaaaa"), partial.parentFile)
+        assertTrue(partial.name.startsWith(".") && partial.name.endsWith(".tmp"))
+        assertNull(store.mediaPartialFile("share:aaaaaaaaaa", "../../x.jpg"))
+        partial.writeBytes(byteArrayOf(1))
+        assertFalse("never media", store.hasMedia("share:aaaaaaaaaa"))
+    }
+
+    // iOS's deliver guard (`WayMediaDownloader.swift:270-296@7c200bf`).
+    @Test
+    fun `landing a file makes media's folders one at a time, and never a gone Way's folder`() {
+        store.save(way("share:aaaaaaaaaa"))
+        val partial = store.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!.apply { writeText("voice") }
+
+        assertTrue(store.landMedia("share:aaaaaaaaaa", "audio/1.m4a", partial))
+        assertEquals("voice", File(dir, "share:aaaaaaaaaa/media/audio/1.m4a").readText())
+        assertFalse(partial.exists())
+
+        val late = File(folder.root, "late.tmp").apply { writeText("late") }
+        store.delete("share:aaaaaaaaaa")
+        assertFalse(store.landMedia("share:aaaaaaaaaa", "audio/2.m4a", late))
+        assertFalse(File(dir, "share:aaaaaaaaaa").exists())
+        assertFalse(late.exists())
+    }
+
+    // A Settings delete and the media worker run on different threads of the UI process.
+    @Test
+    fun `a delete racing a landing waits for it, then takes the landed file too, leaving no orphan folder`() {
+        lateinit var racing: WayStore
+        lateinit var deleting: Thread
+        var landing = false
+        var deleteWaited = false
+        racing = WayStore(
+            { dir },
+            Clock { clockMillis },
+            // The landing's fsync runs after its rename, inside it: the delete starts right then.
+            syncDirectory = {
+                if (landing) {
+                    landing = false
+                    deleting = Thread { racing.delete("share:aaaaaaaaaa") }.apply { start() }
+                    deleting.join(RACE_WAIT_MILLIS)
+                    deleteWaited = deleting.isAlive
+                }
+                true
+            },
+        )
+        racing.save(way("share:aaaaaaaaaa"))
+        val partial = racing.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!.apply { writeText("voice") }
+        landing = true
+
+        assertTrue(racing.landMedia("share:aaaaaaaaaa", "audio/1.m4a", partial))
+        deleting.join(JOIN_BUDGET_MILLIS)
+
+        assertTrue("the delete waits for the landing", deleteWaited)
+        assertFalse(File(dir, "share:aaaaaaaaaa").exists())
+    }
+
+    @Test
+    fun `a partial is opened only for a Way that still loads, and the temp sweep leaves it while held`() {
+        store.save(way("share:aaaaaaaaaa"))
+        val partial = store.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!
+
+        assertNotNull(store.holdMediaPartial("share:aaaaaaaaaa", partial) { it.writeText("voi") })
+        partial.setLastModified(0L)
+        assertEquals("held", 0, store.sweepTempFiles(olderThanMillis = Long.MAX_VALUE))
+        store.releaseMediaPartial(partial)
+        assertEquals("released", 1, store.sweepTempFiles(olderThanMillis = Long.MAX_VALUE))
+
+        store.delete("share:aaaaaaaaaa")
+        assertNull(store.holdMediaPartial("share:aaaaaaaaaa", partial) { error("never opened") })
+        assertFalse(File(dir, "share:aaaaaaaaaa").exists())
+    }
+
+    @Test
+    fun `a partial left empty goes with its hold, and one with bytes stays to be resumed`() {
+        store.save(way("share:aaaaaaaaaa"))
+        val empty = store.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!
+        val started = store.mediaPartialFile("share:aaaaaaaaaa", "audio/2.m4a")!!
+
+        store.holdMediaPartial("share:aaaaaaaaaa", empty) { it.createNewFile() }
+        store.holdMediaPartial("share:aaaaaaaaaa", started) { it.writeText("voi") }
+        store.releaseMediaPartial(empty)
+        store.releaseMediaPartial(started)
+
+        assertFalse(empty.exists())
+        assertEquals("voi", started.readText())
     }
 
     @Test
@@ -547,5 +660,9 @@ class WayStoreTest {
         const val SOURCE_WALK = "0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50"
         const val OWN_ID = "walk:$SOURCE_WALK"
         const val WALK = "7b1a2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+        /** How long a delete that should be waiting is given to finish anyway: it never may. */
+        const val RACE_WAIT_MILLIS = 300L
+        const val JOIN_BUDGET_MILLIS = 30_000L
     }
 }

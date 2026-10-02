@@ -3,7 +3,10 @@ package org.walktalkmeditate.pilgrim.walk.honor
 
 import android.app.Application
 import java.io.File
+import java.io.IOException
+import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -28,8 +31,11 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
+import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.honor.WaySweeper
 import org.walktalkmeditate.pilgrim.walk.honor.HonorHarness.Companion.WAY_ID
 
 /** The Honor step after the walk's finish is recorded, its retry at launch, and the staging sweep. */
@@ -289,5 +295,126 @@ class HonorFinalizerTest {
 
         assertFalse(stale.exists())
         assertTrue(inFlight.exists())
+    }
+
+    @Test
+    fun `the sweep clears a killed write's temp inside staging a walk still needs, and a stale media download`() =
+        runBlocking {
+            val live = UUID.randomUUID().toString().also {
+                h.db.walkDao().insert(Walk(uuid = it, startTimestamp = 1_000L))
+                h.store.stage(it, way)
+            }
+            val stagingTemp = File(stagingDir(live), ".way.json.${UUID.randomUUID()}.tmp").apply { writeText("{") }
+            age(stagingTemp)
+            h.store.save(expiredShare())
+            val stalePartial = h.store.mediaPartialFile(SHARE_ID, "audio/1.m4a")!!.apply { writeBytes(byteArrayOf(1)) }
+            age(stalePartial)
+            val gathering = h.store.mediaPartialFile(SHARE_ID, "audio/2.m4a")!!.apply { writeBytes(byteArrayOf(2)) }
+
+            h.finalizer.sweepStaging()
+
+            assertFalse(stagingTemp.exists())
+            assertNotNull("the walk's staged Way stays", h.store.staged(live))
+            assertFalse(stalePartial.exists())
+            assertTrue("a download in flight is spared", gathering.exists())
+        }
+
+    // The expiry sweep at launch (shared-walk spec S3 §14, correction 10)
+
+    private fun expiredShare() = HonorHarness.way().copy(
+        id = SHARE_ID,
+        source = WaySource.Share(id = SHARE_ID.removePrefix("share:"), pageUrl = "https://walk.pilgrimapp.org/x"),
+        expires = Instant.ofEpochMilli(h.clock.millis - 1),
+    )
+
+    private fun shareMedia() = File(folder.root, "Ways/$SHARE_ID/media/audio/1.m4a")
+
+    private fun sweeper(swept: MutableList<String>, liveRowsWhenSwept: MutableList<Int>) = WaySweeper(
+        store = h.store,
+        heldWayIds = {
+            liveRowsWhenSwept += dao.liveSessionWayIds().size
+            dao.liveSessionWayIds().toSet()
+        },
+        cancelGather = { swept += it },
+        clock = h.clock,
+        ioDispatcher = Dispatchers.IO,
+    )
+
+    @Test
+    fun `the launch runs the expiry sweep after recovery's links, so a crash-recovered honoring keeps its Way`() =
+        runBlocking {
+            h.store.save(expiredShare())
+            shareMedia().apply { parentFile!!.mkdirs() }.writeBytes(byteArrayOf(1))
+            val uuid = UUID.randomUUID().toString()
+            val walkId = h.db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 9_000L))
+            dao.insertSession(
+                HonorSessionEntity(
+                    walkId = walkId,
+                    wayId = SHARE_ID,
+                    sourceKind = HonorSourceKind.SHARE,
+                    voicesEnabled = true,
+                    softTapEnabled = false,
+                    finishKind = HonorFinishKind.RECOVERED,
+                ),
+            )
+            val swept = mutableListOf<String>()
+            val liveRowsWhenSwept = mutableListOf<Int>()
+            val sweeper = sweeper(swept, liveRowsWhenSwept)
+            val finalizer = HonorFinalizer(h.db, h.store, h.clock, Dispatchers.IO, expirySweep = { sweeper.sweep() })
+
+            finalizer.runAtLaunch()
+
+            assertEquals("the sweep ran once the step had cleared the live rows", listOf(0), liveRowsWhenSwept)
+            assertEquals(WayLink(SHARE_ID), h.store.wayLink(uuid))
+            assertNotNull("walked, so its way.json stays", h.store.load(SHARE_ID))
+            assertFalse("and only its media goes", shareMedia().exists())
+            assertEquals("its gather is cancelled", listOf(SHARE_ID), swept)
+        }
+
+    // S3 §13 trigger 1: iOS sweeps on every launch, whatever else its launch did.
+    @Test
+    fun `the launch's expiry sweep runs even when the steps before it fail`() = runBlocking {
+        var swept = 0
+        // The staging sweep's first touch of the store throws.
+        val unreadable = WayStore({ throw IOException("the store's folder is unreadable") })
+        val finalizer = HonorFinalizer(h.db, unreadable, h.clock, Dispatchers.IO, expirySweep = { swept++ })
+
+        finalizer.runAtLaunch()
+
+        assertEquals(1, swept)
+    }
+
+    @Test
+    fun `a failing expiry sweep is deferred to the next launch, not thrown`() = runBlocking {
+        val finalizer = HonorFinalizer(h.db, h.store, h.clock, Dispatchers.IO, expirySweep = { error("the store is unreadable") })
+
+        finalizer.runAtLaunch()
+    }
+
+    @Test
+    fun `a sweep while the UI restarts mid-walk leaves the live walk's Way whole, media and all`() = runBlocking {
+        h.store.save(expiredShare())
+        shareMedia().apply { parentFile!!.mkdirs() }.writeBytes(byteArrayOf(1))
+        val walkId = h.db.walkDao().insert(Walk(uuid = UUID.randomUUID().toString(), startTimestamp = 1_000L))
+        dao.insertSession(
+            HonorSessionEntity(
+                walkId = walkId,
+                wayId = SHARE_ID,
+                sourceKind = HonorSourceKind.SHARE,
+                voicesEnabled = true,
+                softTapEnabled = false,
+            ),
+        )
+        val swept = mutableListOf<String>()
+
+        assertTrue(sweeper(swept, mutableListOf()).sweep().isEmpty())
+
+        assertTrue(shareMedia().exists())
+        assertNotNull(h.store.load(SHARE_ID))
+        assertTrue(swept.isEmpty())
+    }
+
+    private companion object {
+        const val SHARE_ID = "share:Qoi4YmPHLN"
     }
 }

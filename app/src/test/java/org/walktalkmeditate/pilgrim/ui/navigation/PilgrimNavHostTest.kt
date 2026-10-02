@@ -20,6 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
 
@@ -60,22 +61,92 @@ class PilgrimNavHostTest {
 
     @Test
     fun `Begin opens the walk screen in Honor mode with the walk it follows`() {
-        assertEquals("active_walk?mode=Honor&honorSource=42", Routes.activeWalk(WalkMode.Honor, 42L))
+        assertEquals(
+            "active_walk?mode=Honor&honorSource=42",
+            Routes.activeWalk(WalkMode.Honor, HonorWayChoice.OwnWalk(42L)),
+        )
+        assertEquals(
+            "active_walk?mode=Honor&honorWay=share%3AQoi4YmPHLN",
+            Routes.activeWalk(WalkMode.Honor, HonorWayChoice.Stored(SHARED_WAY)),
+        )
         assertEquals("active_walk?mode=Seek", Routes.activeWalk(WalkMode.Seek))
     }
 
     @Test
-    fun `an Honor walk screen with no walk to follow is a plain walk screen`() {
-        assertEquals(WalkMode.Honor, activeWalkMode(WalkMode.Honor, honorSourceWalkId = 42L))
-        assertEquals(WalkMode.Wander, activeWalkMode(WalkMode.Honor, honorSourceWalkId = null))
-        assertEquals(WalkMode.Seek, activeWalkMode(WalkMode.Seek, honorSourceWalkId = null))
+    fun `an Honor walk screen with no Way to follow is a plain walk screen`() {
+        assertEquals(WalkMode.Honor, activeWalkMode(WalkMode.Honor, HonorWayChoice.OwnWalk(42L)))
+        assertEquals(WalkMode.Honor, activeWalkMode(WalkMode.Honor, HonorWayChoice.Stored(SHARED_WAY)))
+        assertEquals(WalkMode.Wander, activeWalkMode(WalkMode.Honor, honorWay = null))
+        assertEquals(WalkMode.Seek, activeWalkMode(WalkMode.Seek, honorWay = null))
     }
 
     @Test
     fun `only a summary whose host can open the overview asks for the door`() {
         assertEquals("walk_summary/7?walkAgain=true", Routes.walkSummary(7L, walkAgainDoor = true))
         assertEquals("walk_summary/7", Routes.walkSummary(7L))
-        assertEquals("honor_overview/7", Routes.honorOverview(7L))
+        assertEquals("honor_overview?sourceWalkId=7", Routes.honorOverview(HonorWayChoice.OwnWalk(7L)))
+        assertEquals("honor_overview?wayId=share%3AQoi4YmPHLN", Routes.honorOverview(HonorWayChoice.Stored(SHARED_WAY)))
+    }
+
+    // S1 §6.3, S2 §4.3: where a Way an import just listed lands.
+
+    @Test
+    fun `a fetched Way opens over the screen showing, waits behind the sheet, a summary, or setup, and a walk drops it`() {
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.PATH, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.HOME, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.HONOR_OVERVIEW_PATTERN, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.HONOR_OWN_WALKS, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(Routes.HONOR_WAYS, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(Routes.WALK_SUMMARY_PATTERN, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(Routes.PERMISSIONS, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(currentRoute = null, walkScreenUp = false))
+        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(Routes.ACTIVE_WALK, walkScreenUp = true))
+        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(Routes.MEDITATION, walkScreenUp = true))
+    }
+
+    @Test
+    fun `a shared row or a finished paste takes the Ways sheet's place, the picker's too`() {
+        val nav = honorBackStack(start = Routes.PATH)
+
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_OWN_WALKS) }
+        onMain { nav.openStoredWayOverview(SHARED_WAY) }
+
+        onMain {
+            val overview = nav.currentBackStackEntry!!
+            assertEquals(Routes.HONOR_OVERVIEW_PATTERN, overview.destination.route)
+            assertEquals(SHARED_WAY, overview.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID))
+            assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route)
+        }
+    }
+
+    @Test
+    fun `a fetched Way replaces an overview already up, as iOS swaps the overview's Way`() {
+        val nav = honorBackStack()
+
+        onMain { nav.openHonorOverviewFromSummary(7L) }
+        onMain { nav.openStoredWayOverview(SHARED_WAY) }
+
+        onMain {
+            assertEquals(SHARED_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID))
+            assertEquals(Routes.HOME, nav.previousBackStackEntry?.destination?.route)
+        }
+    }
+
+    @Test
+    fun `a shared Way's Begin opens the walk screen with the listed Way, in the overview's place`() {
+        val nav = honorBackStack()
+
+        onMain { nav.openStoredWayOverview(SHARED_WAY) }
+        onMain { nav.beginHonorWalk(HonorWayChoice.Stored(SHARED_WAY)) }
+
+        onMain {
+            val walk = nav.currentBackStackEntry!!
+            assertEquals(Routes.ACTIVE_WALK, walk.destination.route)
+            assertEquals(WalkMode.Honor.name, walk.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE))
+            assertEquals(HonorWayChoice.Stored(SHARED_WAY), honorWayOf(walk.arguments))
+            assertEquals(Routes.HOME, nav.previousBackStackEntry?.destination?.route)
+        }
     }
 
     // F §6.2, §7.1, correction 1: each Honor step takes the place of the one
@@ -101,13 +172,14 @@ class PilgrimNavHostTest {
 
         onMain { nav.navigate(Routes.walkSummary(7L, walkAgainDoor = true)) }
         onMain { nav.openHonorOverviewFromSummary(7L) }
-        onMain { nav.beginHonorWalk(7L) }
+        onMain { nav.beginHonorWalk(HonorWayChoice.OwnWalk(7L)) }
 
         onMain {
             val walk = nav.currentBackStackEntry!!
             assertEquals(Routes.ACTIVE_WALK, walk.destination.route)
             assertEquals(WalkMode.Honor.name, walk.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE))
             assertEquals(7L, walk.arguments?.getLong(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE))
+            assertEquals(HonorWayChoice.OwnWalk(7L), honorWayOf(walk.arguments))
             assertEquals(Routes.HOME, nav.previousBackStackEntry?.destination?.route)
         }
     }
@@ -141,15 +213,19 @@ class PilgrimNavHostTest {
 
     /**
      * The production routes and their arguments, an empty screen at each,
-     * started on the Journal tab: the host a summary opens over.
+     * started on the Journal tab (the host a summary opens over) unless
+     * [start] says otherwise.
      */
-    private fun honorBackStack(): NavHostController {
+    private fun honorBackStack(start: String = Routes.HOME): NavHostController {
         var nav: NavHostController? = null
         composeRule.setContent {
             val controller = rememberNavController()
             SideEffect { nav = controller }
-            NavHost(navController = controller, startDestination = Routes.HOME) {
+            NavHost(navController = controller, startDestination = start) {
                 composable(Routes.HOME) {}
+                composable(Routes.PATH) {}
+                composable(Routes.HONOR_WAYS) {}
+                composable(Routes.HONOR_OWN_WALKS) {}
                 composable(
                     route = Routes.WALK_SUMMARY_PATTERN,
                     arguments = listOf(
@@ -160,28 +236,15 @@ class PilgrimNavHostTest {
                         },
                     ),
                 ) {}
-                composable(
-                    route = Routes.HONOR_OVERVIEW_PATTERN,
-                    arguments = listOf(
-                        navArgument(HonorOverviewViewModel.ARG_SOURCE_WALK_ID) { type = NavType.LongType },
-                    ),
-                ) {}
-                composable(
-                    route = Routes.ACTIVE_WALK,
-                    arguments = listOf(
-                        navArgument(Routes.ACTIVE_WALK_ARG_MODE) {
-                            type = NavType.StringType
-                            defaultValue = WalkMode.Wander.name
-                        },
-                        navArgument(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE) {
-                            type = NavType.LongType
-                            defaultValue = NO_HONOR_SOURCE
-                        },
-                    ),
-                ) {}
+                composable(route = Routes.HONOR_OVERVIEW_PATTERN, arguments = honorOverviewArguments) {}
+                composable(route = Routes.ACTIVE_WALK, arguments = activeWalkArguments) {}
             }
         }
         composeRule.waitForIdle()
         return requireNotNull(nav)
+    }
+
+    private companion object {
+        const val SHARED_WAY = "share:Qoi4YmPHLN"
     }
 }

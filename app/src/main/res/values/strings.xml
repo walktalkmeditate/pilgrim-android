@@ -1254,14 +1254,11 @@
     <string name="honor_start_refused_gone">This walk isn\'t here to follow anymore. Try another.</string>
     <string name="honor_walk_this_again">walk this again</string>
     <string name="honor_overview_quiet_way">a quiet way</string>
-    <plurals name="honor_overview_voices">
-        <item quantity="one">%1$s voice</item>
-        <item quantity="other">%1$s voices</item>
-    </plurals>
-    <plurals name="honor_overview_photos">
-        <item quantity="one">%1$s photo</item>
-        <item quantity="other">%1$s photos</item>
-    </plurals>
+    <!-- iOS picks the word by `count == 1`, whatever the phone's plural rules. -->
+    <string name="honor_overview_voice_one">%1$s voice</string>
+    <string name="honor_overview_voices" tools:ignore="PluralsCandidate">%1$s voices</string>
+    <string name="honor_overview_photo_one">%1$s photo</string>
+    <string name="honor_overview_photos" tools:ignore="PluralsCandidate">%1$s photos</string>
     <!-- The temperature is always rounded Celsius with a bare degree sign, whatever
          the walker's units: iOS ships it so (pilgrim-ios #109, matched). -->
     <string name="honor_overview_weather">they walked this in %1$s.</string>
@@ -1273,6 +1270,43 @@
     <string name="honor_overview_voices_toggle">walk with their voice</string>
     <string name="honor_overview_begin">Begin</string>
     <string name="honor_overview_begin_a11y">Begin honoring this way</string>
+
+    <!-- Phase 21 U28: shared walks in (shared-walk spec S1 §6.1, S2 §8, S4 §6–§7).
+         iOS ships every one as an English Swift literal with no Localizable.strings
+         entry. The import lines are HonorImportCopy's, verbatim: the single-character
+         ellipsis, the middle dot, the one capital, and the one full stop. -->
+    <string name="honor_import_fetching">reaching for the walk…</string>
+    <string name="honor_import_gathering">gathering their voices · %1$s%%</string>
+    <string name="honor_import_media_missing">some voices didn\'t arrive</string>
+    <string name="honor_import_not_found">couldn\'t find that walk. Check the link, or it may have returned to the trail.</string>
+    <string name="honor_import_returned_to_trail">This walk has returned to the trail</string>
+    <string name="honor_import_unavailable">couldn\'t reach the walk</string>
+    <string name="honor_import_disk_full">not enough space on this phone to save these voices</string>
+    <string name="honor_ways_voices_returned">voices returned to the trail</string>
+    <string name="honor_ways_paste_header">From a shared walk</string>
+    <string name="honor_ways_paste_placeholder">paste a walk link</string>
+    <string name="honor_ways_paste_open">Open</string>
+    <string name="honor_ways_paste_footer">A walk someone shared with you, from walk.pilgrimapp.org.</string>
+    <!-- Phase 21 U28: the overview's missing-voices choice (shared-walk spec S4 §8.3). -->
+    <string name="honor_overview_try_again">try again</string>
+    <string name="honor_overview_walk_without">walk without the missing voices</string>
+    <!-- Phase 21 U28: Settings → Ways and its Data card row (shared-walk spec S4 §2–§5).
+         English Swift literals on iOS, the count's word picked by `count == 1`.
+         Megabytes are decimal with one decimal under Locale.US; dates are medium
+         style in the phone's zone. -->
+    <string name="settings_data_ways">Ways</string>
+    <string name="settings_ways_count_one">%1$s way</string>
+    <string name="settings_ways_count" tools:ignore="PluralsCandidate">%1$s ways</string>
+    <string name="settings_ways_megabytes">%1$s MB</string>
+    <string name="settings_ways_detail">%1$s · %2$s</string>
+    <string name="settings_ways_title">Ways</string>
+    <string name="settings_ways_empty">no ways yet</string>
+    <string name="settings_ways_delete">Delete</string>
+    <string name="settings_ways_delete_all">Delete all Ways</string>
+    <string name="settings_ways_delete_all_title">Delete all Ways?</string>
+    <string name="settings_ways_delete_all_message">Their voices and photos leave this phone. Your own walks are untouched.</string>
+    <string name="settings_ways_delete_all_confirm">Delete</string>
+    <string name="settings_ways_delete_all_cancel">Cancel</string>
     <string name="honor_moment_spoken_kicker">spoken here</string>
     <string name="honor_moment_ambient_kicker">the sound of this place</string>
     <string name="honor_moment_photo_kicker">what they saw here</string>

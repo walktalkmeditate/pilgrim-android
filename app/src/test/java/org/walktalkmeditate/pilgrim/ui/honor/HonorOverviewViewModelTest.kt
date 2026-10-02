@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.honor
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
@@ -11,11 +12,18 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 import androidx.room.Room
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -41,6 +49,12 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.FakeHonorPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.honor.FakeWayMediaDownloadScheduler
+import org.walktalkmeditate.pilgrim.data.honor.WayMediaReport
+import org.walktalkmeditate.pilgrim.data.honor.WayMediaWork
+import org.walktalkmeditate.pilgrim.data.honor.WayError
+import org.walktalkmeditate.pilgrim.data.honor.WayImportException
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
@@ -53,7 +67,11 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
+import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
+import org.walktalkmeditate.pilgrim.honor.HonorImportState
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
+import org.walktalkmeditate.pilgrim.honor.WayMediaDownloader
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformCache
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitDecision
@@ -75,6 +93,19 @@ class HonorOverviewViewModelTest {
     private val recordingPath = "recordings/$sourceUuid/r1.wav"
     private lateinit var db: PilgrimDatabase
     private lateinit var repository: WalkRepository
+    private val storeDirectory = File(context.filesDir, "overview-ways")
+    private val store = WayStore({ storeDirectory }, syncDirectory = { true })
+    private val importScope = CoroutineScope(SupervisorJob() + dispatcher)
+    private var heldImport: Continuation<Way>? = null
+    private val scheduler = FakeWayMediaDownloadScheduler()
+    private val downloader by lazy { WayMediaDownloader(store, scheduler, importScope, dispatcher) }
+    private val imports = HonorImportCoordinator(
+        importShare = { suspendCoroutine { heldImport = it } },
+        honorEnabled = true,
+        scope = importScope,
+        media = { downloader },
+    )
+    private val sharedWaveform = FloatArray(4) { 0.5f }
     private val viewModels = mutableListOf<HonorOverviewViewModel>()
     private var sourceId = 0L
     private var recordingId = 0L
@@ -141,8 +172,10 @@ class HonorOverviewViewModelTest {
         runBlocking {
             withTimeout(10_000L) { viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
         }
+        importScope.cancel()
         db.close()
         File(context.filesDir, "recordings").deleteRecursively()
+        storeDirectory.deleteRecursively()
         Dispatchers.resetMain()
     }
 
@@ -152,9 +185,12 @@ class HonorOverviewViewModelTest {
         weather: FakeWeatherFetching = FakeWeatherFetching(),
         preferences: FakeHonorPreferencesRepository = FakeHonorPreferencesRepository(),
         playback: FakeVoicePlaybackController = FakeVoicePlaybackController(),
+        savedStateHandle: SavedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_SOURCE_WALK_ID to walkId)),
     ) = HonorOverviewViewModel(
-        savedStateHandle = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_SOURCE_WALK_ID to walkId)),
+        savedStateHandle = savedStateHandle,
         ownWalkWays = OwnWalkWays(repository, VoiceRecordingFileSystem(context), dispatcher, { utc }, { Locale.US }),
+        wayStore = store,
+        imports = imports,
         honorPreferences = preferences,
         unitsPreferences = FakeUnitsPreferencesRepository(),
         locationSource = location,
@@ -163,6 +199,7 @@ class HonorOverviewViewModelTest {
         recordingFiles = VoiceRecordingFileSystem(context),
         waveformCache = WaveformCache(),
         ioDispatcher = dispatcher,
+        loadSharedWaveform = { sharedWaveform },
     ).also { viewModels += it }
 
     private fun TestScope.settled(vm: HonorOverviewViewModel): HonorOverviewUiState {
@@ -327,6 +364,210 @@ class HonorOverviewViewModelTest {
         assertEquals(listOf(0.4f), playback.seekCalls)
     }
 
+    // Shared-walk spec S4 §8–§9: the overview of a listed Way.
+
+    @Test
+    fun `a listed Way's overview is read back from its id alone, as after a process death`() = runTest(dispatcher) {
+        store.save(sharedWay())
+
+        val vm = overview(savedStateHandle = stored())
+        val overview = ready(vm)
+
+        assertEquals(HonorWayChoice.Stored(SHARED_ID), overview.choice)
+        assertEquals("Rúa do Franco → Obradoiro", overview.way.title)
+        assertEquals(overview.way.moments.map { it.id }, overview.pins.map { it.momentId })
+        assertTrue("a shared voice still gathering has nothing to play yet", overview.playableVoices.isEmpty())
+    }
+
+    @Test
+    fun `a listed Way gone from the store closes the overview, and gathers nothing`() = runTest(dispatcher) {
+        val vm = overview(savedStateHandle = stored())
+
+        assertEquals(HonorOverviewUiState.Unavailable, settled(vm))
+        assertEquals(HonorImportState.Idle, vm.importState.value)
+    }
+
+    @Test
+    fun `a shared photo shows from its media file once that file is here, and is missing until then`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        assertTrue(ready(overview(savedStateHandle = stored())).photoUris.isEmpty())
+
+        val file = store.mediaFile(SHARED_ID, "photos/1.jpg")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+
+        assertEquals(mapOf("photo-1" to Uri.fromFile(file).toString()), ready(overview(savedStateHandle = stored())).photoUris)
+    }
+
+    // S4 §8.1: the first frame never shows an enabled Begin before the first gathering state.
+    @Test
+    fun `a shared overview is already gathering when its card first shows`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        var importStateWhenShown: HonorImportState? = null
+        val watcher = backgroundScope.launch {
+            vm.state.collect { if (it is HonorOverviewUiState.Ready && importStateWhenShown == null) importStateWhenShown = vm.importState.value }
+        }
+
+        ready(vm)
+
+        assertEquals(HonorImportState.Gathering(0.0), importStateWhenShown)
+        assertEquals(listOf(SHARED_ID), scheduler.gathers.map { it.wayId })
+        watcher.cancel()
+    }
+
+    // S4 §8.3: disk full, then gathering, then missing, then ready.
+    @Test
+    fun `the overview's line follows the gather to missing voices, and its two buttons do what iOS's do`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = emptyList(), diskFull = false))
+        assertEquals(HonorImportState.Gathering(0.5), vm.importState.value)
+        scheduler.report(SHARED_ID, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, unfinished = 0, failures = listOf("photos/1.jpg"), diskFull = false))
+        assertEquals(HonorImportState.MediaMissing(listOf("photos/1.jpg")), vm.importState.value)
+
+        vm.retryMedia()
+        assertEquals("try again gathers once more", HonorImportState.Gathering(0.0), vm.importState.value)
+        assertEquals(listOf(false, true), scheduler.gathers.map { it.replace })
+        scheduler.report(SHARED_ID, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, unfinished = 0, failures = listOf("photos/1.jpg"), diskFull = false))
+
+        vm.walkWithoutMissingVoices()
+        assertEquals(HonorImportState.Ready, vm.importState.value)
+    }
+
+    @Test
+    fun `disk full outranks the gather still going`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = listOf("audio/1.m4a"), diskFull = true))
+
+        assertEquals(HonorImportState.Failed(WayError.DISK_FULL), vm.importState.value)
+    }
+
+    @Test
+    fun `a closed overview stops watching, and its transfers go on`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+
+        androidx.lifecycle.ViewModelStore().apply { put("shared", vm) }.clear()
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = emptyList(), diskFull = false))
+
+        assertEquals(HonorImportState.Idle, imports.state.value)
+        assertTrue(scheduler.cancels.isEmpty())
+    }
+
+    // The preview plays a shared Way's `media/audio/<n>.m4a` through the same player, by file.
+    @Test
+    fun `a shared voice that has landed plays by file, scrubs, and shows its bars`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val file = store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        val playback = FakeVoicePlaybackController()
+        val vm = overview(savedStateHandle = stored(), playback = playback)
+        val voice = ready(vm).playableVoices.getValue("voice-1")
+
+        vm.openPreview("voice-1")
+        advanceUntilIdle()
+        vm.togglePreviewVoice("voice-1")
+        vm.seekPreviewVoice("voice-1", 0.25f)
+        advanceUntilIdle()
+
+        assertTrue("an id no recording row has", voice.playbackId < 0)
+        assertEquals(40.0, voice.totalSeconds, 0.0)
+        assertEquals(listOf(file), playback.playedFiles)
+        assertEquals(listOf(0.25f), playback.seekCalls)
+        assertEquals(sharedWaveform.toList(), vm.waveforms.value.getValue(voice.playbackId).toList())
+    }
+
+    // S4 §9.3: a preview opened before its voice arrived turns into the player once it has.
+    @Test
+    fun `a shared voice that lands while the overview is up becomes playable`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        assertTrue(ready(vm).playableVoices.isEmpty())
+
+        store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = emptyList(), diskFull = false))
+
+        assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
+    }
+
+    // S3 §8: disk full stops only its own file, so a later voice can still land, and the line no longer moves.
+    @Test
+    fun `a voice that lands after disk full still becomes playable`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = listOf("photos/1.jpg"), diskFull = true))
+        assertEquals(HonorImportState.Failed(WayError.DISK_FULL), vm.importState.value)
+
+        store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 0, failures = listOf("photos/1.jpg"), diskFull = true))
+
+        assertEquals("the line holds still", HonorImportState.Failed(WayError.DISK_FULL), vm.importState.value)
+        assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
+    }
+
+    @Test
+    fun `a voice that lands after walking on without the missing ones still becomes playable`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+        vm.walkWithoutMissingVoices()
+
+        store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        scheduler.report(SHARED_ID, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, unfinished = 0, failures = emptyList(), diskFull = false))
+
+        assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
+    }
+
+    // iOS `gather` and `handleOverviewDismiss` (S1 §6.3).
+    @Test
+    fun `the overview gathers its Way as it shows, and only its own real close hands the state back`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val own = overview()
+        ready(own)
+        assertEquals(HonorImportState.Ready, imports.state.value)
+        val shared = overview(savedStateHandle = stored())
+        ready(shared)
+
+        androidx.lifecycle.ViewModelStore().apply { put("own", own) }.clear()
+        assertEquals("the overview that replaced it holds the state", HonorImportState.Gathering(0.0), imports.state.value)
+        androidx.lifecycle.ViewModelStore().apply { put("shared", shared) }.clear()
+
+        assertEquals(HonorImportState.Idle, imports.state.value)
+    }
+
+    // S1 §8.16: a second link while an overview is up.
+    @Test
+    fun `a link fetched while the overview is up shows its line there`() = runTest(dispatcher) {
+        val vm = overview()
+        ready(vm)
+
+        imports.openWay("Second1234")
+        assertEquals(HonorImportState.Fetching, vm.importState.value)
+        heldImport!!.resumeWithException(WayImportException(WayError.UNAVAILABLE))
+
+        assertEquals(HonorImportState.Failed(WayError.UNAVAILABLE), vm.importState.value)
+    }
+
     // F §9: the card's measured height is the bottom inset, padded 40 top,
     // 30 sides, and 40 + min(card, map − 240) bottom.
     @Test
@@ -353,6 +594,21 @@ class HonorOverviewViewModelTest {
         assertEquals("1 voice", HonorOverviewModel.countsLine(resources, way(voices = 1, photos = 0)))
         assertEquals("1 photo", HonorOverviewModel.countsLine(resources, way(voices = 0, photos = 1)))
         assertEquals("a quiet way", HonorOverviewModel.countsLine(resources, way(voices = 0, photos = 0)))
+    }
+
+    // iOS picks each word by `count == 1` (`HonorOverviewView.swift:9-10@7c200bf`), whatever the phone's plural rules.
+    @Test
+    @Config(qualifiers = "fr")
+    fun `counts keep iOS's rule under French plural rules`() {
+        assertEquals("1 voice · 1 photo", HonorOverviewModel.countsLine(resources, voiceCount = 1, photoCount = 1))
+        assertEquals("2 voices · 2 photos", HonorOverviewModel.countsLine(resources, voiceCount = 2, photoCount = 2))
+    }
+
+    @Test
+    @Config(qualifiers = "ja")
+    fun `counts keep iOS's rule under Japanese plural rules`() {
+        assertEquals("1 voice · 1 photo", HonorOverviewModel.countsLine(resources, voiceCount = 1, photoCount = 1))
+        assertEquals("12 voices · 20 photos", HonorOverviewModel.countsLine(resources, voiceCount = 12, photoCount = 20))
     }
 
     @Test
@@ -408,6 +664,42 @@ class HonorOverviewViewModelTest {
         assertTrue(line, line.endsWith("10:13 PM"))
     }
 
+    private fun stored() = SavedStateHandle(mapOf(HonorOverviewViewModel.ARG_WAY_ID to SHARED_ID))
+
+    /** A share as the importer builds one: file media, a voice with its street, a photo, and an estimated sitting. */
+    private fun sharedWay() = Way(
+        id = SHARED_ID,
+        source = WaySource.Share(id = "Qoi4YmPHLN", pageUrl = "https://walk.pilgrimapp.org/Qoi4YmPHLN"),
+        title = "Rúa do Franco → Obradoiro",
+        departedAt = Instant.parse("2026-08-01T07:00:00Z"),
+        tzIdentifier = "Europe/Madrid",
+        expires = Instant.parse("2099-01-01T00:00:00Z"),
+        route = listOf(WayPoint(42.88, -8.545, 250.0, 0.0), WayPoint(42.88, -8.540, 250.0, 400.0)),
+        totalDistanceMeters = 408.0,
+        theirActiveSeconds = 540.0,
+        moments = listOf(
+            org.walktalkmeditate.pilgrim.domain.honor.WayMoment(
+                id = "voice-1", frac = 0.5, at = null,
+                kind = WayMomentKind.Voice(
+                    endFrac = 0.6, duration = 40.0,
+                    kind = org.walktalkmeditate.pilgrim.domain.honor.VoiceKind.SPOKEN,
+                    media = org.walktalkmeditate.pilgrim.domain.honor.WayMedia.File("audio/1.m4a"),
+                ),
+                place = "Rúa do Franco",
+            ),
+            org.walktalkmeditate.pilgrim.domain.honor.WayMoment(
+                id = "photo-1", frac = 0.8, at = null,
+                kind = WayMomentKind.Photo(org.walktalkmeditate.pilgrim.domain.honor.WayMedia.File("photos/1.jpg")),
+            ),
+            org.walktalkmeditate.pilgrim.domain.honor.WayMoment(
+                id = "sit-1", frac = 0.75, at = null,
+                kind = WayMomentKind.Meditation(minutes = 3, isEstimate = true),
+            ),
+        ),
+        weather = WayWeather("rain", 9.0),
+        spans = emptyList(),
+    )
+
     private fun weather(theirs: WayWeather?, today: String?) =
         HonorOverviewModel.weatherLine(resources, theirs, today, Locale.US)
 
@@ -440,4 +732,8 @@ class HonorOverviewViewModelTest {
         },
         weather = null,
     )
+
+    private companion object {
+        const val SHARED_ID = "share:Qoi4YmPHLN"
+    }
 }

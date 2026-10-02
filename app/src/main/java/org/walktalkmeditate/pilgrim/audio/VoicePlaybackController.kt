@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.audio
 
+import java.io.File
 import kotlinx.coroutines.flow.StateFlow
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 
@@ -34,6 +35,15 @@ interface VoicePlaybackController {
     val playbackPositionMillis: StateFlow<Long>
 
     fun play(recording: VoiceRecording)
+
+    /**
+     * Plays [file] as [play] plays a recording, reported under
+     * [playbackId]: a shared Way's voice, which has no recording row, takes
+     * an id no row has (a negative one), so no other screen reads it as
+     * one of theirs.
+     */
+    fun playFile(playbackId: Long, file: File)
+
     fun pause()
     fun stop()
 

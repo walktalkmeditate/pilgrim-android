@@ -57,4 +57,7 @@ sealed interface SettingsAction {
 
     /** Opens the JourneyEditor webview (iOS v1.6.0). */
     data object OpenJourneyEditor : SettingsAction
+
+    /** Opens Settings → Ways (iOS v2.0.0, Phase 21 U28), from the Data card. */
+    data object OpenWays : SettingsAction
 }

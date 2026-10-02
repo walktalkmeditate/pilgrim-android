@@ -29,6 +29,7 @@ import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.honor.OwnWalkWayBuilder
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
@@ -166,7 +167,7 @@ class HonorDebugReceiver : BroadcastReceiver() {
             soundsEnabled = soundsPreferences.soundsEnabled.value,
         )
         val result = try {
-            beginHonorWalk(BeginHonorWalk.Request(source.id, intention = null, settings = settings))
+            beginHonorWalk(BeginHonorWalk.Request(HonorWayChoice.OwnWalk(source.id), intention = null, settings = settings))
         } catch (e: IllegalStateException) {
             Log.w(TAG, "begin: the start failed (${e::class.simpleName}); is the app on screen?")
             return

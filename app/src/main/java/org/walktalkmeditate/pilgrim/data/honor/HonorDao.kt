@@ -129,6 +129,17 @@ interface HonorDao {
     )
     suspend fun finishedWalkIdsWithLiveSessions(): List<Long>
 
+    /**
+     * The Way every live session names: a walk on, or one whose Honor step
+     * is still to run. The expiry sweep leaves each of them whole.
+     */
+    @Query("SELECT DISTINCT way_id FROM honor_sessions")
+    suspend fun liveSessionWayIds(): List<String>
+
+    /** Live sessions on the phone; while any is, Settings → Ways stays hidden. */
+    @Query("SELECT COUNT(*) FROM honor_sessions")
+    fun observeLiveSessionCount(): Flow<Int>
+
     @Upsert
     suspend fun upsertMomentState(state: HonorMomentStateEntity)
 

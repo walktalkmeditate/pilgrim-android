@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
@@ -38,6 +40,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.R
+import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
@@ -48,7 +51,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
+import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.path.ModeButton
 import org.walktalkmeditate.pilgrim.ui.path.PathStartButton
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
@@ -119,7 +124,16 @@ class HonorOverviewSemanticsTest {
     @Test
     fun `the Ways sheet shows iOS's own-walk section and its empty shared section`() {
         var opened = false
-        show { HonorWaysSheetContent(onClose = {}, onWalkOneOfYours = { opened = true }) }
+        show {
+            HonorWaysSheetContent(
+                shared = SharedWaysUiState.Loaded(emptyList()),
+                importState = HonorImportState.Idle,
+                onClose = {},
+                onChooseShared = {},
+                onWalkOneOfYours = { opened = true },
+                onOpenPasted = {},
+            )
+        }
 
         listOf(
             "Choose a way",
@@ -127,9 +141,9 @@ class HonorOverviewSemanticsTest {
             "Shared with you",
             "no ways yet. Accept a shared walk, or walk one of yours again.",
             "Your own walks",
+            "From a shared walk",
         ).forEach { composeRule.onNodeWithText(it).assertIsDisplayed() }
         composeRule.onAllNodesWithText("A pilgrimage").assertCountEquals(0)
-        composeRule.onAllNodesWithText("From a shared walk").assertCountEquals(0)
 
         composeRule.onNodeWithText("Walk one of yours again")
             .assert(isButton())
@@ -303,6 +317,179 @@ class HonorOverviewSemanticsTest {
         composeRule.onNodeWithText("they walked this in light rain at 9°.").assertIsDisplayed()
     }
 
+    // Shared-walk spec S4 §8.3: the import line, and Begin held only while something could still land.
+
+    @Test
+    fun `a second link's fetch shows its line under the counts and holds Begin`() {
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.Fetching,
+            )
+        }
+
+        composeRule.onNodeWithText("reaching for the walk…").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `a failure, or missing voices, shows its line and leaves Begin to the walker`() {
+        val state = mutableStateOf<HonorImportState>(HonorImportState.Failed(WayError.UNAVAILABLE))
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = state.value,
+            )
+        }
+
+        mapOf(
+            HonorImportState.Failed(WayError.UNAVAILABLE) to "couldn't reach the walk",
+            HonorImportState.Failed(WayError.DISK_FULL) to "not enough space on this phone to save these voices",
+            HonorImportState.MediaMissing(listOf("audio/2.m4a")) to "some voices didn't arrive",
+        ).forEach { (importState, line) ->
+            state.value = importState
+            composeRule.onNodeWithText(line).assertIsDisplayed()
+            composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsEnabled()
+        }
+        state.value = HonorImportState.Ready
+        composeRule.onAllNodesWithText("couldn't reach the walk").assertCountEquals(0)
+    }
+
+    // S4 §8.3: the gathering line rounds half away from zero and holds Begin.
+    @Test
+    fun `a gather shows its percentage and holds Begin, with no buttons`() {
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.Gathering(0.456),
+            )
+        }
+
+        composeRule.onNodeWithText("gathering their voices · 46%").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsNotEnabled()
+        composeRule.onAllNodesWithText("try again").assertCountEquals(0)
+    }
+
+    // Spec correction 6: missing voices never hold Begin; the two buttons are the walker's choice.
+    @Test
+    fun `missing voices offer try again and walk without them, two buttons, with Begin enabled`() {
+        var retries = 0
+        var walkedWithout = 0
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.MediaMissing(listOf("audio/2.m4a")),
+                onRetryMedia = { retries++ },
+                onWalkWithoutMissing = { walkedWithout++ },
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsEnabled()
+        composeRule.onNodeWithText("try again").assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+            .performClick()
+        composeRule.onNodeWithText("walk without the missing voices").assertHasClickAction().performClick()
+
+        assertEquals(1, retries)
+        assertEquals(1, walkedWithout)
+        composeRule.onAllNodesWithText("audio/2.m4a", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun `a full disk names the problem, offers no button, and leaves Begin to the walker`() {
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.Failed(WayError.DISK_FULL),
+            )
+        }
+
+        composeRule.onNodeWithText("not enough space on this phone to save these voices").assertIsDisplayed()
+        composeRule.onAllNodesWithText("try again").assertCountEquals(0)
+        composeRule.onAllNodesWithText("walk without the missing voices").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsEnabled()
+    }
+
+    // Shared-walk spec S4 §9.
+
+    @Test
+    fun `a shared Way's card offers its voices whether or not their files are here`() {
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 0, way = sharedWay()),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.Ready,
+            )
+        }
+
+        composeRule.onNodeWithText("Rúa do Franco → Obradoiro").assertIsDisplayed()
+        composeRule.onNodeWithText("1 voice · 1 photo").assertIsDisplayed()
+        composeRule.onNodeWithText("walk with their voice").assertIsEnabled()
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsEnabled()
+    }
+
+    @Test
+    fun `a shared voice's preview names its street, and says its voice is still on its way`() {
+        val way = sharedWay()
+        show {
+            WayMomentPreviewContent(
+                way = way,
+                moment = way.moments.first { it.isVoice },
+                units = UnitSystem.Metric,
+                voice = null,
+                photoUri = null,
+                onTogglePlay = {},
+                onCycleSpeed = {},
+                onSeek = {},
+            )
+        }
+
+        composeRule.onNodeWithText(" · Rúa do Franco", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("their voice is still on its way here").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a shared photo not on the phone shows its stand-in above the caption, with nothing to enlarge`() {
+        val way = sharedWay()
+        show {
+            WayMomentPreviewContent(
+                way = way,
+                moment = way.moments.first { it.kind is WayMomentKind.Photo },
+                units = UnitSystem.Metric,
+                voice = null,
+                photoUri = null,
+                onTogglePlay = {},
+                onCycleSpeed = {},
+                onSeek = {},
+            )
+        }
+
+        composeRule.onNodeWithText("tap the photo to see it whole").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Enlarge photo").assertCountEquals(0)
+    }
+
     // §17.6 — the moment preview.
 
     @Test
@@ -320,6 +507,7 @@ class HonorOverviewSemanticsTest {
                     speed = 1f,
                     waveform = samples,
                 ),
+                photoUri = null,
                 onTogglePlay = {},
                 onCycleSpeed = {},
                 onSeek = {},
@@ -352,6 +540,7 @@ class HonorOverviewSemanticsTest {
                     speed = 1.5f,
                     waveform = null,
                 ),
+                photoUri = null,
                 onTogglePlay = {},
                 onCycleSpeed = {},
                 onSeek = {},
@@ -371,6 +560,7 @@ class HonorOverviewSemanticsTest {
                 moment = voiceMoment(),
                 units = UnitSystem.Metric,
                 voice = null,
+                photoUri = null,
                 onTogglePlay = {},
                 onCycleSpeed = {},
                 onSeek = {},
@@ -450,12 +640,36 @@ class HonorOverviewSemanticsTest {
         transcript = "the bridge where we stopped.",
     )
 
+    /** A share as the importer builds one: a voice with its street, a photo, file media not on the phone. */
+    private fun sharedWay() = Way(
+        id = "share:Qoi4YmPHLN",
+        source = WaySource.Share(id = "Qoi4YmPHLN", pageUrl = "https://walk.pilgrimapp.org/Qoi4YmPHLN"),
+        title = "Rúa do Franco → Obradoiro",
+        departedAt = Instant.parse("2026-08-01T07:00:00Z"),
+        tzIdentifier = "Europe/Madrid",
+        expires = Instant.parse("2099-01-01T00:00:00Z"),
+        route = listOf(WayPoint(42.88, -8.545, 250.0, 0.0), WayPoint(42.88, -8.540, 250.0, 400.0)),
+        totalDistanceMeters = 408.0,
+        theirActiveSeconds = 540.0,
+        moments = listOf(
+            WayMoment(
+                id = "voice-1", frac = 0.5, at = null,
+                kind = WayMomentKind.Voice(0.6, 40.0, VoiceKind.SPOKEN, WayMedia.File("audio/1.m4a")),
+                place = "Rúa do Franco",
+            ),
+            WayMoment(id = "photo-1", frac = 0.8, at = null, kind = WayMomentKind.Photo(WayMedia.File("photos/1.jpg"))),
+        ),
+        weather = null,
+        spans = emptyList(),
+    )
+
     private fun overview(
         voices: Int,
         distanceToStart: Double? = null,
         weather: WayWeather? = null,
+        way: Way? = null,
     ): HonorOverview {
-        val way = Way(
+        val built = way ?: Way(
             id = "walk:0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50",
             source = WaySource.OwnWalk("0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50"),
             title = "the long way",
@@ -469,12 +683,13 @@ class HonorOverviewSemanticsTest {
             weather = weather,
         )
         return HonorOverview(
-            sourceWalkId = 1L,
-            way = way,
-            line = HonorWayLine.of(way),
-            pins = wayPins(way, emptySet()),
-            bounds = HonorOverviewModel.bounds(way),
+            choice = if (way == null) HonorWayChoice.OwnWalk(1L) else HonorWayChoice.Stored(built.id),
+            way = built,
+            line = HonorWayLine.of(built),
+            pins = wayPins(built, emptySet()),
+            bounds = HonorOverviewModel.bounds(built),
             playableVoices = emptyMap(),
+            photoUris = emptyMap(),
             distanceToStartMeters = distanceToStart,
         )
     }

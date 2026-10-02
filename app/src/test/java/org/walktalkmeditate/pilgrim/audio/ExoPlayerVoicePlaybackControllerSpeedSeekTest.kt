@@ -80,4 +80,14 @@ class ExoPlayerVoicePlaybackControllerSpeedSeekTest {
     fun `playbackPositionMillis default is 0`() {
         assertEquals(0L, controller.playbackPositionMillis.value)
     }
+
+    // The house builder rule: the preview's real MediaItem, for a shared Way's `.m4a` as for a WAV.
+    @Test
+    fun `a file plays through a real MediaItem on its file URI`() {
+        val file = java.io.File("/data/no_backup/Ways/share:Qoi4YmPHLN/media/audio/1.m4a")
+
+        val item = ExoPlayerVoicePlaybackController.mediaItemFor(file)
+
+        assertEquals(android.net.Uri.fromFile(file), item.localConfiguration!!.uri)
+    }
 }

@@ -58,10 +58,20 @@ object HonorOverviewModel {
     }
 
     /** Voices then photos, `" · "`-joined; waypoints, rests, and sittings are not counted. */
-    fun countsLine(resources: Resources, way: Way): String {
+    fun countsLine(resources: Resources, way: Way): String = countsLine(resources, way.voiceCount, way.photoCount)
+
+    /**
+     * The counts a Way declares, whether or not their files are on the
+     * phone (S4 §6.4), each word picked by iOS's `count == 1` in every locale.
+     */
+    fun countsLine(resources: Resources, voiceCount: Int, photoCount: Int): String {
         val parts = buildList {
-            if (way.voiceCount > 0) add(quantity(resources, R.plurals.honor_overview_voices, way.voiceCount))
-            if (way.photoCount > 0) add(quantity(resources, R.plurals.honor_overview_photos, way.photoCount))
+            if (voiceCount > 0) {
+                add(count(resources, voiceCount, R.string.honor_overview_voice_one, R.string.honor_overview_voices))
+            }
+            if (photoCount > 0) {
+                add(count(resources, photoCount, R.string.honor_overview_photo_one, R.string.honor_overview_photos))
+            }
         }
         if (parts.isEmpty()) return resources.getString(R.string.honor_overview_quiet_way)
         return parts.joinToString(" · ")
@@ -136,8 +146,8 @@ object HonorOverviewModel {
             ?.let { resources.getString(it.labelRes).lowercase(locale) }
             ?: condition
 
-    private fun quantity(resources: Resources, id: Int, count: Int): String =
-        resources.getQuantityString(id, count, String.format(Locale.US, "%d", count))
+    private fun count(resources: Resources, count: Int, one: Int, other: Int): String =
+        resources.getString(if (count == 1) one else other, String.format(Locale.US, "%d", count))
 
     /** Swift's `rounded()`. */
     private fun roundedHalfAwayFromZero(value: Double): Double = sign(value) * floor(abs(value) + 0.5)

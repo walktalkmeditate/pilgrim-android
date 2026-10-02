@@ -13,6 +13,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -104,7 +105,8 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
         override fun onPlayerError(error: PlaybackException) {
             val id = currentRecordingId ?: return
-            Log.w(TAG, "playback error for recording $id", error)
+            // The code alone: the cause names the file, and a shared Way's path carries its share id.
+            Log.w(TAG, "playback error for recording $id: ${error.errorCodeName}")
             audioFocus.abandon()
             // Null currentRecordingId so a stale `pause()` arriving on
             // the next frame can't transition state into Paused on a
@@ -117,21 +119,25 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
     }
 
     override fun play(recording: VoiceRecording) {
+        playFile(recording.id, fileSystem.absolutePath(recording.fileRelativePath))
+    }
+
+    override fun playFile(playbackId: Long, file: File) {
         mainHandler.post {
             // Resume-in-place: same recording, currently Paused. Focus
             // is still held from the original play(); re-requesting it
             // would briefly abandon and re-acquire, which other audio
             // apps observe and which can return DELAYED/FAILED on
             // contended systems.
-            if (currentRecordingId == recording.id && _state.value is PlaybackState.Paused) {
+            if (currentRecordingId == playbackId && _state.value is PlaybackState.Paused) {
                 val p = player ?: return@post
                 p.play()
-                _state.value = PlaybackState.Playing(recording.id)
+                _state.value = PlaybackState.Playing(playbackId)
                 return@post
             }
             val granted = audioFocus.requestMediaPlayback(onLossListener = ::onAudioFocusLost)
             if (!granted) {
-                _state.value = PlaybackState.Error(recording.id, "audio focus denied")
+                _state.value = PlaybackState.Error(playbackId, "audio focus denied")
                 return@post
             }
             val p = player ?: createPlayer().also { player = it }
@@ -140,12 +146,11 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             // Otherwise UI bound to playbackPositionMillis would briefly
             // show the old recording's tail before the first tick fires.
             _playbackPositionMillis.value = 0L
-            currentRecordingId = recording.id
-            val absoluteFile = fileSystem.absolutePath(recording.fileRelativePath)
-            p.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(absoluteFile)))
+            currentRecordingId = playbackId
+            p.setMediaItem(mediaItemFor(file))
             p.prepare()
             p.play()
-            _state.value = PlaybackState.Playing(recording.id)
+            _state.value = PlaybackState.Playing(playbackId)
         }
     }
 
@@ -258,7 +263,10 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
             .also { it.addListener(listener) }
     }
 
-    private companion object {
+    internal companion object {
+        /** A recording's WAV and a shared Way's `.m4a` alike: ExoPlayer reads the container. */
+        fun mediaItemFor(file: File): MediaItem = MediaItem.fromUri(android.net.Uri.fromFile(file))
+
         const val TAG = "VoicePlayback"
         const val POSITION_TICK_MS = 100L
         const val MIN_PLAYBACK_SPEED = 0.5f
