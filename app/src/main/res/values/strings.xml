@@ -1411,4 +1411,12 @@
     <string name="pilgrimage_error_walk_in_progress">finish your walk first</string>
     <string name="pilgrimage_error_catalog_unreachable">the routes are out of reach right now</string>
     <string name="pilgrimage_error_map_too_large">more map than can be saved at once</string>
+
+    <!-- Phase 21 U33: the ledger's progress line (pilgrimage-stage spec P2 §8 and its
+         Strings table), Swift literals on iOS. Counts are Locale.US digits; the
+         singular only at 1. The walked figure comes formatted. -->
+    <string name="pilgrimage_stage_count_one">%1$s stage</string>
+    <string name="pilgrimage_stage_count" tools:ignore="PluralsCandidate">%1$s stages</string>
+    <string name="pilgrimage_progress_stage_of">stage %1$s of %2$s · %3$s walked</string>
+    <string name="pilgrimage_progress_whole_way">you have walked the whole way · %1$s</string>
 </resources>

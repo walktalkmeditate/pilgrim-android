@@ -23,18 +23,22 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.di.WayStoreModule
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayJson
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
+import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizer
 
 /**
- * Port of iOS `WayStoreTests.swift@7c200bf`, less its sweep tests
- * (`sweepExpired` is [WayStoreSweepTest]'s; `retireMany` is Stage 21-2's),
- * plus Android's link files, staging, and media gathering. Robolectric only for the
- * module's `noBackupFilesDir` root; every other test runs on a temp folder.
+ * Port of iOS `WayStoreTests.swift@7c200bf`, less its expiry sweep tests
+ * ([WayStoreSweepTest]'s), plus Android's link files, staging, and media
+ * gathering, and Stage 21-2's pilgrimage tree: iOS's stage store tests,
+ * `retireMany`, `list()` stepping over stages, the stage listing, and the
+ * temp sweep's reach. Robolectric only for the module's `noBackupFilesDir`
+ * root; every other test runs on a temp folder.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -625,6 +629,198 @@ class WayStoreTest {
         File(dir, "staging/not-a-uuid").mkdirs()
 
         assertEquals(listOf(StagedWay(WALK, 1_700_000_000_000L)), store.listStaged())
+    }
+
+    // ---- the pilgrimage tree (pilgrimage-stage spec P2 §1) ----
+
+    private fun stageWay(routeId: String = "camino-frances", index: Int = 0) =
+        way(WayStore.stageWayId(routeId, index)).copy(
+            source = WaySource.Pilgrimage(routeId = routeId, stageIndex = index),
+            marks = emptyList(),
+        )
+
+    // iOS `testAStageWayRoundTripsThroughTheStore` (`PilgrimageWayImporterTests.swift@7c200bf`).
+    // Its last assertion is inverted here (2026-10-02, spec P1 C16): Android's list() steps over
+    // stage ids before decoding them (P2 A-11), so the stage is found through the stage listing.
+    @Test
+    fun `a stage Way round-trips through the store`() {
+        val stage = stageWay()
+        store.save(stage)
+
+        assertEquals(stage.id, store.load("pilgrimage:camino-frances:0")?.id)
+        val packageDir = store.pilgrimageDirectory("camino-frances")!!
+        assertTrue(packageDir.path.endsWith("pilgrimage/camino-frances"))
+        assertNull(store.pilgrimageDirectory("../etc"))
+        assertFalse("list() steps over a stage id", store.list().any { it.id == stage.id })
+        assertEquals(listOf(stage.id), store.stageWayIds())
+    }
+
+    @Test
+    fun `a route's package files sit in its folder, the swap marker beside the routes`() {
+        val route = File(dir, "pilgrimage/camino-frances")
+
+        assertEquals(File(dir, "pilgrimage"), store.pilgrimageRoot)
+        assertEquals(File(route, "route.json"), store.routeFile("camino-frances"))
+        assertEquals(File(route, "release.txt"), store.releaseFile("camino-frances"))
+        assertEquals(File(route, "ledger.json"), store.ledgerFile("camino-frances"))
+        assertEquals(File(route, "ledger.json.lock"), store.ledgerLockFile("camino-frances"))
+        assertEquals(File(dir, "pilgrimage/replacing.txt"), store.replacingFile)
+        listOf("../etc", "Camino", "", "camino-frances/x").forEach { refused ->
+            assertNull(refused, store.pilgrimageDirectory(refused))
+            assertNull(refused, store.routeFile(refused))
+            assertNull(refused, store.releaseFile(refused))
+            assertNull(refused, store.ledgerFile(refused))
+            assertNull(refused, store.ledgerLockFile(refused))
+        }
+        assertFalse("nothing was created", dir.exists())
+    }
+
+    @Test
+    fun `route ids are the slug-named folders, a ledger-only one included and the marker never`() {
+        store.writePilgrimageFile(store.routeFile("camino-frances")!!, "{}".toByteArray())
+        store.writePilgrimageFile(store.ledgerFile("camino-norte")!!, "{}".toByteArray())
+        store.writePilgrimageFile(store.replacingFile, "camino-frances".toByteArray())
+        File(dir, "pilgrimage/Not-A-Slug").mkdirs()
+
+        assertEquals(setOf("camino-frances", "camino-norte"), store.pilgrimageRouteIds().toSet())
+        assertEquals("camino-frances", store.replacingFile.readText())
+    }
+
+    @Test
+    fun `only the tree's own files are written through it`() {
+        listOf(
+            store.ledgerLockFile("camino-frances")!!,
+            File(store.pilgrimageDirectory("camino-frances"), "other.json"),
+            File(dir, "pilgrimage:camino-frances:0/way.json"),
+            File(dir, "pilgrimage/Camino/route.json"),
+            File(dir, "replacing.txt"),
+        ).forEach { file ->
+            assertThrows(file.path, IllegalArgumentException::class.java) {
+                store.writePilgrimageFile(file, byteArrayOf(1))
+            }
+        }
+        assertFalse(dir.exists())
+    }
+
+    // iOS `testRetireManyFollowsTheSweepsRuleAndLeavesTheIndexAlone`. Android has a link file per
+    // walk, not an index, so "the index alone" is every link file's bytes and modification time.
+    @Test
+    fun `retire many follows the sweep's rule and leaves every link file alone`() {
+        store.save(way("share:unwalkedXX"))
+        store.save(way("share:walkedXXXX"))
+        val walk = UUID.randomUUID().toString()
+        store.link(walk, "share:walkedXXXX", arrival = null)
+        listOf("share:unwalkedXX", "share:walkedXXXX").forEach { id ->
+            store.mediaFile(id, "audio/1.m4a")!!.apply { parentFile!!.mkdirs() }.writeBytes(byteArrayOf(1))
+        }
+        val links = File(dir, "links").listFiles()!!.onEach { it.setLastModified(1_000_000L) }
+        val before = links.associate { it.name to (it.readBytes().toList() to it.lastModified()) }
+
+        store.retireMany(listOf("share:unwalkedXX", "share:walkedXXXX", "../escape"), liveSessionWayIds = emptySet())
+
+        assertNull("whole folder gone", store.load("share:unwalkedXX"))
+        assertFalse(File(dir, "share:unwalkedXX").exists())
+        assertNotNull("way.json kept", store.load("share:walkedXXXX"))
+        assertFalse("media gone", store.hasMedia("share:walkedXXXX"))
+        assertEquals("share:walkedXXXX", store.wayLink(walk)?.wayId)
+        val after = File(dir, "links").listFiles()!!.associate { it.name to (it.readBytes().toList() to it.lastModified()) }
+        assertEquals("no link file rewritten", before, after)
+    }
+
+    // P2 A-1: a stage whose walk still waits for its finalize has no link yet, and must keep the
+    // way.json that link will name.
+    @Test
+    fun `retire many keeps a walked stage and a stage a live session walks, and takes the rest whole`() {
+        listOf(0, 1, 2).forEach { store.save(stageWay(index = it)) }
+        val walked = stageWay(index = 0).id
+        val live = stageWay(index = 1).id
+        val unwalked = stageWay(index = 2).id
+        val walk = UUID.randomUUID().toString()
+        store.link(walk, walked, arrival = null)
+        store.setReply(walked, originN = -1, relativePath = "recordings/$walk/reflection.wav")
+        val deletionsBefore = store.deletions.value
+
+        store.retireMany(listOf(walked, live, unwalked), liveSessionWayIds = setOf(live))
+
+        assertNotNull(store.load(walked))
+        assertEquals(mapOf(-1 to "recordings/$walk/reflection.wav"), store.replies(walked))
+        assertEquals(walked, store.wayId(walk))
+        assertNotNull("a pending finalize's stage stays", store.load(live))
+        assertEquals(setOf("way.json", "accepted.json"), File(dir, live).list()!!.toSet())
+        assertFalse(File(dir, unwalked).exists())
+        assertEquals("one folder went", deletionsBefore + 1, store.deletions.value)
+    }
+
+    @Test
+    fun `retiring an id with no folder takes nothing and counts nothing`() {
+        val deletionsBefore = store.deletions.value
+
+        store.retireMany(listOf(stageWay(index = 7).id), liveSessionWayIds = emptySet())
+
+        assertEquals(deletionsBefore, store.deletions.value)
+        assertFalse(dir.exists())
+    }
+
+    @Test
+    fun `list never decodes a stage Way, while the stage listing counts every stage folder with a way json`() {
+        val decoded = mutableListOf<String>()
+        val spied = WayStore({ dir }, Clock { clockMillis }, decodeWay = { text -> decoded += text; WayJson.decode(text) })
+        spied.save(way("share:aaaaaaaaaa"))
+        spied.save(stageWay(index = 0))
+        File(dir, "pilgrimage:camino-frances:1").mkdirs()
+        File(dir, "pilgrimage:camino-frances:1/way.json").writeText("""{"id":""")
+        File(dir, "pilgrimage:camino-frances:2").mkdirs()
+
+        assertEquals(listOf("share:aaaaaaaaaa"), spied.list().map { it.id })
+
+        assertEquals("only the share was decoded", 1, decoded.size)
+        assertFalse(decoded.single().contains("pilgrimage:"))
+        assertEquals(
+            "an undecodable stage counts here alone (P2 A-11); a folder with no way.json doesn't",
+            setOf("pilgrimage:camino-frances:0", "pilgrimage:camino-frances:1"),
+            spied.stageWayIds().toSet(),
+        )
+        assertEquals("listing stages decodes nothing", 1, decoded.size)
+    }
+
+    // P2 C-14, matched as shipped (pilgrim-ios #120 item 6): every route's stages count.
+    @Test
+    fun `the stage listing spans every route, a replaced route's kept walked stage included`() {
+        store.save(stageWay("camino-frances", 0))
+        store.save(stageWay("camino-frances", 1))
+        store.save(stageWay("camino-norte", 0))
+        store.save(way("share:aaaaaaaaaa"))
+        store.save(ownWay())
+
+        assertEquals(
+            setOf("pilgrimage:camino-frances:0", "pilgrimage:camino-frances:1", "pilgrimage:camino-norte:0"),
+            store.stageWayIds().toSet(),
+        )
+    }
+
+    @Test
+    fun `the temp sweep reaches the pilgrimage tree at the usual cutoff and spares the ledger's lock`() {
+        val cutoff = clockMillis - HonorFinalizer.STAGING_GRACE_MILLIS
+        store.writePilgrimageFile(store.ledgerFile("camino-frances")!!, "{}".toByteArray())
+        val route = File(dir, "pilgrimage/camino-frances")
+        val lock = store.ledgerLockFile("camino-frances")!!.apply { writeText("") }
+        val staleLedger = File(route, ".ledger.json.${UUID.randomUUID()}.tmp").apply { writeText("{") }
+        val staleRoute = File(route, ".route.json.${UUID.randomUUID()}.tmp").apply { writeText("{") }
+        val staleMarker = File(dir, "pilgrimage/.replacing.txt.${UUID.randomUUID()}.tmp").apply { writeText("x") }
+        val youngLedger = File(route, ".ledger.json.${UUID.randomUUID()}.tmp").apply { writeText("{") }
+        listOf(staleLedger, staleRoute, staleMarker, lock, store.ledgerFile("camino-frances")!!)
+            .forEach { it.setLastModified(cutoff - 1) }
+        youngLedger.setLastModified(cutoff + 1)
+
+        val swept = store.sweepTempFiles(olderThanMillis = cutoff)
+
+        assertEquals(3, swept)
+        assertFalse(staleLedger.exists())
+        assertFalse(staleRoute.exists())
+        assertFalse(staleMarker.exists())
+        assertTrue("a write maybe in flight", youngLedger.exists())
+        assertTrue("the lock is no temp", lock.exists())
+        assertTrue(store.ledgerFile("camino-frances")!!.exists())
     }
 
     // ---- where the store lives ----
