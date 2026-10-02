@@ -457,6 +457,69 @@ class WayStoreTest {
         assertFalse(late.exists())
     }
 
+    // A Settings delete and the media worker run on different threads of the UI process.
+    @Test
+    fun `a delete racing a landing waits for it, then takes the landed file too, leaving no orphan folder`() {
+        lateinit var racing: WayStore
+        lateinit var deleting: Thread
+        var landing = false
+        var deleteWaited = false
+        racing = WayStore(
+            { dir },
+            Clock { clockMillis },
+            // The landing's fsync runs after its rename, inside it: the delete starts right then.
+            syncDirectory = {
+                if (landing) {
+                    landing = false
+                    deleting = Thread { racing.delete("share:aaaaaaaaaa") }.apply { start() }
+                    deleting.join(RACE_WAIT_MILLIS)
+                    deleteWaited = deleting.isAlive
+                }
+                true
+            },
+        )
+        racing.save(way("share:aaaaaaaaaa"))
+        val partial = racing.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!.apply { writeText("voice") }
+        landing = true
+
+        assertTrue(racing.landMedia("share:aaaaaaaaaa", "audio/1.m4a", partial))
+        deleting.join(JOIN_BUDGET_MILLIS)
+
+        assertTrue("the delete waits for the landing", deleteWaited)
+        assertFalse(File(dir, "share:aaaaaaaaaa").exists())
+    }
+
+    @Test
+    fun `a partial is opened only for a Way that still loads, and the temp sweep leaves it while held`() {
+        store.save(way("share:aaaaaaaaaa"))
+        val partial = store.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!
+
+        assertNotNull(store.holdMediaPartial("share:aaaaaaaaaa", partial) { it.writeText("voi") })
+        partial.setLastModified(0L)
+        assertEquals("held", 0, store.sweepTempFiles(olderThanMillis = Long.MAX_VALUE))
+        store.releaseMediaPartial(partial)
+        assertEquals("released", 1, store.sweepTempFiles(olderThanMillis = Long.MAX_VALUE))
+
+        store.delete("share:aaaaaaaaaa")
+        assertNull(store.holdMediaPartial("share:aaaaaaaaaa", partial) { error("never opened") })
+        assertFalse(File(dir, "share:aaaaaaaaaa").exists())
+    }
+
+    @Test
+    fun `a partial left empty goes with its hold, and one with bytes stays to be resumed`() {
+        store.save(way("share:aaaaaaaaaa"))
+        val empty = store.mediaPartialFile("share:aaaaaaaaaa", "audio/1.m4a")!!
+        val started = store.mediaPartialFile("share:aaaaaaaaaa", "audio/2.m4a")!!
+
+        store.holdMediaPartial("share:aaaaaaaaaa", empty) { it.createNewFile() }
+        store.holdMediaPartial("share:aaaaaaaaaa", started) { it.writeText("voi") }
+        store.releaseMediaPartial(empty)
+        store.releaseMediaPartial(started)
+
+        assertFalse(empty.exists())
+        assertEquals("voi", started.readText())
+    }
+
     @Test
     fun `list includes own-walk Ways and steps over the links and staging folders`() {
         store.link(WALK, OWN_ID, arrival = null)
@@ -597,5 +660,9 @@ class WayStoreTest {
         const val SOURCE_WALK = "0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50"
         const val OWN_ID = "walk:$SOURCE_WALK"
         const val WALK = "7b1a2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+        /** How long a delete that should be waiting is given to finish anyway: it never may. */
+        const val RACE_WAIT_MILLIS = 300L
+        const val JOIN_BUDGET_MILLIS = 30_000L
     }
 }

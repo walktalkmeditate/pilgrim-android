@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.data.honor
 
 import android.content.Context
+import android.database.sqlite.SQLiteFullException
 import android.system.ErrnoException
 import android.system.OsConstants
 import androidx.hilt.work.HiltWorker
@@ -12,9 +13,9 @@ import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.RandomAccessFile
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
@@ -81,29 +82,31 @@ data class WayMediaReport(
 }
 
 /**
- * Where the media worker fetches from and how it writes a file. The
- * client keeps OkHttp's own timeouts, as iOS's background session keeps
- * the platform's (S3 open question 4, recorded at the gate), retries
- * nothing on its own (the worker's one retry is the only one), and
- * refuses a redirect off the walk host (an R6 addition, S3 §2).
+ * Where the media worker fetches from and how it opens a partial file.
+ * The client keeps OkHttp's own timeouts, as iOS's background session
+ * keeps the platform's (S3 open question 4, recorded at the gate),
+ * retries nothing on its own (the worker's one retry is the only one),
+ * and refuses a redirect off the walk host before connecting to it (an
+ * R6 addition, S3 §2).
  */
 @Singleton
 class WayMediaTransport internal constructor(
     val baseUrl: HttpUrl,
     val client: OkHttpClient,
-    val openPartial: (file: File, append: Boolean) -> FileOutputStream,
+    /** Opens or creates a partial for reading its length and writing, never truncating it. */
+    val openPartial: (file: File) -> RandomAccessFile,
 ) {
     @Inject
     constructor() : this(
         baseUrl = WayImporter.BASE_URL.toHttpUrl(),
         client = mediaHttpClient(WayImporter.BASE_URL.toHttpUrl()),
-        openPartial = { file, append -> FileOutputStream(file, append) },
+        openPartial = { file -> RandomAccessFile(file, "rw") },
     )
 
     companion object {
         fun mediaHttpClient(base: HttpUrl): OkHttpClient = OkHttpClient.Builder()
             .retryOnConnectionFailure(false)
-            .addNetworkInterceptor(WayImporter.StaysOnTheWalkHost(base))
+            .stayingOnTheWalkHost(base)
             .build()
     }
 }
@@ -128,8 +131,12 @@ class WayMediaTransport internal constructor(
  * - nothing lands for a Way gone before its rename, and its folder is
  *   never made again.
  *
- * A stopped run keeps its partial file and the next run resumes it.
- * Nothing is logged: share ids and paths are shared content.
+ * A stopped run keeps its partial file and the next run resumes it. The
+ * partial is opened once per fetch, before the request, and its length
+ * and its bytes go through that one handle, so a partial unlinked during
+ * the request is never resumed onto a fresh file: its rename fails and
+ * the retry starts the file over. Nothing is logged: share ids and paths
+ * are shared content.
  */
 @HiltWorker
 class WayMediaDownloadWorker @AssistedInject constructor(
@@ -183,16 +190,12 @@ class WayMediaDownloadWorker @AssistedInject constructor(
     private suspend fun fetch(wayId: String, shareId: String, relative: String): Attempt {
         val canonical = WayMediaRules.canonicalPath(relative) ?: return Attempt.REFUSED
         val partial = store.mediaPartialFile(wayId, canonical) ?: return Attempt.REFUSED
-        val cap = WayMediaRules.byteCap(canonical)
-        val have = partial.length().takeIf { partial.isFile && it <= cap } ?: 0L
-        val url = transport.baseUrl.newBuilder().addPathSegment(shareId).addPathSegments(canonical).build()
-        val request = Request.Builder().url(url)
-            .apply { if (have > 0) header(HEADER_RANGE, "bytes=$have-") }
-            .build()
         return try {
-            val call = transport.client.newCall(request)
-            cancelledWithTheWorker(call) {
-                call.execute().use { response -> receive(response, wayId, canonical, partial, have, cap) }
+            val file = store.holdMediaPartial(wayId, partial, transport.openPartial) ?: return Attempt.WAY_GONE
+            try {
+                file.use { transfer(it, wayId, shareId, canonical, partial) }
+            } finally {
+                store.releaseMediaPartial(partial)
             }
         } catch (e: IOException) {
             coroutineContext.ensureActive()
@@ -207,8 +210,29 @@ class WayMediaDownloadWorker @AssistedInject constructor(
         }
     }
 
+    /** One request for [relative], resumed from what [file] already holds, then landed from [partial]. */
+    private suspend fun transfer(
+        file: RandomAccessFile,
+        wayId: String,
+        shareId: String,
+        relative: String,
+        partial: File,
+    ): Attempt {
+        val cap = WayMediaRules.byteCap(relative)
+        val have = file.length().takeIf { it <= cap } ?: 0L
+        val url = transport.baseUrl.newBuilder().addPathSegment(shareId).addPathSegments(relative).build()
+        val request = Request.Builder().url(url)
+            .apply { if (have > 0) header(HEADER_RANGE, "bytes=$have-") }
+            .build()
+        val call = transport.client.newCall(request)
+        return cancelledWithTheWorker(call) {
+            call.execute().use { response -> receive(response, file, wayId, relative, partial, have, cap) }
+        }
+    }
+
     private suspend fun receive(
         response: Response,
+        file: RandomAccessFile,
         wayId: String,
         relative: String,
         partial: File,
@@ -231,18 +255,21 @@ class WayMediaDownloadWorker @AssistedInject constructor(
             partial.delete()
             return Attempt.REFUSED
         }
-        val written = transport.openPartial(partial, partialReply).use { out ->
-            copyCapped(response.body.byteStream(), out, start, cap).also { out.fd.sync() }
-        }
+        if (start == 0L) file.setLength(0)
+        file.seek(start)
+        val written = copyCapped(response.body.byteStream(), file, start, cap)
         if (written > cap) {
             partial.delete()
             return Attempt.REFUSED
         }
+        file.fd.sync()
+        // Closed before it lands, so nothing writes to the file once it has its own name.
+        file.close()
         return if (store.landMedia(wayId, relative, partial)) Attempt.LANDED else Attempt.WAY_GONE
     }
 
     /** The bytes so far, or one past [cap] the moment they would cross it. */
-    private suspend fun copyCapped(source: InputStream, out: FileOutputStream, start: Long, cap: Long): Long {
+    private suspend fun copyCapped(source: InputStream, out: RandomAccessFile, start: Long, cap: Long): Long {
         var total = start
         val buffer = ByteArray(COPY_BUFFER_BYTES)
         while (true) {
@@ -298,12 +325,15 @@ class WayMediaDownloadWorker @AssistedInject constructor(
 
         /**
          * iOS `isDiskFull`'s three detections, Android's way: `ENOSPC` from
-         * the write, the folder, or the rename, directly or as a cause.
+         * the write, the folder, or the rename, directly or as a cause; and
+         * SQLite's full database, which is how WorkManager's own store
+         * refuses a gather on a full phone.
          */
         internal fun isDiskFull(error: Throwable): Boolean =
             generateSequence(error) { it.cause }.take(MAX_CAUSES).any { cause ->
                 val message = cause.message.orEmpty()
-                message.contains(ENOSPC_NAME) || message.contains(ENOSPC_TEXT) || isErrnoNoSpace(cause)
+                cause is SQLiteFullException ||
+                    message.contains(ENOSPC_NAME) || message.contains(ENOSPC_TEXT) || isErrnoNoSpace(cause)
             }
 
         private fun isErrnoNoSpace(cause: Throwable): Boolean = try {

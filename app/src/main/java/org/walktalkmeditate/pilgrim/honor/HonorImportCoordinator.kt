@@ -9,9 +9,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
@@ -56,6 +59,13 @@ class HonorImportCoordinator internal constructor(
 
     /** The id of a Way an import just listed, until the screen that opens its overview takes it. */
     val fetched: StateFlow<String?> = _fetched.asStateFlow()
+
+    /**
+     * The media download's sets themselves, which change with every file
+     * that lands even while [state] holds still (under disk full, say): what
+     * an overview follows to find the files that have arrived (S4 §9.3).
+     */
+    val gathers: Flow<WayGathers> = flow { emitAll(media().gathers) }
 
     private var importJob: Job? = null
     private var shownOverview: Any? = null

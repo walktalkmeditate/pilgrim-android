@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.walk.honor
 
 import android.app.Application
 import java.io.File
+import java.io.IOException
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayLink
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
@@ -368,6 +370,26 @@ class HonorFinalizerTest {
             assertFalse("and only its media goes", shareMedia().exists())
             assertEquals("its gather is cancelled", listOf(SHARE_ID), swept)
         }
+
+    // S3 §13 trigger 1: iOS sweeps on every launch, whatever else its launch did.
+    @Test
+    fun `the launch's expiry sweep runs even when the steps before it fail`() = runBlocking {
+        var swept = 0
+        // The staging sweep's first touch of the store throws.
+        val unreadable = WayStore({ throw IOException("the store's folder is unreadable") })
+        val finalizer = HonorFinalizer(h.db, unreadable, h.clock, Dispatchers.IO, expirySweep = { swept++ })
+
+        finalizer.runAtLaunch()
+
+        assertEquals(1, swept)
+    }
+
+    @Test
+    fun `a failing expiry sweep is deferred to the next launch, not thrown`() = runBlocking {
+        val finalizer = HonorFinalizer(h.db, h.store, h.clock, Dispatchers.IO, expirySweep = { error("the store is unreadable") })
+
+        finalizer.runAtLaunch()
+    }
 
     @Test
     fun `a sweep while the UI restarts mid-walk leaves the live walk's Way whole, media and all`() = runBlocking {

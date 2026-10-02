@@ -3,6 +3,8 @@ package org.walktalkmeditate.pilgrim.data.honor
 
 import android.app.Application
 import android.content.Context
+import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteFullException
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.WorkerFactory
@@ -10,8 +12,8 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.workDataOf
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.TimeUnit
@@ -60,7 +62,7 @@ class WayMediaDownloadWorkerTest {
     private lateinit var store: WayStore
     private val served = Collections.synchronizedList(mutableListOf<String>())
     private var respond: (RecordedRequest) -> MockResponse = { request -> body(bytesFor(request.path.orEmpty())) }
-    private var openPartial: (File, Boolean) -> FileOutputStream = { file, append -> FileOutputStream(file, append) }
+    private var openPartial: (File) -> RandomAccessFile = { file -> RandomAccessFile(file, "rw") }
     private val opened = Collections.synchronizedList(mutableListOf<String>())
 
     @Before
@@ -89,9 +91,9 @@ class WayMediaDownloadWorkerTest {
                 .readTimeout(5, TimeUnit.SECONDS)
                 .callTimeout(20, TimeUnit.SECONDS)
                 .build(),
-            openPartial = { file, append ->
+            openPartial = { file ->
                 opened += file.name
-                openPartial(file, append)
+                openPartial(file)
             },
         )
         val factory = object : WorkerFactory() {
@@ -292,36 +294,118 @@ class WayMediaDownloadWorkerTest {
         assertEquals("the whole voice", landed("audio/1.m4a").readText())
     }
 
+    // The resume reads its length from the handle it appends through: an unlink meanwhile can't splice.
+    @Test
+    fun `a partial unlinked while its resume is in flight never lands as its tail alone`() {
+        saveWay("audio/1.m4a")
+        partial("audio/1.m4a").writeBytes("abc".toByteArray())
+        val ranges = Collections.synchronizedList(mutableListOf<String?>())
+        respond = { request ->
+            ranges += request.getHeader("Range")
+            if (request.getHeader("Range") != null) {
+                // The sweep, or a media delete, takes the partial's name while the request is out.
+                partial("audio/1.m4a").delete()
+                MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 3-5/6").setBody("def")
+            } else {
+                MockResponse().setBody("abcdef")
+            }
+        }
+
+        val report = gather()!!
+
+        assertEquals("the voice lands whole, from its one retry", "abcdef", landed("audio/1.m4a").readText())
+        assertEquals(listOf("bytes=3-", null), ranges)
+        assertTrue(report.failures.isEmpty())
+    }
+
+    // The launch's 24 h temp sweep runs in the process that runs the worker.
+    @Test
+    fun `the temp sweep leaves a partial a fetch holds, however old`() {
+        saveWay("audio/1.m4a")
+        partial("audio/1.m4a").apply {
+            writeBytes("abc".toByteArray())
+            setLastModified(0L)
+        }
+        var sweptMidFetch = -1
+        respond = {
+            sweptMidFetch = store.sweepTempFiles(olderThanMillis = Long.MAX_VALUE)
+            MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 3-5/6").setBody("def")
+        }
+
+        gather()
+
+        assertEquals(0, sweptMidFetch)
+        assertEquals("abcdef", landed("audio/1.m4a").readText())
+        assertEquals(1, server.requestCount)
+    }
+
     // S3 §2, an R6 addition: iOS follows a redirect to any host.
     @Test
-    fun `a redirect to another host is refused, and the other host hears nothing`() {
-        val other = MockWebServer().apply { start() }
-        try {
+    fun `a redirect to another host is refused before anything connects to it`() {
+        ConnectionCountingServer().use { other ->
             saveWay("audio/1.m4a")
             respond = { MockResponse().setResponseCode(302).setHeader("Location", other.url("/elsewhere.m4a")) }
 
             val report = gather()!!
 
-            assertEquals(0, other.requestCount)
+            assertEquals("no connection, let alone a request", 0, other.connectionsSoFar())
             assertEquals("refused, then its one retry", 2, server.requestCount)
             assertEquals(listOf("audio/1.m4a"), report.failures)
             assertFalse(landed("audio/1.m4a").exists())
-        } finally {
-            other.shutdown()
         }
+    }
+
+    @Test
+    fun `a redirect on the walk host is followed, its Range kept`() {
+        saveWay("audio/1.m4a")
+        partial("audio/1.m4a").writeBytes("abc".toByteArray())
+        val ranges = Collections.synchronizedList(mutableListOf<String?>())
+        respond = { request ->
+            ranges += request.getHeader("Range")
+            if (request.path!!.startsWith("/moved/")) {
+                MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 3-5/6").setBody("def")
+            } else {
+                MockResponse().setResponseCode(302).setHeader("Location", "/moved/1.m4a")
+            }
+        }
+
+        gather()
+
+        assertEquals("abcdef", landed("audio/1.m4a").readText())
+        assertEquals(listOf("bytes=3-", "bytes=3-"), ranges)
     }
 
     // S3 §3, an R6 addition: the same bound as iOS's streaming cut, reached before any byte is read.
     @Test
     fun `a declared length over the cap is refused before reading`() {
         saveWay("photos/1.jpg")
+        var written = 0L
+        openPartial = { file ->
+            object : RandomAccessFile(file, "rw") {
+                override fun write(b: ByteArray, off: Int, len: Int) {
+                    written += len
+                    super.write(b, off, len)
+                }
+            }
+        }
         respond = { body(ByteArray(WayMediaRules.PHOTO_BYTE_CAP.toInt() + 1)) }
 
         val report = gather()!!
 
-        assertTrue("no byte is written", opened.isEmpty())
+        assertEquals("no byte is written", 0L, written)
+        assertFalse(partial("photos/1.jpg").exists())
         assertEquals("and it isn't retried", 1, server.requestCount)
         assertEquals(listOf("photos/1.jpg"), report.failures)
+    }
+
+    @Test
+    fun `a failed file leaves no empty partial behind`() {
+        saveWay("audio/1.m4a")
+        respond = { MockResponse().setResponseCode(404) }
+
+        gather()
+
+        assertFalse(partial("audio/1.m4a").exists())
     }
 
     // S3 §7: one retry per file, immediate, then the failure.
@@ -367,15 +451,15 @@ class WayMediaDownloadWorkerTest {
     @Test
     fun `disk full at file 3 is final for it alone, and the files that landed stay`() {
         saveWay("audio/1.m4a", "audio/2.m4a", "audio/3.m4a", "audio/4.m4a")
-        openPartial = { file, append ->
+        openPartial = { file ->
             if (file.name.contains("audio-3")) {
-                object : FileOutputStream(file, append) {
+                object : RandomAccessFile(file, "rw") {
                     override fun write(b: ByteArray, off: Int, len: Int) {
                         throw IOException("write failed: ENOSPC (No space left on device)")
                     }
                 }
             } else {
-                FileOutputStream(file, append)
+                RandomAccessFile(file, "rw")
             }
         }
 
@@ -393,8 +477,8 @@ class WayMediaDownloadWorkerTest {
     @Test
     fun `a Way deleted between its fetch and the rename gets nothing, and its folder isn't made again`() {
         saveWay("audio/1.m4a", "audio/2.m4a")
-        openPartial = { file, append ->
-            object : FileOutputStream(file, append) {
+        openPartial = { file ->
+            object : RandomAccessFile(file, "rw") {
                 override fun close() {
                     super.close()
                     store.delete(WAY_ID)
@@ -407,6 +491,27 @@ class WayMediaDownloadWorkerTest {
         assertNull("nothing is recorded against a Way that is gone", report)
         assertFalse(File(folder.root, "Ways/$WAY_ID").exists())
         assertEquals("the gather stops with the Way", 1, server.requestCount)
+    }
+
+    // A Settings delete runs on another thread than the worker: it waits for the partial's opening.
+    @Test
+    fun `a delete racing a partial's opening waits for it, then leaves no folder behind`() {
+        saveWay("audio/1.m4a")
+        lateinit var deleting: Thread
+        var deleteWaited = false
+        openPartial = { file ->
+            deleting = Thread { store.delete(WAY_ID) }.apply { start() }
+            deleting.join(RACE_WAIT_MILLIS)
+            deleteWaited = deleting.isAlive
+            RandomAccessFile(file, "rw")
+        }
+
+        gather()
+        deleting.join(JOIN_BUDGET_MILLIS)
+
+        assertTrue("the delete waits while the partial opens", deleteWaited)
+        assertFalse(deleting.isAlive)
+        assertFalse("no partial, no media, no folder", File(folder.root, "Ways/$WAY_ID").exists())
     }
 
     @Test
@@ -435,8 +540,18 @@ class WayMediaDownloadWorkerTest {
         assertFalse(WayMediaDownloadWorker.isDiskFull(IOException("Connection reset")))
     }
 
+    @Test
+    fun `a full database is a full disk too, as WorkManager's store reports one`() {
+        assertTrue(WayMediaDownloadWorker.isDiskFull(IllegalStateException("enqueue", SQLiteFullException("database or disk is full"))))
+        assertFalse(WayMediaDownloadWorker.isDiskFull(IllegalStateException("enqueue", SQLiteException("disk I/O error"))))
+    }
+
     private companion object {
         const val SHARE_ID = "aaaaaaaaaa"
         const val WAY_ID = "share:$SHARE_ID"
+
+        /** How long a delete that should be waiting is given to finish anyway: it never may. */
+        const val RACE_WAIT_MILLIS = 300L
+        const val JOIN_BUDGET_MILLIS = 30_000L
     }
 }

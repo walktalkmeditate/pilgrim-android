@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.MeditationBellObserver
 import org.walktalkmeditate.pilgrim.audio.OrphanSweeperScheduler
+import org.walktalkmeditate.pilgrim.audio.honor.ShareIdRedactingMedia3Logger
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesSeeder
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator
@@ -244,6 +245,8 @@ class PilgrimApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Both processes play shared voices, whose paths carry share ids.
+        ShareIdRedactingMedia3Logger.install()
         // WalkTrackingService runs in the `:tracker` process (manifest
         // android:process=":tracker") so the UI process being OEM-killed
         // mid-walk no longer kills GPS tracking. The tracker process

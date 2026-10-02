@@ -7,6 +7,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -93,7 +94,8 @@ object WaveformGenerator {
     private suspend fun decodedBars(file: File, bars: Int): FloatArray? {
         val extractor = MediaExtractor()
         try {
-            extractor.setDataSource(file.path)
+            // By descriptor: the framework logs a path it fails to open, and a shared Way's carries its share id.
+            FileInputStream(file).use { extractor.setDataSource(it.fd) }
             val track = (0 until extractor.trackCount).firstOrNull {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
             } ?: return null

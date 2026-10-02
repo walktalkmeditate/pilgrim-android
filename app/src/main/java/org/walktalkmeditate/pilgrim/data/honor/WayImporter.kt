@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.data.honor
 
 import java.io.IOException
+import java.net.ProtocolException
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
@@ -58,6 +59,12 @@ enum class WayError { NOT_FOUND, RETURNED_TO_TRAIL, UNAVAILABLE, DISK_FULL }
 
 /** A [WayError], thrown. It carries no message: nothing from a share may reach a log. */
 class WayImportException(val error: WayError) : Exception()
+
+/** The manifest's and the media's redirect rule: see [WayImporter.StaysOnTheWalkHost]. */
+internal fun OkHttpClient.Builder.stayingOnTheWalkHost(base: HttpUrl): OkHttpClient.Builder =
+    followRedirects(false)
+        .followSslRedirects(false)
+        .addInterceptor(WayImporter.StaysOnTheWalkHost(base))
 
 /**
  * A shared walk's manifest becomes a listed Way: iOS `WayImporter`
@@ -152,18 +159,42 @@ class WayImporter internal constructor(
     }
 
     /**
-     * Refuses a redirect to any other scheme, host, or port: no request
+     * Follows a redirect only to the walk host's own scheme, host, and
+     * port, as OkHttp would (its codes, its 20 hops), and refuses any
+     * other before anything connects to it: no DNS, socket, or handshake
      * reaches it (an R6 addition: iOS follows any HTTPS redirect, S1 §3.2).
-     * A redirect on the walk host is followed, as iOS follows it. The media
-     * download refuses the same way (S3 §2).
+     * The media download refuses the same way (S3 §2). Both requests are
+     * GETs, so a followed hop keeps its method and headers (a `Range`
+     * included). Installed by [stayingOnTheWalkHost], which turns off
+     * OkHttp's own following: a check of OkHttp's hop could only run once
+     * the connection to its target was made.
      */
     internal class StaysOnTheWalkHost(private val base: HttpUrl) : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
-            val url = chain.request().url
-            if (url.scheme != base.scheme || url.host != base.host || url.port != base.port) {
-                throw IOException("a redirect off the walk host was refused")
+            var request = chain.request()
+            repeat(MAX_REDIRECTS + 1) {
+                val response = chain.proceed(request)
+                val target = redirectTarget(response) ?: return response
+                response.close()
+                if (target.scheme != base.scheme || target.host != base.host || target.port != base.port) {
+                    throw IOException("a redirect off the walk host was refused")
+                }
+                request = request.newBuilder().url(target).build()
             }
-            return chain.proceed(chain.request())
+            throw ProtocolException("too many redirects")
+        }
+
+        private fun redirectTarget(response: Response): HttpUrl? {
+            if (response.code !in REDIRECT_CODES) return null
+            val location = response.header(HEADER_LOCATION) ?: return null
+            return response.request.url.resolve(location)
+        }
+
+        private companion object {
+            /** OkHttp's `MAX_FOLLOW_UPS`. */
+            const val MAX_REDIRECTS = 20
+            const val HEADER_LOCATION = "Location"
+            val REDIRECT_CODES = setOf(300, 301, 302, 303, 307, 308)
         }
     }
 
@@ -239,7 +270,7 @@ class WayImporter internal constructor(
             .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .retryOnConnectionFailure(false)
-            .addNetworkInterceptor(StaysOnTheWalkHost(base))
+            .stayingOnTheWalkHost(base)
             .build()
 
         /**

@@ -44,10 +44,10 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
  * Port of iOS `WayImporterTests.swift@7c200bf`, with its `tour.json`
  * fixture verbatim, plus one rejecting test for each of the 29 bounds in
  * shared-walk spec S1 §4.3 in iOS's check order, the text rules of §7,
- * the HTTP rules of §3 over a MockWebServer (the cross-host redirect
- * refusal and the early length refusal are R6 additions), and pins for
- * the decode differences iOS's decoder doesn't share (S1 open questions
- * 2–5).
+ * the HTTP rules of §3 over a MockWebServer (the declared-length refusal
+ * is iOS's own; the cross-host redirect refusal is an R6 addition), and
+ * pins for the decode differences iOS's decoder doesn't share (S1 open
+ * questions 2–5).
  */
 class WayImporterTest {
 
@@ -601,6 +601,12 @@ class WayImporterTest {
         assertRefused(WayError.UNAVAILABLE, minimal().replace("\"ts\":1000", "\"ts\":1000.0"))
     }
 
+    // S1 §2.4 expected kotlinx to refuse an exponent too; it reads one, as iOS does.
+    @Test
+    fun `an integer written with an exponent reads as iOS reads it`() {
+        assertEquals(400.0, build(minimal().replace("\"ts\":1000", "\"ts\":1e3")).route.last().t, 0.0)
+    }
+
     @Test
     fun `a repeated key keeps its last value, where iOS keeps its first`() {
         val twice = minimal().replace("\"v\":1,", "\"v\":1,\"start_date\":\"2026-08-02T07:00:00Z\",")
@@ -663,7 +669,7 @@ class WayImporterTest {
         }
     }
 
-    // An R6 addition: iOS cuts the stream at the same bound, later (correction 11).
+    // iOS's own check, before it drains the body (`WayImporter.swift:62@7c200bf`, S1 §3.3 row 6).
     @Test
     fun `row 4 - a declared length over the cap is refused before the body is read`() = runBlocking {
         val oversized = Buffer().write(ByteArray(3 * 1024 * 1024) { ' '.code.toByte() })
@@ -712,20 +718,36 @@ class WayImporterTest {
 
     // An R6 addition: iOS follows an HTTPS redirect to any host (correction 11).
     @Test
-    fun `a redirect off the walk host is refused, and one on it is followed`() {
-        val elsewhere = MockWebServer().apply { start() }
-        try {
-            elsewhere.enqueue(MockResponse().setBody(fixture()))
+    fun `a redirect off the walk host is refused before anything connects to it, and one on it is followed`() {
+        ConnectionCountingServer().use { elsewhere ->
             server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", elsewhere.url("/$ID/tour.json")))
             assertImportRefused(WayError.UNAVAILABLE)
-            assertEquals(0, elsewhere.requestCount)
-        } finally {
-            elsewhere.shutdown()
+            assertEquals("no connection, let alone a request", 0, elsewhere.connectionsSoFar())
         }
 
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/moved/tour.json"))
         server.enqueue(MockResponse().setBody(fixture()))
         assertEquals("share:$ID", runBlocking { importer().importShare(ID) }.id)
+        assertEquals(
+            listOf("/$ID/tour.json", "/$ID/tour.json", "/moved/tour.json"),
+            List(3) { server.takeRequest(5, TimeUnit.SECONDS)?.path },
+        )
+    }
+
+    @Test
+    fun `a redirect chain past OkHttp's twenty hops is refused`() {
+        repeat(21) { server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/hop$it/tour.json")) }
+
+        assertImportRefused(WayError.UNAVAILABLE)
+        assertEquals(21, server.requestCount)
+    }
+
+    @Test
+    fun `OkHttp's own following is off, so only the walk-host rule follows a redirect`() {
+        val client = WayImporter.httpClient(WayImporter.BASE_URL.toHttpUrl())
+
+        assertFalse(client.followRedirects)
+        assertFalse(client.followSslRedirects)
     }
 
     @Test

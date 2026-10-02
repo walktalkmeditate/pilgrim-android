@@ -15,7 +15,14 @@ class FakeWayMediaDownloadScheduler : WayMediaDownloadScheduler {
     val gathers = mutableListOf<Gather>()
     val cancels = mutableListOf<String>()
 
+    /** Thrown by the next gathers instead of enqueueing, as WorkManager's full or broken database throws. */
+    var failGather: Exception? = null
+
+    /** Runs as each cancel is asked for. */
+    var onCancel: (wayId: String) -> Unit = {}
+
     override suspend fun gather(wayId: String, replace: Boolean): Flow<WayMediaWork?> {
+        failGather?.let { throw it }
         val work = MutableStateFlow<WayMediaWork?>(WayMediaWork(WayMediaWork.State.WAITING, report = null))
         gathers += Gather(wayId, replace, work)
         return work
@@ -23,6 +30,7 @@ class FakeWayMediaDownloadScheduler : WayMediaDownloadScheduler {
 
     override fun cancel(wayId: String) {
         cancels += wayId
+        onCancel(wayId)
     }
 
     /** The latest gather's work for [wayId]. */

@@ -104,17 +104,26 @@ class HonorFinalizer internal constructor(
      * any more and the temp files killed writes left, then runs the expiry
      * sweep, which so sees every link recovery and the retry could write
      * (shared-walk spec correction 10: iOS races its recovery, a dated R5
-     * divergence). Never throws but for cancellation.
+     * divergence). The expiry sweep runs whether or not the steps before it
+     * failed, as iOS's runs on every launch: a Way whose Honor step is
+     * still pending is held by its live session row either way. Never
+     * throws but for cancellation.
      */
     suspend fun runAtLaunch() {
-        try {
+        deferringFailure("launch Honor maintenance") {
             finalizePending()
             sweepStaging()
-            expirySweep()
+        }
+        deferringFailure("launch expiry sweep", expirySweep)
+    }
+
+    private suspend fun deferringFailure(what: String, block: suspend () -> Unit) {
+        try {
+            block()
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (e: Exception) {
-            Log.w(TAG, "launch Honor maintenance deferred (${e::class.simpleName})")
+            Log.w(TAG, "$what deferred (${e::class.simpleName})")
         }
     }
 

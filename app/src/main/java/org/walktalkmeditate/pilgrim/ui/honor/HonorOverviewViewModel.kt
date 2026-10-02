@@ -15,6 +15,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -351,14 +353,15 @@ class HonorOverviewViewModel internal constructor(
     }
 
     /**
-     * Files land while the overview is up: each change of the gathering
-     * state looks again, so a preview opened before its voice arrived
-     * turns into the player once it has (S4 §9.3). The map's inputs don't
-     * change with it.
+     * Files land while the overview is up: each change of this Way's
+     * gather looks again, so a preview opened before its voice arrived
+     * turns into the player once it has (S4 §9.3), and keeps doing so
+     * under disk full or after "walk without the missing voices", when the
+     * import line no longer moves. The map's inputs don't change with it.
      */
     private fun followLandingMedia(way: Way) {
         viewModelScope.launch {
-            imports.state.collect {
+            imports.gathers.map { it.of(way.id) }.distinctUntilChanged().collect {
                 val voices = sharedVoices(way)
                 val photos = photoUris(way)
                 updateOverview { shown ->

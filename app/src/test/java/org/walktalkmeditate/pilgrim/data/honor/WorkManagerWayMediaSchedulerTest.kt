@@ -10,6 +10,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -82,6 +83,27 @@ class WorkManagerWayMediaSchedulerTest {
 
         scheduler.gather(WAY_ID, replace = true)
         assertNotEquals(pending, infos().single { !it.state.isFinished }.id)
+    }
+
+    // KEEP kept a pending work, and it finished before the gather read the name's works.
+    @Test
+    fun `a kept work that has finished since is still the one followed`() {
+        val enqueued = UUID.randomUUID()
+        val kept = WorkInfo(UUID.randomUUID(), WorkInfo.State.SUCCEEDED, emptySet())
+
+        assertEquals(kept.id, WorkManagerWayMediaDownloadScheduler.followedId(listOf(kept), enqueued))
+    }
+
+    @Test
+    fun `the gather's own work wins, then a pending one`() {
+        val enqueued = WorkInfo(UUID.randomUUID(), WorkInfo.State.ENQUEUED, emptySet())
+        val pending = WorkInfo(UUID.randomUUID(), WorkInfo.State.RUNNING, emptySet())
+        val finished = WorkInfo(UUID.randomUUID(), WorkInfo.State.CANCELLED, emptySet())
+
+        assertEquals(enqueued.id, WorkManagerWayMediaDownloadScheduler.followedId(listOf(pending, enqueued), enqueued.id))
+        assertEquals(pending.id, WorkManagerWayMediaDownloadScheduler.followedId(listOf(finished, pending), UUID.randomUUID()))
+        val none = UUID.randomUUID()
+        assertEquals(none, WorkManagerWayMediaDownloadScheduler.followedId(emptyList(), none))
     }
 
     @Test

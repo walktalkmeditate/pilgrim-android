@@ -84,6 +84,14 @@ data class StagingFolder(val walkUuid: String, val lastTouchedMillis: Long, val 
  * itself survives a power loss: the Honor marker written after a link
  * promises the link is there), and readers only ever open the final
  * names. Nothing here logs: ids and titles are shared content.
+ *
+ * A Way's media is the one thing two threads of one process change at
+ * once: the media worker gathers into a Way while a Settings delete or a
+ * sweep removes it, all in the UI process (iOS runs both on main). So a
+ * partial's opening ([holdMediaPartial]), its landing ([landMedia]), and
+ * every removal of a Way or its media take one lock, and the Way must
+ * still load inside it: nothing lands in, and no partial is made in, a
+ * folder whose `way.json` has gone.
  */
 class WayStore(
     resolveBaseDirectory: () -> File,
@@ -95,6 +103,11 @@ class WayStore(
     val baseDirectory: File by lazy(resolveBaseDirectory)
 
     private val deletionCount = MutableStateFlow(0L)
+
+    private val mediaLock = Any()
+
+    /** Open partials by path, with how many fetches hold each: the temp sweep leaves them be. */
+    private val heldPartials = HashMap<String, Int>()
 
     /**
      * How many Ways this process has [delete]d. Files raise no
@@ -141,7 +154,7 @@ class WayStore(
     /** Removes the Way's folder and every walk's link to it (`WayStore.swift:123-129@7c200bf`). */
     fun delete(id: String) {
         if (!isValidId(id)) return
-        directory(id).deleteRecursively()
+        synchronized(mediaLock) { directory(id).deleteRecursively() }
         linkFiles().forEach { file ->
             if (readLink(file)?.wayId == id) file.delete()
         }
@@ -178,17 +191,19 @@ class WayStore(
     /** `media/`, and the files still gathering into it: what an expired, walked share loses. */
     fun deleteMedia(id: String) {
         if (!isValidId(id)) return
-        mediaDirectory(id).deleteRecursively()
-        directory(id).listFiles().orEmpty()
-            .filter { it.isFile && it.name.startsWith(PARTIAL_PREFIX) && it.name.endsWith(PARTIAL_SUFFIX) }
-            .forEach { it.delete() }
+        synchronized(mediaLock) {
+            mediaDirectory(id).deleteRecursively()
+            directory(id).listFiles().orEmpty()
+                .filter { it.isFile && it.name.startsWith(PARTIAL_PREFIX) && it.name.endsWith(PARTIAL_SUFFIX) }
+                .forEach { it.delete() }
+        }
     }
 
     /**
      * Where [relative] gathers before it lands: a temp in the Way's own
      * folder, outside `media/` so [hasMedia] never counts it, named for its
      * path so a later run resumes it, and swept like every other temp by
-     * [sweepTempFiles]. Null for a path [mediaFile] refuses.
+     * [sweepTempFiles] once no fetch holds it. Null for a path [mediaFile] refuses.
      */
     fun mediaPartialFile(id: String, relative: String): File? {
         mediaFile(id, relative) ?: return null
@@ -196,16 +211,45 @@ class WayStore(
     }
 
     /**
+     * Opens [partial] (a [mediaPartialFile]) for one fetch through [open],
+     * only while the Way still loads, under the media lock: a Way deleted
+     * or swept whole gets no partial made in its folder. Until
+     * [releaseMediaPartial], [sweepTempFiles] leaves it however old.
+     *
+     * @return null when the Way is gone.
+     * @throws IOException when [open] fails, a full disk among the causes.
+     */
+    fun <T> holdMediaPartial(id: String, partial: File, open: (File) -> T): T? = synchronized(mediaLock) {
+        if (load(id) == null) return null
+        open(partial).also { heldPartials.merge(partial.path, 1) { held, more -> held + more } }
+    }
+
+    /** Ends [holdMediaPartial]'s hold; a partial its fetch left empty goes with it. */
+    fun releaseMediaPartial(partial: File) {
+        synchronized(mediaLock) {
+            val left = (heldPartials[partial.path] ?: 1) - 1
+            if (left > 0) {
+                heldPartials[partial.path] = left
+                return
+            }
+            heldPartials.remove(partial.path)
+            if (partial.isFile && partial.length() == 0L) partial.delete()
+        }
+    }
+
+    /**
      * Lands a fully gathered [partial] at [relative] (iOS `deliver`'s guard
      * and `move`, `WayMediaDownloader.swift:270-296@7c200bf`). The Way must
      * still load just before the rename, and `media/` is made one folder at
      * a time under the Way's folder, never with it: a Way deleted or swept
-     * whole meanwhile gets nothing back.
+     * whole meanwhile gets nothing back. The check, the folders, and the
+     * rename hold the media lock, so no delete runs between them.
      *
      * @return false, the partial removed, when the Way is gone.
-     * @throws IOException when a folder or the rename fails, a full disk among them.
+     * @throws IOException when a folder or the rename fails, a full disk
+     *   among them, or when [partial] is no longer there to land.
      */
-    fun landMedia(id: String, relative: String, partial: File): Boolean {
+    fun landMedia(id: String, relative: String, partial: File): Boolean = synchronized(mediaLock) {
         val target = mediaFile(id, relative)
         if (target == null || load(id) == null) {
             partial.delete()
@@ -362,8 +406,10 @@ class WayStore(
      * [olderThanMillis] (a younger one may be another process's write in
      * flight): a write's between its create and its rename, in `links/`,
      * each Way's folder, and each staging folder a walk still needs; and a
-     * media file still gathering in its Way's folder. Staging folders no
-     * walk needs go whole, through [discardStaged].
+     * media file still gathering in its Way's folder, unless a fetch holds
+     * it ([holdMediaPartial]): a gather resumed after a day offline keeps
+     * the bytes it is appending to. Staging folders no walk needs go
+     * whole, through [discardStaged].
      *
      * @return how many were deleted.
      */
@@ -371,9 +417,12 @@ class WayStore(
         val folders = listOf(linksDirectory) +
             baseDirectory.list().orEmpty().filter(::isValidId).map { File(baseDirectory, it) } +
             stagingRoot.list().orEmpty().filter(::isValidWalkUuid).map { File(stagingRoot, it) }
-        return folders.sumOf { folder ->
-            folder.listFiles().orEmpty().count { file ->
-                file.isFile && isTempName(file.name) && file.lastModified() < olderThanMillis && file.delete()
+        return synchronized(mediaLock) {
+            folders.sumOf { folder ->
+                folder.listFiles().orEmpty().count { file ->
+                    file.isFile && isTempName(file.name) && file.lastModified() < olderThanMillis &&
+                        file.path !in heldPartials && file.delete()
+                }
             }
         }
     }
@@ -400,7 +449,7 @@ class WayStore(
             if (way.id in walked) {
                 deleteMedia(way.id)
             } else {
-                directory(way.id).deleteRecursively()
+                synchronized(mediaLock) { directory(way.id).deleteRecursively() }
                 deletionCount.update { it + 1 }
             }
             touched += way.id

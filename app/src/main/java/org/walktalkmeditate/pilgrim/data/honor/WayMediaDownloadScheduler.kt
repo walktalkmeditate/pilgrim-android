@@ -12,6 +12,7 @@ import androidx.work.WorkManager
 import androidx.work.await
 import androidx.work.workDataOf
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -41,7 +42,11 @@ interface WayMediaDownloadScheduler {
     /**
      * Enqueues the Way's gather, `KEEP` (or `REPLACE` when [replace]), and
      * returns the work it now follows: the one it enqueued, or the one
-     * already pending that `KEEP` kept.
+     * already pending that `KEEP` kept, even if that one has finished since.
+     * A null is a work WorkManager no longer has.
+     *
+     * @throws Exception when WorkManager can't take or read the work: its
+     *   database full or broken.
      */
     suspend fun gather(wayId: String, replace: Boolean): Flow<WayMediaWork?>
 
@@ -60,10 +65,7 @@ class WorkManagerWayMediaDownloadScheduler @Inject constructor(
         val policy = if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
         workManager.enqueueUniqueWork(name, policy, request).await()
         val infos = workManager.getWorkInfosForUniqueWorkFlow(name).first()
-        val followed = infos.firstOrNull { it.id == request.id }
-            ?: infos.firstOrNull { !it.state.isFinished }
-            ?: return workManager.getWorkInfoByIdFlow(request.id).map { it?.toWork() }
-        return workManager.getWorkInfoByIdFlow(followed.id).map { it?.toWork() }
+        return workManager.getWorkInfoByIdFlow(followedId(infos, request.id)).map { it?.toWork() }
     }
 
     override fun cancel(wayId: String) {
@@ -83,6 +85,20 @@ class WorkManagerWayMediaDownloadScheduler @Inject constructor(
                 .setInputData(workDataOf(WayMediaDownloadWorker.KEY_WAY_ID to wayId))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .build()
+
+        /**
+         * The work a gather follows among the unique name's: the one it
+         * enqueued, else the one `KEEP` kept. That one may have finished
+         * between the enqueue and this read, and is still the one to follow,
+         * finished: WorkManager clears a name's finished works before it
+         * enqueues anew, so a finished one here is the kept one.
+         */
+        internal fun followedId(infos: List<WorkInfo>, enqueued: UUID): UUID {
+            val followed = infos.firstOrNull { it.id == enqueued }
+                ?: infos.firstOrNull { !it.state.isFinished }
+                ?: infos.firstOrNull()
+            return followed?.id ?: enqueued
+        }
 
         private fun WorkInfo.toWork(): WayMediaWork {
             val mapped = when (state) {

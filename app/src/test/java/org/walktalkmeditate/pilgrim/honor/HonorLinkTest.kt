@@ -86,6 +86,27 @@ class HonorLinkTest {
         assertNull("an id in the query is not a path", HonorLink.parse(text = "https://honor.pilgrimapp.org/?id=Qoi4YmPHLN"))
     }
 
+    // iOS 18's `URL(string:)` percent-encodes what RFC 3986 refuses, so these parse there; `URI` alone would throw.
+    @Test
+    fun `a query or fragment that URI would refuse is ignored as iOS ignores it`() {
+        listOf(
+            "https://walk.pilgrimapp.org/Qoi4YmPHLN?utm=50%",
+            "https://walk.pilgrimapp.org/Qoi4YmPHLN?q=a b",
+            "https://walk.pilgrimapp.org/Qoi4YmPHLN#m3#x",
+            "https://walk.pilgrimapp.org/Qoi4YmPHLN?x={y}|^`\\\"<>",
+            "walk.pilgrimapp.org/Qoi4YmPHLN#a b",
+        ).forEach { assertEquals(it, ID, HonorLink.parse(text = it)) }
+    }
+
+    @Test
+    fun `the same characters in the path still fail the id`() {
+        listOf(
+            "https://walk.pilgrimapp.org/Qoi4 YmPHLN?q=a",
+            "https://walk.pilgrimapp.org/Qoi4{mPHLN#x",
+            "https://walk.pilgrimapp.org/Qoi4YmPHLN%?utm=x",
+        ).forEach { assertNull(it, HonorLink.parse(text = it)) }
+    }
+
     @Test
     fun `the id is case-sensitive and only the host is folded`() {
         assertEquals("qoi4ymphln", HonorLink.parse(text = "https://honor.pilgrimapp.org/qoi4ymphln"))

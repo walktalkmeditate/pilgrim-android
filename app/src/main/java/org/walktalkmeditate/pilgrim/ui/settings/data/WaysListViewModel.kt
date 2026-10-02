@@ -69,9 +69,10 @@ object WaysListModel {
     /** Own-walk and shared Ways; a pilgrimage stage is its route page's, never this list's. */
     fun listable(ways: List<Way>): List<Way> = ways.filterNot { it.source.isPackageOwned }
 
-    /** `"1 way · 2.3 MB"`, `"3 ways · 12.0 MB"`, `"0 ways · 0.0 MB"`. */
+    /** `"1 way · 2.3 MB"`, `"3 ways · 12.0 MB"`, `"0 ways · 0.0 MB"`: the word by iOS's `count == 1`, in every locale. */
     fun rowDetail(resources: Resources, totals: WaysTotals): String {
-        val count = resources.getQuantityString(R.plurals.settings_ways_count, totals.count, String.format(Locale.US, "%d", totals.count))
+        val res = if (totals.count == 1) R.string.settings_ways_count_one else R.string.settings_ways_count
+        val count = resources.getString(res, String.format(Locale.US, "%d", totals.count))
         return resources.getString(R.string.settings_ways_detail, count, megabytes(resources, totals.bytes))
     }
 
@@ -112,16 +113,25 @@ object WaysListModel {
  * step outlives the walk screen, so this is a dated R6 addition at the
  * gate (spec correction 14), keeping a delete off a Way a walk still needs.
  */
-class WaysAvailability internal constructor(val shown: Flow<Boolean>) {
+class WaysAvailability internal constructor(
+    val shown: Flow<Boolean>,
+    /**
+     * What to show before [shown]'s first answer: the release flag, so the
+     * Data card's row is there on its first frame, as iOS's unconditional
+     * row is, and goes only if a walk turns out to be on.
+     */
+    val shownAtFirst: Boolean,
+) {
     @Inject
     constructor(releaseFlags: ReleaseFlags, walkRepository: WalkRepository, honorDao: HonorDao) : this(
-        if (!releaseFlags.honor) {
+        shown = if (!releaseFlags.honor) {
             flowOf(false)
         } else {
             combine(walkRepository.observeActiveWalk(), honorDao.observeLiveSessionCount()) { active, sessions ->
                 active == null && sessions == 0
             }
         },
+        shownAtFirst = releaseFlags.honor,
     )
 }
 
@@ -142,7 +152,7 @@ class WaysRowViewModel internal constructor(
     constructor(store: WayStore, availability: WaysAvailability) : this(store, availability, Dispatchers.IO)
 
     val shown: StateFlow<Boolean> = availability.shown
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), false)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), availability.shownAtFirst)
 
     private val _totals = MutableStateFlow<WaysTotals?>(null)
 
@@ -203,7 +213,7 @@ class WaysListViewModel internal constructor(
 
     /** True once a walk starts or a finished one waits for its Honor step: the screen leaves. */
     val hidden: StateFlow<Boolean> = availability.shown.map { !it }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), false)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), !availability.shownAtFirst)
 
     private val changes = Mutex()
 

@@ -503,6 +503,41 @@ class HonorOverviewViewModelTest {
         assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
     }
 
+    // S3 §8: disk full stops only its own file, so a later voice can still land, and the line no longer moves.
+    @Test
+    fun `a voice that lands after disk full still becomes playable`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = listOf("photos/1.jpg"), diskFull = true))
+        assertEquals(HonorImportState.Failed(WayError.DISK_FULL), vm.importState.value)
+
+        store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 0, failures = listOf("photos/1.jpg"), diskFull = true))
+
+        assertEquals("the line holds still", HonorImportState.Failed(WayError.DISK_FULL), vm.importState.value)
+        assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
+    }
+
+    @Test
+    fun `a voice that lands after walking on without the missing ones still becomes playable`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+        vm.walkWithoutMissingVoices()
+
+        store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        scheduler.report(SHARED_ID, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, unfinished = 0, failures = emptyList(), diskFull = false))
+
+        assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
+    }
+
     // iOS `gather` and `handleOverviewDismiss` (S1 §6.3).
     @Test
     fun `the overview gathers its Way as it shows, and only its own real close hands the state back`() = runTest(dispatcher) {
@@ -559,6 +594,21 @@ class HonorOverviewViewModelTest {
         assertEquals("1 voice", HonorOverviewModel.countsLine(resources, way(voices = 1, photos = 0)))
         assertEquals("1 photo", HonorOverviewModel.countsLine(resources, way(voices = 0, photos = 1)))
         assertEquals("a quiet way", HonorOverviewModel.countsLine(resources, way(voices = 0, photos = 0)))
+    }
+
+    // iOS picks each word by `count == 1` (`HonorOverviewView.swift:9-10@7c200bf`), whatever the phone's plural rules.
+    @Test
+    @Config(qualifiers = "fr")
+    fun `counts keep iOS's rule under French plural rules`() {
+        assertEquals("1 voice · 1 photo", HonorOverviewModel.countsLine(resources, voiceCount = 1, photoCount = 1))
+        assertEquals("2 voices · 2 photos", HonorOverviewModel.countsLine(resources, voiceCount = 2, photoCount = 2))
+    }
+
+    @Test
+    @Config(qualifiers = "ja")
+    fun `counts keep iOS's rule under Japanese plural rules`() {
+        assertEquals("1 voice · 1 photo", HonorOverviewModel.countsLine(resources, voiceCount = 1, photoCount = 1))
+        assertEquals("12 voices · 20 photos", HonorOverviewModel.countsLine(resources, voiceCount = 12, photoCount = 20))
     }
 
     @Test

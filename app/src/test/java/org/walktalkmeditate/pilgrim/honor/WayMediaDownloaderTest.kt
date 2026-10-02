@@ -2,8 +2,12 @@
 package org.walktalkmeditate.pilgrim.honor
 
 import java.io.File
+import java.io.IOException
 import java.time.Instant
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -140,6 +144,85 @@ class WayMediaDownloaderTest {
         assertTrue(way.id in downloader.gathers.value.active)
         assertEquals(listOf(false, true), scheduler.gathers.map { it.replace })
         assertEquals(listOf(way.id), scheduler.cancels)
+    }
+
+    // S4 §8.4: "the line goes back to gathering … and Begin disables again", with no frame of an enabled Begin.
+    @Test
+    fun `try again holds the Way's line through its restart, never ready in between`() = runTest(dispatcher) {
+        val seen = mutableListOf<HonorImportState>()
+        lateinit var downloader: WayMediaDownloader
+        val noting = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) {
+                seen += downloader.gathers.value.state("share:ffffffffff")
+                block.run()
+            }
+        }
+        downloader = WayMediaDownloader(store, scheduler, backgroundScope, noting)
+        val way = way("share:ffffffffff", listOf(voice(1), voice(2)))
+        downloader.download(way)
+        scheduler.report(way.id, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, 0, listOf("audio/2.m4a"), diskFull = false))
+        scheduler.onCancel = { seen += downloader.gathers.value.state(it) }
+        seen.clear()
+
+        downloader.retry(way)
+
+        val missing = HonorImportState.MediaMissing(listOf("audio/2.m4a"))
+        assertEquals("while the disk is read, then as the old work is stopped", listOf(missing, missing), seen)
+        assertEquals(HonorImportState.Gathering(0.0), downloader.gathers.value.state(way.id))
+    }
+
+    @Test
+    fun `a finished round stops following its work`() = runTest(dispatcher) {
+        val downloader = downloader()
+        val way = way("share:dddddddddd", listOf(voice(1)))
+        downloader.download(way)
+        val work = scheduler.work(way.id)
+        assertEquals(1, work.subscriptionCount.value)
+
+        scheduler.report(way.id, WayMediaWork.State.SUCCEEDED, WayMediaReport(1, 0, emptyList(), diskFull = false))
+
+        assertEquals(0, work.subscriptionCount.value)
+    }
+
+    // A work KEEP kept, then pruned or gone: WorkManager answers null, and nothing more comes.
+    @Test
+    fun `a work WorkManager no longer has ends the round as missing, never gathering for good`() = runTest(dispatcher) {
+        val downloader = downloader()
+        val way = way("share:dddddddddd", listOf(voice(1)))
+        downloader.download(way)
+
+        scheduler.work(way.id).value = null
+
+        assertFalse(way.id in downloader.gathers.value.active)
+        assertEquals(HonorImportState.MediaMissing(listOf("audio/1.m4a")), downloader.gathers.value.state(way.id))
+    }
+
+    // iOS's download can't fail; WorkManager's enqueue can, and must not take the app down.
+    @Test
+    fun `a gather WorkManager can't take on a full phone shows the disk-full line`() = runTest(dispatcher) {
+        val downloader = downloader()
+        val way = way("share:dddddddddd", listOf(voice(1)))
+        scheduler.failGather = IllegalStateException("enqueue failed", IOException("write failed: ENOSPC (No space left on device)"))
+
+        downloader.download(way)
+
+        assertEquals(HonorImportState.Failed(WayError.DISK_FULL), downloader.gathers.value.state(way.id))
+        assertFalse("Begin is enabled", way.id in downloader.gathers.value.active)
+    }
+
+    @Test
+    fun `a gather WorkManager can't take for any other reason reads some voices didn't arrive`() = runTest(dispatcher) {
+        val downloader = downloader()
+        val way = way("share:dddddddddd", listOf(voice(1)))
+        scheduler.failGather = IllegalStateException("the work database is broken")
+
+        downloader.download(way)
+
+        assertEquals(HonorImportState.MediaMissing(listOf("audio/1.m4a")), downloader.gathers.value.state(way.id))
+
+        scheduler.failGather = null
+        downloader.retry(way)
+        assertEquals("and try again can still gather", HonorImportState.Gathering(0.0), downloader.gathers.value.state(way.id))
     }
 
     @Test

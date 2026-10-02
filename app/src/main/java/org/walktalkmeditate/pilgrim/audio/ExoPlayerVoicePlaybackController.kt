@@ -105,7 +105,8 @@ class ExoPlayerVoicePlaybackController @Inject constructor(
 
         override fun onPlayerError(error: PlaybackException) {
             val id = currentRecordingId ?: return
-            Log.w(TAG, "playback error for recording $id", error)
+            // The code alone: the cause names the file, and a shared Way's path carries its share id.
+            Log.w(TAG, "playback error for recording $id: ${error.errorCodeName}")
             audioFocus.abandon()
             // Null currentRecordingId so a stale `pause()` arriving on
             // the next frame can't transition state into Paused on a

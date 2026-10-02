@@ -21,9 +21,13 @@ import org.walktalkmeditate.pilgrim.domain.honor.trimmingWhitespacesAndNewlines
  * - The query and the fragment are ignored.
  * - The id is case-sensitive and never folded.
  *
- * Text is parsed with `java.net.URI`, which, like Foundation, refuses a
- * string with a space or a malformed escape in it; `Uri.parse` refuses
- * nothing (S2 §11.1).
+ * Text is parsed with `java.net.URI` up to its first `?` or `#`. iOS 18's
+ * `URL(string:)` percent-encodes what RFC 3986 doesn't allow rather than
+ * refusing it, so a query or a fragment holding a space, a lone `%`, or
+ * a brace still parses there, and both platforms ignore what follows the
+ * path. In the host or the path such a character still fails: `URI`
+ * refuses it, and iOS's decoded segment fails the id. `Uri.parse`
+ * refuses nothing, so it isn't used (S2 §11.1).
  */
 object HonorLink {
 
@@ -47,7 +51,7 @@ object HonorLink {
         if (isId(trimmed)) return trimmed
         val withScheme = if ("://" in trimmed) trimmed else "https://$trimmed"
         val url = try {
-            URI(withScheme)
+            URI(withScheme.substringBefore('?').substringBefore('#'))
         } catch (_: URISyntaxException) {
             return null
         }

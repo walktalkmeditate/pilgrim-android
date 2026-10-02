@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -92,13 +93,13 @@ class WaysListViewModelTest {
         store = store,
         sweeper = sweeper(),
         cancelGather = { cancelled += it },
-        availability = WaysAvailability(shown),
+        availability = WaysAvailability(shown, shownAtFirst = true),
         zone = { ZoneId.of("America/Los_Angeles") },
         locale = { Locale.US },
         ioDispatcher = dispatcher,
     ).also { viewModels += it }
 
-    private fun row() = WaysRowViewModel(store, WaysAvailability(shown), dispatcher).also { viewModels += it }
+    private fun row() = WaysRowViewModel(store, WaysAvailability(shown, shownAtFirst = true), dispatcher).also { viewModels += it }
 
     private fun way(id: String, source: WaySource, expires: Instant? = null, moments: List<WayMoment> = emptyList()) = Way(
         id = id,
@@ -284,8 +285,8 @@ class WaysListViewModelTest {
 
     @Test
     fun `availability needs the flag, no walk on, and no Honor step pending`() = runTest(dispatcher) {
-        assertFalse(WaysAvailability(flowOf(false)).shown.first())
-        assertTrue(WaysAvailability(flowOf(true)).shown.first())
+        assertFalse(WaysAvailability(flowOf(false), shownAtFirst = false).shown.first())
+        assertTrue(WaysAvailability(flowOf(true), shownAtFirst = true).shown.first())
     }
 
     // The Data card row (S4 §2).
@@ -319,5 +320,33 @@ class WaysListViewModelTest {
         shown.value = false
         assertFalse(row.shown.value)
         collector.cancel()
+    }
+
+    // S4 §2.1: iOS's row is unconditional, so it is there before Room's first answer.
+    @Test
+    fun `the row is there on its first frame, before availability has answered`() = runTest(dispatcher) {
+        val silent = MutableSharedFlow<Boolean>()
+
+        assertTrue(WaysRowViewModel(store, WaysAvailability(silent, shownAtFirst = true), dispatcher).also { viewModels += it }.shown.value)
+        assertFalse(
+            "with the flag off it never shows",
+            WaysRowViewModel(store, WaysAvailability(silent, shownAtFirst = false), dispatcher).also { viewModels += it }.shown.value,
+        )
+    }
+
+    // iOS picks the word by `count == 1` (`WaysListView.swift:18-20@7c200bf`), in every locale.
+    @Test
+    @Config(qualifiers = "fr")
+    fun `French plural rules don't make zero singular`() {
+        assertEquals("0 ways · 0.0 MB", WaysListModel.rowDetail(resources, WaysTotals(0, 0)))
+        assertEquals("1 way · 0.0 MB", WaysListModel.rowDetail(resources, WaysTotals(1, 0)))
+        assertEquals("2 ways · 0.0 MB", WaysListModel.rowDetail(resources, WaysTotals(2, 0)))
+    }
+
+    @Test
+    @Config(qualifiers = "ja")
+    fun `Japanese plural rules don't make one plural`() {
+        assertEquals("1 way · 0.0 MB", WaysListModel.rowDetail(resources, WaysTotals(1, 0)))
+        assertEquals("3 ways · 0.0 MB", WaysListModel.rowDetail(resources, WaysTotals(3, 0)))
     }
 }

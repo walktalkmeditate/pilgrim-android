@@ -7,7 +7,11 @@ import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.time.ZoneId
 import java.util.Locale
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -101,6 +105,7 @@ class BeginHonorWalkTest {
         store: WayStore = h.store,
         honorEnabled: Boolean = true,
         begins: HonorBeginsInFlight = HonorBeginsInFlight(),
+        awaitSessionRow: suspend (Long) -> Unit = {},
     ) = BeginHonorWalk(
         repository = h.repository,
         wayStore = store,
@@ -112,6 +117,7 @@ class BeginHonorWalkTest {
         zone = { ZoneId.of("UTC") },
         locale = { Locale.US },
         begins = begins,
+        awaitSessionRow = awaitSessionRow,
     )
 
     private fun storedRequest() =
@@ -193,6 +199,47 @@ class BeginHonorWalkTest {
         begin(controller, begins = begins)(storedRequest())
 
         assertEquals(setOf(SHARED_ID), heldDuringStart)
+        assertTrue(begins.wayIds().isEmpty())
+    }
+
+    // `:tracker` writes the session row after the walk row the start waits for, in a transaction of its own.
+    @Test
+    fun `a shared Way stays held past its walk's start, until the walk's session row exists`() = runBlocking {
+        h.store.save(sharedWay)
+        val begins = HonorBeginsInFlight()
+        val awaiting = CompletableDeferred<Long>()
+        val sessionRow = CompletableDeferred<Unit>()
+        val begin = begin(
+            RecordingController(),
+            begins = begins,
+            awaitSessionRow = { walkId ->
+                awaiting.complete(walkId)
+                sessionRow.await()
+            },
+        )
+
+        val result = async(Dispatchers.Default) { begin(storedRequest()) }
+        assertEquals("the walk has started", 77L, withTimeout(WAIT_BUDGET_MILLIS) { awaiting.await() })
+        assertEquals(setOf(SHARED_ID), begins.wayIds())
+        sessionRow.complete(Unit)
+
+        assertTrue(withTimeout(WAIT_BUDGET_MILLIS) { result.await() } is BeginHonorWalk.Result.Started)
+        assertTrue(begins.wayIds().isEmpty())
+    }
+
+    @Test
+    fun `through the tracker's controller the session row is there once the start returns, so the hold ends`() = runBlocking {
+        h.store.save(sharedWay)
+        val begins = HonorBeginsInFlight()
+        val begin = begin(
+            h.controller,
+            begins = begins,
+            awaitSessionRow = { walkId -> h.db.honorDao().observeSession(walkId).first { it != null } },
+        )
+
+        val result = withTimeout(WAIT_BUDGET_MILLIS) { begin(storedRequest()) } as BeginHonorWalk.Result.Started
+
+        assertNotNull(h.db.honorDao().getSession(result.walk.id))
         assertTrue(begins.wayIds().isEmpty())
     }
 
@@ -292,6 +339,7 @@ class BeginHonorWalkTest {
 
     private companion object {
         const val SHARED_ID = "share:Qoi4YmPHLN"
+        const val WAIT_BUDGET_MILLIS = 30_000L
     }
 
     /** The UI's side of the chain, stood in for: it records the request and answers as the tracker would. */

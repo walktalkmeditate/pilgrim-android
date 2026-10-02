@@ -9,10 +9,13 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
@@ -49,6 +52,8 @@ class BeginHonorWalk internal constructor(
     zone: () -> ZoneId,
     locale: () -> Locale,
     private val begins: HonorBeginsInFlight = HonorBeginsInFlight(),
+    /** Returns once the walk's live session row exists; [invoke] bounds the wait. */
+    private val awaitSessionRow: suspend (walkId: Long) -> Unit = {},
 ) {
     private val ownWalkWays = OwnWalkWays(repository, recordingFiles, ioDispatcher, zone, locale)
 
@@ -60,6 +65,7 @@ class BeginHonorWalk internal constructor(
         recordingFiles: VoiceRecordingFileSystem,
         releaseFlags: ReleaseFlags,
         begins: HonorBeginsInFlight,
+        honorDao: HonorDao,
     ) : this(
         repository = repository,
         wayStore = wayStore,
@@ -71,6 +77,7 @@ class BeginHonorWalk internal constructor(
         zone = ZoneId::systemDefault,
         locale = Locale::getDefault,
         begins = begins,
+        awaitSessionRow = { walkId -> honorDao.observeSession(walkId).first { it != null } },
     )
 
     /** [settings] are the preferences read at Start: see [HonorSettings.atStart]. */
@@ -99,17 +106,27 @@ class BeginHonorWalk internal constructor(
     }
 
     /**
-     * A listed Way is held from Start until the walk exists, so the expiry
-     * sweep can't take it between the read and the live session row
-     * `:tracker` writes for it (shared-walk spec correction 9).
+     * A listed Way is held from Start until its walk's live session row
+     * exists, so the expiry sweep can't take it between the read and that
+     * row (shared-walk spec correction 9). `:tracker` writes the row just
+     * after the walk row the start waits for, in a transaction of its own,
+     * so the hold outlasts the start by that much; a row that never comes
+     * (its write failed, and the walk went on as a wander) is waited for
+     * [SESSION_ROW_WAIT_MILLIS] at most.
      *
      * @throws IllegalStateException when the chain refuses or times out the
      *   start, as [WalkController.startWalk] does for every walk.
      */
     suspend operator fun invoke(request: Request): Result {
         if (!releaseFlags.honor) return Result.Refused(Refusal.DISABLED)
-        val choice = request.way
-        return if (choice is HonorWayChoice.Stored) begins.holding(choice.wayId) { begin(request) } else begin(request)
+        val choice = request.way as? HonorWayChoice.Stored ?: return begin(request)
+        return begins.holding(choice.wayId) {
+            begin(request).also { result ->
+                if (result is Result.Started) {
+                    withTimeoutOrNull(SESSION_ROW_WAIT_MILLIS) { awaitSessionRow(result.walk.id) }
+                }
+            }
+        }
     }
 
     private suspend fun begin(request: Request): Result {
@@ -148,7 +165,10 @@ class BeginHonorWalk internal constructor(
         }
     }
 
-    private companion object {
-        const val TAG = "BeginHonorWalk"
+    internal companion object {
+        private const val TAG = "BeginHonorWalk"
+
+        /** The start's own wait for `:tracker` (`UiWalkController`'s), spent again at most. */
+        const val SESSION_ROW_WAIT_MILLIS = 5_000L
     }
 }
