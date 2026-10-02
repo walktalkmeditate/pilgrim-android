@@ -18,7 +18,7 @@ class HonorMomentTracker(
     moments: List<WayMoment>,
     private val geometry: WayGeometry,
     private val voicesEnabled: Boolean,
-    private val distance: HonorDistance = HAVERSINE_HONOR_DISTANCE,
+    private val distance: HonorDistance = WGS84_HONOR_DISTANCE,
 ) {
 
     sealed class Action {
