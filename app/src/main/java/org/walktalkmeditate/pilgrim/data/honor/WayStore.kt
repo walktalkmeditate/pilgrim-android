@@ -571,9 +571,20 @@ class WayStore(
          */
         fun isValidWalkUuid(uuid: String): Boolean = WALK_UUID.matches(uuid)
 
+        /**
+         * The dataset's route slug, `\A[a-z0-9-]{1,64}\z` with literal ASCII
+         * classes (`WayStore.swift:61-65@7c200bf`), checked before a route id
+         * reaches any path or URL.
+         */
+        fun isValidRouteId(id: String): Boolean = ROUTE_ID.matches(id)
+
+        /** A stage Way's id, the index in plain decimal (`WayStore.swift:67-69@7c200bf`). */
+        fun stageWayId(routeId: String, stageIndex: Int): String = "pilgrimage:$routeId:$stageIndex"
+
         private val WAY_ID =
             Regex("share:[A-Za-z0-9_-]{10}|walk:[0-9A-Fa-f-]{36}|pilgrimage:[a-z0-9-]{1,64}:[0-9]{1,3}")
         private val WALK_UUID = Regex("[0-9A-Fa-f-]{36}")
+        private val ROUTE_ID = Regex("[a-z0-9-]{1,64}")
 
         private val REPLIES_SERIALIZER = MapSerializer(String.serializer(), String.serializer())
 

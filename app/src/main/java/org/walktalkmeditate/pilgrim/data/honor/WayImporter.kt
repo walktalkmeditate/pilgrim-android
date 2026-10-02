@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
@@ -221,16 +222,37 @@ class WayImporter internal constructor(
         const val CALL_TIMEOUT_SECONDS = 30L
 
         private const val TOUR_FILE = "tour.json"
-        private const val DEFAULT_WAYPOINT_ICON = "mappin"
+        internal const val DEFAULT_WAYPOINT_ICON = "mappin"
         private const val READ_CHUNK_BYTES = 8_192L
         private const val HTTP_OK = 200
         private const val HTTP_NOT_FOUND = 404
 
         private val ID = Regex("[A-Za-z0-9_-]{10}")
 
-        private val MANIFEST_JSON = Json {
+        private val WIRE_JSON = Json {
             ignoreUnknownKeys = true
             explicitNulls = false
+        }
+
+        /**
+         * A downloaded wire file as [deserializer] reads it, the way iOS's
+         * default `JSONDecoder` does as nearly as kotlinx can: strict UTF-8,
+         * unknown keys ignored, a required key missing or `null` failing the
+         * whole decode. Shared by the share manifest and the pilgrimage
+         * files; each caller maps a failure to its own error.
+         *
+         * @throws IllegalArgumentException on a failed decode (kotlinx's
+         *   `SerializationException` is one). Its message quotes the input,
+         *   so a caller lets it go no further.
+         * @throws CharacterCodingException on bytes that aren't UTF-8.
+         */
+        internal fun <T> decodeWire(deserializer: DeserializationStrategy<T>, body: ByteArray): T {
+            val text = Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(body))
+                .toString()
+            return WIRE_JSON.decodeFromString(deserializer, text)
         }
 
         /**
@@ -239,12 +261,7 @@ class WayImporter internal constructor(
          * @throws WayImportException
          */
         internal fun manifest(body: ByteArray): TourManifest = try {
-            val text = Charsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(body))
-                .toString()
-            MANIFEST_JSON.decodeFromString(TourManifest.serializer(), text)
+            decodeWire(TourManifest.serializer(), body)
         } catch (e: IllegalArgumentException) {
             // kotlinx's SerializationException is one; its message quotes the input, so it goes no further.
             throw WayImportException(WayError.UNAVAILABLE)
@@ -522,8 +539,12 @@ class WayImporter internal constructor(
             else -> 0
         }
 
-        /** iOS's `(frac, id)` order, ids compared as plain strings (S1 §5.7). */
-        private val BY_FRAC_THEN_ID = Comparator<WayMoment> { a, b ->
+        /**
+         * iOS's `(frac, id)` order, ids compared as plain strings (S1 §5.7):
+         * the one both of iOS's importers sort by (`WayImporter.swift:180`,
+         * `PilgrimageWayImporter.swift:225@7c200bf`).
+         */
+        internal val BY_FRAC_THEN_ID = Comparator<WayMoment> { a, b ->
             a.frac.compareFracTo(b.frac).takeIf { it != 0 } ?: a.id.compareTo(b.id)
         }
     }
