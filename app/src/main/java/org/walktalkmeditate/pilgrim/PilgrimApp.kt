@@ -105,6 +105,13 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var voiceGuideOrchestratorProvider: Provider<VoiceGuideOrchestrator>
 
     /**
+     * U18: sends the guide's prompt and the recorder's take to `:tracker`
+     * as the walk audio gates, and re-sends both when the walk's gate
+     * generation changes. Sends nothing with the release flag off.
+     */
+    @Inject lateinit var uiAudioGatePublisherProvider: Provider<org.walktalkmeditate.pilgrim.audio.walk.UiAudioGatePublisher>
+
+    /**
      * App-scoped auto-download observer for soundscapes. Matches
      * iOS's behavior of downloading all soundscapes in the background
      * as soon as the manifest is fetched — users never need to tap
@@ -296,6 +303,10 @@ class PilgrimApp : Application(), Configuration.Provider {
         // process lifetime. Its collection on `catalog.packStates`
         // lives on `VoiceGuideCatalogScope`, so no per-screen tether.
         voiceGuideDownloadObserverProvider.get().start()
+
+        // The audio gates first, so the first prompt's level has a
+        // publisher listening; a no-op with the release flag off.
+        uiAudioGatePublisherProvider.get().start()
 
         // Start the voice-guide playback orchestrator. Observes the
         // walk-state flow + selected-pack flow and drives the player

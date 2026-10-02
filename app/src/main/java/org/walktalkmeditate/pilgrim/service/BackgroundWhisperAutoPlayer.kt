@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.service
 
 import android.util.Log
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -16,12 +17,15 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import org.walktalkmeditate.pilgrim.audio.walk.WalkAudioArbiter
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
 import org.walktalkmeditate.pilgrim.data.proximity.GeoCacheService
 import org.walktalkmeditate.pilgrim.data.proximity.ProximityDetectionService
 import org.walktalkmeditate.pilgrim.data.proximity.ProximityEvent
 import org.walktalkmeditate.pilgrim.data.proximity.ProximityTarget
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.whisper.WhisperDefinition
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperManifestService
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer
 import org.walktalkmeditate.pilgrim.domain.WalkState
@@ -71,13 +75,19 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
  * Closing these would require an IPC channel between the processes —
  * deliberately out of scope; the walk pipeline was split precisely to
  * keep `:tracker` independent of the UI process.
+ *
+ * With the release flag on, each play goes through [WalkAudioArbiter],
+ * which holds it while a guide prompt sounds or a Way voice is loaded
+ * (one parked whisper, newest wins), as every in-walk whisper on iOS
+ * goes through `AudioPriorityQueue` (parity spec C §5). With it off the
+ * arbiter is never built and whispers play as they did.
  */
 @Singleton
 class BackgroundWhisperAutoPlayer internal constructor(
     private val geoCacheService: GeoCacheService,
     private val proximityService: ProximityDetectionService,
     private val whisperManifestService: WhisperManifestService,
-    private val whisperPlayer: WhisperPlayer,
+    whisperPlayer: WhisperPlayer,
     private val practicePreferences: PracticePreferencesRepository,
     private val soundsPreferences: SoundsPreferencesRepository,
     private val currentTimeMillis: () -> Long,
@@ -88,6 +98,7 @@ class BackgroundWhisperAutoPlayer internal constructor(
     // dispatched children that can't run while the main thread is blocked.
     // Default-dispatched children complete off-thread and let the join return.
     private val sessionDispatcher: CoroutineDispatcher,
+    private val playWhisper: (WhisperDefinition) -> Unit = whisperPlayer::play,
 ) {
     @Inject
     constructor(
@@ -97,6 +108,8 @@ class BackgroundWhisperAutoPlayer internal constructor(
         whisperPlayer: WhisperPlayer,
         practicePreferences: PracticePreferencesRepository,
         soundsPreferences: SoundsPreferencesRepository,
+        releaseFlags: ReleaseFlags,
+        arbiter: Provider<WalkAudioArbiter>,
     ) : this(
         geoCacheService = geoCacheService,
         proximityService = proximityService,
@@ -106,6 +119,7 @@ class BackgroundWhisperAutoPlayer internal constructor(
         soundsPreferences = soundsPreferences,
         currentTimeMillis = System::currentTimeMillis,
         sessionDispatcher = Dispatchers.Default,
+        playWhisper = whisperRoute(releaseFlags, arbiter, whisperPlayer),
     )
 
     /**
@@ -245,7 +259,7 @@ class BackgroundWhisperAutoPlayer internal constructor(
             .firstOrNull { it.id == cacheId } ?: return
         val category = cached.resolvedCategory ?: return
         val definition = whisperManifestService.randomWhisper(category) ?: return
-        whisperPlayer.play(definition)
+        playWhisper(definition)
     }
 
     private fun WalkState.activeOrPausedLocation(): Pair<Double, Double>? = when (this) {
@@ -254,8 +268,17 @@ class BackgroundWhisperAutoPlayer internal constructor(
         else -> null
     }
 
-    private companion object {
-        const val TAG = "BgWhisperAutoPlayer"
-        const val FETCH_THROTTLE_MS = 300_000L
+    internal companion object {
+        private const val TAG = "BgWhisperAutoPlayer"
+        private const val FETCH_THROTTLE_MS = 300_000L
+
+        /** The flag is read at each play, so with it off the arbiter is never resolved. */
+        internal fun whisperRoute(
+            releaseFlags: ReleaseFlags,
+            arbiter: Provider<WalkAudioArbiter>,
+            whisperPlayer: WhisperPlayer,
+        ): (WhisperDefinition) -> Unit = { definition ->
+            if (releaseFlags.honor) arbiter.get().requestWhisper(definition) else whisperPlayer.play(definition)
+        }
     }
 }

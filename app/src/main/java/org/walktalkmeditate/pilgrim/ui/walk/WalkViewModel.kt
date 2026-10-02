@@ -135,6 +135,10 @@ class WalkViewModel @Inject constructor(
     private val releaseFlags: ReleaseFlags,
     /** Resolved only for an honor start, so a flag-off build never builds it. */
     private val beginHonorWalk: Provider<BeginHonorWalk>,
+    // A default keeps the many named test constructions source-compatible;
+    // Hilt ignores defaults and always injects the queue in production.
+    private val whisperQueue: org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue =
+        org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue.unqueued(whisperPlayer),
 ) : ViewModel() {
 
     /**
@@ -1711,7 +1715,9 @@ class WalkViewModel @Inject constructor(
      * iOS parity `ActiveWalkView.swift:911-919@db4196e` — tap-on-pin
      * plays a random placeable whisper from [category] at full volume.
      * Always fires (no `autoPlayWhisperOnProximity` gate); only
-     * gated by `soundsEnabled` inside WhisperPlayer.
+     * gated by `soundsEnabled` inside WhisperPlayer. With the release
+     * flag on it waits behind a prompt or a Way voice, as every in-walk
+     * whisper does on iOS (parity spec C §5.1).
      */
     fun playRandomWhisperInCategory(
         category: org.walktalkmeditate.pilgrim.data.whisper.WhisperCategory,
@@ -1724,7 +1730,7 @@ class WalkViewModel @Inject constructor(
                 }
                 whisperManifestService.randomWhisper(category)
             } ?: return@launch
-            whisperPlayer.play(def)
+            whisperQueue.play(def)
         }
     }
 
@@ -1877,8 +1883,9 @@ class WalkViewModel @Inject constructor(
                 // iOS parity `ActiveWalkView.swift:817-819@db4196e` —
                 // play the just-placed whisper after server confirm.
                 // WhisperPlayer.play short-circuits when soundsEnabled
-                // is off, so the gate stays at the player not here.
-                whisperPlayer.play(whisper)
+                // is off, so the gate stays at the player not here. It
+                // queues like the pin tap; the sheet's preview does not.
+                whisperQueue.play(whisper)
             }
         } catch (e: CancellationException) {
             throw e

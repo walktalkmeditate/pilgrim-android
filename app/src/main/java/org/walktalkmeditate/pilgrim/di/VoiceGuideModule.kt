@@ -15,7 +15,9 @@ import org.walktalkmeditate.pilgrim.audio.voiceguide.ExoPlayerVoiceGuidePlayer
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideObservedWalkState
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlaybackScope
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlayer
+import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePromptGate
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideSelectedPackId
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGatePublisher
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideCatalogScope
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideDownloadScheduler
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideSelectionRepository
@@ -58,6 +60,10 @@ abstract class VoiceGuideModule {
     abstract fun bindVoiceGuidePauseController(
         impl: org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuideOrchestrator,
     ): org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePauseController
+
+    /** The prompt level reaches `:tracker` as the walk audio prompt gate (plan U18). */
+    @Binds
+    abstract fun bindVoiceGuidePromptGate(impl: UiAudioGatePublisher): VoiceGuidePromptGate
 
     companion object {
         /**

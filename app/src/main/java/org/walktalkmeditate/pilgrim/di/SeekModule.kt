@@ -27,6 +27,7 @@ import org.walktalkmeditate.pilgrim.audio.seek.SeekPingGate
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlayer
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlaying
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlayer
+import org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue
 import org.walktalkmeditate.pilgrim.data.seek.SeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperManifestService
@@ -174,6 +175,7 @@ object SeekModule {
         soundPlayer: SeekSoundPlaying,
         haptics: SeekHaptics,
         whisperPlayer: WhisperPlayer,
+        whisperQueue: UiWhisperQueue,
         whisperManifestService: WhisperManifestService,
     ): SeekSenses = SeekSenses(
         soundPlayer = soundPlayer,
@@ -184,6 +186,7 @@ object SeekModule {
                 .filter { it.isActive && whisperPlayer.isAvailable(it) }
                 .randomOrNull()
         },
-        playWhisper = whisperPlayer::play,
+        // Queued behind a prompt or a Way voice like every in-walk whisper (spec C §5.1).
+        playWhisper = whisperQueue::play,
     )
 }

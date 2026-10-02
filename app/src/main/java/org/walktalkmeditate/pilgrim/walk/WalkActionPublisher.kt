@@ -3,11 +3,14 @@ package org.walktalkmeditate.pilgrim.walk
 
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
+import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
@@ -97,6 +100,27 @@ class WalkActionPublisher internal constructor(
         }
         safeStartService(intent, WalkTrackingService.ACTION_HONOR_COMMAND)
     }
+
+    /**
+     * One of the UI's two audio gates, for `:tracker`'s walk audio arbiter
+     * (plan U18). A start carries [token], a Binder made for it, in a
+     * Bundle, so `:tracker` can link to its death. Fire-and-forget: the
+     * service drops it with no live pipeline, or when the OS redelivers it.
+     */
+    fun publishUiAudioGate(kind: UiAudioGateKind, held: Boolean, seq: Long, token: IBinder?) {
+        safeStartService(uiAudioGateIntent(kind, held, seq, token), WalkTrackingService.ACTION_UI_AUDIO_GATE)
+    }
+
+    internal fun uiAudioGateIntent(kind: UiAudioGateKind, held: Boolean, seq: Long, token: IBinder?): Intent =
+        baseIntent(WalkTrackingService.ACTION_UI_AUDIO_GATE).apply {
+            putExtra(WalkTrackingService.EXTRA_UI_AUDIO_GATE, kind.wireName)
+            putExtra(WalkTrackingService.EXTRA_UI_AUDIO_GATE_HELD, held)
+            putExtra(WalkTrackingService.EXTRA_UI_AUDIO_GATE_SEQ, seq)
+            if (token != null) {
+                val bundle = Bundle().apply { putBinder(WalkTrackingService.UI_AUDIO_GATE_TOKEN_KEY, token) }
+                putExtra(WalkTrackingService.EXTRA_UI_AUDIO_GATE_TOKEN, bundle)
+            }
+        }
 
     fun pause() = fireService(WalkTrackingService.ACTION_PAUSE)
 

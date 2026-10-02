@@ -9,6 +9,7 @@ import java.io.File
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -30,12 +31,12 @@ import org.robolectric.shadows.ShadowMediaPlayer
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
 
 /**
- * An in-flight CDN download is the only "pending" phase a whisper has on
- * Android (there is no slot that holds one behind a voice-guide prompt).
- * These tests pin that stopping during that phase drops the whisper: it
- * never starts playing and never takes audio focus once the download
- * lands. The CDN base URL is a constant, so the request is held on a
- * latch by an application interceptor instead of a test server.
+ * A whisper's in-flight CDN download: stopping during it drops the
+ * whisper, which never starts playing and never takes audio focus once
+ * the download lands; a queue's cut leaves a [WhisperPlayer.fetch]
+ * downloading, to land in its queue (plan U18). The CDN base URL is a
+ * constant, so the request is held on a latch by an application
+ * interceptor instead of a test server.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -154,6 +155,48 @@ class WhisperPlayerTest {
             "a preview stopped while downloading must not take focus",
             shadowOf(audioManager).lastAudioFocusRequest,
         )
+    }
+
+    @Test
+    fun `a cut leaves a fetch downloading, which reaches its queue when the download lands`() {
+        val landed = CountDownLatch(1)
+        player.fetch(definition) { landed.countDown() }
+        awaitDownloadInFlight()
+
+        player.cut()
+        download.released.countDown()
+
+        assertTrue(
+            "iOS parks a whisper cut mid-download once it lands (WhisperPlayer.swift:142-156@7c200bf)",
+            landed.await(LATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+        )
+        assertTrue(cachedFile.exists())
+        assertFalse("landing hands the whisper over; it doesn't start it", player.isAnyChannelPlaying.value)
+    }
+
+    @Test
+    fun `stop drops a fetch still downloading`() {
+        val landed = AtomicBoolean(false)
+        player.fetch(definition) { landed.set(true) }
+        awaitDownloadInFlight()
+
+        player.stop()
+        download.released.countDown()
+        awaitDownloadSettled()
+
+        assertFalse(landed.get())
+    }
+
+    @Test
+    fun `a cut stops the audible whisper`() {
+        player.play(definition)
+        awaitDownloadInFlight()
+        download.released.countDown()
+        awaitCondition("the whisper starts once its download lands") { player.isAnyChannelPlaying.value }
+
+        player.cut()
+
+        assertFalse(player.isAnyChannelPlaying.value)
     }
 
     private fun awaitDownloadInFlight() {

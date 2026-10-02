@@ -60,3 +60,31 @@ interface SoundscapePlayer {
         data class Error(val reason: String) : State()
     }
 }
+
+/**
+ * The soundscape as a Way voice ducks it (parity spec C §6, correction 12):
+ * iOS `SoundscapePlayer`'s `currentTargetVolume` and `setVolume(_, animated: true)`,
+ * as `WayVoicePlayer` and the guide prompt it hands its duck to call them
+ * (`WayVoicePlayer.swift:145-158,219-237@7c200bf`). Only the walk audio
+ * arbiter calls it, so with the release flag off nothing does.
+ */
+interface WayVoiceSoundscapeDuck {
+
+    /**
+     * The level the soundscape is heading to, which a duck records as its
+     * "before" (iOS `currentTargetVolume`). Starting a soundscape overwrites
+     * it with the walker's level, whatever duck is in force (iOS C-D4).
+     */
+    val targetVolume: Float
+
+    /**
+     * Ramps to the absolute [level] over 0.5 s and holds it there. The
+     * soundscape's own may-duck dip stands aside until [releaseDuck], since
+     * the Way voice's own focus request sets one off. With no soundscape
+     * playing, only [targetVolume] changes.
+     */
+    fun holdDuck(level: Float)
+
+    /** Ramps back to [level] over 0.5 s, and the soundscape's may-duck handling returns. */
+    fun releaseDuck(level: Float)
+}

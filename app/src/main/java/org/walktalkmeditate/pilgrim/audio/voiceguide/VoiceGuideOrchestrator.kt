@@ -98,8 +98,28 @@ class VoiceGuideOrchestrator @Inject constructor(
     @TalkRecordingActive
     private val talkRecordingActive: StateFlow<@JvmSuppressWildcards Boolean> =
         MutableStateFlow(false),
+    // Same default reasoning as above; production always injects the UI's
+    // gate publisher, which sends nothing with the release flag off.
+    private val promptGate: VoiceGuidePromptGate = VoiceGuidePromptGate {},
 ) : VoiceGuidePauseController {
     private val _isPaused = MutableStateFlow(false)
+
+    private val promptLock = Any()
+    private var promptCount = 0L
+
+    /** The prompt the player holds; 0 with none. */
+    private var currentPrompt = 0L
+    private val _promptSounding = MutableStateFlow(false)
+
+    /**
+     * iOS parity `VoiceGuidePlayer.isPlaying` as a level: true from just
+     * before a prompt is handed to the player until it ends by any path,
+     * and unbroken when one prompt replaces another (iOS re-checks
+     * `isPlaying` on every end signal, `WayVoicePlayer.swift:184-190@7c200bf`).
+     * [promptGate] hears each change first, so the walk audio gate leaves
+     * for `:tracker` before the player starts the prompt (parity spec C §3).
+     */
+    val promptSounding: StateFlow<Boolean> = _promptSounding.asStateFlow()
 
     /**
      * iOS parity `VoiceGuideManagement.isPaused` — true when the user
@@ -405,8 +425,10 @@ class VoiceGuideOrchestrator @Inject constructor(
         // the stored set in lockstep. Meditation plays stay per-session
         // (persistPackId is null for meditation context).
         Log.i(TAG, "play start prompt=${prompt.id} persistPackId=$persistPackId")
+        val promptToken = promptStarting()
         player.play(file) {
             Log.i(TAG, "play onCompletion prompt=${prompt.id} persistPackId=$persistPackId")
+            promptEnded(promptToken)
             sched.markPlayed(prompt.id)
             if (persistPackId != null) {
                 val snapshot = sched.playedSnapshot()
@@ -420,6 +442,29 @@ class VoiceGuideOrchestrator @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Raises the level for the prompt about to be handed to the player. A
+     * replacing prompt keeps it up: the player ends the one it replaces
+     * after this call, and that end no longer names the current prompt.
+     */
+    private fun promptStarting(): Long = synchronized(promptLock) {
+        val token = ++promptCount
+        val wasSounding = currentPrompt != 0L
+        currentPrompt = token
+        if (!wasSounding) {
+            _promptSounding.value = true
+            promptGate.onPromptLevel(true)
+        }
+        token
+    }
+
+    private fun promptEnded(token: Long) = synchronized(promptLock) {
+        if (currentPrompt != token) return@synchronized
+        currentPrompt = 0L
+        _promptSounding.value = false
+        promptGate.onPromptLevel(false)
     }
 
     /**

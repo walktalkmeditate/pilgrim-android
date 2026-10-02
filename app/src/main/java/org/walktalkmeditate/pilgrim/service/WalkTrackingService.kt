@@ -36,6 +36,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.walktalkmeditate.pilgrim.MainActivity
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.soundscape.SoundscapeOrchestrator
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGate
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateSignal
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
@@ -87,6 +90,9 @@ class WalkTrackingService : Service() {
     @Inject lateinit var releaseFlags: Provider<ReleaseFlags>
 
     @Inject lateinit var honorSessionProvider: Provider<HonorSession>
+
+    /** The UI's audio gates; resolved only with the release flag on. */
+    @Inject lateinit var uiAudioGateProvider: Provider<UiAudioGate>
 
     /** Resolved only with the release flag on: with it off, nothing Honor is built here. */
     private var honorSession: HonorSession? = null
@@ -142,6 +148,7 @@ class WalkTrackingService : Service() {
             ACTION_CLEAR_SOUNDSCAPE_SELECTION -> handleSoundscapeAction(action, intent)
             ACTION_UPDATE_SEEK_GLANCE -> handleSeekGlanceAction(intent)
             ACTION_HONOR_COMMAND -> handleHonorCommand(intent, redelivered = flags and START_FLAG_REDELIVERY != 0)
+            ACTION_UI_AUDIO_GATE -> handleUiAudioGate(intent, redelivered = flags and START_FLAG_REDELIVERY != 0)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -222,7 +229,14 @@ class WalkTrackingService : Service() {
         // entirely — their mode is re-derived from the persisted marker.
         val honorEnabled = releaseFlags.get().honor
         val extras = startExtrasFrom(startIntent, honorEnabled)
-        if (honorEnabled) honorSession = honorSessionProvider.get()
+        // The gates hold before the session, and the arbiter it builds, read
+        // them: what this process knew of the UI's gates is stale once a
+        // pipeline (re)starts, until the UI answers the session's bumped
+        // gate generation.
+        if (honorEnabled) {
+            uiAudioGateProvider.get().holdUntilRefreshed()
+            honorSession = honorSessionProvider.get()
+        }
         honorGlanceUnits = extras.honorGlanceUnits
 
         // API 34+ rejects startForeground(type=location) with SecurityException
@@ -478,6 +492,36 @@ class WalkTrackingService : Service() {
                     return
                 }
                 honorSession?.command(seq, command)
+            }
+        }
+    }
+
+    /**
+     * A guide prompt or a recording starting or ending in the UI (plan U18).
+     * The OS redelivers every start after a kill, gate intents included; a
+     * replayed start's Binder can outlive the gate it held, so a redelivered
+     * gate is dropped, and the UI re-sends its gates for the bumped
+     * generation instead.
+     */
+    private fun handleUiAudioGate(intent: Intent?, redelivered: Boolean) {
+        val action = decideUiAudioGateAction(
+            honorEnabled = releaseFlags.get().honor,
+            redelivered = redelivered,
+            pipelineActive = locationJob?.isActive == true,
+        )
+        when (action) {
+            UiAudioGateAction.StopNoPipeline -> {
+                Log.w(TAG, "ignoring a UI audio gate — no active walk pipeline")
+                stopSelf()
+            }
+            UiAudioGateAction.Ignore -> Log.i(TAG, "UI audio gate ignored (redelivered=$redelivered)")
+            UiAudioGateAction.Apply -> {
+                val signal = uiAudioGateSignalFromExtras(intent)
+                if (signal == null) {
+                    Log.w(TAG, "malformed UI audio gate dropped")
+                    return
+                }
+                uiAudioGateProvider.get().apply(signal)
             }
         }
     }
@@ -787,6 +831,8 @@ class WalkTrackingService : Service() {
 
     internal enum class HonorCommandAction { StopNoPipeline, Ignore, Apply }
 
+    internal enum class UiAudioGateAction { StopNoPipeline, Ignore, Apply }
+
     companion object {
         /**
          * Per-process "is the FGS alive in THIS process" flag. Set in
@@ -918,6 +964,22 @@ class WalkTrackingService : Service() {
 
         /** Extra: a scrub's fraction of the voice. Double. */
         const val EXTRA_HONOR_SCRUB_FRACTION = "extra.honor_scrub_fraction"
+
+        const val ACTION_UI_AUDIO_GATE =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.UI_AUDIO_GATE"
+
+        /** Extra: which UI gate, by [org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.wireName]. */
+        const val EXTRA_UI_AUDIO_GATE = "extra.ui_audio_gate"
+
+        /** Extra: true for a gate that started, false for one that ended. Boolean. */
+        const val EXTRA_UI_AUDIO_GATE_HELD = "extra.ui_audio_gate_held"
+
+        /** Extra: the gate's sequence number, rising across UI restarts. Long. */
+        const val EXTRA_UI_AUDIO_GATE_SEQ = "extra.ui_audio_gate_seq"
+
+        /** Extra: a Bundle holding a started gate's Binder under [UI_AUDIO_GATE_TOKEN_KEY]. */
+        const val EXTRA_UI_AUDIO_GATE_TOKEN = "extra.ui_audio_gate_token"
+        const val UI_AUDIO_GATE_TOKEN_KEY = "token"
 
         const val HONOR_COMMAND_TOGGLE_PLAYBACK = "toggle_playback"
         const val HONOR_COMMAND_SCRUB = "scrub"
@@ -1110,6 +1172,30 @@ class WalkTrackingService : Service() {
             !pipelineActive -> HonorCommandAction.StopNoPipeline
             !honorEnabled || redelivered -> HonorCommandAction.Ignore
             else -> HonorCommandAction.Apply
+        }
+
+        /** [decideHonorCommandAction]'s rule: a redelivered gate already acted before the kill. */
+        internal fun decideUiAudioGateAction(
+            honorEnabled: Boolean,
+            redelivered: Boolean,
+            pipelineActive: Boolean,
+        ): UiAudioGateAction = when {
+            !pipelineActive -> UiAudioGateAction.StopNoPipeline
+            !honorEnabled || redelivered -> UiAudioGateAction.Ignore
+            else -> UiAudioGateAction.Apply
+        }
+
+        /** Pure decode of [ACTION_UI_AUDIO_GATE]'s extras; an unknown gate or an unnumbered one decodes to null. */
+        internal fun uiAudioGateSignalFromExtras(intent: Intent?): UiAudioGateSignal? {
+            val kind = UiAudioGateKind.fromWire(intent?.getStringExtra(EXTRA_UI_AUDIO_GATE)) ?: return null
+            val seq = intent?.getLongExtra(EXTRA_UI_AUDIO_GATE_SEQ, 0L) ?: 0L
+            if (seq <= 0L) return null
+            return UiAudioGateSignal(
+                kind = kind,
+                held = intent?.getBooleanExtra(EXTRA_UI_AUDIO_GATE_HELD, false) == true,
+                seq = seq,
+                token = intent?.getBundleExtra(EXTRA_UI_AUDIO_GATE_TOKEN)?.getBinder(UI_AUDIO_GATE_TOKEN_KEY),
+            )
         }
 
         /** Pure decode of [ACTION_HONOR_COMMAND]'s extras; an unknown kind or a missing moment decodes to null. */
