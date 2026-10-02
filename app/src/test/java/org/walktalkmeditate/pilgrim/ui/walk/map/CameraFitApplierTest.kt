@@ -13,6 +13,8 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
  * a throw leaves the record alone so a later pass tries again. That
  * ordering is the iOS #89 fix for the Honor overview's globe. Android's
  * throw is a null camera, and its camera can arrive after a newer pass.
+ * Android records a fit once its ease lands, so an ease cut short (the
+ * map's first style moving the camera, OnePlus 13) is fitted again.
  */
 class CameraFitApplierTest {
 
@@ -22,7 +24,9 @@ class CameraFitApplierTest {
     private class FakeSurface : CameraFitSurface<FakeCamera> {
         var answerImmediately = true
         var answerWithCamera = true
+        var easesLandImmediately = true
         private val pending = mutableListOf<() -> Unit>()
+        private val running = mutableListOf<(Boolean) -> Unit>()
         val computedPaddings = mutableListOf<CameraFitPaddingDp>()
         val eases = mutableListOf<Pair<FakeCamera, Long>>()
 
@@ -39,12 +43,16 @@ class CameraFitApplierTest {
             }
         }
 
-        override fun ease(camera: FakeCamera, durationMs: Long) {
+        override fun ease(camera: FakeCamera, durationMs: Long, onDone: (landed: Boolean) -> Unit) {
             eases += camera to durationMs
+            if (easesLandImmediately) onDone(true) else running += onDone
         }
 
         /** Delivers the [index]th deferred answer, in request order. */
         fun land(index: Int) = pending[index]()
+
+        /** Ends the [index]th deferred ease, in the order they started: at its camera, or cut short. */
+        fun endEase(index: Int, landed: Boolean) = running[index](landed)
     }
 
     private val route = MapCameraBounds(swLat = 1.0, swLng = 2.0, neLat = 3.0, neLng = 4.0)
@@ -68,9 +76,56 @@ class CameraFitApplierTest {
     }
 
     @Test
-    fun `a fit is recorded once the ease is issued, without waiting for it to end`() {
+    fun `a fit is recorded once its ease lands`() {
         apply(insetDp = 12.0)
         assertEquals(AppliedCameraFit(route, 12.0), applier.lastApplied)
+    }
+
+    @Test
+    fun `a fit is not recorded while its ease is still running`() {
+        surface.easesLandImmediately = false
+        apply()
+        assertNull(applier.lastApplied)
+    }
+
+    @Test
+    fun `a pass while the ease runs to the same fit does not ease again`() {
+        surface.easesLandImmediately = false
+        apply()
+        apply()
+        surface.endEase(0, landed = true)
+        assertEquals(1 to AppliedCameraFit(route, 0.0), surface.eases.size to applier.lastApplied)
+    }
+
+    @Test
+    fun `an ease cut short is fitted again by the next pass with the same inputs`() {
+        // The overview's race: the fit eased while the map's first style was
+        // still loading, the load moved the camera, and a record made when
+        // the ease began would have skipped every later pass as unchanged.
+        surface.easesLandImmediately = false
+        apply()
+        surface.endEase(0, landed = false)
+        apply()
+        assertEquals(listOf(FakeCamera(route) to 2_500L, FakeCamera(route) to 2_500L), surface.eases)
+    }
+
+    @Test
+    fun `returning to the applied bounds while another fit eases fits back`() {
+        apply(bounds = route)
+        surface.easesLandImmediately = false
+        apply(bounds = segment)
+        apply(bounds = route)
+        assertEquals(listOf(route, segment, route), surface.eases.map { it.first.bounds })
+    }
+
+    @Test
+    fun `an older ease cut by a newer one leaves the newer fit to be recorded`() {
+        surface.easesLandImmediately = false
+        apply(bounds = route)
+        apply(bounds = segment)
+        surface.endEase(0, landed = false)
+        surface.endEase(1, landed = true)
+        assertEquals(AppliedCameraFit(segment, 0.0), applier.lastApplied)
     }
 
     @Test

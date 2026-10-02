@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.debug.honor
 
 import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -183,25 +184,100 @@ class WayReplayerTimelineTest {
     }
 
     @Test
-    fun `the next tracker start takes mock mode, then lets it go, when no replay runs`() = runTest {
+    fun `a replay in progress leaves its mark, for a process that outlives it to find`() = runTest {
+        val client = FakeMockLocationClient { testScheduler.currentTime }
+        val marker = FakeMockModeMarker()
+        replayer(client, marker).start(WALK_ID, listOf(0.0, 600.0).map { point(t = it) })
+
+        advanceTimeBy(1_000)
+
+        assertTrue(marker.taken)
+    }
+
+    @Test
+    fun `a replay marks mock mode taken before it takes it`() = runTest {
+        val marker = FakeMockModeMarker()
+        val client = FakeMockLocationClient(marker = marker) { testScheduler.currentTime }
+
+        replayer(client, marker).start(WALK_ID, listOf(0.0, 3.0).map { point(t = it) })
+        advanceUntilIdle()
+
+        assertEquals(true, client.markedWhenTaken)
+    }
+
+    @Test
+    fun `a replay that plays out clears its mark`() = runTest {
+        val client = FakeMockLocationClient { testScheduler.currentTime }
+        val marker = FakeMockModeMarker()
+
+        replayer(client, marker).start(WALK_ID, listOf(0.0, 3.0).map { point(t = it) })
+        advanceUntilIdle()
+
+        assertFalse(marker.taken)
+    }
+
+    @Test
+    fun `a tracker start with no replay left on never touches mock mode`() = runTest {
+        // Taking and releasing mock mode empties the device's cached fix,
+        // which the Honor overview reads (OnePlus 13, 2026-10-02).
+        val client = FakeMockLocationClient { testScheduler.currentTime }
+
+        replayer(client, FakeMockModeMarker(taken = false)).onTrackerStart()
+        runCurrent()
+
+        assertTrue(client.calls.isEmpty())
+    }
+
+    @Test
+    fun `a tracker start after a replay was killed takes mock mode, then lets it go`() = runTest {
         // Play services keeps a killed process's mock mode on, and ignores
         // an "off" from a client that never turned it on (OnePlus 13).
         val client = FakeMockLocationClient { testScheduler.currentTime }
 
-        replayer(client).onTrackerStart()
+        replayer(client, FakeMockModeMarker(taken = true)).onTrackerStart()
         runCurrent()
 
         assertEquals(listOf<Call>(Call.Mode(enabled = true), Call.Mode(enabled = false)), client.calls)
     }
 
     @Test
+    fun `releasing a killed replay's mock mode clears its mark`() = runTest {
+        val client = FakeMockLocationClient { testScheduler.currentTime }
+        val marker = FakeMockModeMarker(taken = true)
+
+        replayer(client, marker).onTrackerStart()
+        runCurrent()
+
+        assertFalse(marker.taken)
+    }
+
+    @Test
     fun `a release still turns mock mode off when taking it is refused`() = runTest {
         val client = FakeMockLocationClient(refuseMockMode = true) { testScheduler.currentTime }
 
-        replayer(client).onTrackerStart()
+        replayer(client, FakeMockModeMarker(taken = true)).onTrackerStart()
         runCurrent()
 
         assertEquals(listOf<Call>(Call.Mode(enabled = true), Call.Mode(enabled = false)), client.calls)
+    }
+
+    @Test
+    fun `a release that fails keeps the mark, so the next tracker start tries again`() = runTest {
+        val client = FakeMockLocationClient(refuseMockModeOff = true) { testScheduler.currentTime }
+        val marker = FakeMockModeMarker(taken = true)
+
+        replayer(client, marker).onTrackerStart()
+        runCurrent()
+
+        assertTrue(marker.taken)
+    }
+
+    @Test
+    fun `the mark persists across instances, as a new process reads it`() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        PreferencesMockModeMarker(context).taken = true
+
+        assertTrue(PreferencesMockModeMarker(context).taken)
     }
 
     @Test
@@ -270,8 +346,12 @@ class WayReplayerTimelineTest {
     }
 
     /** On the test's own scope, so `advanceUntilIdle` plays replays out and `runTest` awaits them. */
-    private fun TestScope.replayer(client: MockLocationClient) = WayReplayer(
+    private fun TestScope.replayer(
+        client: MockLocationClient,
+        marker: MockModeMarker = FakeMockModeMarker(),
+    ) = WayReplayer(
         client = client,
+        marker = marker,
         scope = this,
         wallClockMillis = { WALL_START + testScheduler.currentTime },
         elapsedRealtimeNanos = { testScheduler.currentTime * 1_000_000 },
@@ -286,17 +366,27 @@ class WayReplayerTimelineTest {
         data class Fix(val fix: MockFix, val playedAtMillis: Long) : Call
     }
 
+    private class FakeMockModeMarker(override var taken: Boolean = false) : MockModeMarker
+
     private class FakeMockLocationClient(
         private val refuseMockMode: Boolean = false,
+        private val refuseMockModeOff: Boolean = false,
+        private val marker: MockModeMarker? = null,
         private val now: () -> Long,
     ) : MockLocationClient {
         val calls = mutableListOf<Call>()
+
+        /** The marker as it stood when mock mode was first taken. */
+        var markedWhenTaken: Boolean? = null
+            private set
 
         fun fixes(): List<Call.Fix> = calls.filterIsInstance<Call.Fix>()
 
         override suspend fun setMockMode(enabled: Boolean) {
             calls += Call.Mode(enabled)
+            if (enabled && markedWhenTaken == null) markedWhenTaken = marker?.taken
             if (enabled && refuseMockMode) throw SecurityException("not the mock location app")
+            if (!enabled && refuseMockModeOff) throw SecurityException("not the mock location app")
         }
 
         override suspend fun setMockLocation(fix: MockFix) {

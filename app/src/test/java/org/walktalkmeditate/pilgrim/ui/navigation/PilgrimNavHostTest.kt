@@ -2,7 +2,11 @@
 package org.walktalkmeditate.pilgrim.ui.navigation
 
 import android.app.Application
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -326,6 +330,32 @@ class PilgrimNavHostTest {
         }
     }
 
+    // iOS's sheet sits over its tab view, so Path shows behind the Ways
+    // sheet and its picker rather than bare background (OnePlus 13).
+    @Test
+    fun `Path stays behind the Ways sheet and its picker`() {
+        val nav = honorBackStack(start = Routes.PATH)
+
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_OWN_WALKS) }
+
+        composeRule.onNodeWithTag(PATH_TAG).assertExists()
+    }
+
+    @Test
+    fun `closing the picker returns to the Ways sheet over Path`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_OWN_WALKS) }
+
+        onMain { nav.popBackStack(Routes.HONOR_OWN_WALKS, inclusive = true) }
+
+        onMain {
+            assertEquals(Routes.HONOR_WAYS, nav.currentBackStackEntry?.destination?.route)
+            assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route)
+        }
+    }
+
     private fun onMain(block: () -> Unit) = composeRule.runOnIdle(block)
 
     /**
@@ -340,9 +370,9 @@ class PilgrimNavHostTest {
             SideEffect { nav = controller }
             NavHost(navController = controller, startDestination = start) {
                 composable(Routes.HOME) {}
-                composable(Routes.PATH) {}
-                composable(Routes.HONOR_WAYS) {}
-                composable(Routes.HONOR_OWN_WALKS) {}
+                composable(Routes.PATH) { Box(Modifier.testTag(PATH_TAG)) }
+                honorSheet(Routes.HONOR_WAYS) {}
+                honorSheet(Routes.HONOR_OWN_WALKS) {}
                 composable(
                     route = Routes.WALK_SUMMARY_PATTERN,
                     arguments = listOf(
@@ -363,5 +393,6 @@ class PilgrimNavHostTest {
 
     private companion object {
         const val SHARED_WAY = "share:Qoi4YmPHLN"
+        const val PATH_TAG = "path"
     }
 }

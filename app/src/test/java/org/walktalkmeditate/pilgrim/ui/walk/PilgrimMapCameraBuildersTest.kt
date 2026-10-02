@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.walk
 
 import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -25,6 +26,15 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.fitPaddingPx
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class PilgrimMapCameraBuildersTest {
+
+    @Test
+    fun `a map is built with no style, so ours is the only style it loads`() {
+        // Mapbox's own default (Standard) would load first when the view
+        // starts, and a fit could ease under it (OnePlus 13, 2026-10-02).
+        val options = pilgrimMapInitOptions(ApplicationProvider.getApplicationContext(), textureView = true)
+
+        assertNull(options.styleUri)
+    }
 
     @Test
     fun `fit ease carries the requested duration`() {

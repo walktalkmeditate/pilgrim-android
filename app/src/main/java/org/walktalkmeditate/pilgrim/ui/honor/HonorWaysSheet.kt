@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.honor
 
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -26,6 +28,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -45,8 +49,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
@@ -309,6 +317,11 @@ internal fun HonorSheetSection(
  * show none. [content] gets a `hideThen` that slides the sheet down
  * before running its action, so the sheet is gone before whatever opens
  * next; a swipe or Back closes it through [onDismissed].
+ *
+ * Its route is a dialog (`honorSheet`): the route's own window lies under
+ * the sheet's and doesn't dim, so only the sheet's scrim shades Path
+ * behind. A route under the next sheet (the Ways sheet under the picker)
+ * stays composed, hidden, and slides back up once it is on top again.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -319,6 +332,12 @@ internal fun HonorSheetHost(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val dismissed by rememberUpdatedState(onDismissed)
+    val routeWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+    SideEffect { routeWindow?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND) }
+    val onTop = LocalLifecycleOwner.current.lifecycle.currentStateAsState().value.isAtLeast(Lifecycle.State.RESUMED)
+    LaunchedEffect(onTop) {
+        if (onTop && sheetState.targetValue == SheetValue.Hidden) sheetState.show()
+    }
     val hideThen: (() -> Unit) -> Unit = remember(sheetState, scope) {
         { action ->
             scope.launch { sheetState.hide() }.invokeOnCompletion {

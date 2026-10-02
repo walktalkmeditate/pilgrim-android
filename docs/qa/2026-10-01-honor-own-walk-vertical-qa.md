@@ -22,9 +22,9 @@ Use U20's setup (mock location, the `HONOR_` adb commands, the kill commands, an
 | # | Check | Result |
 |---|---|---|
 | A1 | Path tab, Honor selected: "HONOR", "walk in their steps", a quote, and the staff glyph. Unselected labels are dimmer, but readable. Start reads "Honor" and opens "Choose a way". | |
-| A2 | "Choose a way" → "Walk one of yours again" → "Walk again": your finished walks, newest first. A walk with too little route raises "Can't walk this one again". Note what shows behind the sheet: it's a separate screen, so Path may not show through. | |
+| A2 | "Choose a way" → "Walk one of yours again" → "Walk again": your finished walks, newest first. A walk with too little route raises "Can't walk this one again". Path shows behind the sheet and the picker, as iOS's tab view does behind its sheet. | |
 | A3 | "walk this again" sits centred under the share card on the post-walk, journal, Goshuin and widget summaries, and not in Recordings. | |
-| A4 | The overview: the Way fills the map above the card, with margins, and it doesn't rotate, tilt or follow. The Mapbox logo and attribution show above the card. Pins tap open the preview: the voice plays, the speed pill cycles, and the scrubber moves. A photo opens whole, and pinch, tap and swipe-down close it. | |
+| A4 | The overview: the Way fills the map above the card, with margins, and it doesn't rotate, tilt or follow. The Mapbox logo and attribution sit at the map's default bottom position, under the card, as on iOS (owner decision 9, reversed 2026-10-02). Pins tap open the preview: the voice plays, the speed pill cycles, and the scrubber moves. A photo opens whole, and pinch, tap and swipe-down close it. | |
 | A5 | Light and dark (`adb shell cmd uimode night yes/no`) on the sheet, the picker, the overview and the preview. | |
 
 ## B. In a pocket (AE1, R16, R17)

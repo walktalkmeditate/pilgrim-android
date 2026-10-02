@@ -121,7 +121,6 @@ fun HonorOverviewScreen(
                     bottomInsetDp = cardHeight,
                     cameraBounds = overview.bounds,
                     showsUserLocation = showsPuck,
-                    ornamentBottomInsetDp = cardHeight,
                     honorWay = overview.line,
                     wayPins = mapPins,
                     onWayPinTap = { momentId -> previewMomentId = momentId },

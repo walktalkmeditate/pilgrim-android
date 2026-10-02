@@ -30,6 +30,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
+import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
@@ -66,7 +67,7 @@ data class HonorOverview(
     val photoUris: Map<String, String>,
     /** "Today is …": a `WeatherCondition` raw value, once the one fetch lands. */
     val todayCondition: String? = null,
-    /** The one probe from the phone's last fix to the Way's start; null without a fix. */
+    /** From the phone's last fix to the Way's start, measured once; null until a fix is there. */
     val distanceToStartMeters: Double? = null,
 )
 
@@ -202,7 +203,7 @@ class HonorOverviewViewModel internal constructor(
             ),
         )
         if (way.source is WaySource.Share) followLandingMedia(way)
-        val here = lastKnownFix() ?: return
+        val here = awaitLastKnownFix() ?: return
         updateOverview { it.copy(distanceToStartMeters = HonorOverviewModel.distanceToStartMeters(here, way)) }
         // "Today is …": the walk's own weather source, on the walker's
         // current fix; silent offline or without a fix (F §10.5).
@@ -390,6 +391,23 @@ class HonorOverviewViewModel internal constructor(
         }.toMap()
     }
 
+    /**
+     * iOS reads CoreLocation's cached fix once, as the overview appears
+     * (`HonorOverviewView.swift:339-343,371-373@7c200bf`), a cache that is
+     * rarely empty there. The fused provider's can be (after a reboot, or
+     * after another app's mock mode) until the overview's own puck fills it
+     * a few seconds later, so the read is retried until a fix is there, for
+     * up to two minutes. Each retry only reads the cache; nothing here asks
+     * the GPS for a fix of its own.
+     */
+    private suspend fun awaitLastKnownFix(): LocationPoint? {
+        repeat(FIX_RETRIES) {
+            lastKnownFix()?.let { return it }
+            delay(FIX_RETRY_INTERVAL_MILLIS)
+        }
+        return lastKnownFix()
+    }
+
     private suspend fun lastKnownFix() = try {
         locationSource.lastKnownLocation()
     } catch (_: SecurityException) {
@@ -424,5 +442,8 @@ class HonorOverviewViewModel internal constructor(
 
         /** The Recordings list's hop before a seek on a just-started player (iOS's 0.1 s). */
         private const val SEEK_AFTER_START_DELAY_MILLIS = 100L
+
+        internal const val FIX_RETRY_INTERVAL_MILLIS = 2_000L
+        internal const val FIX_RETRIES = 60
     }
 }

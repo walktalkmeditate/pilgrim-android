@@ -43,6 +43,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.LocalIsConstellation
 import org.walktalkmeditate.pilgrim.ui.theme.LocalPilgrimDarkTheme
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.turningAccentColor
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -72,7 +73,6 @@ import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
-import com.mapbox.maps.plugin.logo.logo
 import com.mapbox.maps.plugin.gestures.OnMapClickListener
 import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
 import com.mapbox.maps.plugin.gestures.gestures
@@ -199,10 +199,6 @@ internal fun PilgrimMap(
     // iOS `showsUserLocation` apart from `followsUserLocation`: the
     // overview shows the walker's puck but never follows it.
     showsUserLocation: Boolean = followLatest,
-    // Lifts the Mapbox logo and attribution clear of a card lying over the
-    // map's bottom edge (owner decision 9, 2026-09-30: iOS leaves them
-    // under the overview card, pilgrim-ios #111).
-    ornamentBottomInsetDp: Dp = 0.dp,
     // The Way's ghost line (parity spec E §2) and its moment pins (E §4).
     // A tap reports the moment of the nearest pin within 25 m on the
     // ground, unless a whisper or cairn pin stands nearer (iOS's map tap).
@@ -595,7 +591,9 @@ internal fun PilgrimMap(
     // new target, a new inset, or a new map size. (iOS retries on its next
     // `updateUIView`; without the size key a fit that skipped on an
     // unmeasured map would never run again.) Always an ease, Reduce Motion
-    // or not, as on iOS (pilgrim-ios #96).
+    // or not, as on iOS (pilgrim-ios #96). The first fit waits for our
+    // style: iOS's map is built with its style, and an ease issued while
+    // the style still loads can be cut short by it.
     val cameraFit = remember(mapView, displayDensity) {
         mapView?.let { CameraFitApplier(MapboxCameraFitSurface(it.mapboxMap, displayDensity)) }
     }
@@ -606,7 +604,8 @@ internal fun PilgrimMap(
         if (followLatest) null else cameraBounds ?: boundsForRoute(points)
     }
     val fitTarget = cameraFitTarget(followLatest, revealPhase, zoomTargetBounds, routeFitBounds)
-    LaunchedEffect(cameraFit, fitTarget, bottomInsetDp, mapSizePx) {
+    LaunchedEffect(cameraFit, fitTarget, bottomInsetDp, mapSizePx, styleLoaded) {
+        if (!styleLoaded) return@LaunchedEffect
         val fit = cameraFit ?: return@LaunchedEffect
         val target = fitTarget ?: return@LaunchedEffect
         fit.apply(
@@ -657,6 +656,7 @@ internal fun PilgrimMap(
         wayPinManager?.let { view.annotations.removeAnnotationManager(it) }
         wayPinManager = null
         renderedWayPins = null
+        honorWayRenderer?.onStyleLoadStarted()
         view.mapboxMap.loadStyle(styleUri) {
             // Show the "you are here" puck on the Active Walk map only.
             // The summary map is a post-hoc review; a live puck there
@@ -766,7 +766,9 @@ internal fun PilgrimMap(
             // managers, so the line anchors below the route casing and the
             // companion directly above the route line. iOS reinstalls them
             // before the route on a reload, which drops the companion under
-            // it (owner decision 7, pilgrim-ios #111; parity spec E §5).
+            // it (owner decision 7, pilgrim-ios #111; parity spec E §5). The
+            // renderer installs from here on even while the managers' new
+            // sources make the style read not loaded.
             honorWayRenderer?.onStyleReloaded()
             // Style is textured; kick the fade-in animation.
             styleLoaded = true
@@ -880,36 +882,21 @@ internal fun PilgrimMap(
         }
     }
 
-    val ornamentInsetPx = with(LocalDensity.current) { ornamentBottomInsetDp.toPx() }
-    val ornamentMarginPx = with(LocalDensity.current) { MAPBOX_ORNAMENT_MARGIN_DP.toPx() }
-    LaunchedEffect(mapView, ornamentInsetPx) {
-        val view = mapView ?: return@LaunchedEffect
-        if (ornamentInsetPx <= 0f) return@LaunchedEffect
-        view.logo.updateSettings { marginBottom = ornamentMarginPx + ornamentInsetPx }
-        view.attribution.updateSettings { marginBottom = ornamentMarginPx + ornamentInsetPx }
-    }
-
     AndroidView(
         modifier = modifier
             .alpha(mapAlpha)
             .onSizeChanged { mapSizePx = it },
         factory = { context ->
-            // No MapInitOptions(styleUri): earlier attempts to pre-load the
-            // style from the constructor raced against LaunchedEffect's
-            // loadStyle, with no documented coalescing in the Mapbox SDK —
-            // two callbacks could fire and create a second annotation
-            // manager that orphaned the first one's polyline. The cost of
-            // avoiding that is a ~100ms blank canvas on first render, which
-            // is acceptable for a contemplative walking app.
-            val initOptions = MapInitOptions(
-                context = context,
-                textureView = textureBackend,
-            )
-            MapView(context, initOptions).also { view ->
+            MapView(context, pilgrimMapInitOptions(context, textureBackend)).also { view ->
                 mapView = view
             }
         },
         update = { view ->
+            // Before the managers' guard, as iOS's `applyHonorWay` runs on
+            // every `updateUIView`: the first style's callback then finds
+            // the Way to install. Until that callback the renderer only
+            // records it.
+            honorWayRenderer?.apply(honorWay, companion)
             val manager = polylineManager ?: return@AndroidView
             // Created together inside the same loadStyle callback, so
             // either both managers exist or neither does. Bailing when the
@@ -1442,7 +1429,6 @@ internal fun PilgrimMap(
                 pulse = seekPulse,
                 reduceMotion = reduceMotion,
             )
-            honorWayRenderer?.apply(honorWay, companion)
             if (wayPins.isNotEmpty() && wayPinManager == null) {
                 wayPinManager = view.annotations.createPointAnnotationManager().also(::allowIconOverlap)
             }
@@ -1505,6 +1491,17 @@ internal fun PilgrimMap(
         },
     )
 }
+
+/**
+ * No style at construction: Mapbox's own default (Standard) would start
+ * loading when the view starts, before our `loadStyle` a composition later,
+ * and on a busy main thread could finish first, so the map loaded two
+ * styles and a fit could ease under the first. Ours is the only style a
+ * map loads, from the style effect. A ~100 ms blank canvas on first render
+ * is the cost, acceptable for a contemplative walking app.
+ */
+internal fun pilgrimMapInitOptions(context: Context, textureView: Boolean): MapInitOptions =
+    MapInitOptions(context = context, textureView = textureView, styleUri = null)
 
 /**
  * Per-waypoint-type icon bitmaps. iOS parity
@@ -2019,8 +2016,6 @@ private const val FOCUS_RE_EASE_MS = 1_000L
 private const val REVEAL_ZOOM = 16.0
 private const val FADE_IN_MS = 400
 
-/** The Mapbox SDK's own 4 dp bottom margin for the logo and attribution. */
-private val MAPBOX_ORNAMENT_MARGIN_DP = 4.dp
 // Bitmap size in pixels for the waypoint marker. Mapbox icon images
 // scale by `iconSize` (default 1.0); 56px draws as a ~22dp marker on
 // 320dpi devices, comparable in visual weight to iOS waypoint pins.

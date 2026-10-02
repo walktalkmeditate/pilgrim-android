@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -248,6 +249,35 @@ class HonorOverviewViewModelTest {
 
         assertEquals(111.3, overview.distanceToStartMeters!!, 0.5)
         assertEquals("clear", overview.todayCondition)
+    }
+
+    @Test
+    fun `a fix that reaches the phone after the overview opens still brings the distance and today's weather`() =
+        runTest(dispatcher) {
+            val location = FakeLocationSource(lastKnown = null)
+            val weather = FakeWeatherFetching(
+                WeatherSnapshot(WeatherCondition.CLEAR, temperatureCelsius = 12.0, humidityFraction = null, windSpeedMps = null),
+            )
+            val vm = overview(location = location, weather = weather)
+            advanceTimeBy(HonorOverviewViewModel.FIX_RETRY_INTERVAL_MILLIS * 3)
+
+            location.lastKnown = LocationPoint(timestamp = 1L, latitude = 0.0, longitude = -0.001)
+            val overview = ready(vm)
+
+            assertEquals(111.3, overview.distanceToStartMeters!!, 0.5)
+            assertEquals("clear", overview.todayCondition)
+            assertEquals(1, weather.callCount.get())
+        }
+
+    @Test
+    fun `the overview stops looking for a fix once its retries run out`() = runTest(dispatcher) {
+        val location = FakeLocationSource(lastKnown = null)
+        val vm = overview(location = location)
+        advanceUntilIdle()
+
+        location.lastKnown = LocationPoint(timestamp = 1L, latitude = 0.0, longitude = -0.001)
+
+        assertNull(ready(vm).distanceToStartMeters)
     }
 
     @Test
