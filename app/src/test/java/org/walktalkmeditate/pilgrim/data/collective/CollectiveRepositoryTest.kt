@@ -226,7 +226,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats()
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 2.0, meditationMin = 5, talkMin = 1))
         awaitPostCount(1)
@@ -244,7 +244,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats(99)
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.0, meditationMin = 1, talkMin = 0))
         awaitPostCount(1)
@@ -271,7 +271,7 @@ class CollectiveRepositoryTest {
         cacheStore.setOptIn(true)
         fakeService.postResult = PostResult.RateLimited
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.5, meditationMin = 2, talkMin = 0))
         awaitPostCount(1)
@@ -287,7 +287,7 @@ class CollectiveRepositoryTest {
         cacheStore.setOptIn(true)
         fakeService.postResult = PostResult.Failed(IOException("boom"))
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 0.5, meditationMin = 0, talkMin = 1))
         awaitPostCount(1)
@@ -303,7 +303,7 @@ class CollectiveRepositoryTest {
         cacheStore.setOptIn(true)
         fakeService.postResult = PostResult.Failed(IOException("first call boom"))
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.0, meditationMin = 1, talkMin = 0))
         awaitPostCount(1)
@@ -341,7 +341,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats(99)
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 0.0, meditationMin = 0, talkMin = 0))
         awaitPostCount(1)
@@ -375,7 +375,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats(99)
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(CollectiveWalkSnapshot(walkUuid = null, distanceKm = 1.0, meditationMin = 0, talkMin = 0))
         awaitPostCount(1)
@@ -396,7 +396,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats()
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(
             CollectiveWalkSnapshot(
@@ -421,7 +421,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats()
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(
             CollectiveWalkSnapshot(
@@ -457,7 +457,7 @@ class CollectiveRepositoryTest {
         )
         awaitRecordWalkWorkers(baseline)
         cacheStore.setOptIn(true)
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         assertFalse(ledger.wasContributed("walk-off-on"))
         assertTrue(cacheStore.pendingFlow.first().isEmpty())
@@ -487,7 +487,7 @@ class CollectiveRepositoryTest {
         cacheStore.setOptIn(true)
         fakeService.postResult = PostResult.Failed(IOException("offline finish"))
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(
             CollectiveWalkSnapshot(
@@ -512,7 +512,7 @@ class CollectiveRepositoryTest {
         fakeService.postResult = PostResult.Success
         fakeService.fetchResult = sampleStats()
         val repo = newRepo()
-        repo.optIn.first { it }
+        awaitOptIn(repo)
 
         repo.recordWalk(
             CollectiveWalkSnapshot(
@@ -542,7 +542,20 @@ class CollectiveRepositoryTest {
      * two Eagerly-started stateIn collectors, which never complete.
      */
     private suspend fun awaitRecordWalkWorkers(baseline: Set<Job>) {
-        (repoScopeChildren() - baseline).joinAll()
+        kotlinx.coroutines.withTimeout(AWAIT_BUDGET_MS) { (repoScopeChildren() - baseline).joinAll() }
+    }
+
+    /**
+     * Bounded poll on the opt-in StateFlow, for the same reason as
+     * [awaitPending]: `first { it }` can wait forever under multi-class
+     * run ordering, and a hung suite is worse than a failed test.
+     */
+    private suspend fun awaitOptIn(repo: CollectiveRepository) {
+        val deadline = System.currentTimeMillis() + AWAIT_BUDGET_MS
+        while (!repo.optIn.value && System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.delay(5L)
+        }
+        assertTrue("the opt-in never reached the repository", repo.optIn.value)
     }
 
     /**
@@ -608,3 +621,6 @@ class CollectiveRepositoryTest {
         }
     }
 }
+
+/** Generous: a loaded full-suite run is slow, but a missed emission must still fail, not hang. */
+private const val AWAIT_BUDGET_MS = 10_000L
