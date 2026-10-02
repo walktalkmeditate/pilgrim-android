@@ -40,6 +40,12 @@ data class SealSpec(
      * northern (no route → no coordinate).
      */
     val southernHemisphere: Boolean = false,
+    /**
+     * The ghost-route watermark, already fitted; null draws none (a walk
+     * with fewer than two route samples). Not part of the geometry hash,
+     * as iOS's hash never reads the Way's points.
+     */
+    val watermark: SealWatermark? = null,
 )
 
 /**
@@ -111,6 +117,7 @@ fun Walk.toSealSpec(
     displayDistance: String,
     unitLabel: String,
     southernHemisphere: Boolean = false,
+    watermark: SealWatermark? = null,
 ): SealSpec {
     val endMs = requireNotNull(endTimestamp) {
         "toSealSpec called on an unfinished walk (uuid=$uuid); filter before calling."
@@ -126,5 +133,6 @@ fun Walk.toSealSpec(
         ink = ink,
         favicon = WalkFavicon.fromRawValue(favicon),
         southernHemisphere = southernHemisphere,
+        watermark = watermark,
     )
 }

@@ -11,14 +11,10 @@ import org.walktalkmeditate.pilgrim.domain.walkModeFromEvents
 
 /**
  * How the walk was undertaken — each mode carries its own ritual grammar,
- * explained to the downstream model by the practice lexicon.
- *
- * Deliberately not [WalkMode]: that enum carries a third value
- * (`Honor`) whose lexicon has not been ported yet. A two-case enum keeps
- * [PromptAssembler.practiceLexicon]'s `when` exhaustive without
- * inventing text (spec D3).
+ * explained to the downstream model by the practice lexicon
+ * (`ActivityContext.swift:3-9@7c200bf`).
  */
-enum class PracticeMode { Wander, Seek }
+enum class PracticeMode { Wander, Seek, Honor }
 
 /**
  * What this seek held: when each clearing was reached (epoch ms,
@@ -28,28 +24,51 @@ enum class PracticeMode { Wander, Seek }
 @Immutable
 data class SeekStoryContext(val arrivalTimes: List<Long>)
 
-data class WalkPractice(val mode: PracticeMode, val seekStory: SeekStoryContext?)
+/**
+ * What this honor held: the Way's title, null until a caller that can
+ * reach the Ways store fills it (and when the Way is gone), and whether
+ * its end was reached (iOS `HonorStoryContext`,
+ * `ActivityContext.swift:17-26@7c200bf`). The stage's route name and
+ * label wait for Stage 21-2.
+ */
+@Immutable
+data class HonorStoryContext(val wayTitle: String?, val arrived: Boolean)
+
+data class WalkPractice(
+    val mode: PracticeMode,
+    val seekStory: SeekStoryContext?,
+    val honorStory: HonorStoryContext? = null,
+)
 
 /**
  * Pure mapping from a walk's events to its practice context (iOS
- * `WalkPracticeModel@9a418e4`). Mode derivation routes through
- * [walkModeFromEvents] so the prompt pipeline and the seek-summary
- * path can never disagree about a walk's mode.
+ * `WalkPracticeModel`, `ActivityContext.swift:43-60@7c200bf`). Mode
+ * derivation routes through [walkModeFromEvents] so the prompt pipeline
+ * and the summary can never disagree about a walk's mode: Honor wins over
+ * Seek, and only with the release flag on ([honorEnabled]); with it off
+ * an honor walk reads as the walk it would be without its marker.
  */
 object WalkPracticeModel {
 
-    fun practice(events: List<WalkEventLike>): WalkPractice {
-        // With no Honor lexicon yet, an honor walk reads as Wander here
-        // whatever the release flag says.
-        if (walkModeFromEvents(events, honorEnabled = false) != WalkMode.Seek) {
-            return WalkPractice(PracticeMode.Wander, null)
+    fun practice(events: List<WalkEventLike>, honorEnabled: Boolean): WalkPractice =
+        when (walkModeFromEvents(events, honorEnabled)) {
+            WalkMode.Honor -> WalkPractice(
+                mode = PracticeMode.Honor,
+                seekStory = null,
+                honorStory = HonorStoryContext(
+                    wayTitle = null,
+                    arrived = events.any { it.type == WalkEventType.HONOR_ARRIVAL },
+                ),
+            )
+            WalkMode.Seek -> {
+                val arrivals = events
+                    .filter { it.type == WalkEventType.SEEK_ARRIVAL }
+                    .map { it.timestamp }
+                    .sorted()
+                WalkPractice(PracticeMode.Seek, SeekStoryContext(arrivals))
+            }
+            WalkMode.Wander -> WalkPractice(PracticeMode.Wander, null)
         }
-        val arrivals = events
-            .filter { it.type == WalkEventType.SEEK_ARRIVAL }
-            .map { it.timestamp }
-            .sorted()
-        return WalkPractice(PracticeMode.Seek, SeekStoryContext(arrivals))
-    }
 }
 
 @Immutable
@@ -97,6 +116,8 @@ data class ActivityContext(
      * [AttentionDirectives]'s own `detectedLanguageCode` default).
      */
     val detectedLanguageCode: String? = null,
+    /** Set on an honor walk only, beside [seekStory] (`ActivityContext.swift:77-79@7c200bf`). */
+    val honorStory: HonorStoryContext? = null,
 ) {
     val hasSpeech: Boolean get() = recordings.isNotEmpty()
 }

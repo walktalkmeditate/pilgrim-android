@@ -40,8 +40,9 @@ object SceneryGenerator {
         val roll4 = seededRandom(seed, 4uL)
         val offset = (roll4 * 15.0 - 7.5).toFloat()
 
-        // Meaning outranks the lottery: threshold walks stand at a gate,
-        // and a seek that found places raises a cairn.
+        // Meaning outranks the lottery: threshold walks stand at a gate, a
+        // seek that found places raises a cairn, and a Way walked to its
+        // end raises two staffs (`SceneryGenerator.swift:96-119@7c200bf`).
         snapshot.threshold?.let { threshold ->
             return SceneryPlacement(SceneryType.Torii, side, offset, gateKind = threshold)
         }
@@ -52,6 +53,9 @@ object SceneryGenerator {
                 offset = offset,
                 stones = min(2 + snapshot.foundPlaces, 5),
             )
+        }
+        if (snapshot.isHonor && snapshot.honorArrivals > 0) {
+            return SceneryPlacement(SceneryType.Staffs, side, offset)
         }
 
         val roll1 = seededRandom(seed, 1uL)
@@ -136,8 +140,13 @@ object SceneryGenerator {
     private const val FNV_PRIME: ULong = 1099511628211uL
 }
 
+/**
+ * The ten scenery types, iOS's order (`SceneryGenerator.swift:7-8@7c200bf`).
+ * Torii, Cairn, and Staffs are never in the lottery's weight table: only
+ * the deterministic branch places them.
+ */
 enum class SceneryType {
-    Tree, Lantern, Butterfly, Mountain, Grass, Torii, Moon, Cairn, Drift;
+    Tree, Lantern, Butterfly, Mountain, Grass, Torii, Moon, Cairn, Drift, Staffs;
 
     /** Token name into pilgrimColors.* — same naming as iOS. */
     val tintTokenName: String
@@ -151,6 +160,7 @@ enum class SceneryType {
             Moon -> "fog"
             Cairn -> "stone"
             Drift -> "fog"
+            Staffs -> "stone"
         }
 
     /**
@@ -167,6 +177,7 @@ enum class SceneryType {
             Tree -> 8f
             Lantern -> 9f
             Cairn -> 9f
+            Staffs -> 9f
             Grass -> 12f
             Butterfly -> 14f
             Drift -> 16f

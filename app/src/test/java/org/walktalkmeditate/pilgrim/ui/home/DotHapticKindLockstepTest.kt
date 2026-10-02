@@ -25,6 +25,8 @@ class DotHapticKindLockstepTest {
         isSeek: Boolean,
         foundPlaces: Int,
         threshold: WalkThreshold?,
+        isHonor: Boolean = false,
+        honorArrivals: Int = 0,
     ) = WalkSnapshot(
         id = 1L,
         uuid = uuid,
@@ -41,6 +43,8 @@ class DotHapticKindLockstepTest {
         isSeek = isSeek,
         foundPlaces = foundPlaces,
         threshold = threshold,
+        isHonor = isHonor,
+        honorArrivals = honorArrivals,
     )
 
     @Test
@@ -50,33 +54,39 @@ class DotHapticKindLockstepTest {
         for (threshold in listOf(null, WalkThreshold.Practice, WalkThreshold.Seeking)) {
             for (isSeek in listOf(false, true)) {
                 for (foundPlaces in listOf(0, 1, 4)) {
-                    // Varied seeds so the lottery branch rolls both
-                    // hits and misses behind the deterministic one.
-                    repeat(40) {
-                        i++
-                        val snapshot = snap(
-                            uuid = "00000000-0000-0000-0000-" +
-                                i.toString().padStart(12, '0'),
-                            startMs = 1_700_000_000_000L + i * 3_600_000L,
-                            distanceM = 1_000.0 + i,
-                            durationSec = 600.0 + i,
-                            isSeek = isSeek,
-                            foundPlaces = foundPlaces,
-                            threshold = threshold,
-                        )
-                        val kind = dotHapticKind(snapshot)
-                        val sceneryType = SceneryGenerator.pick(snapshot)?.type
-                        seen += kind
-                        assertEquals(
-                            "gate kind must match a torii for $snapshot",
-                            kind == DotHapticKind.Gate,
-                            sceneryType == SceneryType.Torii,
-                        )
-                        assertEquals(
-                            "cairn kind must match a cairn for $snapshot",
-                            kind == DotHapticKind.Cairn,
-                            sceneryType == SceneryType.Cairn,
-                        )
+                    for (isHonor in listOf(false, true)) {
+                        for (honorArrivals in listOf(0, 1)) {
+                            // Varied seeds so the lottery branch rolls both
+                            // hits and misses behind the deterministic one.
+                            repeat(10) {
+                                i++
+                                val snapshot = snap(
+                                    uuid = "00000000-0000-0000-0000-" +
+                                        i.toString().padStart(12, '0'),
+                                    startMs = 1_700_000_000_000L + i * 3_600_000L,
+                                    distanceM = 1_000.0 + i,
+                                    durationSec = 600.0 + i,
+                                    isSeek = isSeek,
+                                    foundPlaces = foundPlaces,
+                                    threshold = threshold,
+                                    isHonor = isHonor,
+                                    honorArrivals = honorArrivals,
+                                )
+                                val kind = dotHapticKind(snapshot)
+                                val sceneryType = SceneryGenerator.pick(snapshot)?.type
+                                seen += kind
+                                assertEquals(
+                                    "gate kind must match a torii for $snapshot",
+                                    kind == DotHapticKind.Gate,
+                                    sceneryType == SceneryType.Torii,
+                                )
+                                assertEquals(
+                                    "cairn kind must match a cairn or the staffs for $snapshot",
+                                    kind == DotHapticKind.Cairn,
+                                    sceneryType == SceneryType.Cairn || sceneryType == SceneryType.Staffs,
+                                )
+                            }
+                        }
                     }
                 }
             }

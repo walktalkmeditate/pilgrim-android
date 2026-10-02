@@ -115,6 +115,16 @@ open class WalkRepository @Inject constructor(
         walkEventDao.walkIdsWithEvent(WalkEventType.SEEK_MODE.name).toSet()
 
     /**
+     * Ids of all walks that honored a Way (one `HONOR_MODE` event at
+     * recording start), in a single query, as [seekWalkIds] does for
+     * seeks (iOS `fetchWalkIDs(withEvent: .honorMode)`,
+     * `HomeViewModel.swift:153-167@7c200bf`). Whatever the release flag
+     * says: callers gate on it.
+     */
+    open suspend fun honorWalkIds(): Set<Long> =
+        walkEventDao.walkIdsWithEvent(WalkEventType.HONOR_MODE.name).toSet()
+
+    /**
      * Icon strings of every icon-carrying waypoint, grouped by walk id,
      * in a single query (no N+1). Feeds
      * `GoshuinMilestones.arrivalCounts` — the pure pass that turns
@@ -329,21 +339,23 @@ open class WalkRepository @Inject constructor(
      * file, and its Honor marker stay. The children are iOS's
      * (`PilgrimPackageImporter.swift:457-464@7c200bf`). Joins the caller's
      * transaction; once that commits, the caller runs [discardHonorStaging]
-     * for the walk.
+     * for the walk. [keepLiveHonorRows] keeps the live rows (and the
+     * caller keeps the staging) of a walk whose Honor step is still
+     * pending, so the next launch's retry still has what it links.
      *
      * A failed delete propagates. Catching it would not keep the others:
      * each DAO call is a nested transaction, which on framework SQLite
      * dooms the whole batch without throwing, so the caller would go on to
      * discard staging and mark walks archived that had rolled back.
      */
-    suspend fun stripArchivedWalk(walkId: Long) {
+    suspend fun stripArchivedWalk(walkId: Long, keepLiveHonorRows: Boolean = false) {
         routeDao.deleteByWalkId(walkId)
         waypointDao.deleteByWalkId(walkId)
         walkEventDao.deleteByWalkId(walkId)
         activityIntervalDao.deleteByWalkId(walkId)
         voiceRecordingDao.deleteByWalkId(walkId)
         walkPhotoDao.deleteByWalkId(walkId)
-        database.honorDao().deleteLiveRows(walkId)
+        if (!keepLiveHonorRows) database.honorDao().deleteLiveRows(walkId)
     }
 
     /**

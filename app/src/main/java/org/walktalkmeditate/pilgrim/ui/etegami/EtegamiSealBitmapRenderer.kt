@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.compose.ui.graphics.Color
@@ -19,6 +20,7 @@ import org.walktalkmeditate.pilgrim.ui.design.seals.Dot
 import org.walktalkmeditate.pilgrim.ui.design.seals.Radial
 import org.walktalkmeditate.pilgrim.ui.design.seals.Ring
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealWatermark
 import org.walktalkmeditate.pilgrim.ui.design.seals.sealGeometry
 
 /**
@@ -89,6 +91,7 @@ internal object EtegamiSealBitmapRenderer {
 
         canvas.save()
         canvas.rotate(geometry.rotationDeg, centerX, centerY)
+        spec.watermark?.let { drawWatermark(canvas, it, sizePx, ink) }
         drawRings(canvas, geometry.rings, centerX, centerY, outerR, sizePx, ink)
         drawRadials(canvas, geometry.radialLines, centerX, centerY, outerR, sizePx, ink)
         drawArcs(canvas, geometry.arcs, centerX, centerY, outerR, sizePx, ink)
@@ -96,6 +99,29 @@ internal object EtegamiSealBitmapRenderer {
         canvas.restore()
 
         drawCenterText(canvas, centerX, centerY, sizePx, spec, ink, context)
+    }
+
+    /** The Compose renderer's watermark, stroke for stroke: the Way's line first, each line one path. */
+    private fun drawWatermark(canvas: Canvas, watermark: SealWatermark, sizePx: Float, ink: Color) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = sizePx * SealWatermark.STROKE_FRACTION
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        watermark.wayLine?.let { line ->
+            paint.color = ink.copy(alpha = ink.alpha * SealWatermark.WAY_ALPHA).toArgb()
+            canvas.drawPath(watermarkPath(line, sizePx), paint)
+        }
+        paint.color = ink.copy(alpha = ink.alpha * SealWatermark.WALK_ALPHA).toArgb()
+        canvas.drawPath(watermarkPath(watermark.walkLine, sizePx), paint)
+    }
+
+    private fun watermarkPath(unitLine: FloatArray, sizePx: Float): Path = Path().apply {
+        moveTo(unitLine[0] * sizePx, unitLine[1] * sizePx)
+        for (i in 2 until unitLine.size step 2) {
+            lineTo(unitLine[i] * sizePx, unitLine[i + 1] * sizePx)
+        }
     }
 
     private fun drawRings(

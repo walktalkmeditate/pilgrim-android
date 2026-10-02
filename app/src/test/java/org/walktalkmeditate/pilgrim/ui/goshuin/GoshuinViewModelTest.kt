@@ -4,12 +4,16 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 import android.app.Application
 import android.content.Context
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -66,11 +70,20 @@ class GoshuinViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun newViewModel(): GoshuinViewModel =
+    private fun newViewModel(
+        honorEnabled: Boolean = false,
+        wayStore: org.walktalkmeditate.pilgrim.data.honor.WayStore? = null,
+    ): GoshuinViewModel =
         GoshuinViewModel(
             repository,
             org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
             org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
+            org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = honorEnabled),
+            if (wayStore != null) {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context, wayStore)
+            } else {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context)
+            },
         )
 
     @Test
@@ -156,6 +169,138 @@ class GoshuinViewModelTest {
                 cancelAndIgnoreRemainingEvents()
             }
         }
+
+    /** An earlier wander walk, then an honor walk that arrived, linked to a stored Way. */
+    private fun linkedHonorWalk(store: org.walktalkmeditate.pilgrim.data.honor.WayStore): Long = runBlocking {
+        val earlier = repository.startWalk(startTimestamp = 1_000_000L)
+        repository.finishWalk(earlier, endTimestamp = 1_600_000L)
+        val walk = repository.startWalk(startTimestamp = 5_000_000L)
+        repository.recordEvent(
+            org.walktalkmeditate.pilgrim.data.entity.WalkEvent(
+                walkId = walk.id,
+                timestamp = 5_000_001L,
+                eventType = org.walktalkmeditate.pilgrim.domain.WalkEventType.HONOR_MODE,
+            ),
+        )
+        repository.addWaypoint(
+            org.walktalkmeditate.pilgrim.data.entity.Waypoint(
+                walkId = walk.id,
+                timestamp = 5_300_000L,
+                latitude = 0.0,
+                longitude = 0.004,
+                label = "Walked their way: Morning loop",
+                icon = org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence.ARRIVAL_WAYPOINT_ICON,
+            ),
+        )
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 5_000_000L, latitude = 0.0, longitude = 0.0))
+        repository.recordLocation(RouteDataSample(walkId = walk.id, timestamp = 5_300_000L, latitude = 0.0, longitude = 0.004))
+        repository.finishWalk(walk, endTimestamp = 5_600_000L)
+        val way = org.walktalkmeditate.pilgrim.data.honor.HonorWalkState(db, store).way()
+        store.save(way)
+        store.link(walk.uuid, way.id, arrival = null)
+        walk.id
+    }
+
+    private fun newWayStore() = org.walktalkmeditate.pilgrim.data.honor.WayStore({
+        java.io.File(context.cacheDir, "goshuin-ways-${java.util.UUID.randomUUID()}")
+    })
+
+    @Test
+    fun `an honor seal carries the Way's line and First Honor with the flag on`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+
+        val vm = newViewModel(honorEnabled = true, wayStore = store)
+        vm.uiState.test(timeout = 10.seconds) {
+            val loaded = awaitLoaded(this)
+            val seal = loaded.seals.first { it.walkId == walkId }
+            assertNotNull("the walk's own line", seal.sealSpec.watermark)
+            assertNotNull("the Way's line beneath it", seal.sealSpec.watermark?.wayLine)
+            assertEquals(GoshuinMilestone.FirstHonor, seal.milestone)
+            assertEquals("First Honor", GoshuinMilestones.label(seal.milestone!!))
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `an honor seal loses the Way's line when the Way is deleted, and is plain with the flag off`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+        store.delete("walk:${org.walktalkmeditate.pilgrim.data.honor.HonorWalkState.SOURCE_WALK_UUID}")
+
+        newViewModel(honorEnabled = true, wayStore = store).uiState.test(timeout = 10.seconds) {
+            val seal = awaitLoaded(this).seals.first { it.walkId == walkId }
+            assertNotNull(seal.sealSpec.watermark)
+            assertNull("owner decision 3: the line goes with the link", seal.sealSpec.watermark?.wayLine)
+            cancelAndIgnoreRemainingEvents()
+        }
+        newViewModel(honorEnabled = false, wayStore = store).uiState.test(timeout = 10.seconds) {
+            val seal = awaitLoaded(this).seals.first { it.walkId == walkId }
+            assertNull(seal.sealSpec.watermark?.wayLine)
+            assertTrue("no honor seal with the flag off", seal.milestone != GoshuinMilestone.FirstHonor)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `an open book drops a deleted Way's line from its seal`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+
+        newViewModel(honorEnabled = true, wayStore = store).uiState.test(timeout = 10.seconds) {
+            assertNotNull(awaitLoaded(this).seals.first { it.walkId == walkId }.sealSpec.watermark?.wayLine)
+            store.delete("walk:${org.walktalkmeditate.pilgrim.data.honor.HonorWalkState.SOURCE_WALK_UUID}")
+            var seal = awaitLoaded(this).seals.first { it.walkId == walkId }
+            while (seal.sealSpec.watermark?.wayLine != null) seal = awaitLoaded(this).seals.first { it.walkId == walkId }
+            assertNotNull("the walk keeps its own line", seal.sealSpec.watermark)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `the seals are built off Main`() = runTest(dispatcher) {
+        val walk = runBlocking { repository.startWalk(startTimestamp = 5_000_000L) }
+        runBlocking { repository.finishWalk(walk, endTimestamp = 5_600_000L) }
+        val threadNames = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val spying = object : WalkRepository(
+            database = db,
+            walkDao = db.walkDao(),
+            routeDao = db.routeDataSampleDao(),
+            altitudeDao = db.altitudeSampleDao(),
+            walkEventDao = db.walkEventDao(),
+            activityIntervalDao = db.activityIntervalDao(),
+            waypointDao = db.waypointDao(),
+            voiceRecordingDao = db.voiceRecordingDao(),
+            walkPhotoDao = db.walkPhotoDao(),
+        ) {
+            override suspend fun locationSamplesFor(walkId: Long): List<RouteDataSample> {
+                threadNames += Thread.currentThread().name
+                return super.locationSamplesFor(walkId)
+            }
+        }
+        val sealDispatcher = java.util.concurrent.Executors
+            .newSingleThreadExecutor { Thread(it, "goshuin-seals") }
+            .asCoroutineDispatcher()
+        val vm = GoshuinViewModel(
+            spying,
+            org.walktalkmeditate.pilgrim.data.units.FakeUnitsPreferencesRepository(),
+            org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
+            org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = true),
+            org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context),
+            sealDispatcher,
+        )
+        try {
+            vm.uiState.test(timeout = 10.seconds) {
+                awaitLoaded(this)
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertTrue("a walk's samples were read", threadNames.isNotEmpty())
+            assertTrue("read and fitted on $threadNames", threadNames.all { it.startsWith("goshuin-seals") })
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            sealDispatcher.close()
+        }
+    }
 
     @Test
     fun `seal favicon is null when walk is untagged`() = runTest(dispatcher) {

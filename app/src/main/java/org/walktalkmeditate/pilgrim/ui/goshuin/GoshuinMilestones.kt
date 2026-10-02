@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.ui.goshuin
 
 import java.time.Instant
 import java.time.ZoneId
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 
@@ -31,6 +32,12 @@ data class WalkMilestoneInput(
      * caller that doesn't award seeking seals.
      */
     val foundPlaceCount: Int = 0,
+    /**
+     * Way arrivals recorded on this walk (honor reserved-icon waypoints),
+     * for the honor milestones. Mirrors iOS `SealInput.honorArrivalCount`;
+     * populated from [GoshuinMilestones.honorArrivalCounts].
+     */
+    val honorArrivalCount: Int = 0,
 )
 
 /**
@@ -69,6 +76,9 @@ object GoshuinMilestones {
      * `unknownThresholds` (`GoshuinMilestones.swift:18@c1745e8`).
      */
     val unknownThresholds: List<Int> = listOf(10, 25, 50, 100)
+
+    /** Lifetime Way-arrival counts that earn a seal (iOS `honorThresholds`, `GoshuinMilestones.swift:24-25@7c200bf`). */
+    val honorThresholds: List<Int> = listOf(10, 25, 50, 100)
 
     fun detect(
         walkIndex: Int,
@@ -145,17 +155,25 @@ object GoshuinMilestones {
         // walks strictly before this one, self excluded. Verbatim port
         // of the iOS SealInput-overload aggregation
         // (`GoshuinMilestones.swift:218-227@c1745e8`).
-        if (walk.foundPlaceCount > 0) {
-            val arrivalsBefore = allFinished
-                .filter {
-                    it.walkId != walk.walkId &&
-                        isOrderedBefore(it.startTimestamp, it.uuid, walk.startTimestamp, walk.uuid)
-                }
-                .sumOf { it.foundPlaceCount }
-            milestones += seekingMilestones(
-                arrivalsInWalk = walk.foundPlaceCount,
-                arrivalsBefore = arrivalsBefore,
-            )
+        // Honor milestones count the same way over Way arrivals (iOS
+        // `crossings(for:among:)`, `GoshuinMilestones.swift:316-340@7c200bf`).
+        if (walk.foundPlaceCount > 0 || walk.honorArrivalCount > 0) {
+            val earlier = allFinished.filter {
+                it.walkId != walk.walkId &&
+                    isOrderedBefore(it.startTimestamp, it.uuid, walk.startTimestamp, walk.uuid)
+            }
+            if (walk.foundPlaceCount > 0) {
+                milestones += seekingMilestones(
+                    arrivalsInWalk = walk.foundPlaceCount,
+                    arrivalsBefore = earlier.sumOf { it.foundPlaceCount },
+                )
+            }
+            if (walk.honorArrivalCount > 0) {
+                milestones += honorMilestones(
+                    arrivalsInWalk = walk.honorArrivalCount,
+                    arrivalsBefore = earlier.sumOf { it.honorArrivalCount },
+                )
+            }
         }
 
         return primaryMilestone(milestones)
@@ -183,6 +201,25 @@ object GoshuinMilestones {
     }
 
     /**
+     * Honor milestones for a walk, from the Ways it walked to their end
+     * and the lifetime count before it: [seekingMilestones]'s rule over
+     * Way arrivals. Verbatim port of iOS `honorMilestones`
+     * (`GoshuinMilestones.swift:148-159@7c200bf`).
+     */
+    fun honorMilestones(arrivalsInWalk: Int, arrivalsBefore: Int): Set<GoshuinMilestone> {
+        if (arrivalsInWalk <= 0) return emptySet()
+        val milestones = mutableSetOf<GoshuinMilestone>()
+        if (arrivalsBefore == 0) {
+            milestones += GoshuinMilestone.FirstHonor
+        }
+        val total = arrivalsBefore + arrivalsInWalk
+        honorThresholds
+            .filter { arrivalsBefore < it && total >= it }
+            .forEach { milestones += GoshuinMilestone.HonorsWalked(it) }
+        return milestones
+    }
+
+    /**
      * One pure counting pass for the whole book: arrival-waypoint
      * counts per walk id, zero-count walks omitted. iOS
      * `arrivalCounts(for:)` walks the CoreData waypoint relationships
@@ -194,6 +231,17 @@ object GoshuinMilestones {
     fun arrivalCounts(waypointIconsByWalk: Map<Long, List<String?>>): Map<Long, Int> =
         waypointIconsByWalk
             .mapValues { (_, icons) -> icons.count(SeekPersistence::isArrivalWaypoint) }
+            .filterValues { it > 0 }
+
+    /**
+     * The same pass over the honor reserved icon (iOS
+     * `honorArrivalCounts(for:)`, `GoshuinMilestones.swift:86-94@7c200bf`):
+     * Way arrivals are counted from their waypoints, whatever the walk's
+     * events say.
+     */
+    fun honorArrivalCounts(waypointIconsByWalk: Map<Long, List<String?>>): Map<Long, Int> =
+        waypointIconsByWalk
+            .mapValues { (_, icons) -> icons.count(HonorPersistence::isArrivalWaypoint) }
             .filterValues { it > 0 }
 
     /**
@@ -219,18 +267,19 @@ object GoshuinMilestones {
      * milestones at once — Set iteration order must never pick the
      * displayed seal. Once-ever moments outrank threshold crossings
      * outrank recurring and transient records; within a parameterized
-     * tier the largest count is the headline. Port of iOS
-     * `primaryMilestone` (`GoshuinMilestones.swift:20-49@c1745e8`).
+     * tier the largest count is the headline, and a seek and an honor
+     * milestone tied on both keys go to the seek. Port of iOS
+     * `primaryMilestone` (`GoshuinMilestones.swift:35-67@7c200bf`).
      */
     fun primaryMilestone(milestones: Set<GoshuinMilestone>): GoshuinMilestone? =
         milestones.minWithOrNull(
-            compareBy({ displayPriority(it) }, { -intraPriority(it) }),
+            compareBy({ displayPriority(it) }, { -intraPriority(it) }, { subPriority(it) }),
         )
 
     private fun displayPriority(milestone: GoshuinMilestone): Int = when (milestone) {
         GoshuinMilestone.FirstWalk -> 0
-        GoshuinMilestone.FirstUnknown -> 1
-        is GoshuinMilestone.UnknownsFound -> 2
+        GoshuinMilestone.FirstUnknown, GoshuinMilestone.FirstHonor -> 1
+        is GoshuinMilestone.UnknownsFound, is GoshuinMilestone.HonorsWalked -> 2
         is GoshuinMilestone.NthWalk -> 3
         is GoshuinMilestone.FirstOfSeason -> 4
         GoshuinMilestone.LongestWalk -> 5
@@ -240,6 +289,13 @@ object GoshuinMilestones {
     private fun intraPriority(milestone: GoshuinMilestone): Int = when (milestone) {
         is GoshuinMilestone.NthWalk -> milestone.n
         is GoshuinMilestone.UnknownsFound -> milestone.count
+        is GoshuinMilestone.HonorsWalked -> milestone.count
+        else -> 0
+    }
+
+    /** Seek before honor when [displayPriority] and [intraPriority] both tie. */
+    private fun subPriority(milestone: GoshuinMilestone): Int = when (milestone) {
+        GoshuinMilestone.FirstHonor, is GoshuinMilestone.HonorsWalked -> 1
         else -> 0
     }
 
@@ -277,6 +333,8 @@ object GoshuinMilestones {
         is GoshuinMilestone.FirstOfSeason -> "First of ${seasonLabel(milestone.season)}"
         GoshuinMilestone.FirstUnknown -> "First Unknown"
         is GoshuinMilestone.UnknownsFound -> "${milestone.count} Unknowns"
+        GoshuinMilestone.FirstHonor -> "First Honor"
+        is GoshuinMilestone.HonorsWalked -> "${milestone.count} Ways Walked"
     }
 
     private fun seasonLabel(season: Season): String = when (season) {

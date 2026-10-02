@@ -26,6 +26,8 @@ import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -175,6 +177,97 @@ class HomeViewModelJournalTest {
             // The flag comes from the bulk id fetch (one call per
             // snapshot build), never from per-walk event faulting.
             assertTrue(bulkFetches.get() >= 1)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    /** An honor walk that arrived: its HONOR_MODE event and one arrival waypoint. */
+    private fun arrivedHonorWalk(startMs: Long): Long = runBlocking {
+        val walk = repo.startWalk(startTimestamp = startMs)
+        repo.recordEvent(WalkEvent(walkId = walk.id, timestamp = startMs + 1, eventType = WalkEventType.HONOR_MODE))
+        repo.addWaypoint(
+            org.walktalkmeditate.pilgrim.data.entity.Waypoint(
+                walkId = walk.id,
+                timestamp = startMs + 2,
+                latitude = 0.0,
+                longitude = 0.0,
+                label = "Walked their way: Morning loop",
+                icon = org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence.ARRIVAL_WAYPOINT_ICON,
+            ),
+        )
+        repo.finishWalk(walk, endTimestamp = startMs + 600_000L)
+        walk.id
+    }
+
+    @Test
+    fun `honor walks carry their mode and Way arrivals, and the first stands at a seeking gate`() = runTest(dispatcher) {
+        val wander = runBlocking { repo.startWalk(startTimestamp = 1_000_000L) }
+        runBlocking { repo.finishWalk(wander, endTimestamp = 1_600_000L) }
+        val firstHonor = arrivedHonorWalk(2_000_000L)
+        val secondHonor = arrivedHonorWalk(3_000_000L)
+        val v = newVm(honorEnabled = true)
+        vm = v
+        v.journalState.test(timeout = 10.seconds) {
+            var item = awaitItem()
+            while (item !is JournalUiState.Loaded) item = awaitItem()
+            val byId = item.snapshots.associateBy { it.id }
+            assertEquals(org.walktalkmeditate.pilgrim.domain.WalkMode.Wander, byId.getValue(wander.id).mode)
+            val first = byId.getValue(firstHonor)
+            assertTrue(first.isHonor)
+            assertEquals(org.walktalkmeditate.pilgrim.domain.WalkMode.Honor, first.mode)
+            assertEquals(1, first.honorArrivals)
+            assertEquals("the first Way walked to its end stands at a gate", WalkThreshold.Seeking, first.threshold)
+            val second = byId.getValue(secondHonor)
+            assertNull(second.threshold)
+            assertEquals(
+                "the next raises the staffs",
+                org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryType.Staffs,
+                org.walktalkmeditate.pilgrim.ui.home.scenery.SceneryGenerator.pick(second)?.type,
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `the FAB seal loses the Way's line when the Way is deleted`() = runTest(dispatcher) {
+        val store = org.walktalkmeditate.pilgrim.data.honor.WayStore({
+            java.io.File(context.cacheDir, "home-ways-${java.util.UUID.randomUUID()}")
+        })
+        val walkId = arrivedHonorWalk(2_000_000L)
+        val walk = runBlocking {
+            repo.recordLocation(org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(walkId = walkId, timestamp = 2_000_001L, latitude = 0.0, longitude = 0.0))
+            repo.recordLocation(org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(walkId = walkId, timestamp = 2_300_000L, latitude = 0.0, longitude = 0.004))
+            repo.getWalk(walkId)!!
+        }
+        val way = org.walktalkmeditate.pilgrim.data.honor.HonorWalkState(db, store).way()
+        store.save(way)
+        store.link(walk.uuid, way.id, arrival = null)
+        val v = newVm(honorEnabled = true, wayStore = store)
+        vm = v
+
+        v.latestSealSpec.test(timeout = 10.seconds) {
+            var spec = awaitItem()
+            while (spec?.watermark?.wayLine == null) spec = awaitItem()
+            store.delete(way.id)
+            while (spec?.watermark?.wayLine != null) spec = awaitItem()
+            assertNotNull("the walk keeps its own line", spec?.watermark)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `with the flag off an honor walk is a plain walk in the journal`() = runTest(dispatcher) {
+        val honor = arrivedHonorWalk(2_000_000L)
+        val v = newVm(honorEnabled = false)
+        vm = v
+        v.journalState.test(timeout = 10.seconds) {
+            var item = awaitItem()
+            while (item !is JournalUiState.Loaded) item = awaitItem()
+            val snapshot = item.snapshots.single { it.id == honor }
+            assertFalse(snapshot.isHonor)
+            assertEquals(0, snapshot.honorArrivals)
+            assertEquals(org.walktalkmeditate.pilgrim.domain.WalkMode.Wander, snapshot.mode)
+            assertEquals("walk #1's practice gate, no honor gate", WalkThreshold.Practice, snapshot.threshold)
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -352,7 +445,11 @@ class HomeViewModelJournalTest {
         icon = SeekPersistence.ARRIVAL_WAYPOINT_ICON,
     )
 
-    private fun newVm(repository: WalkRepository = repo): HomeViewModel {
+    private fun newVm(
+        repository: WalkRepository = repo,
+        honorEnabled: Boolean = false,
+        wayStore: org.walktalkmeditate.pilgrim.data.honor.WayStore? = null,
+    ): HomeViewModel {
         val clock = object : Clock {
             override fun now(): Long = 10_000_000L
         }
@@ -369,6 +466,12 @@ class HomeViewModelJournalTest {
             cachedShareStore = cachedShareStore,
             practicePreferences = FakePracticePreferencesRepository(),
             archivedRegistry = org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry(),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = honorEnabled),
+            honorWalkRecords = if (wayStore != null) {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context, wayStore)
+            } else {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context)
+            },
             defaultDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         )

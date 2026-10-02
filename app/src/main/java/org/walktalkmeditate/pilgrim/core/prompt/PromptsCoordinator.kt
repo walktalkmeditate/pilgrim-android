@@ -21,6 +21,7 @@ import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.MoonCalc
 import org.walktalkmeditate.pilgrim.core.celestial.Planet
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.core.prompt.voices.CustomPromptStyleVoice
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder
@@ -42,6 +43,7 @@ import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.haversineMeters
+import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
 
 /**
  * Single-entry-point facade for the Stage 13-XZ AI Prompts surface.
@@ -111,6 +113,10 @@ open class PromptsCoordinator internal constructor(
      * history.
      */
     private val threadsAnalysisEnvironment: ThreadsAnalysisEnvironment,
+    /** Honor reads as a practice only with the release flag on (AE12). */
+    private val releaseFlags: ReleaseFlags,
+    /** Fills an honor walk's story with its Way's title, as iOS's prompt screen does from the Ways store. */
+    private val honorWalkRecords: HonorWalkRecords,
     /**
      * CPU-bound dispatcher for the [buildContext] orchestration. The body
      * does CPU work (per-sample haversine for `routeSpeeds`, celestial /
@@ -155,6 +161,8 @@ open class PromptsCoordinator internal constructor(
         threadsDossierBuilder: ThreadsDossierBuilder,
         mlKitLanguageIdClient: MlKitLanguageIdClient,
         threadsAnalysisEnvironment: ThreadsAnalysisEnvironment,
+        releaseFlags: ReleaseFlags,
+        honorWalkRecords: HonorWalkRecords,
     ) : this(
         repository = repository,
         customStyleStore = customStyleStore,
@@ -167,6 +175,8 @@ open class PromptsCoordinator internal constructor(
         threadsDossierBuilder = threadsDossierBuilder,
         mlKitLanguageIdClient = mlKitLanguageIdClient,
         threadsAnalysisEnvironment = threadsAnalysisEnvironment,
+        releaseFlags = releaseFlags,
+        honorWalkRecords = honorWalkRecords,
         defaultDispatcher = Dispatchers.Default,
     )
 
@@ -266,7 +276,12 @@ open class PromptsCoordinator internal constructor(
         val imperial = unitsPreferences.distanceUnits.value == UnitSystem.Imperial
         val weather = ContextFormatter.formatWeather(walk, weatherLabelResolver(), imperial)
         val routeSpeeds = computeRouteSpeeds(locationSamples)
-        val practice = WalkPracticeModel.practice(fetches.events)
+        val practice = WalkPracticeModel.practice(fetches.events, releaseFlags.honor)
+        // iOS `PromptListView.practice` (`PromptListView.swift:226-236@7c200bf`):
+        // the title costs a store read, and only for an honor walk.
+        val honorStory = practice.honorStory?.copy(
+            wayTitle = honorWalkRecords.record(walkId, walk.uuid).way?.title,
+        )
         val pauses = pauseContexts(walk, fetches.events)
         val (ascent, descent) = AltitudeCalculator.computeAscentDescent(fetches.altitudeSamples)
         val threadsDossier = buildThreadsDossierSafely(walkId)
@@ -299,6 +314,7 @@ open class PromptsCoordinator internal constructor(
             descentMeters = descent,
             threadsDossier = threadsDossier,
             detectedLanguageCode = detectedLanguageCode,
+            honorStory = honorStory,
         )
     }
 

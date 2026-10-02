@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.practice.PracticePreferencesRepository
@@ -40,8 +41,10 @@ import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealColorPalette
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
+import org.walktalkmeditate.pilgrim.ui.design.seals.sealWatermark
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSealBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinMilestones
@@ -67,6 +70,8 @@ class HomeViewModel internal constructor(
     private val cachedShareStore: CachedShareStore,
     private val practicePreferences: PracticePreferencesRepository,
     private val archivedRegistry: org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry,
+    private val releaseFlags: ReleaseFlags,
+    private val honorWalkRecords: HonorWalkRecords,
     private val defaultDispatcher: CoroutineDispatcher,
     private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
@@ -81,6 +86,8 @@ class HomeViewModel internal constructor(
         cachedShareStore: CachedShareStore,
         practicePreferences: PracticePreferencesRepository,
         archivedRegistry: org.walktalkmeditate.pilgrim.data.pilgrim.ArchivedWalkRegistry,
+        releaseFlags: ReleaseFlags,
+        honorWalkRecords: HonorWalkRecords,
     ) : this(
         context = context,
         repository = repository,
@@ -90,6 +97,8 @@ class HomeViewModel internal constructor(
         cachedShareStore = cachedShareStore,
         practicePreferences = practicePreferences,
         archivedRegistry = archivedRegistry,
+        releaseFlags = releaseFlags,
+        honorWalkRecords = honorWalkRecords,
         defaultDispatcher = Dispatchers.Default,
         ioDispatcher = Dispatchers.IO,
     )
@@ -169,13 +178,16 @@ class HomeViewModel internal constructor(
     // it doesn't affect any per-walk numbers, and re-running the full
     // per-walk DAO fan-out on every pref toggle was wasteful. The
     // expand-sheet path reads it via `practicePreferences.value`
-    // directly at the moment of expansion.
+    // directly at the moment of expansion. A Way deleted in Settings
+    // rebuilds too, so the FAB seal loses the Way's line with the link
+    // (owner decision 3); the bottom-nav tabs keep this VM alive.
     val journalState: StateFlow<JournalUiState> = combine(
         repository.observeAllWalks(),
         unitsPreferences.distanceUnits,
         cachedShareStore.observeAll(),
         archivedRegistry.archivedRegistry,
-    ) { walks, units, shareCache, archivedMap ->
+        honorWalkRecords.wayDeletions,
+    ) { walks, units, shareCache, archivedMap, _ ->
         val finished = walks.filter { it.endTimestamp != null }
         if (finished.isEmpty()) {
             JournalUiState.Empty
@@ -202,7 +214,17 @@ class HomeViewModel internal constructor(
             val meditateSec: Long,
         )
         val seekWalkIds = fetchSeekWalkIds()
-        val arrivalCounts = fetchArrivalCounts()
+        // With the flag off an honor walk is a plain walk (AE12): no staff,
+        // no staffs, no honor gate.
+        val honorEnabled = releaseFlags.honor
+        val honorWalkIds = if (honorEnabled) fetchHonorWalkIds() else emptySet()
+        val waypointIcons = fetchWaypointIcons()
+        val arrivalCounts = GoshuinMilestones.arrivalCounts(waypointIcons)
+        val honorArrivalCounts = if (honorEnabled) {
+            GoshuinMilestones.honorArrivalCounts(waypointIcons)
+        } else {
+            emptyMap()
+        }
         // Parallelize per-walk DAO reads — kaijutsu PR #86 review caught
         // sequential N reads stuttering at 100+ walks. Each walk's
         // locationSamplesFor + walkEventsFor + activitySumsFor are
@@ -247,6 +269,7 @@ class HomeViewModel internal constructor(
                     )
                 },
                 foundPlacesByWalkId = arrivalCounts,
+                honorArrivalsByWalkId = honorArrivalCounts,
             )
             var cumulative = 0.0
             val oldestFirstSnapshots = perWalk.map { input ->
@@ -272,6 +295,8 @@ class HomeViewModel internal constructor(
                     isSeek = input.walk.id in seekWalkIds,
                     foundPlaces = arrivalCounts[input.walk.id] ?: 0,
                     threshold = thresholds[input.walk.id],
+                    isHonor = input.walk.id in honorWalkIds,
+                    honorArrivals = honorArrivalCounts[input.walk.id] ?: 0,
                 )
             }
             val newestFirst = oldestFirstSnapshots.reversed()
@@ -287,7 +312,7 @@ class HomeViewModel internal constructor(
             JournalUiState.Loaded(newestFirst, summary)
         }
 
-        scheduleSealRender(walks, units)
+        scheduleSealRender(walks, units, honorWalkIds)
         return loaded
     }
 
@@ -308,20 +333,30 @@ class HomeViewModel internal constructor(
         emptySet()
     }
 
-    /**
-     * Arrival counts per walk (reserved-icon waypoints) via the single
-     * U12 bulk waypoint-icons query — one read for the whole journal,
-     * exactly like iOS `GoshuinMilestones.arrivalCounts(for: walks)`
-     * computed once in `buildSnapshots`. Feeds the ink scroll's cairns
-     * and seeking gates; a failed fetch degrades those two surfaces
-     * (practice gates need no arrivals), never the journal.
-     */
-    private suspend fun fetchArrivalCounts(): Map<Long, Int> = try {
-        GoshuinMilestones.arrivalCounts(repository.waypointIconsByWalk())
+    /** Honor walks by their `HONOR_MODE` event, with [fetchSeekWalkIds]'s one-query rule and failure contract. */
+    private suspend fun fetchHonorWalkIds(): Set<Long> = try {
+        repository.honorWalkIds()
     } catch (ce: CancellationException) {
         throw ce
     } catch (t: Throwable) {
-        android.util.Log.w("HomeViewModel", "waypoint-icon fetch failed; cairns and seeking gates degrade", t)
+        android.util.Log.w("HomeViewModel", "honor walk-id fetch failed; glyphs fall back to wander", t)
+        emptySet()
+    }
+
+    /**
+     * Waypoint icons per walk via the single U12 bulk query — one read
+     * for the whole journal, from which both reserved-icon counts come,
+     * exactly like iOS `GoshuinMilestones.arrivalAndHonorCounts(for:)`
+     * computed once in `buildSnapshots`. Feeds the ink scroll's cairns,
+     * staffs, and seeking gates; a failed fetch degrades those surfaces
+     * (practice gates need no arrivals), never the journal.
+     */
+    private suspend fun fetchWaypointIcons(): Map<Long, List<String?>> = try {
+        repository.waypointIconsByWalk()
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (t: Throwable) {
+        android.util.Log.w("HomeViewModel", "waypoint-icon fetch failed; cairns, staffs, and seeking gates degrade", t)
         emptyMap()
     }
 
@@ -355,6 +390,7 @@ class HomeViewModel internal constructor(
     private suspend fun scheduleSealRender(
         walks: List<Walk>,
         units: UnitSystem,
+        honorWalkIds: Set<Long>,
     ) {
         // Filter to FINISHED walks before pickup — Walk.toSealSpec
         // requires non-null endTimestamp. An in-progress walk at the
@@ -376,13 +412,24 @@ class HomeViewModel internal constructor(
         // (iOS `routePoints.first`), not the device; the light/dark variant
         // from the theme pushed in via [setFabSealDark]. Resolve against the
         // placeholder spec (the seal hash ignores ink), then bake the result.
-        val firstLat = repository.firstLocationSampleFor(newest.id)?.latitude ?: 0.0
+        // The whole route feeds the ghost-route watermark, and an honor
+        // walk's Way its second line (parity spec G §6).
+        val route = repository.locationSamplesFor(newest.id).map {
+            LocationPoint(timestamp = it.timestamp, latitude = it.latitude, longitude = it.longitude)
+        }
+        val honoredWay = if (newest.id in honorWalkIds) {
+            honorWalkRecords.honoredWays(listOf(newest))[newest.id]
+        } else {
+            null
+        }
+        val firstLat = route.firstOrNull()?.latitude ?: 0.0
         val spec0 = newest.toSealSpec(
             distanceMeters = distance,
             ink = Color.Transparent,
             displayDistance = label.value,
             unitLabel = label.unit,
             southernHemisphere = Hemisphere.fromLatitude(firstLat) == Hemisphere.Southern,
+            watermark = sealWatermark(route, honoredWay),
         )
         val ink = SealColorPalette.sealInk(spec0, _fabSealDark.value)
         val spec = spec0.copy(ink = ink)

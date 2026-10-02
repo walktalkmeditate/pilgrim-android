@@ -10,10 +10,15 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.WalkFavicon
@@ -22,6 +27,9 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
+import org.walktalkmeditate.pilgrim.ui.design.seals.SealWatermark
+import org.walktalkmeditate.pilgrim.ui.design.seals.sealWatermark
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
@@ -44,15 +52,34 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
  * is an N+1 query per collection load; for current walk counts it is
  * a non-issue. If device QA flags jank at scale, a focused
  * `Walk.distanceMeters` cache is a separate schema-migration stage.
+ * The per-walk distance and watermark fit run on [defaultDispatcher],
+ * never on Main.
  */
 @HiltViewModel
-class GoshuinViewModel @Inject constructor(
+class GoshuinViewModel internal constructor(
     private val repository: WalkRepository,
     unitsPreferences: UnitsPreferencesRepository,
     private val archivedRegistry: ArchivedWalkRegistry,
+    private val releaseFlags: ReleaseFlags,
+    private val honorWalkRecords: HonorWalkRecords,
+    private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
-    val uiState: StateFlow<GoshuinUiState> = repository.observeAllWalks()
+    @Inject
+    constructor(
+        repository: WalkRepository,
+        unitsPreferences: UnitsPreferencesRepository,
+        archivedRegistry: ArchivedWalkRegistry,
+        releaseFlags: ReleaseFlags,
+        honorWalkRecords: HonorWalkRecords,
+    ) : this(repository, unitsPreferences, archivedRegistry, releaseFlags, honorWalkRecords, Dispatchers.Default)
+
+    // A Way deleted in Settings rebuilds the book too, so its seals lose
+    // the Way's line with the link (owner decision 3).
+    val uiState: StateFlow<GoshuinUiState> = combine(
+        repository.observeAllWalks(),
+        honorWalkRecords.wayDeletions,
+    ) { walks, _ -> walks }
         .map { walks ->
             // iOS parity v1.6.0: archived walks are filtered from
             // `selectSeals` candidates so they don't receive individual
@@ -71,24 +98,35 @@ class GoshuinViewModel @Inject constructor(
             if (finished.isEmpty()) {
                 GoshuinUiState.Empty
             } else {
+                // With the flag off an honor walk is a plain walk (AE12).
+                val honorWalkIds = if (releaseFlags.honor) repository.honorWalkIds() else emptySet()
+                val honoredWays = honorWalkRecords.honoredWays(finished.filter { it.id in honorWalkIds })
                 // Load each finished walk's GPS samples once, derive its
-                // distance + first-coordinate latitude, and drop the sample
-                // list (don't retain every walk's samples in memory at once).
-                // iOS keys the seal color, milestone season, and share off
-                // `routeData.first`, not the device hemisphere.
+                // distance, first-coordinate latitude, and fitted watermark,
+                // and drop the sample list (don't retain every walk's samples
+                // in memory at once). iOS keys the seal color, milestone
+                // season, and share off `routeData.first`, not the device
+                // hemisphere.
                 val distances = HashMap<Long, Double>(finished.size)
                 val firstLats = HashMap<Long, Double>(finished.size)
+                val watermarks = HashMap<Long, SealWatermark?>(finished.size)
                 finished.forEach { walk ->
                     val samples = samplesFor(walk.id)
                     distances[walk.id] = walkDistanceMeters(samples)
                     firstLats[walk.id] = samples.firstOrNull()?.latitude ?: 0.0
+                    watermarks[walk.id] = sealWatermark(samples, honoredWays[walk.id])
                 }
                 // One waypoint pass for the whole book (iOS GoshuinView
                 // computes arrivalCounts once at construction; seal
                 // cells read counts by id instead of re-faulting every
                 // walk's waypoints per cell).
-                val arrivalCounts =
-                    GoshuinMilestones.arrivalCounts(repository.waypointIconsByWalk())
+                val waypointIcons = repository.waypointIconsByWalk()
+                val arrivalCounts = GoshuinMilestones.arrivalCounts(waypointIcons)
+                val honorArrivalCounts = if (releaseFlags.honor) {
+                    GoshuinMilestones.honorArrivalCounts(waypointIcons)
+                } else {
+                    emptyMap()
+                }
                 val milestoneInputs = finished.map { walk ->
                     WalkMilestoneInput(
                         walkId = walk.id,
@@ -98,6 +136,7 @@ class GoshuinViewModel @Inject constructor(
                         meditateDurationMillis = (walk.meditationSeconds ?: 0L) * 1000L,
                         latitude = firstLats.getValue(walk.id),
                         foundPlaceCount = arrivalCounts[walk.id] ?: 0,
+                        honorArrivalCount = honorArrivalCounts[walk.id] ?: 0,
                     )
                 }
                 val seals = finished.mapIndexed { index, walk ->
@@ -105,6 +144,7 @@ class GoshuinViewModel @Inject constructor(
                         walk = walk,
                         distance = distances.getValue(walk.id),
                         firstRouteLatitude = firstLats.getValue(walk.id),
+                        watermark = watermarks[walk.id],
                         milestone = GoshuinMilestones.detect(
                             walkIndex = index,
                             walk = milestoneInputs[index],
@@ -127,6 +167,7 @@ class GoshuinViewModel @Inject constructor(
                 )
             }
         }
+        .flowOn(defaultDispatcher)
         .stateIn(
             scope = viewModelScope,
             // WhileSubscribed matches HomeViewModel — stops the Room
@@ -163,6 +204,7 @@ class GoshuinViewModel @Inject constructor(
         walk: Walk,
         distance: Double,
         firstRouteLatitude: Double,
+        watermark: SealWatermark?,
         milestone: GoshuinMilestone?,
     ): GoshuinSeal {
         // Seal artwork stays metric (TODO stage 10-Z; see [distanceUnits]).
@@ -175,6 +217,7 @@ class GoshuinViewModel @Inject constructor(
             // Walk-location hemisphere from the first route coordinate (iOS
             // SealColorPalette uses `routePoints.first`), not the device.
             southernHemisphere = Hemisphere.fromLatitude(firstRouteLatitude) == Hemisphere.Southern,
+            watermark = watermark,
         )
         val walkDate = Instant.ofEpochMilli(walk.startTimestamp)
             .atZone(ZoneId.systemDefault())

@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -48,6 +49,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.reliquary.PhotoCandidate
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshot
 import org.walktalkmeditate.pilgrim.core.celestial.CelestialSnapshotCalc
 import org.walktalkmeditate.pilgrim.core.celestial.LightReading
+import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.core.prompt.ActivityContext
 import org.walktalkmeditate.pilgrim.core.prompt.CustomPromptStyle
 import org.walktalkmeditate.pilgrim.core.prompt.GeneratedPrompt
@@ -79,8 +81,11 @@ import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
+import org.walktalkmeditate.pilgrim.honor.HonorWalkRecord
+import org.walktalkmeditate.pilgrim.honor.HonorWalkRecords
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.ui.design.seals.SealSpec
+import org.walktalkmeditate.pilgrim.ui.design.seals.sealWatermark
 import org.walktalkmeditate.pilgrim.ui.design.seals.toSealSpec
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiBitmapRenderer
 import org.walktalkmeditate.pilgrim.ui.etegami.EtegamiSpec
@@ -101,6 +106,8 @@ import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.MAX_PINS_PER_WALK
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.ReliquaryState
 import org.walktalkmeditate.pilgrim.ui.walk.reliquary.resolveReliquaryState
+import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummaryModel
+import org.walktalkmeditate.pilgrim.ui.walk.summary.HonorSummaryState
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummaryData
 import org.walktalkmeditate.pilgrim.ui.walk.summary.SeekSummaryModel
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkSummaryCalloutInputs
@@ -258,6 +265,20 @@ data class WalkSummary(
      * via [SeekSummaryModel.summaryData].
      */
     val seekSummary: SeekSummaryData? = null,
+    /**
+     * U23: the walk carries a `HONOR_MODE` event and the release flag is
+     * on. Its section and ghost line come from
+     * [WalkSummaryViewModel.honorSummary], which follows the Honor step.
+     */
+    val isHonorWalk: Boolean = false,
+    /**
+     * U23: the Honor section and ghost line as the summary first read
+     * them, so they draw with the summary's first frame, as iOS computes
+     * them in `init` (`WalkSummaryView.swift:35-37@7c200bf`). Null on
+     * every walk that isn't an honor. The screen draws this until
+     * [WalkSummaryViewModel.honorSummary] has read.
+     */
+    val honorSummary: HonorSummaryState? = null,
 )
 
 @HiltViewModel
@@ -286,6 +307,8 @@ class WalkSummaryViewModel @Inject constructor(
     private val autoTranscriptionSkipState:
         org.walktalkmeditate.pilgrim.core.threads.AutoTranscriptionSkipState,
     private val threadsAnalyzer: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer,
+    private val releaseFlags: ReleaseFlags,
+    private val honorWalkRecords: HonorWalkRecords,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -420,6 +443,42 @@ class WalkSummaryViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = WalkSummaryUiState.Loading,
     )
+
+    /** The release flag, for the map's honor-arrival signpost (a plain pin with it off, as in 1.5.0). */
+    val honorEnabled: Boolean get() = releaseFlags.honor
+
+    /**
+     * U23: the summary's Honor section and the map's ghost line, null on
+     * every walk that isn't an honor (parity spec G §2–§3). Rendered at
+     * once from the walk's live session row and the Way while the Honor
+     * step is still to run (or failed and waits for the next launch), then
+     * from the link, when the delta line appears: the record re-reads as
+     * the marker lands and the live rows go. Until it first reads, and
+     * after a failed read, the screen keeps [WalkSummary.honorSummary].
+     * The model and the ghost's slicing run off Main.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val honorSummary: StateFlow<HonorSummaryState?> = state
+        .flatMapLatest { s ->
+            val summary = (s as? WalkSummaryUiState.Loaded)?.summary
+            if (summary == null || !summary.isHonorWalk) {
+                kotlinx.coroutines.flow.flowOf(null)
+            } else {
+                honorWalkRecords.observe(summary.walk.id, summary.walk.uuid)
+                    .map<HonorWalkRecord, HonorSummaryState?> { record -> HonorSummaryModel.summaryState(record) }
+                    .flowOn(Dispatchers.Default)
+                    .catch { t ->
+                        if (t is CancellationException) throw t
+                        android.util.Log.w(TAG, "honor summary read failed for walk $walkId", t)
+                        emit(null)
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS),
+            initialValue = null,
+        )
 
     /**
      * U6: whether THIS walk moved the collective counter — a
@@ -1809,6 +1868,16 @@ class WalkSummaryViewModel @Inject constructor(
         // (e.g. WalkSummaryScreen's `walk_stat_distance` row) DOES flip
         // with [distanceUnits].
         val distanceLabel = WalkFormat.distanceLabel(distance, UnitSystem.Metric)
+        val isHonorWalk = HonorSummaryModel.isHonorWalk(events.map { it.eventType }, releaseFlags.honor)
+        // The seal's Way line reads the summary's own record, live session
+        // row included: iOS renders a seal first at the reveal, after the
+        // link is written, so a fresh honor seal carries the line. It goes
+        // when the link does (owner decision 3). The same read gives the
+        // Honor section its first frame.
+        val honorRecord = if (isHonorWalk) honorWalkRecords.record(walkId, walk.uuid) else null
+        val (watermark, honorSummary) = withContext(Dispatchers.Default) {
+            sealWatermark(points, honorRecord?.way) to honorRecord?.let { HonorSummaryModel.summaryState(it) }
+        }
         val sealSpec = walk.toSealSpec(
             // Reuse the haversine sum computed above — `toSealSpec`
             // takes the distance directly so both the seal's center
@@ -1824,6 +1893,7 @@ class WalkSummaryViewModel @Inject constructor(
             // SealColorPalette uses `routePoints.first`), not the device.
             southernHemisphere =
                 Hemisphere.fromLatitude(points.firstOrNull()?.latitude ?: 0.0) == Hemisphere.Southern,
+            watermark = watermark,
         )
 
         // Stage 4-D: detect milestone for THIS walk against the user's
@@ -2065,6 +2135,8 @@ class WalkSummaryViewModel @Inject constructor(
                 celestialSnapshot = celestialSnapshot,
                 calloutInputs = calloutInputs,
                 seekSummary = seekSummary,
+                isHonorWalk = isHonorWalk,
+                honorSummary = honorSummary,
             ),
         )
     }
@@ -2090,7 +2162,15 @@ class WalkSummaryViewModel @Inject constructor(
         // perf rule; same wiring as GoshuinViewModel). Without this every
         // input defaulted foundPlaceCount = 0 and seeking seals never
         // captioned on the summary reveal.
-        val arrivalCounts = GoshuinMilestones.arrivalCounts(repository.waypointIconsByWalk())
+        val waypointIcons = repository.waypointIconsByWalk()
+        val arrivalCounts = GoshuinMilestones.arrivalCounts(waypointIcons)
+        // U23: Way arrivals for the honor seals; none with the flag off,
+        // where an honor walk is a plain walk.
+        val honorArrivalCounts = if (releaseFlags.honor) {
+            GoshuinMilestones.honorArrivalCounts(waypointIcons)
+        } else {
+            emptyMap()
+        }
         val inputs = finished.map { walk ->
             // For the current walk, use the live event-replay total
             // (currentDistance) — Walk.distanceMeters is populated by
@@ -2130,6 +2210,7 @@ class WalkSummaryViewModel @Inject constructor(
                 meditateDurationMillis = medMillis,
                 latitude = firstLats[walk.id] ?: 0.0,
                 foundPlaceCount = arrivalCounts[walk.id] ?: 0,
+                honorArrivalCount = honorArrivalCounts[walk.id] ?: 0,
             )
         }
         val currentIndex = finished.indexOfFirst { it.id == currentWalk.id }

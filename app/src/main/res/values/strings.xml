@@ -1349,4 +1349,20 @@
     <!-- iOS picks the word by `minutes == 1`, whatever the phone's plural rules. -->
     <string name="honor_meditation_they_sat_one">they sat here %1$s minute</string>
     <string name="honor_meditation_they_sat" tools:ignore="PluralsCandidate">they sat here %1$s minutes</string>
+
+    <!-- Phase 21 U23: the summary's Honor section (parity spec G §2, iOS
+         HonorSummarySection.swift:98-118 + :36@7c200bf). English Swift literals on
+         iOS with no Localizable.strings entry; the word is picked by `== 1`. The
+         counts join with " · " in code, voices first. -->
+    <string name="honor_summary_kicker">in their steps</string>
+    <string name="honor_summary_way_removed">a way that has been removed</string>
+    <string name="honor_summary_arrived_together">you arrived together</string>
+    <string name="honor_summary_arrived_after_one">they arrived %1$s minute after you</string>
+    <string name="honor_summary_arrived_after" tools:ignore="PluralsCandidate">they arrived %1$s minutes after you</string>
+    <string name="honor_summary_arrived_before_one">they arrived %1$s minute before you</string>
+    <string name="honor_summary_arrived_before" tools:ignore="PluralsCandidate">they arrived %1$s minutes before you</string>
+    <string name="honor_summary_voice_one">%1$s voice along the way</string>
+    <string name="honor_summary_voices" tools:ignore="PluralsCandidate">%1$s voices along the way</string>
+    <string name="honor_summary_reply_one">%1$s reply</string>
+    <string name="honor_summary_replies" tools:ignore="PluralsCandidate">%1$s replies</string>
 </resources>

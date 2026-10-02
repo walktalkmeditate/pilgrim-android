@@ -399,6 +399,10 @@ class UiWalkController @Inject constructor(
      * Start (spec D §11). The await then resolves to the walk under that
      * uuid, never another unfinished walk.
      */
+    /** How long a start waits for the tracker's row; a loaded test JVM needs more than a phone does. */
+    @androidx.annotation.VisibleForTesting
+    internal var startAwaitTimeoutMillis: Long = START_AWAIT_TIMEOUT_MS
+
     override suspend fun startWalk(request: WalkStartRequest): Walk {
         check(releaseFlags.honor || (request.walkUuid == null && request.honor == null)) {
             "an Honor start with the release flag off"
@@ -410,7 +414,7 @@ class UiWalkController @Inject constructor(
         // WalkViewModel.startWalk's try/catch maps to a no-op
         // (matches the existing IllegalStateException path).
         val walk = try {
-            withTimeout(START_AWAIT_TIMEOUT_MS) {
+            withTimeout(startAwaitTimeoutMillis) {
                 repository.observeActiveWalk().filterNotNull()
                     .first { request.walkUuid == null || it.uuid == request.walkUuid }
             }
@@ -421,7 +425,7 @@ class UiWalkController @Inject constructor(
             // IllegalStateException so callers can roll back UI state
             // identically to the same-process controller's start
             // rejection path.
-            throw IllegalStateException("tracker did not start walk within ${START_AWAIT_TIMEOUT_MS} ms", t)
+            throw IllegalStateException("tracker did not start walk within $startAwaitTimeoutMillis ms", t)
         }
         // Belt-and-suspenders: AlarmManager watchdog periodically
         // verifies the FGS is still alive in :tracker. If REDELIVER_

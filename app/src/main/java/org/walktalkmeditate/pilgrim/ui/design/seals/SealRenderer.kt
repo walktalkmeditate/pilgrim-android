@@ -11,7 +11,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -29,17 +32,19 @@ import org.walktalkmeditate.pilgrim.R
  * and geometry are computed once per spec via [remember]; the seasonal
  * tint comes in via [SealSpec.ink].
  *
- * Five procedural layers (the first four drawn under a global
+ * Six procedural layers (the first five drawn under a global
  * hash-derived rotation):
- *   1. Concentric rings (3..8, count/jitter/dash from hash)
- *   2. Radial spokes (4..12)
- *   3. Arc accent segments (2..4)
- *   4. Decorative dots (3..7)
- *   5. Center text (distance + unit — stays upright, unrotated)
+ *   1. The ghost-route watermark ([SealSpec.watermark]; iOS's second
+ *      layer, under everything but its weather texture)
+ *   2. Concentric rings (3..8, count/jitter/dash from hash)
+ *   3. Radial spokes (4..12)
+ *   4. Arc accent segments (2..4)
+ *   5. Decorative dots (3..7)
+ *   6. Center text (distance + unit — stays upright, unrotated)
  *
- * iOS ships a further 4 decorative layers (weather, ghost route,
- * elevation ring, curved outer text) which Stage 4-A explicitly
- * defers — see the design spec's "Non-goals" block.
+ * iOS ships a further 3 decorative layers (weather, elevation ring,
+ * curved outer text) which Stage 4-A explicitly defers — see the
+ * design spec's "Non-goals" block.
  *
  * Size-agnostic. Caller chooses the Canvas size via [modifier]; the
  * renderer enforces 1:1 aspect internally.
@@ -94,6 +99,7 @@ fun SealRenderer(
         val outerR = canvasSize * 0.44f
 
         rotate(degrees = geometry.rotationDeg, pivot = center) {
+            spec.watermark?.let { drawWatermark(it, canvasSize, spec.ink) }
             drawRings(geometry.rings, center, outerR, canvasSize, spec.ink)
             drawRadialLines(geometry.radialLines, center, outerR, canvasSize, spec.ink)
             drawArcs(geometry.arcs, center, outerR, canvasSize, spec.ink)
@@ -115,6 +121,34 @@ fun SealRenderer(
 }
 
 // --- layer helpers ---------------------------------------------------
+
+/** Each line one path, so its own crossings don't darken; the Way's first, beneath. */
+private fun DrawScope.drawWatermark(watermark: SealWatermark, canvasSize: Float, ink: Color) {
+    val stroke = Stroke(
+        width = canvasSize * SealWatermark.STROKE_FRACTION,
+        cap = StrokeCap.Round,
+        join = StrokeJoin.Round,
+    )
+    watermark.wayLine?.let { line ->
+        drawPath(
+            path = watermarkPath(line, canvasSize),
+            color = ink.copy(alpha = ink.alpha * SealWatermark.WAY_ALPHA),
+            style = stroke,
+        )
+    }
+    drawPath(
+        path = watermarkPath(watermark.walkLine, canvasSize),
+        color = ink.copy(alpha = ink.alpha * SealWatermark.WALK_ALPHA),
+        style = stroke,
+    )
+}
+
+private fun watermarkPath(unitLine: FloatArray, canvasSize: Float): Path = Path().apply {
+    moveTo(unitLine[0] * canvasSize, unitLine[1] * canvasSize)
+    for (i in 2 until unitLine.size step 2) {
+        lineTo(unitLine[i] * canvasSize, unitLine[i + 1] * canvasSize)
+    }
+}
 
 private fun DrawScope.drawRings(
     rings: List<Ring>,

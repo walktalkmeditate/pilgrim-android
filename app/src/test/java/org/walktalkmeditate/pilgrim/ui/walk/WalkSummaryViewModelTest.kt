@@ -261,6 +261,8 @@ class WalkSummaryViewModelTest {
         autoTranscriptionSkipStateOverride: org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState =
             org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
         threadsAnalyzerOverride: org.walktalkmeditate.pilgrim.core.threads.TranscriptContextAnalyzer = threadsAnalyzer,
+        honorEnabled: Boolean = false,
+        wayStore: org.walktalkmeditate.pilgrim.data.honor.WayStore? = null,
     ): WalkSummaryViewModel {
         photoAnalysisScheduler = org.walktalkmeditate.pilgrim.data.photo.FakePhotoAnalysisScheduler()
         val json = kotlinx.serialization.json.Json {
@@ -328,6 +330,12 @@ class WalkSummaryViewModelTest {
             persistenceScope = persistenceScope,
             autoTranscriptionSkipState = autoTranscriptionSkipStateOverride,
             threadsAnalyzer = threadsAnalyzerOverride,
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = honorEnabled),
+            honorWalkRecords = if (wayStore != null) {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context, wayStore)
+            } else {
+                org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context)
+            },
             savedStateHandle = SavedStateHandle(mapOf("walkId" to walkId)),
         )
         createdViewModels += vm
@@ -407,6 +415,8 @@ class WalkSummaryViewModelTest {
                     kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
                 ),
             ),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, ctxApp),
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =
@@ -1654,6 +1664,97 @@ class WalkSummaryViewModelTest {
                     org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence.ARRIVAL_WAYPOINT_ICON
             },
         )
+    }
+
+    // --- U23: the honor section, the seal's Way line, and First Honor ---
+
+    /**
+     * A wander walk before it (soaking up First Walk), then an honor walk
+     * that arrived, linked by its finished Honor step to a stored Way.
+     */
+    private suspend fun linkedHonorWalk(store: org.walktalkmeditate.pilgrim.data.honor.WayStore): Long {
+        val earlier = repository.startWalk(startTimestamp = -200_000L)
+        repository.finishWalk(earlier, endTimestamp = -100_000L)
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 1_000L, eventType = WalkEventType.HONOR_MODE))
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 40_000L, eventType = WalkEventType.HONOR_ARRIVAL))
+        repository.addWaypoint(
+            org.walktalkmeditate.pilgrim.data.entity.Waypoint(
+                walkId = walk.id,
+                timestamp = 40_000L,
+                latitude = 0.0,
+                longitude = 0.004,
+                label = "Walked their way: Morning loop",
+                icon = org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence.ARRIVAL_WAYPOINT_ICON,
+            ),
+        )
+        insertRouteSample(walk.id, 1_000L, 0.0, 0.0)
+        insertRouteSample(walk.id, 40_000L, 0.0, 0.004)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        val way = org.walktalkmeditate.pilgrim.data.honor.HonorWalkState(db, store).way()
+        store.save(way)
+        store.link(walk.uuid, way.id, org.walktalkmeditate.pilgrim.data.honor.WayArrival(400.0, 100.0))
+        db.honorDao().insertMarker(
+            org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity(
+                walkUuid = walk.uuid,
+                finishedAt = 60_000L,
+                finishKind = org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind.CLEAN,
+            ),
+        )
+        return walk.id
+    }
+
+    private fun newWayStore() = org.walktalkmeditate.pilgrim.data.honor.WayStore({
+        java.io.File(context.cacheDir, "summary-ways-${java.util.UUID.randomUUID()}")
+    })
+
+    @Test
+    fun `honor walk with the flag on carries its section, its Way's seal line, and First Honor`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+
+        val vm = newViewModel(walkId = walkId, honorEnabled = true, wayStore = store)
+        val loaded = awaitLoaded(vm)
+
+        assertTrue(loaded.summary.isHonorWalk)
+        assertNotNull("the walk's own line", loaded.summary.sealSpec.watermark)
+        assertNotNull("and the Way's beneath it", loaded.summary.sealSpec.watermark?.wayLine)
+        assertEquals(GoshuinMilestone.FirstHonor, loaded.summary.milestone)
+        val honor = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(10_000L) { vm.honorSummary.first { it != null } }
+        }!!
+        assertEquals("Morning loop", honor.data.wayTitle)
+        assertEquals(300.0, honor.data.arrivedBeforeTheirsSeconds!!, 1e-9)
+        assertEquals("the summary map's ghost line", "walk:${org.walktalkmeditate.pilgrim.data.honor.HonorWalkState.SOURCE_WALK_UUID}", honor.ghost?.wayId)
+    }
+
+    @Test
+    fun `a revisited honor summary carries its section in its first state, before the live read`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+
+        val loaded = awaitLoaded(newViewModel(walkId = walkId, honorEnabled = true, wayStore = store))
+
+        val first = loaded.summary.honorSummary!!
+        assertEquals("Morning loop", first.data.wayTitle)
+        assertEquals(300.0, first.data.arrivedBeforeTheirsSeconds!!, 1e-9)
+        assertNotNull("the map's ghost with the first frame too", first.ghost)
+    }
+
+    @Test
+    fun `honor walk with the flag off is a plain walk with its own seal line only`() = runTest(dispatcher) {
+        val store = newWayStore()
+        val walkId = linkedHonorWalk(store)
+
+        val vm = newViewModel(walkId = walkId, honorEnabled = false, wayStore = store)
+        val loaded = awaitLoaded(vm)
+
+        assertFalse(loaded.summary.isHonorWalk)
+        assertNull(loaded.summary.honorSummary)
+        assertNotNull("every walk with a route keeps its own line", loaded.summary.sealSpec.watermark)
+        assertNull(loaded.summary.sealSpec.watermark?.wayLine)
+        assertNotEquals(GoshuinMilestone.FirstHonor, loaded.summary.milestone)
+        assertFalse(vm.honorEnabled)
     }
 
     @Test

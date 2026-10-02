@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.flow.first
@@ -117,8 +118,13 @@ class WalkSummaryViewModelLightReadingGateTest {
 
     @After
     fun tearDown() {
-        for (vm in createdViewModels) {
-            vm.viewModelScope.coroutineContext[Job]?.cancel()
+        // Join, not just cancel: buildState hops to Dispatchers.Default,
+        // so a cancelled VM can still reach Room after db.close() and
+        // land in a later test as an uncaught exception.
+        kotlinx.coroutines.runBlocking {
+            for (vm in createdViewModels) {
+                vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            }
         }
         createdViewModels.clear()
         persistenceScope.coroutineContext[Job]?.cancel()
@@ -200,6 +206,8 @@ class WalkSummaryViewModelLightReadingGateTest {
             persistenceScope = persistenceScope,
             autoTranscriptionSkipState = org.walktalkmeditate.pilgrim.core.threads.FakeAutoTranscriptionSkipState(),
             threadsAnalyzer = org.walktalkmeditate.pilgrim.core.threads.realTranscriptContextAnalyzerForTests(context),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, context),
             savedStateHandle = SavedStateHandle(mapOf(WalkSummaryViewModel.ARG_WALK_ID to walkId)),
         )
         createdViewModels += vm
@@ -271,6 +279,8 @@ class WalkSummaryViewModelLightReadingGateTest {
                     kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
                 ),
             ),
+            releaseFlags = org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags(honor = false),
+            honorWalkRecords = org.walktalkmeditate.pilgrim.honor.honorWalkRecordsForTests(db, ctx),
         ) {
             override suspend fun buildContext(walkId: Long, zone: java.time.ZoneId) = null
             override suspend fun generateAll(walkId: Long, zone: java.time.ZoneId) =

@@ -310,7 +310,34 @@ object PromptAssembler {
                 }
                 text.toString()
             }
+            PracticeMode.Honor -> context.honorStory?.let(::honorLexicon) ?: HONOR_BASE_TEXT
         }
+
+    /**
+     * iOS's one Honor form for own and shared walks alike
+     * (`sharedWalkLexicon`, `PromptAssembler.swift:170-201@7c200bf`): it
+     * speaks of another walker even when the Way is the walker's own
+     * earlier walk (pilgrim-ios #109). The stage form, selected on iOS by a
+     * route name, arrives with Stage 21-2.
+     */
+    private fun honorLexicon(story: HonorStoryContext): String {
+        val text = StringBuilder(HONOR_BASE_TEXT)
+        story.wayTitle?.let { text.append(" The Way: ").append(it).append('.') }
+        text.append(
+            if (story.arrived) {
+                " The end of the Way was reached."
+            } else {
+                " The Way was left before its end, which the practice honors too."
+            },
+        )
+        return text.toString()
+    }
+
+    /** iOS `sharedWalkBaseText`: the sole source of the opening sentence. */
+    private const val HONOR_BASE_TEXT =
+        "**About this practice:** This walk was an Honor. The walker followed a Way another walker " +
+            "laid down, hearing their voices where they were spoken. Two traveling together; the line " +
+            "was traced, not raced."
 
     /**
      * The closing contract every prompt carries: what the response may not

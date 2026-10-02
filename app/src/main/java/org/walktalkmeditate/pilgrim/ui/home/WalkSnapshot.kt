@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.ui.home
 
 import androidx.compose.runtime.Immutable
+import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.ui.home.scenery.WalkThreshold
 
 /**
@@ -60,7 +61,31 @@ data class WalkSnapshot(
      * from history on every snapshot build, never stored.
      */
     val threshold: WalkThreshold? = null,
+    /**
+     * True when the walk carries a `HONOR_MODE` event and the release
+     * flag is on (iOS `WalkSnapshot.isHonor`,
+     * `HomeViewModel.swift:25-29@7c200bf`). From one bulk event fetch,
+     * like [isSeek]. Kept beside [isSeek] rather than folded into one
+     * value: a hand-edited `.pilgrim` can carry both events, and the
+     * glyph lets Honor win while the scenery lets the Seek cairn win
+     * (parity spec G §1).
+     */
+    val isHonor: Boolean = false,
+    /**
+     * Ways walked to their end on this walk: honor arrival waypoints,
+     * counted whatever the walk's events say (iOS
+     * `WalkSnapshot.honorArrivals`). An arrival raises the staffs.
+     */
+    val honorArrivals: Int = 0,
 ) {
+    /** The mode the quick-view glyph speaks: Honor over Seek over Wander (`InkScrollView.swift:349-358@7c200bf`). */
+    val mode: WalkMode
+        get() = when {
+            isHonor -> WalkMode.Honor
+            isSeek -> WalkMode.Seek
+            else -> WalkMode.Wander
+        }
+
     /** Walk-only duration (total minus talk minus meditate, floored at 0). */
     val walkOnlyDurationSec: Long
         get() = (durationSec.toLong() - talkDurationSec - meditateDurationSec).coerceAtLeast(0L)

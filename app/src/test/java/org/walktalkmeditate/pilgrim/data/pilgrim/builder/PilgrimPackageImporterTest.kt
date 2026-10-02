@@ -560,6 +560,91 @@ class PilgrimPackageImporterTest {
         assertNull("the old id's live rows cascaded with the old row", db.honorDao().getSession(oldId))
     }
 
+    /** A finished own walk whose clean Honor step is still to run, its link write blocked so it stays pending. */
+    private suspend fun pendingHonorWalk(store: WayStore, uuid: String, honor: HonorWalkState): Pair<Long, File> {
+        val walkId = db.walkDao().insert(
+            Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 100_000L, intention = "original"),
+        )
+        db.honorDao().insertSession(
+            HonorSessionEntity(
+                walkId = walkId,
+                wayId = HonorWalkState.WAY_ID,
+                sourceKind = HonorSourceKind.OWN_WALK,
+                voicesEnabled = true,
+                softTapEnabled = false,
+                arrivalTheirSeconds = 2_400.0,
+                arrivalYourSeconds = 2_100.0,
+                finishKind = HonorFinishKind.CLEAN,
+            ),
+        )
+        store.stage(uuid, honor.way())
+        val blocker = File(store.baseDirectory, "links").apply { writeText("not a folder") }
+        return walkId to blocker
+    }
+
+    private fun importerWithFinalizer(store: WayStore, finalizer: HonorFinalizer): PilgrimPackageImporter {
+        val repository = repository(store, finalizer)
+        return PilgrimPackageImporter(
+            db, json, context, FakeArchivedWalkRegistry(), threadsStore, threadsPreferences,
+            WalkMetricsCache(repository, db.walkDao(), db.walkEventDao()), repository,
+        )
+    }
+
+    @Test
+    fun `a tended replace while the Honor step stays pending carries its session to the new row, and the retry links it`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val honor = HonorWalkState(db, store)
+        val uuid = UUID.randomUUID().toString()
+        val (oldId, blocker) = pendingHonorWalk(store, uuid, honor)
+        val finalizer = HonorFinalizer(db, store, Clock { 5_000L }, Dispatchers.IO)
+
+        val summary = importerWithFinalizer(store, finalizer).import(
+            buildArchive(
+                tended = true,
+                walks = mapOf("walk.json" to json.encodeToString(goodWalk(uuid = uuid, intention = "edited"))),
+            ),
+        )
+
+        assertEquals(1, summary.replaced)
+        val replaced = db.walkDao().getByUuid(uuid)!!
+        assertTrue(replaced.id != oldId)
+        assertEquals("edited", replaced.intention)
+        assertNull("nothing linked yet", store.wayLink(uuid))
+        val carried = db.honorDao().getSession(replaced.id)
+        assertEquals(HonorWalkState.WAY_ID, carried?.wayId)
+        assertEquals(2_400.0, carried?.arrivalTheirSeconds)
+        assertNotNull("the staging the retry promotes stays", store.staged(uuid))
+
+        blocker.delete()
+        assertEquals(1, finalizer.finalizePending())
+        assertEquals(WayLink(HonorWalkState.WAY_ID, 2_400.0, 2_100.0), store.wayLink(uuid))
+        assertNotNull(store.load(HonorWalkState.WAY_ID))
+        assertNull(db.honorDao().getSession(replaced.id))
+    }
+
+    @Test
+    fun `an archive strip while the Honor step stays pending keeps its session and staging, and the retry links it`() = runBlocking {
+        val store = WayStore({ File(tempDir, "Ways") })
+        val honor = HonorWalkState(db, store)
+        val uuid = UUID.randomUUID().toString()
+        val (walkId, blocker) = pendingHonorWalk(store, uuid, honor)
+        db.walkEventDao().insert(WalkEvent(walkId = walkId, timestamp = 1_000L, eventType = WalkEventType.HONOR_MODE))
+        val finalizer = HonorFinalizer(db, store, Clock { 5_000L }, Dispatchers.IO)
+
+        importerWithFinalizer(store, finalizer)
+            .import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+
+        assertEquals("the strip ran", emptyList<Any>(), db.walkEventDao().getForWalk(walkId))
+        assertNotNull("the session the retry links from stays", db.honorDao().getSession(walkId))
+        assertNotNull("and the staging it promotes", store.staged(uuid))
+
+        blocker.delete()
+        assertEquals(1, finalizer.finalizePending())
+        assertEquals(WayLink(HonorWalkState.WAY_ID, 2_400.0, 2_100.0), store.wayLink(uuid))
+        assertNotNull(store.load(HonorWalkState.WAY_ID))
+        assertNull(db.honorDao().getSession(walkId))
+    }
+
     /** One pass of the real [WalkMetricsBackfillCoordinator] over the walks as they are now. */
     private suspend fun runBackfillOnce() = coroutineScope {
         val snapshot = object : WalksSource {
