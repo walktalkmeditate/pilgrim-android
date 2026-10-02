@@ -76,10 +76,21 @@ class WalkActionPublisherUiAudioGateIntentTest {
     }
 
     @Test
+    fun `a whisper the UI plays crosses as its own gate`() {
+        val token = Binder()
+        val intent = WalkActionPublisher(context).uiAudioGateIntent(UiAudioGateKind.WHISPER, held = true, seq = 9L, token = token)
+
+        assertEquals(
+            UiAudioGateSignal(UiAudioGateKind.WHISPER, held = true, seq = 9L, token = token),
+            WalkTrackingService.uiAudioGateSignalFromExtras(intent),
+        )
+    }
+
+    @Test
     fun `an unknown gate or an unnumbered one decodes to nothing`() {
         val publisher = WalkActionPublisher(context)
         val unknown = publisher.uiAudioGateIntent(UiAudioGateKind.PROMPT, held = true, seq = 3L, token = Binder())
-            .putExtra(WalkTrackingService.EXTRA_UI_AUDIO_GATE, "whisper")
+            .putExtra(WalkTrackingService.EXTRA_UI_AUDIO_GATE, "soundscape")
         val unnumbered = publisher.uiAudioGateIntent(UiAudioGateKind.PROMPT, held = true, seq = 0L, token = Binder())
 
         assertNull(WalkTrackingService.uiAudioGateSignalFromExtras(unknown))

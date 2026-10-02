@@ -2,21 +2,27 @@
 package org.walktalkmeditate.pilgrim.walk
 
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.walk.seek.SeekStart
 
 /**
  * Everything a walk start carries to the `:tracker` controller.
  *
  * [walkUuid] is the uuid the Honor Begin use case minted for the new walk,
  * so the staged Way, the link file, and the marker all key by the same
- * string as the walk row; null lets the repository mint one, as every
- * non-Honor start does. It is also the replay guard for a redelivered
- * start: a uuid already in Room is never inserted twice.
+ * string as the walk row; a seek walk's Begin mints one too when it hands
+ * [seek] to `:tracker`. Null lets the repository mint one, as every other
+ * start does. It is also the replay guard for a redelivered start: a uuid
+ * already in Room is never inserted twice.
+ *
+ * [seek] is the pre-departure seek session `:tracker` restarts with the
+ * release flag on (plan U25); null on every other start.
  */
 data class WalkStartRequest(
     val intention: String? = null,
     val mode: WalkMode = WalkMode.Wander,
     val walkUuid: String? = null,
     val honor: HonorStart? = null,
+    val seek: SeekStart? = null,
 )
 
 /** The Way an honor walk follows, and the preferences frozen for it at Start. */

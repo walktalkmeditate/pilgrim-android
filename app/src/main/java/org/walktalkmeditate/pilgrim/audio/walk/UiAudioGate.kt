@@ -16,10 +16,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** The UI process's two audio gates, by their names on the gate intent. */
+/** The UI process's audio gates, by their names on the gate intent. */
 enum class UiAudioGateKind(val wireName: String) {
     PROMPT("prompt"),
     RECORDING("recording"),
+
+    /** A whisper the UI process plays (a tapped pin, a preview), which holds only Seek's sonar (plan U25). */
+    WHISPER("whisper"),
     ;
 
     companion object {
@@ -42,7 +45,8 @@ data class UiAudioGateSignal(
 /**
  * `:tracker`'s record of the UI's guide prompt and recording, which
  * [WalkAudioArbiter] reads (plan U18, "Gates via Binder death links from
- * single observers").
+ * single observers"), and of a whisper the UI plays, which only Seek's
+ * sonar reads (plan U25).
  *
  * - **A start carries a Binder.** The gate is linked to that Binder's
  *   death, so a UI process that dies mid-prompt or mid-take lets go of it.
@@ -52,11 +56,13 @@ data class UiAudioGateSignal(
  *   held. A signal numbered at or below the gate's last one is stale and
  *   changes nothing.
  * - **Unknown until the UI answers.** A fresh process, and each walk
- *   pipeline start ([holdUntilRefreshed]), knows nothing of the UI: both
- *   gates read held until each gate's next signal, or until
- *   [refreshWaitMillis] passes with none, since a dead UI sends nothing
- *   and holds no prompt and no take. The UI answers when the session's
- *   gate generation, bumped at each session start and revival, changes.
+ *   pipeline start ([holdUntilRefreshed]), knows nothing of the UI: the
+ *   prompt and recording gates read held until each gate's next signal,
+ *   or until [refreshWaitMillis] passes with none, since a dead UI sends
+ *   nothing and holds no prompt and no take. The UI answers when the
+ *   session's gate generation, bumped at each session start and revival,
+ *   changes. [unanswered] is true meanwhile; the whisper gate reads open
+ *   while unknown, since the sonar it holds waits on [unanswered] instead.
  * - **A take that starts behind a prompt** is reported with the prompt's
  *   end, in one value, which the arbiter applies prompt first: on iOS a
  *   recording stops the prompt before its own gate closes
@@ -91,20 +97,24 @@ class UiAudioGate internal constructor(
     private val lock = Any()
     private val prompt = Gate(UiAudioGateKind.PROMPT)
     private val recording = Gate(UiAudioGateKind.RECORDING)
+    private val whisper = Gate(UiAudioGateKind.WHISPER)
+    private val all = listOf(prompt, recording, whisper)
     private var recordingBehindPrompt = false
     private var refreshWait: Job? = null
     private val _gates = MutableStateFlow(UiAudioGates(prompt = true, recording = true))
+    private val _unanswered = MutableStateFlow(true)
 
     override val gates: StateFlow<UiAudioGates> = _gates.asStateFlow()
+    override val unanswered: StateFlow<Boolean> = _unanswered.asStateFlow()
 
     init {
         holdUntilRefreshed()
     }
 
-    /** Both gates unknown, so held, until the UI's next signal for each or [refreshWaitMillis]. */
+    /** Every gate unknown until the UI's next signal for each or [refreshWaitMillis]. */
     fun holdUntilRefreshed() {
         synchronized(lock) {
-            for (gate in listOf(prompt, recording)) {
+            for (gate in all) {
                 unlink(gate)
                 gate.phase = Phase.UNKNOWN
             }
@@ -120,7 +130,7 @@ class UiAudioGate internal constructor(
 
     fun apply(signal: UiAudioGateSignal) {
         synchronized(lock) {
-            val gate = if (signal.kind == UiAudioGateKind.PROMPT) prompt else recording
+            val gate = all.first { it.kind == signal.kind }
             if (signal.seq <= gate.seq) return
             gate.seq = signal.seq
             unlink(gate)
@@ -163,7 +173,7 @@ class UiAudioGate internal constructor(
 
     private fun openUnanswered() {
         synchronized(lock) {
-            val unanswered = listOf(prompt, recording).filter { it.phase == Phase.UNKNOWN }
+            val unanswered = all.filter { it.phase == Phase.UNKNOWN }
             if (unanswered.isEmpty()) return
             unanswered.forEach { it.phase = Phase.OPEN }
             Log.i(TAG, "no UI answer in ${refreshWaitMillis}ms: ${unanswered.joinToString { it.kind.wireName }} open")
@@ -185,7 +195,9 @@ class UiAudioGate internal constructor(
         _gates.value = UiAudioGates(
             prompt = prompt.phase != Phase.OPEN,
             recording = recording.phase != Phase.OPEN && !recordingBehindPrompt,
+            whisper = whisper.phase == Phase.HELD,
         )
+        _unanswered.value = all.any { it.phase == Phase.UNKNOWN }
     }
 
     companion object {

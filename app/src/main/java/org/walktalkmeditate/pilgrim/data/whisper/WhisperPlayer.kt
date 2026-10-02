@@ -38,6 +38,21 @@ import okhttp3.Response
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 
 /**
+ * A newer master Sounds switch than this process's preferences hold, or
+ * null with none. `:tracker`'s read of the preference freezes once the
+ * process has made it, so while a seek session plays by the switch the UI
+ * sends, `:tracker`'s whispers follow that one (plan U25). The UI process
+ * never has one.
+ */
+fun interface WhisperSoundsOverride {
+    fun soundsEnabled(): Boolean?
+
+    companion object {
+        val None = WhisperSoundsOverride { null }
+    }
+}
+
+/**
  * iOS parity `WhisperPlayer.swift@db4196e`. Plays whisper audio files
  * fetched from `cdn.pilgrimapp.org/audio/whisper/<audioFileName>.aac`
  * and cached at `filesDir/whispers/<audioFileName>.aac`. Survives
@@ -80,6 +95,8 @@ open class WhisperPlayer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val httpClient: OkHttpClient,
     private val soundsPreferences: SoundsPreferencesRepository,
+    // A default keeps the test constructions source-compatible; Hilt injects the binding.
+    private val soundsOverride: WhisperSoundsOverride = WhisperSoundsOverride.None,
 ) {
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val playMutex = Mutex()
@@ -119,6 +136,8 @@ open class WhisperPlayer @Inject constructor(
         _isAnyChannelPlaying.value = playPlayer != null || previewPlayer != null
     }
 
+    private fun soundsEnabled(): Boolean = soundsOverride.soundsEnabled() ?: soundsPreferences.soundsEnabled.value
+
     /**
      * Whether [definition]'s audio is already cached on disk (the same
      * target `ensureCached` writes). iOS parity
@@ -136,7 +155,7 @@ open class WhisperPlayer @Inject constructor(
      * No-op when `soundsEnabled` is false.
      */
     open fun play(definition: WhisperDefinition) {
-        if (!soundsPreferences.soundsEnabled.value) return
+        if (!soundsEnabled()) return
         playJob?.cancel()
         playJob = scope.launch {
             playMutex.withLock {
@@ -160,7 +179,7 @@ open class WhisperPlayer @Inject constructor(
      * `soundsEnabled` is false.
      */
     open fun fetch(definition: WhisperDefinition, onLanded: (WhisperDefinition) -> Unit) {
-        if (!soundsPreferences.soundsEnabled.value) return
+        if (!soundsEnabled()) return
         fetchJob?.cancel()
         fetchJob = scope.launch {
             ensureCached(definition.audioFileName) ?: return@launch
@@ -185,7 +204,7 @@ open class WhisperPlayer @Inject constructor(
      * — only one preview active at a time.
      */
     open fun preview(definition: WhisperDefinition) {
-        if (!soundsPreferences.soundsEnabled.value) return
+        if (!soundsEnabled()) return
         previewJob?.cancel()
         previewJob = scope.launch {
             previewMutex.withLock {

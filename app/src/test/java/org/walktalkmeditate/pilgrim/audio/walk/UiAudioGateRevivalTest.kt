@@ -221,8 +221,8 @@ class UiAudioGateRevivalTest {
 
     private companion object {
         const val VOICE_LON = 0.002
-        const val FIRST_WALK_SENDS = 3
-        const val RESEND = 2
+        const val RESEND = 3
+        const val FIRST_WALK_SENDS = 1 + RESEND
 
         /** A failsafe, not a grace window: each wait returns the moment its intent is sent. */
         const val WAIT_MS = 30_000L

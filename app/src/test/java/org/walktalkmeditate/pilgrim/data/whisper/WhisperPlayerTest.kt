@@ -199,6 +199,31 @@ class WhisperPlayerTest {
         assertFalse(player.isAnyChannelPlaying.value)
     }
 
+    @Test
+    fun `a Sounds switch the UI sent outranks the process's own frozen read of it`() {
+        cachedFile.parentFile!!.mkdirs()
+        cachedFile.writeBytes(ByteArray(256) { 1 })
+        var sent: Boolean? = true
+        val tracker = WhisperPlayer(
+            context = context,
+            httpClient = httpClient,
+            soundsPreferences = FakeSoundsPreferencesRepository(initialSoundsEnabled = false),
+            soundsOverride = WhisperSoundsOverride { sent },
+        )
+        try {
+            val landed = CountDownLatch(1)
+            tracker.fetch(definition) { landed.countDown() }
+            assertTrue("Sounds on in the UI: the whisper lands", landed.await(LATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+
+            sent = null
+            val landedOnPreference = AtomicBoolean(false)
+            tracker.fetch(definition) { landedOnPreference.set(true) }
+            assertFalse("nothing sent: the process's preference, off, decides at once", landedOnPreference.get())
+        } finally {
+            tracker.stop()
+        }
+    }
+
     private fun awaitDownloadInFlight() {
         assertTrue(
             "the whisper download never reached the network layer",

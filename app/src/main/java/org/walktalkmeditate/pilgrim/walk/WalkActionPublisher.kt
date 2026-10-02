@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -13,9 +14,12 @@ import javax.inject.Singleton
 import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.domain.seek.SeekChainCodec
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
+import org.walktalkmeditate.pilgrim.walk.seek.SeekSonarSettings
+import org.walktalkmeditate.pilgrim.walk.seek.SeekStart
 
 /**
  * Cross-process bridge: every user-initiated walk action in the UI
@@ -36,9 +40,13 @@ import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
 class WalkActionPublisher internal constructor(
     private val context: Context,
     private val honorCommandSequence: HonorCommandSequence,
+    private val bootNanos: () -> Long = SystemClock::elapsedRealtimeNanos,
 ) {
     @Inject
     constructor(@ApplicationContext context: Context) : this(context, HonorCommandSequence(context))
+
+    private val seekSequenceLock = Any()
+    private var lastSeekSeq = 0L
 
     /**
      * Begin a new walk. Uses `startForegroundService` because the
@@ -66,8 +74,76 @@ class WalkActionPublisher internal constructor(
                 putExtra(WalkTrackingService.EXTRA_HONOR_SOFT_TAP_ENABLED, honor.settings.softTapEnabled)
                 honorGlanceUnits?.let { putExtra(WalkTrackingService.EXTRA_HONOR_GLANCE_UNITS, it.name) }
             }
+            request.seek?.let { putSeekStart(it) }
         }
         ContextCompat.startForegroundService(context, intent)
+    }
+
+    /**
+     * "Seek anew" for the seek walk's session in `:tracker` (plan U25).
+     * Fire-and-forget: the service drops it with no live pipeline, or when
+     * the OS redelivers it, and the session applies each number once.
+     */
+    fun sendSeekAnew() {
+        safeStartService(seekAnewIntent(nextSeekSeq()), WalkTrackingService.ACTION_SEEK_ANEW)
+    }
+
+    internal fun seekAnewIntent(seq: Long): Intent =
+        baseIntent(WalkTrackingService.ACTION_SEEK_ANEW).apply {
+            putExtra(WalkTrackingService.EXTRA_SEEK_SEQ, seq)
+        }
+
+    /** The walker's sonar settings for the seek session in `:tracker`, which can't read them itself. */
+    fun publishSeekPreferences(settings: SeekSonarSettings) {
+        safeStartService(seekPreferencesIntent(settings, nextSeekSeq()), WalkTrackingService.ACTION_SEEK_PREFERENCES)
+    }
+
+    internal fun seekPreferencesIntent(settings: SeekSonarSettings, seq: Long): Intent =
+        baseIntent(WalkTrackingService.ACTION_SEEK_PREFERENCES).apply {
+            putExtra(WalkTrackingService.EXTRA_SEEK_SEQ, seq)
+            putSeekSonar(settings)
+        }
+
+    /**
+     * A seek session whose chain locked after its walk started, for
+     * `:tracker` to attach to the seek walk in progress. Fire-and-forget,
+     * and dropped when redelivered, like the other seek intents.
+     */
+    fun handOffSeekSession(start: SeekStart) {
+        safeStartService(seekSessionIntent(start), WalkTrackingService.ACTION_SEEK_SESSION)
+    }
+
+    internal fun seekSessionIntent(start: SeekStart): Intent =
+        baseIntent(WalkTrackingService.ACTION_SEEK_SESSION).apply { putSeekStart(start) }
+
+    /** Rising across UI restarts: the boot clock both processes share is the floor. */
+    private fun nextSeekSeq(): Long = synchronized(seekSequenceLock) {
+        lastSeekSeq = maxOf(lastSeekSeq + 1, bootNanos())
+        lastSeekSeq
+    }
+
+    private fun Intent.putSeekStart(start: SeekStart) {
+        putExtra(WalkTrackingService.EXTRA_SEEK_CHAIN, SeekChainCodec.encode(start.chain))
+        putExtra(WalkTrackingService.EXTRA_SEEK_ACTIVE_INDEX, start.activeIndex)
+        putExtra(WalkTrackingService.EXTRA_SEEK_DURATION_MINUTES, start.durationMinutes)
+        start.tintHex?.let { putExtra(WalkTrackingService.EXTRA_SEEK_TINT_HEX, it) }
+        putExtra(WalkTrackingService.EXTRA_SEEK_SEED, start.seed)
+        putExtra(WalkTrackingService.EXTRA_SEEK_SEEDED_AT, start.seededAtEpochMillis)
+        start.intention?.let { putExtra(WalkTrackingService.EXTRA_SEEK_INTENTION, it) }
+        start.distanceToActiveMeters?.let { putExtra(WalkTrackingService.EXTRA_SEEK_DISTANCE_METERS, it) }
+        start.fogBucket?.let { putExtra(WalkTrackingService.EXTRA_SEEK_FOG_BUCKET, it) }
+        start.walker?.let {
+            putExtra(WalkTrackingService.EXTRA_SEEK_WALKER_LATITUDE, it.latitude)
+            putExtra(WalkTrackingService.EXTRA_SEEK_WALKER_LONGITUDE, it.longitude)
+        }
+        start.nextPulseDueAtMillis?.let { putExtra(WalkTrackingService.EXTRA_SEEK_PULSE_DUE_AT, it) }
+        putSeekSonar(start.sonar)
+    }
+
+    private fun Intent.putSeekSonar(settings: SeekSonarSettings) {
+        putExtra(WalkTrackingService.EXTRA_SEEK_SONAR_ENABLED, settings.sonarEnabled)
+        putExtra(WalkTrackingService.EXTRA_SEEK_SONAR_VOLUME, settings.sonarVolume)
+        putExtra(WalkTrackingService.EXTRA_SEEK_SOUNDS_ENABLED, settings.soundsEnabled)
     }
 
     /**

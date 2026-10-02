@@ -132,6 +132,13 @@ class PilgrimApp : Application(), Configuration.Provider {
     @Inject lateinit var seekOrchestratorProvider: Provider<SeekOrchestrator>
 
     /**
+     * U25: sends the walker's sonar settings to a seek walk's session in
+     * `:tracker`, which can't read them. Sends nothing with the release flag off.
+     */
+    @Inject lateinit var seekPreferencesPublisherProvider:
+        Provider<org.walktalkmeditate.pilgrim.walk.seek.SeekPreferencesPublisher>
+
+    /**
      * Stage 8-B: collective counter. Boot-time fetch warms the cached
      * stats blob so Settings renders aggregates instantly on first
      * navigation. The 216s in-memory TTL inside the repo prevents a
@@ -317,6 +324,7 @@ class PilgrimApp : Application(), Configuration.Provider {
         // and boots/tears down the seek engine per session; wander walks
         // cost one no-op state check per transition.
         seekOrchestratorProvider.get().start()
+        seekPreferencesPublisherProvider.get().start()
 
         // The soundscape playback orchestrator is NOT started here. It
         // runs in the :tracker process (WalkTrackingService) so the

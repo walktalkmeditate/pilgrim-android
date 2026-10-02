@@ -11,6 +11,7 @@ import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.R
@@ -38,6 +39,28 @@ class SeekPingGate(
 ) {
     fun allowsPing(): Boolean =
         !isWhisperPlaying() && !isVoiceGuidePlaying() && !isTalkRecordingActive()
+}
+
+/**
+ * The three settings the sonar plays by, read at play time and observed
+ * for the focus release. The UI process reads them from its preferences
+ * ([of]); `:tracker`, which can't, holds the values the UI sends (plan U25).
+ */
+interface SeekSoundSettings {
+    val sonarEnabled: StateFlow<Boolean>
+    val sonarVolume: StateFlow<Float>
+    val soundsEnabled: StateFlow<Boolean>
+
+    companion object {
+        fun of(
+            seekPreferences: SeekPreferencesRepository,
+            soundsPreferences: SoundsPreferencesRepository,
+        ): SeekSoundSettings = object : SeekSoundSettings {
+            override val sonarEnabled: StateFlow<Boolean> = seekPreferences.sonarEnabled
+            override val sonarVolume: StateFlow<Float> = seekPreferences.sonarVolume
+            override val soundsEnabled: StateFlow<Boolean> = soundsPreferences.soundsEnabled
+        }
+    }
 }
 
 /**
@@ -106,8 +129,7 @@ interface SeekSoundPlaying {
 class SeekSoundPlayer(
     private val context: Context,
     private val audioManager: AudioManager,
-    private val seekPreferences: SeekPreferencesRepository,
-    private val soundsPreferences: SoundsPreferencesRepository,
+    private val settings: SeekSoundSettings,
     scope: CoroutineScope,
     private val gate: SeekPingGate,
     private val haptics: SeekHaptics,
@@ -117,6 +139,30 @@ class SeekSoundPlayer(
     // plays on real MediaPlayer instances; production uses the default.
     private val playerFactory: () -> MediaPlayer = { MediaPlayer() },
 ) : SeekSoundPlaying {
+
+    /** The UI process's player, reading the walker's preferences directly. */
+    constructor(
+        context: Context,
+        audioManager: AudioManager,
+        seekPreferences: SeekPreferencesRepository,
+        soundsPreferences: SoundsPreferencesRepository,
+        scope: CoroutineScope,
+        gate: SeekPingGate,
+        haptics: SeekHaptics,
+        doublePingGapMs: Long = DOUBLE_PING_GAP_MS,
+        completionReleaseDelayMs: Long = COMPLETION_RELEASE_DELAY_MS,
+        playerFactory: () -> MediaPlayer = { MediaPlayer() },
+    ) : this(
+        context = context,
+        audioManager = audioManager,
+        settings = SeekSoundSettings.of(seekPreferences, soundsPreferences),
+        scope = scope,
+        gate = gate,
+        haptics = haptics,
+        doublePingGapMs = doublePingGapMs,
+        completionReleaseDelayMs = completionReleaseDelayMs,
+        playerFactory = playerFactory,
+    )
     private val lock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val audioAttrs = AudioAttributes.Builder()
@@ -146,8 +192,8 @@ class SeekSoundPlayer(
     init {
         scope.launch {
             combine(
-                seekPreferences.sonarEnabled,
-                soundsPreferences.soundsEnabled,
+                settings.sonarEnabled,
+                settings.soundsEnabled,
                 ::Pair,
             ).collect { (sonar, sounds) ->
                 try {
@@ -223,7 +269,7 @@ class SeekSoundPlayer(
      */
     override fun playBowl() {
         synchronized(lock) {
-            if (!soundsPreferences.soundsEnabled.value || isInterrupted) return
+            if (!settings.soundsEnabled.value || isInterrupted) return
             if (!activateSessionIfNeededLocked()) return
             armBowlPlayerIfNeededLocked()
             val player = bowlPlayer ?: run {
@@ -235,7 +281,7 @@ class SeekSoundPlayer(
             // carried its own focus, so give it back once it has rung.
             // The bowl keeps its master-sounds-only independence — only
             // the idle-release is scoped to the silent sonar channel.
-            if (started && !seekPreferences.sonarEnabled.value) scheduleSessionReleaseLocked()
+            if (started && !settings.sonarEnabled.value) scheduleSessionReleaseLocked()
         }
     }
 
@@ -261,7 +307,7 @@ class SeekSoundPlayer(
     // ─── Ping gating ──────────────────────────────────────────────────
 
     private fun sonarAndSoundsEnabled(): Boolean =
-        seekPreferences.sonarEnabled.value && soundsPreferences.soundsEnabled.value
+        settings.sonarEnabled.value && settings.soundsEnabled.value
 
     private fun firePingIfAllowedLocked(volumeScale: Float): PingOutcome {
         if (isInterrupted || !gate.allowsPing()) return PingOutcome.POLICY_SKIPPED
@@ -285,7 +331,7 @@ class SeekSoundPlayer(
     // ─── Players ──────────────────────────────────────────────────────
 
     private fun startPlayerLocked(player: MediaPlayer, volumeScale: Float): Boolean {
-        val rawVolume = seekPreferences.sonarVolume.value
+        val rawVolume = settings.sonarVolume.value
         val prefVolume = if (rawVolume.isNaN()) 0f else rawVolume.coerceIn(0f, 1f)
         val volume = (prefVolume * volumeScale).coerceIn(0f, 1f)
         return try {

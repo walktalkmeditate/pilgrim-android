@@ -94,6 +94,16 @@ object SeekEngineTuning {
  * dispatcher (the iOS engine's main-queue delivery). The orchestrator must
  * build [scope] on a single-threaded dispatcher and call [seekAnew]/[stop]
  * from it. Port spec: docs/parity/2026-07-14-port-seek-engine-u3.md.
+ *
+ * An engine can also take over where another stood (plan U25: `:tracker`
+ * at Begin, or a revival after a kill): [initialActiveIndex] and
+ * [initialPhase] restore its place in the chain, an ARRIVED engine resumes
+ * its stillness watch with the grace counted from [arrivedAtMillis] and
+ * never reports the arrival again, [initialDistanceToActiveMeters] is the
+ * other engine's last distance, so the fog holds and the pulse clock runs
+ * before this one's first fix, and [firstPulseDueAtMillis] keeps the other
+ * engine's sonar cadence for the first pulse. Left at their defaults, the
+ * engine starts at the chain's first clearing as it always has.
  */
 class SeekEngine(
     chain: SeekChain,
@@ -104,20 +114,27 @@ class SeekEngine(
     private val powerTiers: Flow<SeekPowerTier>,
     private val stillnessWindowOverrideMillis: Long? = null,
     private val windowRng: Random = Random.Default,
+    initialActiveIndex: Int = 0,
+    initialPhase: SeekEnginePhase? = null,
+    private val arrivedAtMillis: Long? = null,
+    initialDistanceToActiveMeters: Double? = null,
+    firstPulseDueAtMillis: Long? = null,
 ) {
 
     private val _chain = MutableStateFlow(chain)
     val chain: StateFlow<SeekChain> = _chain.asStateFlow()
 
-    private val _activeIndex = MutableStateFlow(0)
+    private val _activeIndex = MutableStateFlow(
+        initialActiveIndex.coerceIn(0, (chain.clearings.size - 1).coerceAtLeast(0)),
+    )
     val activeIndex: StateFlow<Int> = _activeIndex.asStateFlow()
 
     private val _phase = MutableStateFlow(
-        if (chain.clearings.isEmpty()) SeekEnginePhase.COMPLETE else SeekEnginePhase.GUIDING,
+        if (chain.clearings.isEmpty()) SeekEnginePhase.COMPLETE else initialPhase ?: SeekEnginePhase.GUIDING,
     )
     val phase: StateFlow<SeekEnginePhase> = _phase.asStateFlow()
 
-    private val _distanceToActiveMeters = MutableStateFlow<Double?>(null)
+    private val _distanceToActiveMeters = MutableStateFlow(initialDistanceToActiveMeters)
     val distanceToActiveMeters: StateFlow<Double?> = _distanceToActiveMeters.asStateFlow()
 
     private val _events = MutableSharedFlow<SeekEngineEvent>(extraBufferCapacity = 64)
@@ -128,6 +145,17 @@ class SeekEngine(
 
     var pulseGeneration: Int = 0
         private set
+
+    /**
+     * When the scheduled pulse is due, on [clock]; null with none scheduled.
+     * Read across threads by a hand-off, so it is volatile.
+     */
+    @Volatile
+    var nextPulseDueAtMillis: Long? = null
+        private set
+
+    /** The first pulse's due time, carried from the engine this one takes over from; spent on first use. */
+    private var carriedPulseDueAtMillis: Long? = firstPulseDueAtMillis
 
     /**
      * Inputs (or whole feeds) dropped by [start]'s guards. The engine is
@@ -165,6 +193,10 @@ class SeekEngine(
 
     fun start() {
         collectorJobs.forEach { it.cancel() }
+        if (_phase.value == SeekEnginePhase.ARRIVED && stillnessDetector == null) {
+            armStillness(graceDeadlineMillis = (arrivedAtMillis ?: clock.now()) + SeekEngineTuning.GRACE_MILLIS)
+        }
+        if (_phase.value == SeekEnginePhase.GUIDING && _distanceToActiveMeters.value != null) ensurePulseScheduled()
         collectorJobs = listOf(
             collectQuietly(locations) { processLocation(it) },
             collectQuietly(walkStates) { handleWalkState(it) },
@@ -269,11 +301,17 @@ class SeekEngine(
         val generation = pulseGeneration
         pulseJob?.cancel()
         pulseJob = null
+        nextPulseDueAtMillis = null
         if (_phase.value != SeekEnginePhase.GUIDING || isSuspended) return
         val distance = _distanceToActiveMeters.value ?: rerollPulseDistance ?: return
         val intervalMillis = pulseIntervalMillis(distance, currentTier)
+        val delayMillis = carriedPulseDueAtMillis
+            ?.let { (it - clock.now()).coerceIn(0L, intervalMillis) }
+            ?: intervalMillis
+        carriedPulseDueAtMillis = null
+        nextPulseDueAtMillis = clock.now() + delayMillis
         pulseJob = scope.launch {
-            delay(intervalMillis)
+            delay(delayMillis)
             pulseTimerFired(generation)
         }
     }
@@ -282,6 +320,7 @@ class SeekEngine(
         pulseGeneration += 1
         pulseJob?.cancel()
         pulseJob = null
+        nextPulseDueAtMillis = null
     }
 
     // Location intake
@@ -322,6 +361,11 @@ class SeekEngine(
         _phase.value = SeekEnginePhase.ARRIVED
         arrivalDebounce.reset()
         invalidatePulseTimer()
+        armStillness(graceDeadlineMillis = clock.now() + SeekEngineTuning.GRACE_MILLIS)
+        _events.tryEmit(SeekEngineEvent.Arrived(clearingIndex = _activeIndex.value))
+    }
+
+    private fun armStillness(graceDeadlineMillis: Long) {
         val baseWindowMillis = stillnessWindowOverrideMillis
             ?: (
                 windowRng.nextDouble(
@@ -332,9 +376,8 @@ class SeekEngine(
         val detector = SeekStillnessDetector(baseWindowMillis)
         detector.start()
         stillnessDetector = detector
-        graceDeadlineMillis = clock.now() + SeekEngineTuning.GRACE_MILLIS
+        this.graceDeadlineMillis = graceDeadlineMillis
         startStillnessCheckTimer()
-        _events.tryEmit(SeekEngineEvent.Arrived(clearingIndex = _activeIndex.value))
     }
 
     // Stillness and reveal
