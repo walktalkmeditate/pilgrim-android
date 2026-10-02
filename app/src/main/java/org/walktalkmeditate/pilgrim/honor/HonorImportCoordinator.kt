@@ -10,8 +10,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -60,6 +63,15 @@ class HonorImportCoordinator internal constructor(
     /** The id of a Way an import just listed, until the screen that opens its overview takes it. */
     val fetched: StateFlow<String?> = _fetched.asStateFlow()
 
+    private val _outcomes = MutableSharedFlow<HonorImportOutcome>(extraBufferCapacity = OUTCOME_BUFFER)
+
+    /**
+     * How each import nobody replaced ended, a link's or a paste's: what
+     * the link toast answers with (iOS `openWay`'s two `showLinkToast`
+     * calls, S2 §4.2). A cancelled import announces nothing.
+     */
+    val outcomes: SharedFlow<HonorImportOutcome> = _outcomes.asSharedFlow()
+
     /**
      * The media download's sets themselves, which change with every file
      * that lands even while [state] holds still (under disk full, say): what
@@ -95,12 +107,15 @@ class HonorImportCoordinator internal constructor(
                 throw cancel
             } catch (e: Exception) {
                 if (!isActive) return@launch
-                _state.value = HonorImportState.Failed((e as? WayImportException)?.error ?: WayError.UNAVAILABLE)
+                val error = (e as? WayImportException)?.error ?: WayError.UNAVAILABLE
+                _state.value = HonorImportState.Failed(error)
+                _outcomes.tryEmit(HonorImportOutcome.Failed(error))
                 return@launch
             }
             // A cancelled import belongs to a link already replaced: neither its Way nor its error lands.
             if (!isActive) return@launch
             _state.value = HonorImportState.Idle
+            _outcomes.tryEmit(HonorImportOutcome.Listed)
             _fetched.value = way.id
         }
     }
@@ -177,4 +192,17 @@ class HonorImportCoordinator internal constructor(
         gathering?.cancel()
         gathering = null
     }
+
+    private companion object {
+        /** Outcomes arrive one per import on the main thread, so a few slots never drop one. */
+        const val OUTCOME_BUFFER = 4
+    }
+}
+
+/** How an import the walker still wanted ended. */
+sealed interface HonorImportOutcome {
+    /** Its Way is listed and offered through [HonorImportCoordinator.fetched]. */
+    data object Listed : HonorImportOutcome
+
+    data class Failed(val error: WayError) : HonorImportOutcome
 }

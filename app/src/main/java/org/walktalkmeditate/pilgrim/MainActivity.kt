@@ -31,6 +31,10 @@ import org.walktalkmeditate.pilgrim.data.sounds.LocalBellHapticEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.LocalBreathRhythm
 import org.walktalkmeditate.pilgrim.data.sounds.LocalSoundsEnabled
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
+import org.walktalkmeditate.pilgrim.honor.HonorLinkRouter
+import org.walktalkmeditate.pilgrim.honor.InstallReferrerHandoff
+import org.walktalkmeditate.pilgrim.honor.carriesLinkData
+import org.walktalkmeditate.pilgrim.honor.linkConsumed
 import org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -61,6 +65,8 @@ class MainActivity : ComponentActivity() {
         org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
     @Inject lateinit var modelDownloadScheduler: WhisperModelDownloadScheduler
     @Inject lateinit var releaseFlags: org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
+    @Inject lateinit var honorLinks: HonorLinkRouter
+    @Inject lateinit var installReferrer: InstallReferrerHandoff
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,8 +79,10 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.auto(parchmentLight, parchmentDark),
             navigationBarStyle = SystemBarStyle.auto(parchmentLight, parchmentDark),
         )
-        // Stage 9-A: parse widget intent extras at first launch.
-        pendingDeepLink.value = DeepLinkTarget.parse(intent)
+        // Stage 9-A: parse widget intent extras at first launch. An Honor
+        // link in a rebuilt Activity's intent is never routed again.
+        receive(intent, restored = savedInstanceState != null)
+        installReferrer.start()
         // iOS-parity recovery: catches the warm-launch-after-swipe case
         // that `PilgrimApp.onCreate.recoverStaleWalks` misses. Application
         // onCreate only fires on cold launch; if the user swipes the app
@@ -182,6 +190,19 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        receive(intent, restored = false)
+    }
+
+    /**
+     * An Honor link routes once: its data is stripped from the attached
+     * intent (setIntent survives a configuration change), and the widget's
+     * extras are never read from it. Any other intent is the widget's.
+     */
+    private fun receive(intent: Intent, restored: Boolean) {
+        if (carriesLinkData(intent)) {
+            honorLinks.open(intent, restored)
+            setIntent(linkConsumed(intent))
+        }
         pendingDeepLink.value = DeepLinkTarget.parse(intent)
     }
 

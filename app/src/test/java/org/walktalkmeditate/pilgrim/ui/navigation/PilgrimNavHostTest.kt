@@ -91,17 +91,109 @@ class PilgrimNavHostTest {
     // S1 §6.3, S2 §4.3: where a Way an import just listed lands.
 
     @Test
-    fun `a fetched Way opens over the screen showing, waits behind the sheet, a summary, or setup, and a walk drops it`() {
-        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.PATH, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.HOME, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.HONOR_OVERVIEW_PATTERN, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(Routes.HONOR_OWN_WALKS, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(Routes.HONOR_WAYS, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(Routes.WALK_SUMMARY_PATTERN, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(Routes.PERMISSIONS, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(currentRoute = null, walkScreenUp = false))
-        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(Routes.ACTIVE_WALK, walkScreenUp = true))
-        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(Routes.MEDITATION, walkScreenUp = true))
+    fun `a fetched Way opens over the screen showing, waits for the sheet or setup, parks behind a summary, and a walk drops it`() {
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(listOf(Routes.PATH)))
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(listOf(Routes.PATH, Routes.HOME)))
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(listOf(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN)))
+        assertEquals(
+            "the picker over the Ways sheet: the sheet isn't showing to take it",
+            FetchedWayLanding.PRESENT,
+            fetchedWayLanding(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_OWN_WALKS)),
+        )
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.PATH, Routes.HONOR_WAYS)))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.WELCOME)))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.PERMISSIONS)))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(listOf(Routes.BREATH)))
+        assertEquals(FetchedWayLanding.WAIT, fetchedWayLanding(emptyList()))
+        assertEquals(FetchedWayLanding.PARK, fetchedWayLanding(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN)))
+        assertEquals(FetchedWayLanding.PARK, fetchedWayLanding(listOf(Routes.PATH, Routes.HOME, Routes.WALK_SUMMARY_PATTERN)))
+        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
+        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))
+    }
+
+    // iOS `walkAgain` overwrites `pendingHonorWay`, so the own walk's overview wins.
+    @Test
+    fun `a Way parked behind a summary gives way to the overview walk this again opens in its place`() {
+        val walkAgain = listOf(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN)
+
+        assertEquals(FetchedWayLanding.DROP, fetchedWayLanding(walkAgain, parkedBehindSummary = true))
+        assertEquals(FetchedWayLanding.PRESENT, fetchedWayLanding(listOf(Routes.PATH, Routes.HOME), parkedBehindSummary = true))
+    }
+
+    @Test
+    fun `the link routing reads setup, the walk screen, the sheet, a summary, and an overview off the back stack`() {
+        assertTrue(honorLinkScreen(emptyList()).inSetup)
+        assertTrue(honorLinkScreen(listOf(Routes.PERMISSIONS)).inSetup)
+        assertFalse(honorLinkScreen(listOf(Routes.PATH)).inSetup)
+        assertTrue(honorLinkScreen(listOf(Routes.PATH)).atPath)
+        assertFalse(honorLinkScreen(listOf(Routes.PATH, Routes.HOME)).atPath)
+        assertTrue("before Start too", honorLinkScreen(listOf(Routes.PATH, Routes.ACTIVE_WALK)).walkScreenUp)
+        assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)).walkScreenUp)
+        assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.HONOR_WAYS, Routes.HONOR_OWN_WALKS)).waysSheetUp)
+        assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN, Routes.WALK_SHARE_PATTERN)).summaryUp)
+        assertTrue(honorLinkScreen(listOf(Routes.PATH, Routes.HOME, Routes.HONOR_OVERVIEW_PATTERN)).overviewUp)
+    }
+
+    @Test
+    fun `the app-wide link toast shows on the walk screen but not over a sitting, and leaves Path and the overview their own`() {
+        assertTrue(linkToastOverlayShows(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
+        assertFalse(linkToastOverlayShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))
+        assertFalse(linkToastOverlayShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION, Routes.SOUNDSCAPE_PICKER)))
+        assertFalse("the Path screen draws it under its recovery banner", linkToastOverlayShows(listOf(Routes.PATH)))
+        assertFalse(linkToastOverlayShows(listOf(Routes.PATH, Routes.HONOR_OVERVIEW_PATTERN)))
+        assertTrue(linkToastOverlayShows(listOf(Routes.PATH, Routes.HOME)))
+        assertTrue("under the summary's own window", linkToastOverlayShows(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN)))
+        assertFalse(linkToastOverlayShows(emptyList()))
+    }
+
+    // Owner decision 5: a link from any other screen opens over the Path tab, so Close lands there.
+
+    @Test
+    fun `a fetched Way opens over the Path tab from another tab, and Close lands on Path`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigateToTab(Routes.HOME) }
+
+        onMain { nav.openFetchedWayOverview(SHARED_WAY) }
+        onMain {
+            assertEquals(SHARED_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID))
+            assertEquals(Routes.PATH, nav.previousBackStackEntry?.destination?.route)
+        }
+        onMain { nav.closeHonorOverview() }
+
+        onMain { assertEquals(Routes.PATH, nav.currentBackStackEntry?.destination?.route) }
+    }
+
+    @Test
+    fun `a fetched Way replaces an overview up over the Journal with one over Path`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigateToTab(Routes.HOME) }
+        onMain { nav.navigate(Routes.walkSummary(7L, walkAgainDoor = true)) }
+        onMain { nav.openHonorOverviewFromSummary(7L) }
+
+        onMain { nav.openFetchedWayOverview(SHARED_WAY) }
+
+        onMain { assertEquals(SHARED_WAY, nav.currentBackStackEntry?.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID)) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    @Test
+    fun `a fetched Way takes the Ways sheet's place, and its picker's`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.navigate(Routes.HONOR_OWN_WALKS) }
+
+        onMain { nav.openFetchedWayOverview(SHARED_WAY) }
+
+        onMain { assertEquals(Routes.HONOR_OVERVIEW_PATTERN, nav.currentBackStackEntry?.destination?.route) }
+        assertOnlyPathBeneath(nav)
+    }
+
+    private fun assertOnlyPathBeneath(nav: NavHostController) {
+        onMain { nav.popBackStack() }
+        onMain {
+            assertEquals(Routes.PATH, nav.currentBackStackEntry?.destination?.route)
+            assertNull(nav.previousBackStackEntry)
+        }
     }
 
     @Test

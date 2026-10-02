@@ -55,9 +55,12 @@ fun RecoveryBanner(
         modifier = modifier,
     ) {
         Row(
+            // iOS pads the banner at the top only, so a link toast stacked
+            // under it sits 4 + the toast's own 8 below (S2 §7.2).
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PilgrimSpacing.normal, vertical = PilgrimSpacing.small)
+                .padding(horizontal = PilgrimSpacing.normal)
+                .padding(top = PilgrimSpacing.small)
                 .clip(RoundedCornerShape(8.dp))
                 .background(pilgrimColors.parchmentSecondary.copy(alpha = 0.95f))
                 .padding(

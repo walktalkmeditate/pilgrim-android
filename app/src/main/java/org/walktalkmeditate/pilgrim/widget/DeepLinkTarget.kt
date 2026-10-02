@@ -2,11 +2,16 @@
 package org.walktalkmeditate.pilgrim.widget
 
 import android.content.Intent
+import org.walktalkmeditate.pilgrim.honor.carriesLinkData
 
 /**
  * Sealed type for widget → MainActivity → NavHost deep-link dispatch.
  * `parse(intent)` keeps Intent extra parsing in one place — testable in
  * isolation, no Activity lifecycle needed.
+ *
+ * Only an intent with no link data is read: the widget and the walk
+ * notification never set one, and MainActivity is exported, so a link
+ * can arrive carrying any extras at all (Phase 21 U27).
  */
 sealed interface DeepLinkTarget {
     data class WalkSummary(val walkId: Long) : DeepLinkTarget
@@ -21,7 +26,7 @@ sealed interface DeepLinkTarget {
         const val DEEP_LINK_ACTIVE_WALK = "active_walk"
 
         fun parse(intent: Intent?): DeepLinkTarget? {
-            if (intent == null) return null
+            if (intent == null || carriesLinkData(intent)) return null
             return when (intent.getStringExtra(EXTRA_DEEP_LINK)) {
                 DEEP_LINK_WALK_SUMMARY -> {
                     val id = intent.getLongExtra(EXTRA_WALK_ID, -1L)

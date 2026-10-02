@@ -23,6 +23,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLink
+import org.walktalkmeditate.pilgrim.honor.HonorLinkRouter
+import org.walktalkmeditate.pilgrim.honor.HonorLinkScreen
+import org.walktalkmeditate.pilgrim.honor.HonorLinkToast
 import org.walktalkmeditate.pilgrim.honor.WaySweeper
 
 /** One "Shared with you" row: the title over `<medium date> · <counts>` (S4 §6.4). */
@@ -120,20 +123,36 @@ class HonorWaysViewModel internal constructor(
     }
 }
 
-/** The app's end of the import: a listed Way no sheet is up to take, and the walk screen's cancel. */
+/**
+ * The app's end of the import and the links: a listed Way no sheet is up
+ * to take, the link toast, the switch to the Path tab, and the back stack
+ * the link routing reads (the walk screen's cancel among it).
+ */
 @HiltViewModel
 class HonorImportHostViewModel @Inject constructor(
     private val imports: HonorImportCoordinator,
+    private val links: HonorLinkRouter,
 ) : ViewModel() {
 
     val fetched: StateFlow<String?> = imports.fetched
+
+    val linkToast: StateFlow<HonorLinkToast?> = links.toast
+
+    val pathSwitch: StateFlow<Boolean> = links.pathSwitch
 
     fun consumeFetched(wayId: String) {
         imports.consumeFetched(wayId)
     }
 
-    /** iOS's `startWalk`: the walk screen opening drops an import in flight, silently. */
-    fun walkScreenOpened() {
-        imports.cancelImport()
+    fun screenChanged(screen: HonorLinkScreen) {
+        links.screenChanged(screen, owner = this)
+    }
+
+    fun screenGone() {
+        links.screenGone(owner = this)
+    }
+
+    fun pathSwitchTaken() {
+        links.pathSwitchTaken()
     }
 }

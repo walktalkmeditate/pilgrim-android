@@ -1282,6 +1282,9 @@
     <string name="honor_import_returned_to_trail">This walk has returned to the trail</string>
     <string name="honor_import_unavailable">couldn\'t reach the walk</string>
     <string name="honor_import_disk_full">not enough space on this phone to save these voices</string>
+    <!-- Phase 21 U27: a link refused during a walk (shared-walk spec S2 §6.1),
+         lowercase with no full stop, an English Swift literal on iOS. -->
+    <string name="honor_link_finish_walk_first">finish this walk first</string>
     <string name="honor_ways_voices_returned">voices returned to the trail</string>
     <string name="honor_ways_paste_header">From a shared walk</string>
     <string name="honor_ways_paste_placeholder">paste a walk link</string>

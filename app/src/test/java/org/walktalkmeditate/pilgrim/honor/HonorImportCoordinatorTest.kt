@@ -9,6 +9,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -126,6 +127,23 @@ class HonorImportCoordinatorTest {
             imports.state.value,
         )
         assertNull(imports.fetched.value)
+    }
+
+    // What the link toast answers with (S2 §4.2), a paste's included.
+    @Test
+    fun `each import nobody replaced announces how it ended, and a replaced one announces nothing`() = runTest(dispatcher) {
+        val imports = coordinator()
+        val outcomes = mutableListOf<HonorImportOutcome>()
+        backgroundScope.launch { imports.outcomes.collect { outcomes += it } }
+
+        imports.openWay(FIRST)
+        imports.openWay(SECOND)
+        land(FIRST)
+        land(SECOND)
+        imports.openWay(THIRD)
+        fail(THIRD, WayImportException(WayError.NOT_FOUND))
+
+        assertEquals(listOf(HonorImportOutcome.Listed, HonorImportOutcome.Failed(WayError.NOT_FOUND)), outcomes)
     }
 
     // iOS `startWalk`: the import is cancelled and the state left as it was.

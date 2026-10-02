@@ -3,6 +3,7 @@ package org.walktalkmeditate.pilgrim.widget
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -63,5 +64,14 @@ class DeepLinkTargetTest {
     fun `parse returns ActiveWalk for active_walk deep link`() {
         val intent = Intent().putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_ACTIVE_WALK)
         assertEquals(DeepLinkTarget.ActiveWalk, DeepLinkTarget.parse(intent))
+    }
+
+    // Phase 21 U27: MainActivity is exported, so a link can carry any extras.
+    @Test
+    fun `parse ignores widget extras on an intent that carries link data`() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/Qoi4YmPHLN"))
+            .putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_WALK_SUMMARY)
+            .putExtra(DeepLinkTarget.EXTRA_WALK_ID, 42L)
+        assertNull(DeepLinkTarget.parse(intent))
     }
 }
