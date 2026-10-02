@@ -106,7 +106,7 @@ class WayMediaTransport internal constructor(
     companion object {
         fun mediaHttpClient(base: HttpUrl): OkHttpClient = OkHttpClient.Builder()
             .retryOnConnectionFailure(false)
-            .stayingOnTheWalkHost(base)
+            .stayingOnTheHost(base)
             .build()
     }
 }

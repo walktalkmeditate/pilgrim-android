@@ -64,11 +64,65 @@ data class PilgrimageRoute(
     val stages: List<PilgrimageRouteStage>,
 )
 
+/**
+ * iOS `PilgrimageCatalogEntry` (`PilgrimageCatalogService.swift:6-42@7c200bf`):
+ * one listed route of the index, checked and cut (P1 §7.2). Serializable for
+ * the catalog cache, where every non-null key is required as iOS's
+ * synthesized `Codable` requires it, and for a route page that carries it.
+ * iOS's memberwise defaults for [placesPerStage] and [sparse] serve only its
+ * tests, so there are none here.
+ */
+@Serializable
+data class PilgrimageCatalogEntry(
+    val id: String,
+    val name: String,
+    val names: Map<String, String>,
+    val country: String?,
+    val region: String?,
+    val distanceKm: Double,
+    val tradition: String?,
+    val stageCount: Int,
+    val bytes: Int,
+    val placesPerStage: Double,
+    val sparse: Boolean,
+)
+
+/**
+ * iOS `PilgrimageGroup` (`PilgrimageCatalogService.swift:47-53@7c200bf`): one
+ * pilgrimage's sections in walking order. [name] is null for the routes no
+ * pilgrimage claims, which trail the list under no header. Ids can repeat
+ * (P1 §7.4), so nothing may key a list by [id] alone (A6).
+ */
+@Serializable
+data class PilgrimageGroup(
+    val id: String,
+    val name: String?,
+    val entries: List<PilgrimageCatalogEntry>,
+)
+
+/**
+ * iOS `PilgrimageCatalog` (`PilgrimageCatalogService.swift:55-70@7c200bf`).
+ * [release] is the tag every package file is pinned to. [groups] is a view
+ * of [routes], never a filter: every route appears in exactly one group.
+ */
+@Serializable
+data class PilgrimageCatalog(
+    val release: String,
+    val routes: List<PilgrimageCatalogEntry>,
+    val groups: List<PilgrimageGroup>,
+) {
+    /** iOS's `groups: nil`: one loose group holding every route, even when there are none (P1 §7.4). */
+    constructor(release: String, routes: List<PilgrimageCatalogEntry>) :
+        this(release, routes, listOf(PilgrimageGroup(id = "", name = null, entries = routes)))
+}
+
 /*
  * The wire files, as iOS's private `StageFile` and `RouteFile` declare them
- * (`PilgrimageWayImporter.swift:77-164@7c200bf`, P1 §4.2). A required field
- * has no default, so a missing key or a JSON `null` fails the whole decode,
- * as Swift's synthesized `Decodable` does; unknown keys (`schemaVersion`,
+ * (`PilgrimageWayImporter.swift:77-164@7c200bf`), and the index as its
+ * catalog's private `IndexFile` does (`PilgrimageCatalogService.swift:243-274@7c200bf`,
+ * P1 §4.2). A required field has no default, so a missing key or a JSON
+ * `null` fails the whole decode, as Swift's synthesized `Decodable` does;
+ * unknown keys (`schemaVersion`,
  * `stampHours`, `cover`) are ignored. Swift's `Int` is 64-bit, so every
  * integer is a [Long], narrowed only once its bound has passed (P1 §4.3, A7).
  * Moment and mark kinds are plain strings, so a kind the dataset adds later
@@ -180,5 +234,45 @@ internal data class RouteFile(
         val gainMeters: Double,
         val hours: StageFile.Hours,
         val difficulty: String,
+    )
+}
+
+/**
+ * The index. A row that doesn't decode fails the whole file, as on iOS
+ * (P1 C8, pilgrim-ios #121); a row that decodes but fails a range is
+ * dropped by the catalog's parse. A pilgrimage's `kind`, `circular` and
+ * figures are never read.
+ */
+@Serializable
+internal data class IndexFile(
+    val release: String,
+    val routes: List<Route>,
+    val pilgrimages: List<Pilgrimage>? = null,
+) {
+
+    @Serializable
+    data class Ways(
+        val stageCount: Long,
+        val bytes: Long,
+        val placesPerStage: Double? = null,
+        val sparse: Boolean? = null,
+    )
+
+    @Serializable
+    data class Route(
+        val id: String,
+        val name: Map<String, String>,
+        val region: String? = null,
+        val country: String? = null,
+        val distanceKm: Double,
+        val tradition: String? = null,
+        val ways: Ways? = null,
+    )
+
+    @Serializable
+    data class Pilgrimage(
+        val id: String,
+        val name: Map<String, String>,
+        val sections: List<String>,
     )
 }
