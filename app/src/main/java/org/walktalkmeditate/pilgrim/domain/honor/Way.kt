@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.domain.honor
 
-import java.text.BreakIterator
 import java.time.Instant
-import java.util.Locale
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -130,12 +128,13 @@ data class WayMoment(
         private const val SENTENCE_ENDS = ".!?"
 
         /**
-         * Trims, drops the empty, and caps at [MAX_TRANSCRIPT_CHARACTERS].
-         * Characters are counted as Swift counts them, by grapheme cluster
-         * (`String.prefix`, `Way.swift:71-74@7c200bf`).
+         * Trims Swift's whitespace set, drops the empty, and caps at
+         * [MAX_TRANSCRIPT_CHARACTERS]. Characters are counted as Swift
+         * counts them, by grapheme cluster (`String.prefix`,
+         * `Way.swift:71-74@7c200bf`; shared-walk spec S1 §9 trap 2).
          */
         fun trimmedTranscript(raw: String?): String? {
-            val trimmed = raw?.trim()
+            val trimmed = raw?.trimmingWhitespacesAndNewlines()
             if (trimmed.isNullOrEmpty()) return null
             return trimmed.prefixCharacters(MAX_TRANSCRIPT_CHARACTERS)
         }
@@ -292,24 +291,4 @@ data class Way(
     val photoCount: Int get() = moments.count { it.kind is WayMomentKind.Photo }
 
     val isPilgrimageStage: Boolean get() = stage != null
-}
-
-private fun String.characterCount(): Int {
-    val characters = BreakIterator.getCharacterInstance(Locale.ROOT)
-    characters.setText(this)
-    var count = 0
-    while (characters.next() != BreakIterator.DONE) count++
-    return count
-}
-
-private fun String.prefixCharacters(maxCharacters: Int): String {
-    val characters = BreakIterator.getCharacterInstance(Locale.ROOT)
-    characters.setText(this)
-    var end = 0
-    repeat(maxCharacters) {
-        val next = characters.next()
-        if (next == BreakIterator.DONE) return this
-        end = next
-    }
-    return substring(0, end)
 }

@@ -65,6 +65,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.ui.honor.COMMAND_CONFIRM_WINDOW_MILLIS
 import org.walktalkmeditate.pilgrim.ui.honor.CardTouches
@@ -202,10 +203,11 @@ data class HonorSheetStats(
  * E §1–§14): the Way, the companion, the pins, the fly-to, the card queue
  * and its cards, the listening chip, the Remaining stat, the soft-tap
  * caption, and the arrival card. Before Start the Way is built from the
- * walk being honored, as iOS draws it from the moment the walk screen
- * appears; once the walk runs, everything comes from Room (the session
- * row `:tracker` writes, its moment rows, the UI's own card rows) and from
- * the Ways store, so a restarted UI process draws the same screen (AE1).
+ * walk being honored, or read from the store for a shared one, as iOS
+ * draws it from the moment the walk screen appears; once the walk runs,
+ * everything comes from Room (the session row `:tracker` writes, its
+ * moment rows, the UI's own card rows) and from the Ways store, so a
+ * restarted UI process draws the same screen (AE1).
  * iOS keeps all of it on its view model in one process.
  *
  * The walker's voice controls go to `:tracker` as commands, never
@@ -263,7 +265,7 @@ class HonorWalkViewModel internal constructor(
     private val enabled = releaseFlags.honor
 
     private val previewState = MutableStateFlow<HonorWalkUiState?>(null)
-    private var previewSourceWalkId: Long? = null
+    private var previewWay: HonorWayChoice? = null
 
     @Volatile
     private var latestLive: LiveHonor? = null
@@ -379,12 +381,18 @@ class HonorWalkViewModel internal constructor(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), null)
     }
 
-    /** Builds the Way of [sourceWalkId] for the pre-walk screen, once per source walk. */
-    fun showWay(sourceWalkId: Long) {
-        if (!enabled || previewSourceWalkId == sourceWalkId) return
-        previewSourceWalkId = sourceWalkId
+    /**
+     * The Way [choice] names, for the pre-walk screen, once per choice: an
+     * own walk's built from its source walk, a shared one read from the store.
+     */
+    fun showWay(choice: HonorWayChoice) {
+        if (!enabled || previewWay == choice) return
+        previewWay = choice
         viewModelScope.launch {
-            val way = (ownWalkWays.build(sourceWalkId) as? OwnWalkWays.Built.Ready)?.way ?: return@launch
+            val way = when (choice) {
+                is HonorWayChoice.OwnWalk -> (ownWalkWays.build(choice.sourceWalkId) as? OwnWalkWays.Built.Ready)?.way
+                is HonorWayChoice.Stored -> withContext(ioDispatcher) { wayStore.load(choice.wayId) }
+            } ?: return@launch
             previewState.value = withContext(ioDispatcher) {
                 HonorWalkUiState(way, HonorWayLine.of(way), wayPins(way, heardVoiceIds = emptySet()), session = null)
             }

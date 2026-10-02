@@ -52,6 +52,9 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
+import org.walktalkmeditate.pilgrim.honor.HonorImportState
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimCornerRadius
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
@@ -61,18 +64,19 @@ import org.walktalkmeditate.pilgrim.ui.walk.WalkFormat
 import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMapPins
 
 /**
- * iOS `HonorOverviewView` (parity spec F §8–§14): the map fit to the whole
- * Way, the card over it, and Begin. Begin only navigates: it closes the
- * overview and opens the walk screen before its Start (spec correction 1).
- * The camera never follows the puck here.
+ * iOS `HonorOverviewView` (parity spec F §8–§14, shared-walk spec S4 §8–§9):
+ * the map fit to the whole Way, the card over it, and Begin. Begin only
+ * navigates: it closes the overview and opens the walk screen before its
+ * Start (spec correction 1). The camera never follows the puck here.
  */
 @Composable
 fun HonorOverviewScreen(
     onClose: () -> Unit,
-    onBegin: (sourceWalkId: Long) -> Unit,
+    onBegin: (HonorWayChoice) -> Unit,
     viewModel: HonorOverviewViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val importState by viewModel.importState.collectAsStateWithLifecycle()
     val voicesEnabled by viewModel.voicesEnabled.collectAsStateWithLifecycle()
     val units by viewModel.units.collectAsStateWithLifecycle()
     val playback by viewModel.playbackState.collectAsStateWithLifecycle()
@@ -125,7 +129,8 @@ fun HonorOverviewScreen(
                     units = units,
                     voicesEnabled = voicesEnabled,
                     onVoicesEnabledChange = viewModel::setVoicesEnabled,
-                    onBegin = { onBegin(overview.sourceWalkId) },
+                    onBegin = { onBegin(overview.choice) },
+                    importState = importState,
                 )
             },
         )
@@ -151,6 +156,7 @@ fun HonorOverviewScreen(
                 moment = moment,
                 units = units,
                 voice = voice.takeIf { moment.kind is WayMomentKind.Voice },
+                photoUri = overview.photoUris[moment.id],
                 onTogglePlay = { viewModel.togglePreviewVoice(moment.id) },
                 onCycleSpeed = viewModel::cyclePreviewSpeed,
                 onSeek = { viewModel.seekPreviewVoice(moment.id, it) },
@@ -209,6 +215,11 @@ internal fun HonorOverviewFrame(
  * The card (F §8, §10): a flat parchment rectangle spanning the width, not
  * scrollable. Every line is its own TalkBack element, the stats row's two
  * "·" included, as iOS reads them (pilgrim-ios #108, matched).
+ *
+ * The import line sits under the counts, rust for trouble and fog while
+ * something is on its way, and Begin is held only while a fetch or a
+ * gather could still land (S4 §8.3); nothing announces the line, as on
+ * iOS (pilgrim-ios #108, matched).
  */
 @Composable
 internal fun HonorOverviewCard(
@@ -218,6 +229,7 @@ internal fun HonorOverviewCard(
     onVoicesEnabledChange: (Boolean) -> Unit,
     onBegin: () -> Unit,
     modifier: Modifier = Modifier,
+    importState: HonorImportState = HonorImportState.Idle,
 ) {
     val way = overview.way
     val resources = LocalResources.current
@@ -242,6 +254,13 @@ internal fun HonorOverviewCard(
             StatsText(STATS_SEPARATOR)
             StatsText(HonorOverviewModel.countsLine(resources, way))
         }
+        HonorImportCopy.line(resources, importState)?.let {
+            Text(
+                text = it,
+                style = pilgrimType.caption,
+                color = if (importState.isTrouble) pilgrimColors.rust else pilgrimColors.fog,
+            )
+        }
         HonorOverviewModel.weatherLine(resources, way.weather, overview.todayCondition, locale)?.let {
             Text(text = it, style = pilgrimType.caption, color = pilgrimColors.fog)
         }
@@ -257,6 +276,7 @@ internal fun HonorOverviewCard(
         val beginLabel = stringResource(R.string.honor_overview_begin_a11y)
         Button(
             onClick = onBegin,
+            enabled = !importState.holdsBegin,
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentDescription = beginLabel },
@@ -265,6 +285,8 @@ internal fun HonorOverviewCard(
             colors = ButtonDefaults.buttonColors(
                 containerColor = pilgrimColors.stone,
                 contentColor = pilgrimColors.parchment,
+                disabledContainerColor = pilgrimColors.fog,
+                disabledContentColor = pilgrimColors.parchment,
             ),
         ) {
             Text(
@@ -316,3 +338,14 @@ private fun VoicesToggle(
 }
 
 private const val STATS_SEPARATOR = "·"
+
+/** iOS `isTrouble`: a failure or missing media reads in rust. */
+private val HonorImportState.isTrouble: Boolean
+    get() = this is HonorImportState.Failed || this is HonorImportState.MediaMissing
+
+/**
+ * iOS `isGathering`: a fetch too, so a second link can't swap the Way out
+ * from under a Begin tap. Missing media never holds it (S1 §6.5).
+ */
+private val HonorImportState.holdsBegin: Boolean
+    get() = this is HonorImportState.Fetching || this is HonorImportState.Gathering

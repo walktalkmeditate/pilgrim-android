@@ -89,6 +89,7 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
 import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.ui.honor.HonorAlert
 import org.walktalkmeditate.pilgrim.ui.honor.HonorCardLayer
 import org.walktalkmeditate.pilgrim.ui.honor.WayPlaceCardActions
@@ -265,11 +266,11 @@ fun ActiveWalkScreen(
      */
     mode: WalkMode = WalkMode.Wander,
     /**
-     * The walk an Honor walk follows, from the overview's Begin. Start then
+     * The Way an Honor walk follows, from the overview's Begin. Start then
      * starts the honor walk through [WalkViewModel.startHonorWalk] (parity
      * spec correction 1); null for every other mode.
      */
-    honorSourceWalkId: Long? = null,
+    honorWay: HonorWayChoice? = null,
     viewModel: WalkViewModel = hiltViewModel(),
     seekSetupViewModel: SeekSetupViewModel = hiltViewModel(),
     seekWalkViewModel: SeekWalkViewModel = hiltViewModel(),
@@ -299,8 +300,8 @@ fun ActiveWalkScreen(
     val honor by honorWalkViewModel.state.collectAsStateWithLifecycle()
     val honorCompanion by honorWalkViewModel.companion.collectAsStateWithLifecycle()
     val honorFocus by honorWalkViewModel.focus.collectAsStateWithLifecycle()
-    LaunchedEffect(honorWalkViewModel, mode, honorSourceWalkId) {
-        if (mode == WalkMode.Honor && honorSourceWalkId != null) honorWalkViewModel.showWay(honorSourceWalkId)
+    LaunchedEffect(honorWalkViewModel, mode, honorWay) {
+        if (mode == WalkMode.Honor && honorWay != null) honorWalkViewModel.showWay(honorWay)
     }
     val honorMapPins = rememberWayMapPins(honor?.pins.orEmpty())
     // The cards, the chip, and the Remaining stat (parity spec E §7–§11).
@@ -332,8 +333,8 @@ fun ActiveWalkScreen(
     // One Start for every mode: an honor walk starts through its Begin use
     // case, so the permission check, weather, and greeting run as for any.
     val startWalk: (String?) -> Unit = { intention ->
-        if (mode == WalkMode.Honor && honorSourceWalkId != null) {
-            viewModel.startHonorWalk(sourceWalkId = honorSourceWalkId, intention = intention)
+        if (mode == WalkMode.Honor && honorWay != null) {
+            viewModel.startHonorWalk(way = honorWay, intention = intention)
         } else {
             viewModel.startWalk(intention = intention, mode = mode)
         }

@@ -50,7 +50,6 @@ import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
 import org.walktalkmeditate.pilgrim.domain.honor.Way
-import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformBar
@@ -85,6 +84,7 @@ fun WayMomentPreviewSheet(
     moment: WayMoment,
     units: UnitSystem,
     voice: WayVoicePreview?,
+    photoUri: String?,
     onTogglePlay: () -> Unit,
     onCycleSpeed: () -> Unit,
     onSeek: (Float) -> Unit,
@@ -100,6 +100,7 @@ fun WayMomentPreviewSheet(
             moment = moment,
             units = units,
             voice = voice,
+            photoUri = photoUri,
             onTogglePlay = onTogglePlay,
             onCycleSpeed = onCycleSpeed,
             onSeek = onSeek,
@@ -108,13 +109,18 @@ fun WayMomentPreviewSheet(
     }
 }
 
-/** [voice] is null for a voice with no local file, and for every other kind. */
+/**
+ * [voice] is null for a voice with no local file, and for every other
+ * kind. [photoUri] is null for a photo not on the phone, which shows the
+ * plate's parchment stand-in above the same caption (S4 §9.3).
+ */
 @Composable
 fun WayMomentPreviewContent(
     way: Way,
     moment: WayMoment,
     units: UnitSystem,
     voice: WayVoicePreview?,
+    photoUri: String?,
     onTogglePlay: () -> Unit,
     onCycleSpeed: () -> Unit,
     onSeek: (Float) -> Unit,
@@ -132,9 +138,7 @@ fun WayMomentPreviewContent(
         when (val kind = moment.kind) {
             is WayMomentKind.Voice -> VoiceBody(moment, kind, voice, onTogglePlay, onCycleSpeed, onSeek)
             is WayMomentKind.Photo -> Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {
-                (kind.media as? WayMedia.PhotoAsset)?.let {
-                    WayPhotoPlate(photoUri = it.localIdentifier, maxHeight = PREVIEW_PHOTO_MAX_HEIGHT)
-                }
+                WayPhotoPlate(photoUri = photoUri, maxHeight = PREVIEW_PHOTO_MAX_HEIGHT)
                 Caption(stringResource(R.string.honor_moment_photo_caption))
             }
             is WayMomentKind.Waypoint -> Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.small)) {

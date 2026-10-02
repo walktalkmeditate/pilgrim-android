@@ -86,6 +86,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.Hemisphere
 import org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
@@ -326,7 +327,7 @@ class WalkViewModelTest {
         try {
             honorController.state.test(timeout = 10.seconds) {
                 assertTrue(awaitItem() is WalkState.Idle)
-                vm.startHonorWalk(sourceId, intention = "for her")
+                vm.startHonorWalk(HonorWayChoice.OwnWalk(sourceId), intention = "for her")
                 val active = awaitItem() as WalkState.Active
                 assertEquals(WalkMode.Honor, active.walk.mode)
                 assertEquals(mintedUuid, repository.getWalk(active.walk.walkId)!!.uuid)
@@ -358,7 +359,7 @@ class WalkViewModelTest {
             begin
         }
 
-        vm.startHonorWalk(sourceWalkId = 999L)
+        vm.startHonorWalk(HonorWayChoice.OwnWalk(999L))
         runCurrent()
 
         assertEquals(1, resolved)
@@ -375,7 +376,7 @@ class WalkViewModelTest {
             honorPreferences = { error("the Honor preferences resolved with the flag off") },
         ) { error("Begin resolved with the flag off") }
 
-        vm.startHonorWalk(sourceWalkId = 1L)
+        vm.startHonorWalk(HonorWayChoice.OwnWalk(1L))
         runCurrent()
 
         assertTrue(controller.state.value is WalkState.Idle)
@@ -387,7 +388,7 @@ class WalkViewModelTest {
         val vm = newHonorViewModel(controller, honorEnabled = true) { error("Begin ran without permission") }
 
         vm.locationPermissionRequired.test(timeout = 10.seconds) {
-            vm.startHonorWalk(sourceWalkId = 1L, intention = "for her")
+            vm.startHonorWalk(HonorWayChoice.OwnWalk(1L), intention = "for her")
             assertEquals("for her", awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -423,7 +424,7 @@ class WalkViewModelTest {
 
         try {
             vm.honorStartRefusals.test(timeout = 10.seconds) {
-                vm.startHonorWalk(world.sourceId, intention = "for her")
+                vm.startHonorWalk(HonorWayChoice.OwnWalk(world.sourceId), intention = "for her")
                 assertEquals(HonorStartRefused(HonorStartRefusal.CouldNotPrepare, "for her"), awaitItem())
             }
             assertTrue(world.controller.state.value is WalkState.Idle)
@@ -442,7 +443,7 @@ class WalkViewModelTest {
 
         try {
             vm.honorStartRefusals.test(timeout = 10.seconds) {
-                vm.startHonorWalk(world.sourceId)
+                vm.startHonorWalk(HonorWayChoice.OwnWalk(world.sourceId))
                 assertEquals(HonorStartRefused(HonorStartRefusal.Gone, intention = null), awaitItem())
             }
             assertTrue(world.controller.state.value is WalkState.Idle)
@@ -466,8 +467,8 @@ class WalkViewModelTest {
         try {
             world.controller.state.test(timeout = 10.seconds) {
                 assertTrue(awaitItem() is WalkState.Idle)
-                vm.startHonorWalk(world.sourceId)
-                vm.startHonorWalk(world.sourceId)
+                vm.startHonorWalk(HonorWayChoice.OwnWalk(world.sourceId))
+                vm.startHonorWalk(HonorWayChoice.OwnWalk(world.sourceId))
                 assertTrue(awaitItem() is WalkState.Active)
                 cancelAndIgnoreRemainingEvents()
             }
@@ -542,7 +543,7 @@ class WalkViewModelTest {
             var voices: Boolean? = null
             world.controller.state.test(timeout = 10.seconds) {
                 assertTrue(awaitItem() is WalkState.Idle)
-                vm.startHonorWalk(world.sourceId)
+                vm.startHonorWalk(HonorWayChoice.OwnWalk(world.sourceId))
                 val active = awaitItem() as WalkState.Active
                 voices = db.honorDao().getSession(active.walk.walkId)!!.voicesEnabled
                 cancelAndIgnoreRemainingEvents()

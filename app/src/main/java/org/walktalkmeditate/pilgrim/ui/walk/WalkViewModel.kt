@@ -51,6 +51,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.TheirSitting
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
@@ -1483,11 +1484,12 @@ class WalkViewModel @Inject constructor(
     }
 
     /**
-     * The walk screen's Start on an honor walk of the walker's own walk
-     * [sourceWalkId] (parity spec correction 1: the overview's Begin only
-     * navigates here). The Begin use case builds and stages the Way and
-     * starts the walk through the same path as [startWalk], so the
-     * permission check, weather, and greeting run as for any walk.
+     * The walk screen's Start on an honor walk of [way], one of the
+     * walker's own walks or a listed shared Way (parity spec correction 1:
+     * the overview's Begin only navigates here). The Begin use case finds
+     * the Way, stages an own walk's, and starts the walk through the same
+     * path as [startWalk], so the permission check, weather, and greeting
+     * run as for any walk.
      * [honorVoicesEnabled] is the overview's sticky "walk with their voice";
      * null reads the stored preference here, off the disk, and either way
      * it is AND-ed with Sounds, as iOS reads both at Start
@@ -1495,7 +1497,7 @@ class WalkViewModel @Inject constructor(
      * nothing and emits [honorStartRefusals].
      */
     fun startHonorWalk(
-        sourceWalkId: Long,
+        way: HonorWayChoice,
         intention: String? = null,
         honorVoicesEnabled: Boolean? = null,
     ) {
@@ -1505,7 +1507,7 @@ class WalkViewModel @Inject constructor(
                 honorVoicesEnabled = honorVoicesEnabled ?: honorPreferences.get().awaitVoicesEnabled(),
                 soundsEnabled = soundsPreferences.soundsEnabled.value,
             )
-            val request = BeginHonorWalk.Request(sourceWalkId, intention, settings)
+            val request = BeginHonorWalk.Request(way, intention, settings)
             when (val result = beginHonorWalk.get().invoke(request)) {
                 is BeginHonorWalk.Result.Started -> result.walk
                 is BeginHonorWalk.Result.Refused -> {

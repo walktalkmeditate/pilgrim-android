@@ -33,6 +33,7 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
+import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
@@ -40,6 +41,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.walk.BellTrigger
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -110,8 +112,17 @@ class BeginHonorWalkTest {
         locale = { Locale.US },
     )
 
+    private fun storedRequest() =
+        BeginHonorWalk.Request(way = HonorWayChoice.Stored(SHARED_ID), intention = "for her", settings = settings)
+
+    private val sharedWay = HonorHarness.way(moments = listOf(HonorHarness.waypoint(1, 0.003)), title = "Rúa do Franco → Obradoiro")
+        .copy(
+            id = SHARED_ID,
+            source = WaySource.Share(id = "Qoi4YmPHLN", pageUrl = "https://walk.pilgrimapp.org/Qoi4YmPHLN"),
+        )
+
     private fun request(sourceWalkId: Long = sourceId) =
-        BeginHonorWalk.Request(sourceWalkId = sourceWalkId, intention = "for her", settings = settings)
+        BeginHonorWalk.Request(way = HonorWayChoice.OwnWalk(sourceWalkId), intention = "for her", settings = settings)
 
     @Test
     fun `Start stages the own-walk Way under the minted uuid and starts the walk with it`() = runBlocking {
@@ -147,6 +158,51 @@ class BeginHonorWalkTest {
         assertEquals("walk:$sourceUuid", h.store.wayLink(mintedUuid)!!.wayId)
         assertEquals(HonorFinishKind.CLEAN, h.db.honorDao().getMarker(mintedUuid)!!.finishKind)
         assertNotNull(h.store.load("walk:$sourceUuid"))
+    }
+
+    // Shared-walk spec S4 §8.6: a shared Way's Begin goes through the same Start.
+    @Test
+    fun `a shared Way starts from the store, staged nowhere, and its walk links to it at the finish`() = runBlocking {
+        h.store.save(sharedWay)
+        val acceptedAt = h.store.acceptedAt(SHARED_ID)
+
+        val result = begin(h.controller)(storedRequest()) as BeginHonorWalk.Result.Started
+
+        assertEquals(mintedUuid, result.walk.uuid)
+        assertNull("a share is listed, never staged", h.store.staged(mintedUuid))
+        val session = h.db.honorDao().getSession(result.walk.id)!!
+        assertEquals(SHARED_ID to HonorSourceKind.SHARE, session.wayId to session.sourceKind)
+        assertEquals("for her", h.repository.getWalk(result.walk.id)!!.intention)
+
+        h.controller.finishWalk()
+
+        assertEquals(SHARED_ID, h.store.wayLink(mintedUuid)!!.wayId)
+        assertEquals(HonorFinishKind.CLEAN, h.db.honorDao().getMarker(mintedUuid)!!.finishKind)
+        assertEquals("still listed, its acceptance kept", acceptedAt, h.store.acceptedAt(SHARED_ID))
+    }
+
+    @Test
+    fun `a shared Way gone from the store refuses the start as gone`() = runBlocking {
+        val controller = RecordingController()
+
+        assertEquals(
+            BeginHonorWalk.Result.Refused(BeginHonorWalk.Refusal.SOURCE_MISSING),
+            begin(controller)(storedRequest()),
+        )
+        assertTrue(controller.requests.isEmpty())
+    }
+
+    @Test
+    fun `a shared Way's start sends its store id and the frozen settings`() = runBlocking {
+        h.store.save(sharedWay)
+        val controller = RecordingController()
+
+        begin(controller)(storedRequest())
+
+        val sent = controller.requests.single()
+        assertEquals(WalkMode.Honor to mintedUuid, sent.mode to sent.walkUuid)
+        assertEquals(SHARED_ID, sent.honor!!.wayId)
+        assertEquals(settings, sent.honor!!.settings)
     }
 
     @Test
@@ -205,6 +261,10 @@ class BeginHonorWalkTest {
             HonorSettings(voicesEnabled = true, softTapEnabled = false),
             HonorSettings.atStart(honorVoicesEnabled = true, soundsEnabled = true),
         )
+    }
+
+    private companion object {
+        const val SHARED_ID = "share:Qoi4YmPHLN"
     }
 
     /** The UI's side of the chain, stood in for: it records the request and answers as the tracker would. */

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim.ui.honor
 
+import android.net.Uri
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -20,6 +21,7 @@ import org.walktalkmeditate.pilgrim.audio.PlaybackState
 import org.walktalkmeditate.pilgrim.audio.VoicePlaybackController
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
@@ -27,6 +29,9 @@ import org.walktalkmeditate.pilgrim.data.weather.WeatherFetching
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
+import org.walktalkmeditate.pilgrim.honor.HonorImportState
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformCache
@@ -40,13 +45,19 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
 /** Everything the overview draws for one Way, derived once (iOS `WayRendering`, F §9.1). */
 @Immutable
 data class HonorOverview(
-    val sourceWalkId: Long,
+    /** What Begin walks: the source walk, or the listed Way. */
+    val choice: HonorWayChoice,
     val way: Way,
     val line: HonorWayLine,
     val pins: List<WayPin>,
     val bounds: MapCameraBounds?,
-    /** Each voice moment whose recording is here to play, by moment id. */
+    /**
+     * Each voice moment whose recording is here to play, by moment id. A
+     * shared Way's voices have no recording row, so it has none yet.
+     */
     val playableVoices: Map<String, VoiceRecording>,
+    /** Each photo moment's image on the phone, by moment id; a shared photo not here has none. */
+    val photoUris: Map<String, String>,
     /** "Today is …": a `WeatherCondition` raw value, once the one fetch lands. */
     val todayCondition: String? = null,
     /** The one probe from the phone's last fix to the Way's start; null without a fix. */
@@ -65,9 +76,15 @@ sealed interface HonorOverviewUiState {
 
 /**
  * iOS `HonorOverviewView`'s state (`HonorOverviewView.swift:62-418@7c200bf`,
- * parity spec F §8–§14). The Way is built once from the source walk and held
- * for the overview's life, as iOS carries it by value: a walk deleted while
- * the overview is open still shows, and the walk screen's Start refuses it.
+ * parity spec F §8–§14, shared-walk spec S4 §8–§9). The Way is built once
+ * from the source walk, or read once from the Ways store for a shared Way,
+ * and held for the overview's life, as iOS carries it by value: a Way gone
+ * while the overview is open still shows, and the walk screen's Start
+ * refuses it. Either argument survives a process death in the route.
+ *
+ * The import line is the app's one import state ([HonorImportCoordinator]):
+ * the overview gathers its Way as it shows it and hands the state back on
+ * a real close, as iOS's `gather` and `handleOverviewDismiss` do.
  *
  * The moment preview plays an own-walk recording through the app's one
  * [VoicePlaybackController], the summary's and Recordings list's player with
@@ -78,6 +95,8 @@ sealed interface HonorOverviewUiState {
 class HonorOverviewViewModel internal constructor(
     savedStateHandle: SavedStateHandle,
     private val ownWalkWays: OwnWalkWays,
+    private val wayStore: WayStore,
+    private val imports: HonorImportCoordinator,
     private val honorPreferences: HonorPreferencesRepository,
     unitsPreferences: UnitsPreferencesRepository,
     private val locationSource: LocationSource,
@@ -92,6 +111,8 @@ class HonorOverviewViewModel internal constructor(
     constructor(
         savedStateHandle: SavedStateHandle,
         ownWalkWays: OwnWalkWays,
+        wayStore: WayStore,
+        imports: HonorImportCoordinator,
         honorPreferences: HonorPreferencesRepository,
         unitsPreferences: UnitsPreferencesRepository,
         locationSource: LocationSource,
@@ -100,13 +121,11 @@ class HonorOverviewViewModel internal constructor(
         recordingFiles: VoiceRecordingFileSystem,
         waveformCache: WaveformCache,
     ) : this(
-        savedStateHandle, ownWalkWays, honorPreferences, unitsPreferences, locationSource,
+        savedStateHandle, ownWalkWays, wayStore, imports, honorPreferences, unitsPreferences, locationSource,
         weatherFetching, playback, recordingFiles, waveformCache, Dispatchers.IO,
     )
 
-    private val sourceWalkId: Long = requireNotNull(savedStateHandle.get<Long>(ARG_SOURCE_WALK_ID)) {
-        "sourceWalkId argument missing from nav savedStateHandle"
-    }
+    private val choice: HonorWayChoice = choiceOf(savedStateHandle)
 
     private val _state = MutableStateFlow<HonorOverviewUiState>(HonorOverviewUiState.Loading)
     val state: StateFlow<HonorOverviewUiState> = _state.asStateFlow()
@@ -117,6 +136,9 @@ class HonorOverviewViewModel internal constructor(
      * will play then (pilgrim-ios #109, matched).
      */
     val voicesEnabled: StateFlow<Boolean> = honorPreferences.voicesEnabled
+
+    /** The import line under the counts, and whether Begin may go (S4 §8.3). */
+    val importState: StateFlow<HonorImportState> = imports.state
 
     val units: StateFlow<UnitSystem> = unitsPreferences.distanceUnits
 
@@ -134,20 +156,29 @@ class HonorOverviewViewModel internal constructor(
     }
 
     private suspend fun load() {
-        val built = ownWalkWays.build(sourceWalkId) as? OwnWalkWays.Built.Ready
-        if (built == null) {
+        val (way, playable) = when (val chosen = choice) {
+            is HonorWayChoice.OwnWalk -> {
+                val built = ownWalkWays.build(chosen.sourceWalkId) as? OwnWalkWays.Built.Ready
+                built?.let { it.way to playableVoices(it.way, it.recordings) }
+            }
+            is HonorWayChoice.Stored -> withContext(ioDispatcher) { wayStore.load(chosen.wayId) }
+                ?.let { it to emptyMap<String, VoiceRecording>() }
+        } ?: run {
             _state.value = HonorOverviewUiState.Unavailable
             return
         }
-        val way = built.way
+        val photos = photoUris(way)
+        // Before the card shows, so its first frame already has the gathered state (S4 §8.1).
+        imports.gather(way, overview = this)
         _state.value = HonorOverviewUiState.Ready(
             HonorOverview(
-                sourceWalkId = sourceWalkId,
+                choice = choice,
                 way = way,
                 line = HonorWayLine.of(way),
                 pins = wayPins(way, heardVoiceIds = emptySet()),
                 bounds = HonorOverviewModel.bounds(way),
-                playableVoices = playableVoices(way, built.recordings),
+                playableVoices = playable,
+                photoUris = photos,
             ),
         )
         val here = lastKnownFix() ?: return
@@ -232,6 +263,7 @@ class HonorOverviewViewModel internal constructor(
 
     override fun onCleared() {
         closePreview()
+        imports.overviewClosed(overview = this)
         super.onCleared()
     }
 
@@ -259,6 +291,21 @@ class HonorOverviewViewModel internal constructor(
             }.toMap()
         }
 
+    /**
+     * An own walk's photos by their content URI; a shared photo by its file
+     * in the Way's `media/` folder, once that file is here.
+     */
+    private suspend fun photoUris(way: Way): Map<String, String> = withContext(ioDispatcher) {
+        way.moments.mapNotNull { moment ->
+            val uri = when (val media = (moment.kind as? WayMomentKind.Photo)?.media) {
+                is WayMedia.PhotoAsset -> media.localIdentifier
+                is WayMedia.File -> wayStore.mediaFile(way.id, media.path)?.takeIf { it.isFile }?.let { Uri.fromFile(it).toString() }
+                is WayMedia.Recording, null -> null
+            }
+            uri?.let { moment.id to it }
+        }.toMap()
+    }
+
     private suspend fun lastKnownFix() = try {
         locationSource.lastKnownLocation()
     } catch (_: SecurityException) {
@@ -272,7 +319,22 @@ class HonorOverviewViewModel internal constructor(
     }
 
     companion object {
+        /** The own walk to rebuild a Way from; [NO_SOURCE_WALK] when the route names a stored Way. */
         const val ARG_SOURCE_WALK_ID = "sourceWalkId"
+
+        /** A listed Way's store id; absent for an own walk. */
+        const val ARG_WAY_ID = "wayId"
+
+        const val NO_SOURCE_WALK = -1L
+
+        private fun choiceOf(savedStateHandle: SavedStateHandle): HonorWayChoice {
+            savedStateHandle.get<String>(ARG_WAY_ID)?.let { return HonorWayChoice.Stored(it) }
+            val sourceWalkId = savedStateHandle.get<Long>(ARG_SOURCE_WALK_ID)?.takeIf { it != NO_SOURCE_WALK }
+            return HonorWayChoice.OwnWalk(
+                requireNotNull(sourceWalkId) { "neither a source walk nor a Way id in the overview's route" },
+            )
+        }
+
         private const val WAVEFORM_BARS = 64
 
         /** The Recordings list's hop before a seek on a just-started player (iOS's 0.1 s). */

@@ -29,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.Context
+import android.net.Uri
+import android.os.Bundle
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -38,10 +40,12 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.permissions.AppSettings
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.permissions.PermissionsViewModel
 import org.walktalkmeditate.pilgrim.ui.goshuin.GoshuinScreen
+import org.walktalkmeditate.pilgrim.ui.honor.HonorImportHostViewModel
 import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
@@ -83,14 +87,21 @@ object Routes {
      */
     const val ACTIVE_WALK_ARG_MODE = "mode"
 
-    /** The walk an Honor walk follows, from the overview's Begin; absent for every other mode. */
+    /** The walk an Honor walk follows, from an own walk's overview Begin; absent for every other walk. */
     const val ACTIVE_WALK_ARG_HONOR_SOURCE = "honorSource"
+
+    /** The listed Way an Honor walk follows, from a shared Way's overview Begin; absent for every other walk. */
+    const val ACTIVE_WALK_ARG_HONOR_WAY = "honorWay"
     const val ACTIVE_WALK =
         "active_walk?$ACTIVE_WALK_ARG_MODE={$ACTIVE_WALK_ARG_MODE}" +
-            "&$ACTIVE_WALK_ARG_HONOR_SOURCE={$ACTIVE_WALK_ARG_HONOR_SOURCE}"
-    fun activeWalk(mode: WalkMode, honorSourceWalkId: Long? = null): String =
-        "active_walk?$ACTIVE_WALK_ARG_MODE=${mode.name}" +
-            (honorSourceWalkId?.let { "&$ACTIVE_WALK_ARG_HONOR_SOURCE=$it" } ?: "")
+            "&$ACTIVE_WALK_ARG_HONOR_SOURCE={$ACTIVE_WALK_ARG_HONOR_SOURCE}" +
+            "&$ACTIVE_WALK_ARG_HONOR_WAY={$ACTIVE_WALK_ARG_HONOR_WAY}"
+    fun activeWalk(mode: WalkMode, honorWay: HonorWayChoice? = null): String =
+        "active_walk?$ACTIVE_WALK_ARG_MODE=${mode.name}" + when (honorWay) {
+            is HonorWayChoice.OwnWalk -> "&$ACTIVE_WALK_ARG_HONOR_SOURCE=${honorWay.sourceWalkId}"
+            is HonorWayChoice.Stored -> "&$ACTIVE_WALK_ARG_HONOR_WAY=${Uri.encode(honorWay.wayId)}"
+            null -> ""
+        }
     const val FEEDBACK = "feedback"
     const val GOSHUIN = "goshuin"
     const val MEDITATION = "meditation"
@@ -104,12 +115,21 @@ object Routes {
     fun walkSummary(walkId: Long, walkAgainDoor: Boolean = false): String =
         "$WALK_SUMMARY_PREFIX/$walkId" + if (walkAgainDoor) "?$WALK_SUMMARY_ARG_WALK_AGAIN=true" else ""
 
-    /** The Ways sheet, the "Walk again" picker, and the overview: reachable only with Honor on. */
+    /**
+     * The Ways sheet, the "Walk again" picker, and the overview: reachable
+     * only with Honor on. The overview names an own walk to rebuild or a
+     * listed Way to read back, so either survives a process death.
+     */
     const val HONOR_WAYS = "honor_ways"
     const val HONOR_OWN_WALKS = "honor_own_walks"
     private const val HONOR_OVERVIEW_PREFIX = "honor_overview"
-    const val HONOR_OVERVIEW_PATTERN = "$HONOR_OVERVIEW_PREFIX/{${HonorOverviewViewModel.ARG_SOURCE_WALK_ID}}"
-    fun honorOverview(sourceWalkId: Long): String = "$HONOR_OVERVIEW_PREFIX/$sourceWalkId"
+    const val HONOR_OVERVIEW_PATTERN =
+        "$HONOR_OVERVIEW_PREFIX?${HonorOverviewViewModel.ARG_SOURCE_WALK_ID}={${HonorOverviewViewModel.ARG_SOURCE_WALK_ID}}" +
+            "&${HonorOverviewViewModel.ARG_WAY_ID}={${HonorOverviewViewModel.ARG_WAY_ID}}"
+    fun honorOverview(way: HonorWayChoice): String = "$HONOR_OVERVIEW_PREFIX?" + when (way) {
+        is HonorWayChoice.OwnWalk -> "${HonorOverviewViewModel.ARG_SOURCE_WALK_ID}=${way.sourceWalkId}"
+        is HonorWayChoice.Stored -> "${HonorOverviewViewModel.ARG_WAY_ID}=${Uri.encode(way.wayId)}"
+    }
 
     const val SETTINGS = "settings"
     const val VOICE_GUIDE_PICKER = "voice_guides"
@@ -380,27 +400,16 @@ fun PilgrimNavHost(
         }
         composable(
             Routes.ACTIVE_WALK,
-            arguments = listOf(
-                navArgument(Routes.ACTIVE_WALK_ARG_MODE) {
-                    type = NavType.StringType
-                    defaultValue = WalkMode.Wander.name
-                },
-                navArgument(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE) {
-                    type = NavType.LongType
-                    defaultValue = NO_HONOR_SOURCE
-                },
-            ),
+            arguments = activeWalkArguments,
         ) { backStackEntry ->
-            val honorSource = backStackEntry.arguments
-                ?.getLong(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE)
-                ?.takeIf { honorEnabled && it != NO_HONOR_SOURCE }
+            val honorWay = honorWayOf(backStackEntry.arguments)?.takeIf { honorEnabled }
             val walkMode = activeWalkMode(
                 WalkMode.fromWire(backStackEntry.arguments?.getString(Routes.ACTIVE_WALK_ARG_MODE)),
-                honorSource,
+                honorWay,
             )
             ActiveWalkScreen(
                 mode = walkMode,
-                honorSourceWalkId = honorSource,
+                honorWay = honorWay,
                 onFinished = { walkId ->
                     // Stage 9.5-A: a walk launched from Path leaves HOME
                     // off the back stack. popUpTo(HOME) would no-op +
@@ -670,6 +679,10 @@ fun PilgrimNavHost(
         }
     }
 
+    if (honorEnabled) {
+        HonorImportLanding(navController = navController, currentRoute = currentEntry?.destination?.route)
+    }
+
     // Stage 9-A/B: handle widget + notification deep links.
     //
     // ActiveWalk fires UNCONDITIONALLY (the target IS an active-session
@@ -750,16 +763,122 @@ fun PilgrimNavHost(
     }
 }
 
-/** The `honorSource` default: no Way to follow. */
+/** The `honorSource` default: no own walk to follow. */
 internal const val NO_HONOR_SOURCE = -1L
 
+/** The walk screen's arguments; tests build their graph from the same list. */
+internal val activeWalkArguments = listOf(
+    navArgument(Routes.ACTIVE_WALK_ARG_MODE) {
+        type = NavType.StringType
+        defaultValue = WalkMode.Wander.name
+    },
+    navArgument(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE) {
+        type = NavType.LongType
+        defaultValue = NO_HONOR_SOURCE
+    },
+    navArgument(Routes.ACTIVE_WALK_ARG_HONOR_WAY) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+)
+
+/** The overview's arguments: exactly one of the two is set. */
+internal val honorOverviewArguments = listOf(
+    navArgument(HonorOverviewViewModel.ARG_SOURCE_WALK_ID) {
+        type = NavType.LongType
+        defaultValue = HonorOverviewViewModel.NO_SOURCE_WALK
+    },
+    navArgument(HonorOverviewViewModel.ARG_WAY_ID) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+)
+
+/** The Way the walk screen's arguments name, if any: a listed Way, or an own walk to rebuild. */
+internal fun honorWayOf(arguments: Bundle?): HonorWayChoice? {
+    arguments ?: return null
+    arguments.getString(Routes.ACTIVE_WALK_ARG_HONOR_WAY)?.let { return HonorWayChoice.Stored(it) }
+    return arguments.getLong(Routes.ACTIVE_WALK_ARG_HONOR_SOURCE, NO_HONOR_SOURCE)
+        .takeIf { it != NO_HONOR_SOURCE }
+        ?.let(HonorWayChoice::OwnWalk)
+}
+
 /**
- * An Honor walk needs the walk it follows; one without (a redirect into a
+ * An Honor walk needs the Way it follows; one without (a redirect into a
  * running walk, a flag-off build) is a plain walk screen, whose running
  * walk's mode lives on the accumulator anyway.
  */
-internal fun activeWalkMode(mode: WalkMode, honorSourceWalkId: Long?): WalkMode =
-    if (mode == WalkMode.Honor && honorSourceWalkId == null) WalkMode.Wander else mode
+internal fun activeWalkMode(mode: WalkMode, honorWay: HonorWayChoice?): WalkMode =
+    if (mode == WalkMode.Honor && honorWay == null) WalkMode.Wander else mode
+
+/** What a Way an import just listed does on the screen showing now. */
+internal enum class FetchedWayLanding {
+    /** Its overview opens over this screen. */
+    PRESENT,
+
+    /** It waits for this screen to go: the Ways sheet takes it itself, and a summary or setup holds it. */
+    WAIT,
+
+    /** A walk is under way, and nothing interrupts it (iOS drops it silently; the Way stays listed). */
+    DROP,
+}
+
+/**
+ * iOS `openWay`'s success and `openOverview` (S1 §6.3, S2 §4.3): parked
+ * behind the summary until it closes (owner decision 5), dropped once the
+ * walk screen is up. The setup hold and the walk-screen rule's full
+ * reach are the link routing's.
+ */
+internal fun fetchedWayLanding(currentRoute: String?, walkScreenUp: Boolean): FetchedWayLanding = when {
+    walkScreenUp -> FetchedWayLanding.DROP
+    currentRoute == null || currentRoute in HOLDING_ROUTES -> FetchedWayLanding.WAIT
+    else -> FetchedWayLanding.PRESENT
+}
+
+private val HOLDING_ROUTES = setOf(
+    Routes.WELCOME,
+    Routes.PERMISSIONS,
+    Routes.BREATH,
+    Routes.HONOR_WAYS,
+    Routes.WALK_SUMMARY_PATTERN,
+)
+
+/**
+ * The app's end of a shared walk's import: a Way the import listed with
+ * no Ways sheet up to take it opens its overview here, and the walk screen
+ * opening drops an import still in flight, as iOS's `startWalk` does.
+ */
+@Composable
+private fun HonorImportLanding(
+    navController: NavHostController,
+    currentRoute: String?,
+    host: HonorImportHostViewModel = hiltViewModel(),
+) {
+    val fetched by host.fetched.collectAsState()
+    LaunchedEffect(fetched, currentRoute) {
+        val wayId = fetched ?: return@LaunchedEffect
+        when (fetchedWayLanding(currentRoute, walkScreenUp = navController.hasBackStackEntry(Routes.ACTIVE_WALK))) {
+            FetchedWayLanding.WAIT -> Unit
+            FetchedWayLanding.DROP -> host.consumeFetched(wayId)
+            FetchedWayLanding.PRESENT -> {
+                host.consumeFetched(wayId)
+                navController.openStoredWayOverview(wayId)
+            }
+        }
+    }
+    LaunchedEffect(currentRoute) {
+        if (currentRoute == Routes.ACTIVE_WALK) host.walkScreenOpened()
+    }
+}
+
+private fun NavController.hasBackStackEntry(route: String): Boolean = try {
+    getBackStackEntry(route)
+    true
+} catch (_: IllegalArgumentException) {
+    false
+}
 
 /**
  * The Ways sheet → "Walk again" picker → overview → walk screen chain
@@ -775,13 +894,14 @@ private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHo
             onOpenOwnWalks = {
                 navController.navigate(Routes.HONOR_OWN_WALKS) { launchSingleTop = true }
             },
+            onOpenOverview = navController::openStoredWayOverview,
         )
     }
     composable(Routes.HONOR_OWN_WALKS) {
         org.walktalkmeditate.pilgrim.ui.honor.OwnWalkPickerRoute(
             onClosed = { navController.popBackStack(Routes.HONOR_OWN_WALKS, inclusive = true) },
             onOpenOverview = { sourceWalkId ->
-                navController.navigate(Routes.honorOverview(sourceWalkId)) {
+                navController.navigate(Routes.honorOverview(HonorWayChoice.OwnWalk(sourceWalkId))) {
                     popUpTo(Routes.HONOR_WAYS) { inclusive = true }
                     launchSingleTop = true
                 }
@@ -790,9 +910,7 @@ private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHo
     }
     composable(
         route = Routes.HONOR_OVERVIEW_PATTERN,
-        arguments = listOf(
-            navArgument(HonorOverviewViewModel.ARG_SOURCE_WALK_ID) { type = NavType.LongType },
-        ),
+        arguments = honorOverviewArguments,
     ) {
         org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewScreen(
             onClose = navController::closeHonorOverview,
@@ -803,7 +921,7 @@ private fun androidx.navigation.NavGraphBuilder.honorRoutes(navController: NavHo
 
 /** "walk this again" built a Way: the overview takes the summary's place over its host (F §6.2). */
 internal fun NavController.openHonorOverviewFromSummary(sourceWalkId: Long) {
-    navigate(Routes.honorOverview(sourceWalkId)) {
+    navigate(Routes.honorOverview(HonorWayChoice.OwnWalk(sourceWalkId))) {
         popUpTo(Routes.WALK_SUMMARY_PATTERN) { inclusive = true }
         launchSingleTop = true
     }
@@ -814,9 +932,23 @@ internal fun NavController.closeHonorOverview() {
     popBackStack(Routes.HONOR_OVERVIEW_PATTERN, inclusive = true)
 }
 
+/**
+ * A listed Way's overview, from its "Shared with you" row or a finished
+ * import: it takes the place of the Ways sheet (and the picker over it),
+ * or of an overview already up, as iOS swaps the overview's Way (S1 §8.16);
+ * anywhere else it opens over the screen showing.
+ */
+internal fun NavController.openStoredWayOverview(wayId: String) {
+    val replaces = listOf(Routes.HONOR_WAYS, Routes.HONOR_OVERVIEW_PATTERN).firstOrNull(::hasBackStackEntry)
+    navigate(Routes.honorOverview(HonorWayChoice.Stored(wayId))) {
+        replaces?.let { popUpTo(it) { inclusive = true } }
+        launchSingleTop = true
+    }
+}
+
 /** Begin takes the overview's place with the walk screen, before its Start (spec correction 1). */
-internal fun NavController.beginHonorWalk(sourceWalkId: Long) {
-    navigate(Routes.activeWalk(WalkMode.Honor, sourceWalkId)) {
+internal fun NavController.beginHonorWalk(way: HonorWayChoice) {
+    navigate(Routes.activeWalk(WalkMode.Honor, way)) {
         popUpTo(Routes.HONOR_OVERVIEW_PATTERN) { inclusive = true }
         launchSingleTop = true
     }

@@ -16,21 +16,23 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.HonorStart
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
 
 /**
- * The walk screen's Start on an honor walk of one of the walker's own
- * walks (plan U17, parity spec correction 1: iOS's overview Begin only
- * navigates, and the walk starts at Start). It mints the new walk's uuid,
- * builds the own-walk Way from the source walk's rows, stages it under
- * that uuid, and starts the walk through the existing chain with the
- * uuid, the Way id, and the preferences frozen for the walk. iOS builds
- * nothing here and stages nothing (`startRecording`, D §3.1); the uuid
- * and the staging are Android's, so `:tracker` can rebuild the session
- * from files and Room alone.
+ * The walk screen's Start on an honor walk (plan U17, parity spec
+ * correction 1: iOS's overview Begin only navigates, and the walk starts
+ * at Start). It mints the new walk's uuid and starts the walk through the
+ * existing chain with the uuid, the Way id, and the preferences frozen
+ * for the walk. An own walk's Way is built from the source walk's rows
+ * and staged under that uuid; a shared Way is read back from the store,
+ * where it has been listed since its acceptance, and staged nowhere. iOS
+ * builds nothing here and stages nothing (`startRecording`, D §3.1); the
+ * uuid and the staging are Android's, so `:tracker` can rebuild the
+ * session from files and Room alone.
  *
  * A staging write that fails refuses the start. A start that fails after
  * staging (the tracker's 5 s wait, or its refusal) leaves the staging for
@@ -70,7 +72,7 @@ class BeginHonorWalk internal constructor(
 
     /** [settings] are the preferences read at Start: see [HonorSettings.atStart]. */
     data class Request(
-        val sourceWalkId: Long,
+        val way: HonorWayChoice,
         val intention: String?,
         val settings: HonorSettings,
     )
@@ -84,7 +86,7 @@ class BeginHonorWalk internal constructor(
         /** The release flag is off. */
         DISABLED,
 
-        /** The walk to honor is gone. */
+        /** The walk to honor is gone, or the listed Way is. */
         SOURCE_MISSING,
 
         /** Too little route to follow (iOS's nil build: fewer than 2 samples, under 20 m, or no uuid). */
@@ -99,22 +101,20 @@ class BeginHonorWalk internal constructor(
      */
     suspend operator fun invoke(request: Request): Result {
         if (!releaseFlags.honor) return Result.Refused(Refusal.DISABLED)
-        val way = when (val built = ownWalkWays.build(request.sourceWalkId)) {
-            is OwnWalkWays.Built.Ready -> built.way
-            OwnWalkWays.Built.SourceMissing -> return Result.Refused(Refusal.SOURCE_MISSING)
-            OwnWalkWays.Built.NotWalkable -> return Result.Refused(Refusal.NOT_WALKABLE)
+        val way = when (val choice = request.way) {
+            is HonorWayChoice.OwnWalk -> when (val built = ownWalkWays.build(choice.sourceWalkId)) {
+                is OwnWalkWays.Built.Ready -> built.way
+                OwnWalkWays.Built.SourceMissing -> return Result.Refused(Refusal.SOURCE_MISSING)
+                OwnWalkWays.Built.NotWalkable -> return Result.Refused(Refusal.NOT_WALKABLE)
+            }
+            // Listed since its acceptance, and `:tracker` reads a share from the store: nothing to stage.
+            is HonorWayChoice.Stored -> withContext(ioDispatcher) { wayStore.load(choice.wayId) }
+                ?: return Result.Refused(Refusal.SOURCE_MISSING)
         }
         val walkUuid = mintWalkUuid()
-        val staged = withContext(ioDispatcher) {
-            try {
-                wayStore.stage(walkUuid, way)
-                true
-            } catch (e: IOException) {
-                Log.w(TAG, "staging for an honor walk failed (${e::class.simpleName})")
-                false
-            }
+        if (request.way is HonorWayChoice.OwnWalk && !stage(walkUuid, way)) {
+            return Result.Refused(Refusal.STAGING_FAILED)
         }
-        if (!staged) return Result.Refused(Refusal.STAGING_FAILED)
         val walk = walkController.startWalk(
             WalkStartRequest(
                 intention = request.intention,
@@ -124,6 +124,16 @@ class BeginHonorWalk internal constructor(
             ),
         )
         return Result.Started(walk)
+    }
+
+    private suspend fun stage(walkUuid: String, way: Way): Boolean = withContext(ioDispatcher) {
+        try {
+            wayStore.stage(walkUuid, way)
+            true
+        } catch (e: IOException) {
+            Log.w(TAG, "staging for an honor walk failed (${e::class.simpleName})")
+            false
+        }
     }
 
     private companion object {

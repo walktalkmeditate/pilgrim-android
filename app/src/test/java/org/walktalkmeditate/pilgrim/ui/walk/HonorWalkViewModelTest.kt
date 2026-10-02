@@ -75,6 +75,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.ui.honor.CARD_RETIRE_MILLIS
@@ -151,16 +152,38 @@ class HonorWalkViewModelTest {
         val sourceId = insertSourceWalk()
         val vm = viewModel()
 
-        vm.showWay(sourceId)
+        vm.showWay(HonorWayChoice.OwnWalk(sourceId))
         val state = vm.state.awaitValue { it != null }!!
 
         assertEquals("walk:$SOURCE_UUID" to listOf("waypoint-1"), state.line.wayId to state.pins.map { it.momentId })
     }
 
     @Test
+    fun `before Start the pre-walk screen draws a listed shared Way, read from the store`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = viewModel()
+
+        vm.showWay(HonorWayChoice.Stored(SHARE_WAY_ID))
+        val state = vm.state.awaitValue { it != null }!!
+
+        assertEquals(SHARE_WAY_ID to listOf("voice-1", "photo-1"), state.line.wayId to state.pins.map { it.momentId })
+        assertNull(state.session)
+    }
+
+    @Test
+    fun `a listed Way gone from the store draws nothing before Start`() = runTest(dispatcher) {
+        val vm = viewModel()
+        backgroundScope.launch { vm.state.collect {} }
+
+        vm.showWay(HonorWayChoice.Stored(SHARE_WAY_ID))
+
+        assertNull(vm.state.value)
+    }
+
+    @Test
     fun `before Start there is no session, so no companion stands on the Way`() = runTest(dispatcher) {
         val vm = viewModel()
-        vm.showWay(insertSourceWalk())
+        vm.showWay(HonorWayChoice.OwnWalk(insertSourceWalk()))
         backgroundScope.launch { vm.companion.collect {} }
 
         assertEquals(null to null, vm.state.awaitValue { it != null }!!.session to vm.companion.value)
@@ -169,7 +192,7 @@ class HonorWalkViewModelTest {
     @Test
     fun `a pin tapped before Start opens nothing`() = runTest(dispatcher) {
         val vm = viewModel()
-        vm.showWay(insertSourceWalk())
+        vm.showWay(HonorWayChoice.OwnWalk(insertSourceWalk()))
         backgroundScope.launch { vm.state.collect {} }
         collectCards(vm)
         vm.state.awaitValue { it != null }
@@ -408,7 +431,7 @@ class HonorWalkViewModelTest {
     fun `with the release flag off the walk screen has no Way`() = runTest(dispatcher) {
         startLiveWalk()
         val vm = viewModel(honorEnabled = false)
-        vm.showWay(insertSourceWalk())
+        vm.showWay(HonorWayChoice.OwnWalk(insertSourceWalk()))
         backgroundScope.launch { vm.state.collect {} }
         backgroundScope.launch { vm.companion.collect {} }
         stepOneSecond()
@@ -865,7 +888,7 @@ class HonorWalkViewModelTest {
     @Test
     fun `before Start the honor walk's Remaining is unknown`() = runTest(dispatcher) {
         val vm = viewModel()
-        vm.showWay(insertSourceWalk())
+        vm.showWay(HonorWayChoice.OwnWalk(insertSourceWalk()))
         collectCards(vm)
 
         val sheet = vm.sheet.awaitValue { it != null }!!
