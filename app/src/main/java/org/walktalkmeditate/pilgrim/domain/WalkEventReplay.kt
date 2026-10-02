@@ -51,6 +51,8 @@ fun replayWalkEventTotals(
             WalkEventType.WAYPOINT_MARKED,
             WalkEventType.SEEK_MODE,
             WalkEventType.SEEK_ARRIVAL,
+            WalkEventType.HONOR_MODE,
+            WalkEventType.HONOR_ARRIVAL,
             WalkEventType.UNKNOWN,
             -> Unit
         }
@@ -82,7 +84,8 @@ interface WalkEventLike {
  * stay ordinary Room rows (no mode column); a seek is recognized by
  * the single SEEK_MODE marker the reducer writes at start. Shared by
  * both controllers' restore/derivation paths so the two processes can
- * never disagree about a walk's mode.
+ * never disagree about a walk's mode. A HONOR_MODE marker reads as
+ * Wander: Android has no Honor mode yet.
  */
 fun walkModeFromEvents(events: List<WalkEventLike>): WalkMode =
     if (events.any { it.type == WalkEventType.SEEK_MODE }) WalkMode.Seek else WalkMode.Wander

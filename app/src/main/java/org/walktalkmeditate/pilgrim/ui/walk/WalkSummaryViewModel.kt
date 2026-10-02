@@ -71,6 +71,7 @@ import org.walktalkmeditate.pilgrim.data.photo.PhotoAnalysisScheduler
 import org.walktalkmeditate.pilgrim.di.PersistenceScope
 import org.walktalkmeditate.pilgrim.data.walk.RouteSegment
 import org.walktalkmeditate.pilgrim.data.walk.WalkMapAnnotation
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
 import org.walktalkmeditate.pilgrim.data.walk.computeAscend
 import org.walktalkmeditate.pilgrim.data.walk.computeRouteSegments
 import org.walktalkmeditate.pilgrim.data.walk.computeWalkMapAnnotations
@@ -166,9 +167,8 @@ data class WalkSummary(
      */
     val voiceRecordings: List<VoiceRecording> = emptyList(),
     /**
-     * Stage 13-C: meditation intervals only — `activityIntervalsFor`
-     * filtered to [ActivityType.MEDITATING] in the VM so consumers don't
-     * each repeat the filter. Talk segments come from [voiceRecordings];
+     * Stage 13-C: the walk's sittings, derived from its events by
+     * `deriveActivityIntervals`. Talk segments come from [voiceRecordings];
      * walking is implicit (the bar's background fill).
      */
     val meditationIntervals: List<ActivityInterval> = emptyList(),
@@ -1785,8 +1785,12 @@ class WalkSummaryViewModel @Inject constructor(
         // events, so the replay would otherwise undercount pause and
         // meditation time (and overcount active walking).
         val totals = replayWalkEventTotals(events = events, closeAt = walk.endTimestamp)
+        // The clamped total the cache, export, and share payload carry
+        // (iOS's summary reads the clamped `walk.meditateDuration`), so
+        // every surface shows one number for the same walk.
+        val meditatedMillis = WalkMetricsMath.computeMeditationSeconds(walk, events) * 1_000L
         val totalElapsed = (walk.endTimestamp ?: walk.startTimestamp) - walk.startTimestamp
-        val activeWalking = (totalElapsed - totals.totalPausedMillis - totals.totalMeditatedMillis)
+        val activeWalking = (totalElapsed - totals.totalPausedMillis - meditatedMillis)
             .coerceAtLeast(0)
 
         val distanceKm = distance / 1_000.0
@@ -1827,7 +1831,7 @@ class WalkSummaryViewModel @Inject constructor(
         // per row. Same N+1 cost as `GoshuinViewModel`; acceptable
         // here because milestone detection is a once-per-summary-load
         // computation, not a hot path.
-        val milestone = detectMilestoneFor(walk, distance, totals.totalMeditatedMillis)
+        val milestone = detectMilestoneFor(walk, distance, meditatedMillis)
 
         // Stage 6-B: compute Light Reading. Pure, deterministic from
         // walkId + startedAt + first GPS location. `runCatching` is
@@ -1864,13 +1868,10 @@ class WalkSummaryViewModel @Inject constructor(
         // both the route-segments classifier (top-level field) and the
         // etegami spec consume it.
         //
-        // `activity_intervals` has no production writer
-        // (WalkRepository.recordActivityInterval has zero callers) — the
-        // table is always empty, so this reconstructs MEDITATING
-        // intervals from the same event log `totals` above already
-        // replayed, closing a dangling MEDITATION_START at the walk's
-        // end timestamp exactly like `replayWalkEventTotals` does for
-        // the aggregate. See deriveActivityIntervals.
+        // Sittings come from the walk's event log, never
+        // `activity_intervals` (#223), closing a dangling
+        // MEDITATION_START at the walk's end timestamp. See
+        // deriveActivityIntervals.
         val voiceRecordings = repository.voiceRecordingsFor(walkId)
         val altitudeSamples = repository.altitudeSamplesFor(walkId)
         val activityIntervals = deriveActivityIntervals(
@@ -2030,7 +2031,7 @@ class WalkSummaryViewModel @Inject constructor(
             // freshly-finished walk (WalkMetricsCache races the same
             // WalkState.Finished transition that opens this screen).
             // See same pattern in detectMilestoneFor above.
-            currentMeditationSeconds = totals.totalMeditatedMillis / 1_000L,
+            currentMeditationSeconds = meditatedMillis / 1_000L,
             pastWalksMaxDistance = pastFinished.maxOfOrNull { it.distanceMeters ?: 0.0 } ?: 0.0,
             pastWalksMaxMeditation = pastFinished.maxOfOrNull { it.meditationSeconds ?: 0L } ?: 0L,
             pastWalksDistanceSum = pastFinished.sumOf { it.distanceMeters ?: 0.0 },
@@ -2044,7 +2045,7 @@ class WalkSummaryViewModel @Inject constructor(
                 totalElapsedMillis = totalElapsed,
                 activeWalkingMillis = activeWalking,
                 totalPausedMillis = totals.totalPausedMillis,
-                totalMeditatedMillis = totals.totalMeditatedMillis,
+                totalMeditatedMillis = meditatedMillis,
                 distanceMeters = distance,
                 paceSecondsPerKm = pace,
                 waypointCount = waypoints.size,
@@ -2111,8 +2112,8 @@ class WalkSummaryViewModel @Inject constructor(
             } else {
                 walk.distanceMeters ?: 0.0
             }
-            // For the current walk, use the live event-replay total
-            // (totals.totalMeditatedMillis) — Walk.meditationSeconds is
+            // For the current walk, use the live clamped total
+            // (meditatedMillis in buildState) — Walk.meditationSeconds is
             // populated by WalkMetricsCache asynchronously after Finish,
             // and Walk Summary opens via the same WalkState.Finished
             // transition. Without the live read, freshly-finished walks

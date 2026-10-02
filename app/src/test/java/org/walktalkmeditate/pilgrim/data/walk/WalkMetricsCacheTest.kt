@@ -71,6 +71,50 @@ class WalkMetricsCacheTest {
         db.routeDataSampleDao().insert(routeSample(id, t = 0L, lat = 0.0, lng = 0.0))
         db.routeDataSampleDao().insert(routeSample(id, t = 60_000L, lat = 0.0, lng = 0.001))
         db.routeDataSampleDao().insert(routeSample(id, t = 120_000L, lat = 0.0, lng = 0.002))
+        sitting(id, start = 60_000L, end = 360_000L)
+
+        cache.computeAndPersist(id)
+
+        val w = walkDao.getById(id)!!
+        assertNotNull(w.distanceMeters)
+        assertTrue("expected ~222m, got ${w.distanceMeters}", w.distanceMeters!! in 200.0..240.0)
+        assertEquals(300L, w.meditationSeconds)
+    }
+
+    @Test
+    fun computeAndPersist_neverOverwritesCachesFilledSinceItStarted() = runTest {
+        // An archive strip fills a walk's caches from its children, then
+        // deletes them. A backfill pass that computed from the emptied walk
+        // must not replace those stats with zeros.
+        val id = walkDao.insert(
+            Walk(startTimestamp = 0L, endTimestamp = 30 * 60_000L, distanceMeters = 5_000.0, meditationSeconds = 600L),
+        )
+
+        cache.computeAndPersist(id)
+
+        val w = walkDao.getById(id)!!
+        assertEquals(5_000.0, w.distanceMeters!!, 0.0)
+        assertEquals(600L, w.meditationSeconds)
+    }
+
+    @Test
+    fun nativeWalkWithOnlyMeditationEvents_cachesItsSitting() = runTest {
+        // #223: native walks record sittings only as events. The cache
+        // used to sum the (empty) activity_intervals table and store 0.
+        val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 20 * 60_000L))
+        sitting(id, start = 2 * 60_000L, end = 7 * 60_000L)
+        sitting(id, start = 10 * 60_000L, end = 11 * 60_000L)
+
+        cache.computeAndPersist(id)
+
+        assertEquals(6 * 60L, walkDao.getById(id)!!.meditationSeconds)
+    }
+
+    @Test
+    fun meditatingRowsInActivityIntervals_areNotASittingSource() = runTest {
+        // walk_events is the only source; MIGRATION_8_9 turned every
+        // pre-9 MEDITATING row into events, so a row alone counts nothing.
+        val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 30 * 60_000L))
         db.activityIntervalDao().insert(
             ActivityInterval(
                 walkId = id,
@@ -82,10 +126,19 @@ class WalkMetricsCacheTest {
 
         cache.computeAndPersist(id)
 
-        val w = walkDao.getById(id)!!
-        assertNotNull(w.distanceMeters)
-        assertTrue("expected ~222m, got ${w.distanceMeters}", w.distanceMeters!! in 200.0..240.0)
-        assertEquals(300L, w.meditationSeconds)
+        assertEquals(0L, walkDao.getById(id)!!.meditationSeconds)
+    }
+
+    @Test
+    fun sittingFinishedMidMeditation_closesAtWalkEnd() = runTest {
+        // The reducer writes no MEDITATION_END when the walk finishes
+        // mid-sitting; the cache must still count the final stretch.
+        val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 10 * 60_000L))
+        walkEventDao.insert(WalkEvent(walkId = id, timestamp = 7 * 60_000L, eventType = WalkEventType.MEDITATION_START))
+
+        cache.computeAndPersist(id)
+
+        assertEquals(3 * 60L, walkDao.getById(id)!!.meditationSeconds)
     }
 
     @Test
@@ -102,16 +155,9 @@ class WalkMetricsCacheTest {
     @Test
     fun computeMeditation_clampsToActiveDurationFromPauseEvents() = runTest {
         // 30-minute walk; user paused at 10min, resumed at 22min (12-min pause).
-        // Active duration = 18 minutes. Corruption: meditation interval claims 50 minutes.
+        // Active duration = 18 minutes. Corruption: the sitting claims 50 minutes.
         val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 30 * 60_000L))
-        db.activityIntervalDao().insert(
-            ActivityInterval(
-                walkId = id,
-                activityType = ActivityType.MEDITATING,
-                startTimestamp = 0L,
-                endTimestamp = 50 * 60_000L,
-            ),
-        )
+        sitting(id, start = 0L, end = 50 * 60_000L)
         walkEventDao.insert(
             WalkEvent(walkId = id, timestamp = 10 * 60_000L, eventType = WalkEventType.PAUSED),
         )
@@ -130,14 +176,7 @@ class WalkMetricsCacheTest {
         // Walk paused 10min in, never resumed; ended at 20min.
         // Active = 10 min; pause closed at endTimestamp.
         val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 20 * 60_000L))
-        db.activityIntervalDao().insert(
-            ActivityInterval(
-                walkId = id,
-                activityType = ActivityType.MEDITATING,
-                startTimestamp = 0L,
-                endTimestamp = 30 * 60_000L,
-            ),
-        )
+        sitting(id, start = 0L, end = 30 * 60_000L)
         walkEventDao.insert(
             WalkEvent(walkId = id, timestamp = 10 * 60_000L, eventType = WalkEventType.PAUSED),
         )
@@ -154,14 +193,7 @@ class WalkMetricsCacheTest {
         // leave NULL — the cache row is the one source of truth for
         // downstream consumers.
         val id = walkDao.insert(Walk(startTimestamp = 1_000L, endTimestamp = 1_000L))
-        db.activityIntervalDao().insert(
-            ActivityInterval(
-                walkId = id,
-                activityType = ActivityType.MEDITATING,
-                startTimestamp = 1_000L,
-                endTimestamp = 1_000L,
-            ),
-        )
+        sitting(id, start = 1_000L, end = 1_000L)
 
         cache.computeAndPersist(id)
 
@@ -170,23 +202,21 @@ class WalkMetricsCacheTest {
     }
 
     @Test
-    fun reversedMeditationIntervalCoercedToZero() = runTest {
-        // Corrupted interval (end < start) would otherwise compute a
-        // negative span. The per-interval coerceAtLeast(0L) clamps it
-        // to zero so the meditation total never goes negative.
-        val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 600_000L))
-        db.activityIntervalDao().insert(
-            ActivityInterval(
-                walkId = id,
-                activityType = ActivityType.MEDITATING,
-                startTimestamp = 400_000L,
-                endTimestamp = 300_000L,
-            ),
-        )
+    fun overlappingSittings_countTheirUnionOnce() = runTest {
+        // Two overlapping sittings (an imported package's activities):
+        // [1, 6] min and [4, 9] min merge to [1, 9] = 8 min, not 10.
+        val id = walkDao.insert(Walk(startTimestamp = 0L, endTimestamp = 20 * 60_000L))
+        sitting(id, start = 60_000L, end = 6 * 60_000L)
+        sitting(id, start = 4 * 60_000L, end = 9 * 60_000L)
 
         cache.computeAndPersist(id)
 
-        assertEquals(0L, walkDao.getById(id)!!.meditationSeconds)
+        assertEquals(8 * 60L, walkDao.getById(id)!!.meditationSeconds)
+    }
+
+    private suspend fun sitting(walkId: Long, start: Long, end: Long) {
+        walkEventDao.insert(WalkEvent(walkId = walkId, timestamp = start, eventType = WalkEventType.MEDITATION_START))
+        walkEventDao.insert(WalkEvent(walkId = walkId, timestamp = end, eventType = WalkEventType.MEDITATION_END))
     }
 
     private fun routeSample(walkId: Long, t: Long, lat: Double, lng: Double) = RouteDataSample(

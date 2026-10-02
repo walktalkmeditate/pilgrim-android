@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import java.util.UUID
 import org.walktalkmeditate.pilgrim.data.dao.ActivityIntervalDao
 import org.walktalkmeditate.pilgrim.data.dao.AltitudeSampleDao
 import org.walktalkmeditate.pilgrim.data.dao.RouteDataSampleDao
@@ -35,7 +36,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
         VoiceRecording::class,
         WalkPhoto::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -187,5 +188,94 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `walk_photos` ADD COLUMN `captured_lng` REAL")
             }
         }
+
+        /**
+         * #223 data-only repair: `walk_events` becomes the one source of
+         * sittings. The schema is unchanged (9's identity hash equals 8's).
+         *
+         * 1. Walks imported from iOS before v9 hold their sittings only as
+         *    `'MEDITATING'` rows in `activity_intervals`. Each such walk
+         *    with no meditation event gains a `'MEDITATION_START'` at the
+         *    row's start and a `'MEDITATION_END'` at its end. A row whose
+         *    end isn't after its start adds nothing, and `'WALKING'` /
+         *    `'TALKING'` rows are never read, so no sitting is invented.
+         *    Every target row is read before the first insert: a check run
+         *    per insert would see its own new START and skip the END.
+         * 2. Every finished walk with meditation events or MEDITATING rows
+         *    gets its cached `meditation_seconds` nulled. Native walks
+         *    cached 0 (the cache summed the empty interval table), and
+         *    [org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator]
+         *    only fills NULLs, so this is what makes it recompute them.
+         *
+         * Idempotent: a second run finds no target walk (they now have
+         * events) and only re-nulls values the backfill recomputes to the
+         * same number. Enum names are literals on purpose: they are what
+         * v9 stores, whatever the Kotlin enums later become.
+         *
+         * No manual transaction wrapper — Room wraps `migrate()` in one.
+         */
+        val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val sittings = mutableListOf<Triple<Long, Long, Long>>()
+                db.query(SELECT_SITTINGS_WITHOUT_EVENTS_SQL).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        sittings += Triple(cursor.getLong(0), cursor.getLong(1), cursor.getLong(2))
+                    }
+                }
+                for ((walkId, start, end) in sittings) {
+                    db.execSQL(
+                        INSERT_EVENT_SQL,
+                        arrayOf<Any>(UUID.randomUUID().toString(), walkId, start, "MEDITATION_START"),
+                    )
+                    db.execSQL(
+                        INSERT_EVENT_SQL,
+                        arrayOf<Any>(UUID.randomUUID().toString(), walkId, end, "MEDITATION_END"),
+                    )
+                }
+                db.execSQL(NULL_MEDITATION_CACHE_SQL)
+            }
+        }
+
+        private const val SELECT_SITTINGS_WITHOUT_EVENTS_SQL =
+            "SELECT `ai`.`walk_id`, `ai`.`start_timestamp`, `ai`.`end_timestamp` " +
+                "FROM `activity_intervals` AS `ai` " +
+                "WHERE `ai`.`activity_type` = 'MEDITATING' " +
+                "AND `ai`.`end_timestamp` > `ai`.`start_timestamp` " +
+                "AND NOT EXISTS (SELECT 1 FROM `walk_events` AS `e` " +
+                "WHERE `e`.`walk_id` = `ai`.`walk_id` " +
+                "AND `e`.`event_type` IN ('MEDITATION_START', 'MEDITATION_END')) " +
+                "ORDER BY `ai`.`walk_id`, `ai`.`start_timestamp`"
+
+        private const val INSERT_EVENT_SQL =
+            "INSERT INTO `walk_events` (`uuid`, `walk_id`, `timestamp`, `event_type`) " +
+                "VALUES (?, ?, ?, ?)"
+
+        private const val NULL_MEDITATION_CACHE_SQL =
+            "UPDATE `walks` SET `meditation_seconds` = NULL " +
+                "WHERE `end_timestamp` IS NOT NULL " +
+                "AND (EXISTS (SELECT 1 FROM `walk_events` AS `e` " +
+                "WHERE `e`.`walk_id` = `walks`.`id` " +
+                "AND `e`.`event_type` IN ('MEDITATION_START', 'MEDITATION_END')) " +
+                "OR EXISTS (SELECT 1 FROM `activity_intervals` AS `ai` " +
+                "WHERE `ai`.`walk_id` = `walks`.`id` " +
+                "AND `ai`.`activity_type` = 'MEDITATING'))"
+
+        /**
+         * Every manual migration, in order — the one list the production
+         * builder ([org.walktalkmeditate.pilgrim.di.DatabaseModule]) and the
+         * migration tests register. 1→2 is the AutoMigration declared on
+         * [Database]. A getter, so a migration declared below this line
+         * can never be captured before it is initialized.
+         */
+        val MIGRATIONS: Array<Migration>
+            get() = arrayOf(
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+                MIGRATION_6_7,
+                MIGRATION_7_8,
+                MIGRATION_8_9,
+            )
     }
 }

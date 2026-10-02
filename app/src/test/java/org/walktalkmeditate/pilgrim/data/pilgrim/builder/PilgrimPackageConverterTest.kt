@@ -17,8 +17,10 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.pilgrim.GeoJsonCoordinates
 import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.honor.HonorPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 
 class PilgrimPackageConverterTest {
@@ -36,9 +38,11 @@ class PilgrimPackageConverterTest {
                 AltitudeSample(walkId = 1, timestamp = 1_000, altitudeMeters = 100.0),
                 AltitudeSample(walkId = 1, timestamp = 60_000, altitudeMeters = 110.0),
             ),
-            walkEvents = emptyList(),
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 100_000, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 1, timestamp = 700_000, eventType = WalkEventType.MEDITATION_END),
+            ),
             activityIntervals = listOf(
-                ActivityInterval(walkId = 1, startTimestamp = 100_000, endTimestamp = 700_000, activityType = ActivityType.MEDITATING),
                 ActivityInterval(walkId = 1, startTimestamp = 700_000, endTimestamp = 800_000, activityType = ActivityType.TALKING),
             ),
             waypoints = emptyList(),
@@ -346,13 +350,9 @@ class PilgrimPackageConverterTest {
             sample(walkId = 1, timestamp = 60_000L, lat = 0.0, lng = 0.001),
             sample(walkId = 1, timestamp = 120_000L, lat = 0.0, lng = 0.002),
         )
-        val intervals = listOf(
-            ActivityInterval(
-                walkId = 1,
-                startTimestamp = 60_000L,
-                endTimestamp = 360_000L,
-                activityType = ActivityType.MEDITATING,
-            ),
+        val sittingEvents = listOf(
+            WalkEvent(walkId = 1, timestamp = 60_000L, eventType = WalkEventType.MEDITATION_START),
+            WalkEvent(walkId = 1, timestamp = 360_000L, eventType = WalkEventType.MEDITATION_END),
         )
         val liveDistance = WalkDistanceCalculator.computeDistanceMeters(routeSamples)
 
@@ -360,8 +360,8 @@ class PilgrimPackageConverterTest {
             walk = baseWalk.copy(distanceMeters = liveDistance, meditationSeconds = 300L),
             routeSamples = routeSamples,
             altitudeSamples = emptyList(),
-            walkEvents = emptyList(),
-            activityIntervals = intervals,
+            walkEvents = sittingEvents,
+            activityIntervals = emptyList(),
             waypoints = emptyList(),
             voiceRecordings = emptyList(),
             walkPhotos = emptyList(),
@@ -384,31 +384,25 @@ class PilgrimPackageConverterTest {
     @Test
     fun `export corrupt meditation clamped regardless of cache state`() {
         // 30-min walk with a 12-min pause via PAUSED/RESUMED → activeDuration = 18min = 1080s.
-        // Corrupt 50-min MEDITATING interval. Both paths must clamp to 1080s.
+        // Corrupt 50-min sitting. Both paths must clamp to 1080s.
         val walk = Walk(
             id = 1,
             uuid = UUID.randomUUID().toString(),
             startTimestamp = 0L,
             endTimestamp = 30 * 60_000L,
         )
-        val intervals = listOf(
-            ActivityInterval(
-                walkId = 1,
-                startTimestamp = 0L,
-                endTimestamp = 50 * 60_000L,
-                activityType = ActivityType.MEDITATING,
-            ),
-        )
         val events = listOf(
+            WalkEvent(walkId = 1, timestamp = 0L, eventType = WalkEventType.MEDITATION_START),
             WalkEvent(walkId = 1, timestamp = 5 * 60_000L, eventType = WalkEventType.PAUSED),
             WalkEvent(walkId = 1, timestamp = 17 * 60_000L, eventType = WalkEventType.RESUMED),
+            WalkEvent(walkId = 1, timestamp = 50 * 60_000L, eventType = WalkEventType.MEDITATION_END),
         )
         val baseBundle = WalkExportBundle(
             walk = walk,
             routeSamples = emptyList(),
             altitudeSamples = emptyList(),
             walkEvents = events,
-            activityIntervals = intervals,
+            activityIntervals = emptyList(),
             waypoints = emptyList(),
             voiceRecordings = emptyList(),
             walkPhotos = emptyList(),
@@ -523,19 +517,145 @@ class PilgrimPackageConverterTest {
     }
 
     @Test
-    fun `convertToImport meditation activity maps to MEDITATING domain enum`() {
+    fun `convertToImport turns a meditation activity into a START and END event pair`() {
+        val pilgrimWalk = synthesizePilgrimWalk(
+            activities = listOf(activity("meditation", 10_000, 70_000)),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertTrue("a sitting is never stored as a MEDITATING row", pending.activityIntervals.isEmpty())
+        assertEquals(
+            listOf(WalkEventType.MEDITATION_START to 10_000L, WalkEventType.MEDITATION_END to 70_000L),
+            pending.walkEvents.map { it.eventType to it.timestamp },
+        )
+    }
+
+    @Test
+    fun `convertToImport keeps every other activity as a WALKING row`() {
         val pilgrimWalk = synthesizePilgrimWalk(
             activities = listOf(
-                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity(
-                    type = "meditation",
-                    startDate = Instant.ofEpochMilli(10_000),
-                    endDate = Instant.ofEpochMilli(70_000),
+                activity("unknown", 5_000, 9_000),
+                activity("meditation", 10_000, 70_000),
+                activity("someFutureType", 80_000, 90_000),
+            ),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertEquals(
+            listOf(
+                Triple(ActivityType.WALKING, 5_000L, 9_000L),
+                Triple(ActivityType.WALKING, 80_000L, 90_000L),
+            ),
+            pending.activityIntervals.map { Triple(it.activityType, it.startTimestamp, it.endTimestamp) },
+        )
+        assertEquals(2, pending.walkEvents.size)
+    }
+
+    @Test
+    fun `convertToImport drops a meditation activity that does not end after it starts`() {
+        // It contributes nothing, and a lone START would read as a sitting
+        // left open until the walk's end.
+        val pilgrimWalk = synthesizePilgrimWalk(
+            activities = listOf(activity("meditation", 20_000, 20_000), activity("meditation", 40_000, 30_000)),
+        )
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertTrue(pending.walkEvents.isEmpty())
+        assertTrue(pending.activityIntervals.isEmpty())
+    }
+
+    @Test
+    fun `convertToImport leaves the meditation cache for the backfill to recompute`() {
+        // iOS stores stats.meditateDuration verbatim; Android recomputes it
+        // from the sitting events so every surface reads one source.
+        val pilgrimWalk = synthesizePilgrimWalk(activities = listOf(activity("meditation", 10_000, 70_000)))
+            .let { it.copy(stats = it.stats.copy(meditateDuration = 999.0)) }
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        assertNull(pending.walk.meditationSeconds)
+    }
+
+    @Test
+    fun `a package without activities imports no sittings and no invented events`() {
+        // Android 1.5.0 and earlier exported `activities: []` for native
+        // walks (#223), with only pauses and seek events.
+        val pilgrimWalk = synthesizePilgrimWalk(
+            pauses = listOf(
+                org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPause(
+                    startDate = Instant.ofEpochMilli(20_000),
+                    endDate = Instant.ofEpochMilli(30_000),
+                    type = "manual",
                 ),
             ),
         )
         val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
-        assertEquals(1, pending.activityIntervals.size)
-        assertEquals(ActivityType.MEDITATING, pending.activityIntervals[0].activityType)
+        assertEquals(listOf(WalkEventType.PAUSED, WalkEventType.RESUMED), pending.walkEvents.map { it.eventType })
+        assertTrue(pending.activityIntervals.isEmpty())
+        assertTrue(deriveActivityIntervals(pending.walkEvents, walkId = 0L, closeAt = 100_000L).isEmpty())
+    }
+
+    // MARK: - #223: sittings export from walk_events
+
+    @Test
+    fun `a native walk's sitting exports in activities and in the meditation total`() {
+        // Before #223 both were empty: export read the activity_intervals
+        // table, which native walks never write.
+        val bundle = emptyBundle().copy(
+            walk = Walk(id = 1, uuid = UUID.randomUUID().toString(), startTimestamp = 0, endTimestamp = 600_000),
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 60_000, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 1, timestamp = 360_000, eventType = WalkEventType.MEDITATION_END),
+                WalkEvent(walkId = 1, timestamp = 500_000, eventType = WalkEventType.MEDITATION_START),
+            ),
+        )
+        val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertEquals(
+            listOf(
+                Triple("meditation", 60_000L, 360_000L),
+                Triple("meditation", 500_000L, 600_000L),
+            ),
+            walk.activities.map { Triple(it.type, it.startDate.toEpochMilli(), it.endDate.toEpochMilli()) },
+        )
+        assertEquals(400.0, walk.stats.meditateDuration, 0.0)
+    }
+
+    @Test
+    fun `MEDITATING rows left in activity_intervals never export a second copy`() {
+        val bundle = emptyBundle().copy(
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 10_000, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 1, timestamp = 40_000, eventType = WalkEventType.MEDITATION_END),
+            ),
+            activityIntervals = listOf(
+                ActivityInterval(walkId = 1, startTimestamp = 10_000, endTimestamp = 40_000, activityType = ActivityType.MEDITATING),
+                ActivityInterval(walkId = 1, startTimestamp = 50_000, endTimestamp = 60_000, activityType = ActivityType.WALKING),
+            ),
+        )
+        val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertEquals(listOf("meditation", "unknown"), walk.activities.map { it.type })
+        assertEquals(30.0, walk.stats.meditateDuration, 0.0)
+    }
+
+    @Test
+    fun `an iOS walk's activities round-trip through import and export unchanged`() {
+        val iosActivities = listOf(
+            activity("unknown", 2_000, 9_000),
+            activity("meditation", 10_000, 40_000),
+            activity("unknown", 45_000, 50_000),
+            activity("meditation", 60_000, 90_000),
+        )
+        val exported = roundTrip(synthesizePilgrimWalk(activities = iosActivities))
+        assertEquals(iosActivities, exported.activities)
+        assertEquals(60.0, exported.stats.meditateDuration, 0.0)
+    }
+
+    @Test
+    fun `overlapping imported sittings merge into one on the round trip`() {
+        // iOS sums overlaps before its clamp; Android's single source
+        // counts their union (a recorded gate row, not a defect).
+        val exported = roundTrip(
+            synthesizePilgrimWalk(
+                activities = listOf(activity("meditation", 10_000, 40_000), activity("meditation", 30_000, 60_000)),
+            ),
+        )
+        assertEquals(listOf(activity("meditation", 10_000, 60_000)), exported.activities)
+        assertEquals(50.0, exported.stats.meditateDuration, 0.0)
     }
 
     // MARK: - Seek persistence vocabulary (U4, iOS SeekPersistenceTests.swift@c1745e8)
@@ -582,6 +702,7 @@ class PilgrimPackageConverterTest {
         val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
         assertTrue(walk.workoutEvents.isEmpty())
         assertEquals(1, walk.pauses.size)
+        assertEquals(listOf("meditation"), walk.activities.map { it.type })
     }
 
     @Test
@@ -689,6 +810,135 @@ class PilgrimPackageConverterTest {
             ),
             pending.walkEvents.map { it.eventType to it.timestamp },
         )
+    }
+
+    // MARK: - Honor persistence vocabulary (iOS HonorPersistence.swift@7c200bf)
+
+    @Test
+    fun `honor events export with iOS wire identifiers verbatim`() {
+        val bundle = emptyBundle().copy(
+            walkEvents = listOf(
+                WalkEvent(walkId = 1, timestamp = 1_000, eventType = WalkEventType.HONOR_MODE),
+                WalkEvent(walkId = 1, timestamp = 90_000, eventType = WalkEventType.HONOR_ARRIVAL),
+            ),
+        )
+        val walk = PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+        assertEquals(listOf("honorMode", "honorArrival"), walk.workoutEvents.map { it.type })
+    }
+
+    @Test
+    fun `an iOS 2_0_0 honor walk re-exports honorMode, honorArrival, and the signpost waypoint`() {
+        // Covers AE6. Decoded from JSON exactly as an iOS 2.0.0 export
+        // writes it, imported, then exported again.
+        val iosJson = """
+            {
+              "schemaVersion": "1.0",
+              "id": "6F1C2D3E-0000-4000-8000-000000000001",
+              "type": "walking",
+              "startDate": 1759140000,
+              "endDate": 1759143600,
+              "stats": {
+                "distance": 4200.5, "activeDuration": 3600, "pauseDuration": 0,
+                "ascent": 12, "descent": 10, "talkDuration": 0, "meditateDuration": 0
+              },
+              "route": {
+                "type": "FeatureCollection",
+                "features": [
+                  {
+                    "type": "Feature",
+                    "geometry": { "type": "Point", "coordinates": [-8.5446, 42.8805] },
+                    "properties": {
+                      "markerType": "waypoint",
+                      "label": "Walked their way: Camino",
+                      "icon": "signpost.right.fill",
+                      "timestamp": 1759143500
+                    }
+                  }
+                ]
+              },
+              "pauses": [],
+              "activities": [],
+              "voiceRecordings": [],
+              "heartRates": [],
+              "workoutEvents": [
+                { "timestamp": 1759140000, "type": "honorMode" },
+                { "timestamp": 1759143500, "type": "honorArrival" }
+              ],
+              "isRace": false,
+              "isUserModified": false,
+              "finishedRecording": true
+            }
+        """.trimIndent()
+        val decoded = pilgrimJson.decodeFromString(
+            org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk.serializer(),
+            iosJson,
+        )
+
+        val pending = PilgrimPackageConverter.convertToImport(decoded)
+        assertEquals(
+            listOf(WalkEventType.HONOR_MODE, WalkEventType.HONOR_ARRIVAL),
+            pending.walkEvents.map { it.eventType },
+        )
+        val exported = roundTrip(decoded)
+
+        assertEquals(decoded.workoutEvents, exported.workoutEvents)
+        assertEquals(listOf("honorMode", "honorArrival"), exported.workoutEvents.map { it.type })
+        val waypoint = exported.route.features.single { it.geometry.type == "Point" }.properties
+        assertEquals(HonorPersistence.ARRIVAL_WAYPOINT_ICON, waypoint.icon)
+        assertEquals("Walked their way: Camino", waypoint.label)
+        assertEquals(Instant.ofEpochSecond(1_759_143_500), waypoint.timestamp)
+    }
+
+    @Test
+    fun `an unknown future event name imports as UNKNOWN and re-exports as unknown`() {
+        // iOS loses a name it doesn't know the same way
+        // (walkEventType(from:) default → .unknown → "unknown").
+        val exported = roundTrip(
+            synthesizePilgrimWalk(
+                workoutEvents = listOf(
+                    org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWorkoutEvent(
+                        timestamp = Instant.ofEpochMilli(5_000), type = "someFutureEvent",
+                    ),
+                ),
+            ),
+        )
+        assertEquals(listOf("unknown" to Instant.ofEpochMilli(5_000)), exported.workoutEvents.map { it.type to it.timestamp })
+    }
+
+    /**
+     * Import → Room-shaped rows → export, as a real re-export would see
+     * them (ids stamped, events in timestamp order like the DAO returns).
+     */
+    private fun roundTrip(
+        pilgrimWalk: org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk,
+    ): org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk {
+        val pending = PilgrimPackageConverter.convertToImport(pilgrimWalk)
+        val bundle = WalkExportBundle(
+            walk = pending.walk.copy(id = 7),
+            routeSamples = pending.routeSamples.map { it.copy(walkId = 7) },
+            altitudeSamples = emptyList(),
+            walkEvents = pending.walkEvents.map { it.copy(walkId = 7) },
+            activityIntervals = pending.activityIntervals.map { it.copy(walkId = 7) },
+            waypoints = pending.waypoints.map { it.copy(walkId = 7) },
+            voiceRecordings = emptyList(),
+            walkPhotos = emptyList(),
+        )
+        return PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+    }
+
+    private fun activity(type: String, startMs: Long, endMs: Long) =
+        org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity(
+            type = type,
+            startDate = Instant.ofEpochMilli(startMs),
+            endDate = Instant.ofEpochMilli(endMs),
+        )
+
+    // Same Json shape as PilgrimJsonModule.providePilgrimJson.
+    private val pilgrimJson = kotlinx.serialization.json.Json {
+        prettyPrint = true
+        encodeDefaults = false
+        explicitNulls = false
+        ignoreUnknownKeys = true
     }
 
     private fun synthesizePilgrimWalk(

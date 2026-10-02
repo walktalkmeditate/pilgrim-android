@@ -20,6 +20,10 @@ data class WalkExportBundle(
     val routeSamples: List<RouteDataSample>,
     val altitudeSamples: List<AltitudeSample>,
     val walkEvents: List<WalkEvent>,
+    /**
+     * The walk's `activity_intervals` rows. Only the non-MEDITATING ones
+     * are exported (as "unknown"); sittings come from [walkEvents].
+     */
     val activityIntervals: List<ActivityInterval>,
     val waypoints: List<Waypoint>,
     val voiceRecordings: List<VoiceRecording>,

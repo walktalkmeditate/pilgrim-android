@@ -77,6 +77,20 @@ interface WalkDao {
     )
     suspend fun updateAggregates(id: Long, distanceMeters: Double?, meditationSeconds: Long?)
 
+    /**
+     * [updateAggregates], but only while a cache column is still unset. The
+     * backfill computes from a walk's children outside any transaction; if
+     * an archive strip filled the caches and then deleted those children in
+     * between, this refuses the stale zeros instead of overwriting the only
+     * stats the walk has left.
+     */
+    @Query(
+        "UPDATE walks SET distance_meters = :distanceMeters, " +
+            "meditation_seconds = :meditationSeconds WHERE id = :id " +
+            "AND (distance_meters IS NULL OR meditation_seconds IS NULL)",
+    )
+    suspend fun updateAggregatesIfUncached(id: Long, distanceMeters: Double?, meditationSeconds: Long?)
+
     @Query(
         "UPDATE walks SET weather_condition = :condition, " +
             "weather_temperature = :temperature, weather_humidity = :humidity, " +

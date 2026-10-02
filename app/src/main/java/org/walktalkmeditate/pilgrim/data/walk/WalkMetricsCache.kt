@@ -16,7 +16,7 @@ import org.walktalkmeditate.pilgrim.data.dao.WalkEventDao
  * fills the `distance_meters` and `meditation_seconds` cache columns on
  * [Walk] when the walk transitions out of the active state, so reads
  * (Walk Summary, milestone trigger, package export fallback) never
- * traverse `RouteDataSamples`/`ActivityIntervals`/`WalkEvents` again.
+ * traverse `RouteDataSamples`/`WalkEvents` again.
  */
 interface WalkMetricsCaching {
     suspend fun computeAndPersist(walkId: Long)
@@ -24,12 +24,13 @@ interface WalkMetricsCaching {
 
 /**
  * Computes distance and meditation aggregates for a finished walk and
- * writes them to the cache columns on [Walk] via [WalkDao.updateAggregates].
+ * writes them to the cache columns on [Walk] via [WalkDao.updateAggregatesIfUncached].
  *
  * - Distance: cumulative haversine over [WalkRepository.locationSamplesFor],
  *   delegated to [WalkDistanceCalculator].
- * - Meditation: raw sum of MEDITATING [ActivityInterval] durations,
- *   clamped to the walk's active duration (wall-clock minus paused gaps).
+ * - Meditation: the sittings derived from the walk's events
+ *   ([deriveActivityIntervals]), clamped to the walk's active duration
+ *   (wall-clock minus paused gaps) by [WalkMetricsMath.computeMeditationSeconds].
  *   Mirrors iOS `NewWalk.swift:42` `min(rawMeditate, activeDuration)`.
  *
  * Skips in-progress walks (`endTimestamp == null`) — the finalize hook
@@ -48,11 +49,10 @@ class WalkMetricsCache @Inject constructor(
         if (walk.endTimestamp == null) return
 
         val samples = walkRepository.locationSamplesFor(walkId)
-        val intervals = walkRepository.activityIntervalsFor(walkId)
         val events = walkEventDao.getForWalk(walkId)
 
         val distance = WalkDistanceCalculator.computeDistanceMeters(samples)
-        val meditation = WalkMetricsMath.computeMeditationSeconds(intervals, walk, events)
-        walkDao.updateAggregates(walkId, distance, meditation)
+        val meditation = WalkMetricsMath.computeMeditationSeconds(walk, events)
+        walkDao.updateAggregatesIfUncached(walkId, distance, meditation)
     }
 }

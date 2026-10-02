@@ -14,6 +14,9 @@ import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -21,6 +24,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,8 +34,13 @@ import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.core.threads.FakeThreadsPreferencesRepository
 import org.walktalkmeditate.pilgrim.core.threads.TranscriptContextStore
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
+import org.walktalkmeditate.pilgrim.data.WalkRepository
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.Walk
+import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.pilgrim.FakeArchivedWalkRegistry
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimActivity
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimArchivedWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimManifest
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimModification
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPhoto
@@ -39,6 +48,13 @@ import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimPreferences
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimSchema
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimVoiceRecording
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
+import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
+import org.walktalkmeditate.pilgrim.domain.ActivityType
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.ui.settings.data.WalksSource
 
 /**
  * AF28 (iOS PR #45) + the import data-loss fix.
@@ -293,6 +309,150 @@ class PilgrimPackageImporterTest {
         assertEquals("original", survivor!!.intention)
     }
 
+    // ---- #223: package sittings land as walk_events ----
+
+    @Test
+    fun `imported meditation activities become events that derive the same sittings`() = runBlocking {
+        val uuid = UUID.randomUUID().toString()
+        val uri = buildArchive(
+            tended = false,
+            walks = mapOf("walk.json" to json.encodeToString(walkWithActivities(uuid, statsMeditateSeconds = 999.0))),
+        )
+
+        val summary = importer.import(uri)
+
+        assertEquals(1, summary.added)
+        val walk = db.walkDao().getByUuid(uuid)!!
+        val events = db.walkEventDao().getForWalk(walk.id)
+        assertEquals(
+            listOf(
+                WalkEventType.MEDITATION_START to 10_000L,
+                WalkEventType.MEDITATION_END to 40_000L,
+                WalkEventType.MEDITATION_START to 60_000L,
+                WalkEventType.MEDITATION_END to 90_000L,
+            ),
+            events.map { it.eventType to it.timestamp },
+        )
+        // The summary and share derive sittings exactly like this.
+        assertEquals(
+            listOf(10_000L to 40_000L, 60_000L to 90_000L),
+            deriveActivityIntervals(events, walk.id, closeAt = walk.endTimestamp)
+                .map { it.startTimestamp to it.endTimestamp },
+        )
+        assertEquals(
+            "the iOS \"unknown\" activity stays a WALKING row; no MEDITATING row is stored",
+            listOf(Triple(ActivityType.WALKING, 45_000L, 50_000L)),
+            db.activityIntervalDao().getForWalk(walk.id)
+                .map { Triple(it.activityType, it.startTimestamp, it.endTimestamp) },
+        )
+    }
+
+    @Test
+    fun `an imported walk's meditation total is recomputed from its events, not copied from stats`() = runBlocking {
+        val uuid = UUID.randomUUID().toString()
+        val uri = buildArchive(
+            tended = false,
+            walks = mapOf("walk.json" to json.encodeToString(walkWithActivities(uuid, statsMeditateSeconds = 999.0))),
+        )
+        importer.import(uri)
+        val walk = db.walkDao().getByUuid(uuid)!!
+        assertNull("left for the backfill", walk.meditationSeconds)
+
+        WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao()).computeAndPersist(walk.id)
+
+        assertEquals(60L, db.walkDao().getById(walk.id)!!.meditationSeconds)
+    }
+
+    @Test
+    fun `a package from Android 1_5_0 or earlier imports with no sittings and no invented events`() = runBlocking {
+        // Native walks exported `activities: []` before #223.
+        val uuid = UUID.randomUUID().toString()
+        val uri = buildArchive(
+            tended = false,
+            walks = mapOf("walk.json" to json.encodeToString(goodWalk(uuid))),
+        )
+
+        importer.import(uri)
+
+        val walk = db.walkDao().getByUuid(uuid)!!
+        assertEquals(emptyList<Any>(), db.walkEventDao().getForWalk(walk.id))
+        assertEquals(emptyList<Any>(), db.activityIntervalDao().getForWalk(walk.id))
+    }
+
+    @Test
+    fun `a walk that fails to insert leaves none of its sitting events behind`() = runBlocking {
+        val uuid = UUID.randomUUID().toString()
+        val broken = walkWithActivities(uuid, statsMeditateSeconds = 0.0).copy(
+            voiceRecordings = walkWithBadVoiceRecording(uuid).voiceRecordings,
+        )
+        val uri = buildArchive(tended = false, walks = mapOf("walk.json" to json.encodeToString(broken)))
+
+        val summary = importer.import(uri)
+
+        assertEquals(1, summary.skipped)
+        assertNull(db.walkDao().getByUuid(uuid))
+        assertEquals(0L, db.openHelper.readableDatabase.query("SELECT COUNT(*) FROM walk_events").use { c ->
+            c.moveToFirst()
+            c.getLong(0)
+        })
+    }
+
+    // ---- #238: the archive strip keeps an uncached walk's stats ----
+
+    @Test
+    fun `archiving a walk with NULL caches keeps the stats its children gave`() = runBlocking {
+        val uuid = UUID.randomUUID().toString()
+        val walkId = db.walkDao().insert(Walk(uuid = uuid, startTimestamp = 1_000L, endTimestamp = 3_601_000L))
+        db.routeDataSampleDao().insertAll(
+            listOf(
+                RouteDataSample(walkId = walkId, timestamp = 2_000L, latitude = 0.0, longitude = 0.0),
+                RouteDataSample(walkId = walkId, timestamp = 3_000L, latitude = 0.0, longitude = 0.001),
+            ),
+        )
+        db.walkEventDao().insert(WalkEvent(walkId = walkId, timestamp = 601_000L, eventType = WalkEventType.MEDITATION_START))
+        db.walkEventDao().insert(WalkEvent(walkId = walkId, timestamp = 1_201_000L, eventType = WalkEventType.MEDITATION_END))
+        val childDistance = WalkDistanceCalculator.computeDistanceMeters(db.routeDataSampleDao().getForWalk(walkId))
+        assertTrue("the fixture's route must have a real distance", childDistance > 100.0)
+
+        importer.import(buildArchive(tended = false, walks = emptyMap(), archived = listOf(archivedEntry(uuid))))
+
+        assertEquals("the strip ran", emptyList<Any>(), db.routeDataSampleDao().getForWalk(walkId))
+        assertEquals("the strip ran", emptyList<Any>(), db.walkEventDao().getForWalk(walkId))
+        val stripped = db.walkDao().getById(walkId)!!
+        assertEquals(childDistance, stripped.distanceMeters!!, 0.0)
+        assertEquals(600L, stripped.meditationSeconds)
+
+        runBackfillOnce()
+
+        val afterBackfill = db.walkDao().getById(walkId)!!
+        assertEquals(
+            stripped.distanceMeters to stripped.meditationSeconds,
+            afterBackfill.distanceMeters to afterBackfill.meditationSeconds,
+        )
+    }
+
+    /** One pass of the real [WalkMetricsBackfillCoordinator] over the walks as they are now. */
+    private suspend fun runBackfillOnce() = coroutineScope {
+        val snapshot = object : WalksSource {
+            override fun observeAllWalks(): Flow<List<Walk>> = flow { emit(db.walkDao().getAll()) }
+        }
+        val cache = WalkMetricsCache(repository(), db.walkDao(), db.walkEventDao())
+        WalkMetricsBackfillCoordinator(snapshot, cache, this).start()
+    }
+
+    private fun archivedEntry(uuid: String) = PilgrimArchivedWalk(
+        id = uuid,
+        startDate = 1.0,
+        endDate = 3_601.0,
+        archivedAt = 1_700_000_000.0,
+        stats = PilgrimArchivedWalk.Stats(
+            distance = 0.0,
+            activeDuration = 3_600.0,
+            talkDuration = 0.0,
+            meditateDuration = 0.0,
+        ),
+    )
+
     // ---- Phase 20 U5: threads clearTombstones + importGeneration hygiene ----
 
     // Android's .pilgrim wire format carries no recording identity
@@ -397,6 +557,34 @@ class PilgrimPackageImporterTest {
 
     // ---- helpers ----
 
+    /**
+     * An iOS-shaped walk: two "meditation" activities (60 s in all), one
+     * "unknown", and a stats total that disagrees with them.
+     */
+    private fun walkWithActivities(uuid: String, statsMeditateSeconds: Double): PilgrimWalk {
+        val walk = goodWalk(uuid)
+        return walk.copy(
+            stats = walk.stats.copy(meditateDuration = statsMeditateSeconds),
+            activities = listOf(
+                PilgrimActivity("meditation", Instant.ofEpochMilli(10_000L), Instant.ofEpochMilli(40_000L)),
+                PilgrimActivity("unknown", Instant.ofEpochMilli(45_000L), Instant.ofEpochMilli(50_000L)),
+                PilgrimActivity("meditation", Instant.ofEpochMilli(60_000L), Instant.ofEpochMilli(90_000L)),
+            ),
+        )
+    }
+
+    private fun repository() = WalkRepository(
+        database = db,
+        walkDao = db.walkDao(),
+        routeDao = db.routeDataSampleDao(),
+        altitudeDao = db.altitudeSampleDao(),
+        walkEventDao = db.walkEventDao(),
+        activityIntervalDao = db.activityIntervalDao(),
+        waypointDao = db.waypointDao(),
+        voiceRecordingDao = db.voiceRecordingDao(),
+        walkPhotoDao = db.walkPhotoDao(),
+    )
+
     private fun goodWalk(
         uuid: String = UUID.randomUUID().toString(),
         intention: String? = null,
@@ -448,7 +636,7 @@ class PilgrimPackageImporterTest {
             ),
         )
 
-    private fun manifestJson(walkCount: Int, tended: Boolean): String =
+    private fun manifestJson(walkCount: Int, tended: Boolean, archived: List<PilgrimArchivedWalk>?): String =
         json.encodeToString(
             PilgrimManifest(
                 schemaVersion = PilgrimSchema.VERSION,
@@ -467,16 +655,20 @@ class PilgrimPackageImporterTest {
                 customPromptStyles = emptyList(),
                 intentions = emptyList(),
                 events = emptyList(),
-                archived = null,
+                archived = archived,
                 modifications = if (tended) listOf(PilgrimModification(op = "edit", walkId = "x")) else null,
             ),
         )
 
-    private fun buildArchive(tended: Boolean, walks: Map<String, String>): Uri {
+    private fun buildArchive(
+        tended: Boolean,
+        walks: Map<String, String>,
+        archived: List<PilgrimArchivedWalk>? = null,
+    ): Uri {
         val bytes = ByteArrayOutputStream().use { baos ->
             ZipOutputStream(baos).use { zip ->
                 zip.putNextEntry(ZipEntry("manifest.json"))
-                zip.write(manifestJson(walkCount = walks.size, tended = tended).toByteArray())
+                zip.write(manifestJson(walkCount = walks.size, tended = tended, archived = archived).toByteArray())
                 zip.closeEntry()
                 walks.forEach { (name, content) ->
                     zip.putNextEntry(ZipEntry("walks/$name"))

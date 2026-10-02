@@ -2,30 +2,44 @@
 package org.walktalkmeditate.pilgrim.data
 
 import android.app.Application
+import android.content.ContentValues
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
+import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter
+import org.walktalkmeditate.pilgrim.data.pilgrim.builder.WalkExportBundle
+import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
+import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
+import org.walktalkmeditate.pilgrim.domain.WalkEventType
 
 /**
- * Exercises [PilgrimDatabase.MIGRATION_2_3] directly against a hand-built
- * v2-shape SQLite DB. We deliberately avoid `MigrationTestHelper` here:
- * under Robolectric the instrumentation context's asset loader can't
- * find the exported v2 schema JSON (the helper is designed for on-device
- * `androidTest` runs). Rather than wrestle with asset plumbing, we test
- * the thing we actually ship — the Migration's `migrate` function — by
- * opening a raw SQLite DB, running the migration, and asserting the new
- * schema and Room round-trip both behave as expected.
+ * The 2→3 … 5→6 tests exercise each Migration's `migrate` directly
+ * against a hand-built minimal SQLite DB. `MigrationTestHelper` is
+ * avoided: under Robolectric the instrumentation context's asset loader
+ * can't find the exported schema JSON (the helper is designed for
+ * on-device `androidTest` runs).
+ *
+ * The 8→9 tests, and the chains from 6 and 7, build the starting version
+ * from its exported schema
+ * with [MigrationTestDatabases] and open it through `Room.databaseBuilder`
+ * with the production [PilgrimDatabase.MIGRATIONS], so Room's schema
+ * validation and identity check run exactly as on a device.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -491,7 +505,536 @@ class PilgrimDatabaseMigrationTest {
         }
     }
 
+    // ---- 8 → 9: the #223 sittings repair, through Room's own open path ----
+
+    @Test
+    fun `a v8 database migrates to 9 through Room's identity check and keeps its data`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(9L, db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(9),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            assertEquals(MigrationTestDatabases.identityHash(8), MigrationTestDatabases.identityHash(9))
+
+            assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
+            assertEquals(WORLD_INTERVAL_COUNT, db.longQuery("SELECT COUNT(*) FROM activity_intervals"))
+            assertEquals(
+                "only the two intervals-only walks gain events: 2 sittings on walk 1, 1 on walk 5",
+                WORLD_EVENT_COUNT + 6,
+                db.longQuery("SELECT COUNT(*) FROM walk_events"),
+            )
+            runBlocking {
+                val repairedWalk = room.walkDao().getById(IOS_MEDITATION_WALK)!!
+                assertEquals("ios-meditation", repairedWalk.uuid)
+                assertEquals("calm", repairedWalk.intention)
+                assertEquals(iosRouteDistance(), repairedWalk.distanceMeters!!, 0.0)
+                assertEquals(2, room.routeDataSampleDao().getForWalk(IOS_MEDITATION_WALK).size)
+                val waypoint = room.waypointDao().getForWalk(IOS_MEDITATION_WALK).single()
+                assertEquals("signpost.right.fill", waypoint.icon)
+                assertEquals("Walked their way: Camino", waypoint.label)
+                assertEquals("hello", room.voiceRecordingDao().getForWalk(IOS_MEDITATION_WALK).single().transcription)
+                assertEquals("content://photo/1", room.walkPhotoDao().getForWalk(IOS_MEDITATION_WALK).single().photoUri)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `an intervals-only meditation walk gains a START and an END per sitting`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val events = runBlocking { room.walkEventDao().getForWalk(IOS_MEDITATION_WALK) }
+            assertEquals(
+                "both MEDITATING rows become pairs; the zero-length row and the WALKING row add nothing",
+                listOf(
+                    WalkEventType.MEDITATION_START to 600_000L,
+                    WalkEventType.MEDITATION_END to 1_200_000L,
+                    WalkEventType.MEDITATION_START to 2_000_000L,
+                    WalkEventType.MEDITATION_END to 2_300_000L,
+                ),
+                events.map { it.eventType to it.timestamp },
+            )
+            val uuids = runBlocking { room.walkEventDao().getForWalk(UNFINISHED_WALK) }.map { it.uuid } +
+                events.map { it.uuid }
+            assertEquals(uuids.size, uuids.toSet().size)
+            assertTrue(uuids.toString(), uuids.all { CANONICAL_UUID.matches(it) })
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `the backfill recomputes each repaired walk to its real sitting`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                val dao = room.walkDao()
+                assertNull(dao.getById(IOS_MEDITATION_WALK)!!.meditationSeconds)
+                assertNull(dao.getById(NATIVE_MEDITATION_WALK)!!.meditationSeconds)
+                assertNull(dao.getById(BOTH_SOURCES_WALK)!!.meditationSeconds)
+
+                runMetricsBackfill(room)
+
+                assertEquals(900L, dao.getById(IOS_MEDITATION_WALK)!!.meditationSeconds)
+                assertEquals(
+                    "the native walk's cached 0 becomes its real sitting",
+                    600L,
+                    dao.getById(NATIVE_MEDITATION_WALK)!!.meditationSeconds,
+                )
+                assertEquals("an interval plus its events count once", 300L, dao.getById(BOTH_SOURCES_WALK)!!.meditationSeconds)
+                assertEquals(iosRouteDistance(), dao.getById(IOS_MEDITATION_WALK)!!.distanceMeters!!, 0.0)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `walks without sittings keep their cached totals`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                val dao = room.walkDao()
+                assertEquals("iOS WALKING-only walk", 0L, dao.getById(IOS_WALKING_WALK)!!.meditationSeconds)
+                assertEquals("archived stub", 420L, dao.getById(ARCHIVED_WALK)!!.meditationSeconds)
+                assertEquals("archived stub", 1_234.0, dao.getById(ARCHIVED_WALK)!!.distanceMeters!!, 0.0)
+                assertEquals("plain native walk", 0L, dao.getById(PLAIN_NATIVE_WALK)!!.meditationSeconds)
+                assertTrue(room.walkEventDao().getForWalk(IOS_WALKING_WALK).isEmpty())
+                assertTrue(room.walkEventDao().getForWalk(ARCHIVED_WALK).isEmpty())
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `an unfinished walk gains its events and stays uncached`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                assertNull(room.walkDao().getById(UNFINISHED_WALK)!!.meditationSeconds)
+                assertEquals(
+                    listOf(WalkEventType.MEDITATION_START to 21_000_000L, WalkEventType.MEDITATION_END to 21_100_000L),
+                    room.walkEventDao().getForWalk(UNFINISHED_WALK).map { it.eventType to it.timestamp },
+                )
+                runMetricsBackfill(room)
+                assertNull("the backfill skips a walk in progress", room.walkDao().getById(UNFINISHED_WALK)!!.meditationSeconds)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `a walk with both a MEDITATING row and its events gains nothing and exports one sitting`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                assertEquals(2, room.walkEventDao().getForWalk(BOTH_SOURCES_WALK).size)
+                runMetricsBackfill(room)
+                val exported = export(room, BOTH_SOURCES_WALK)
+                assertEquals(listOf("meditation"), exported.activities.map { it.type })
+                assertEquals(300.0, exported.stats.meditateDuration, 0.0)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `migrated iOS walks re-export their unknown activities unchanged`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                runMetricsBackfill(room)
+                val walkingOnly = export(room, IOS_WALKING_WALK)
+                assertEquals(
+                    listOf(
+                        Triple("unknown", 30_000_000L, 30_600_000L),
+                        Triple("unknown", 31_000_000L, 31_200_000L),
+                    ),
+                    walkingOnly.activities.map { Triple(it.type, it.startDate.toEpochMilli(), it.endDate.toEpochMilli()) },
+                )
+                assertEquals(0.0, walkingOnly.stats.meditateDuration, 0.0)
+
+                val meditated = export(room, IOS_MEDITATION_WALK)
+                assertEquals(
+                    listOf(
+                        Triple("unknown", 0L, 600_000L),
+                        Triple("meditation", 600_000L, 1_200_000L),
+                        Triple("meditation", 2_000_000L, 2_300_000L),
+                    ),
+                    meditated.activities.map { Triple(it.type, it.startDate.toEpochMilli(), it.endDate.toEpochMilli()) },
+                )
+                assertEquals(900.0, meditated.stats.meditateDuration, 0.0)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `running migration 8 to 9 again adds nothing and recomputes the same totals`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            runBlocking { runMetricsBackfill(room) }
+            val eventsAfterFirstRun = db.longQuery("SELECT COUNT(*) FROM walk_events")
+            val totalsAfterFirstRun = runBlocking { room.walkDao().getAll() }.associate { it.id to it.meditationSeconds }
+
+            db.beginTransaction()
+            try {
+                PilgrimDatabase.MIGRATION_8_9.migrate(db)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            runBlocking { runMetricsBackfill(room) }
+
+            assertEquals(eventsAfterFirstRun, db.longQuery("SELECT COUNT(*) FROM walk_events"))
+            assertEquals(totalsAfterFirstRun, runBlocking { room.walkDao().getAll() }.associate { it.id to it.meditationSeconds })
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `overlapping and duplicate MEDITATING rows backfill and export as one merged sitting`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db ->
+            db.insertWalk(SINGLE_WALK, "overlapping", start = 0L, end = 3_600_000L, distance = 0.0, meditationSeconds = 1_800L)
+            db.insertInterval(SINGLE_WALK, 600_000L, 1_200_000L, "MEDITATING")
+            db.insertInterval(SINGLE_WALK, 900_000L, 1_500_000L, "MEDITATING")
+            db.insertInterval(SINGLE_WALK, 600_000L, 1_200_000L, "MEDITATING", uuid = "interval-duplicate")
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                assertEquals(
+                    "the repair writes a pair per row; merging happens when sittings are derived",
+                    6,
+                    room.walkEventDao().getForWalk(SINGLE_WALK).size,
+                )
+                runMetricsBackfill(room)
+                assertEquals(900L, room.walkDao().getById(SINGLE_WALK)!!.meditationSeconds)
+                val exported = export(room, SINGLE_WALK)
+                assertEquals(
+                    listOf(Triple("meditation", 600_000L, 1_500_000L)),
+                    exported.activities.map { Triple(it.type, it.startDate.toEpochMilli(), it.endDate.toEpochMilli()) },
+                )
+                assertEquals(900.0, exported.stats.meditateDuration, 0.0)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `MEDITATING rows beside a lone MEDITATION_START are left to the events`() {
+        // The repair fills only walks with no meditation event at all: any
+        // such event means walk_events already holds the walk's sittings.
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db ->
+            db.insertWalk(SINGLE_WALK, "lone-start", start = 0L, end = 3_600_000L, distance = 0.0, meditationSeconds = 900L)
+            db.insertInterval(SINGLE_WALK, 600_000L, 1_500_000L, "MEDITATING")
+            db.insertEvent(SINGLE_WALK, 3_000_000L, "MEDITATION_START")
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                assertEquals(
+                    listOf(WalkEventType.MEDITATION_START to 3_000_000L),
+                    room.walkEventDao().getForWalk(SINGLE_WALK).map { it.eventType to it.timestamp },
+                )
+                runMetricsBackfill(room)
+                assertEquals(
+                    "the open sitting closes at the walk's end; the row's 900 s is never read",
+                    600L,
+                    room.walkDao().getById(SINGLE_WALK)!!.meditationSeconds,
+                )
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `a v7 database migrates to 9 through the shared migrations array`() {
+        assertMigratesToNineFrom(version = 7)
+    }
+
+    @Test
+    fun `a v6 database migrates to 9 through the shared migrations array`() {
+        assertMigratesToNineFrom(version = 6)
+    }
+
+    /**
+     * Replays [version]'s schema with one walk and one photo, then opens it
+     * through [PilgrimDatabase.MIGRATIONS]: a migration missing from the
+     * array, or one whose result differs from the current entities, fails
+     * Room's open here.
+     */
+    private fun assertMigratesToNineFrom(version: Int) {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = version) { db ->
+            db.insertWalk(SINGLE_WALK, "chain", start = 0L, end = 3_600_000L, distance = 12.5, meditationSeconds = 0L)
+            db.insertRow(
+                "walk_photos",
+                "uuid" to "ph-chain", "walk_id" to SINGLE_WALK, "photo_uri" to "content://photo/chain",
+                "pinned_at" to 1_000L,
+            )
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(9L, db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(9),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            runBlocking {
+                val walk = room.walkDao().getById(SINGLE_WALK)!!
+                assertEquals(12.5, walk.distanceMeters!!, 0.0)
+                assertNull(walk.steps)
+                val photo = room.walkPhotoDao().getForWalk(SINGLE_WALK).single()
+                assertNull(photo.capturedLat)
+                assertNull(photo.capturedLng)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `a schema 9 replay opens through Room without any migration`() {
+        // Proves the helper replays a schema exactly as Room would create
+        // it: Room's validation would reject a table that differs.
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 9)
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            assertEquals(9L, room.openHelper.writableDatabase.longQuery("PRAGMA user_version"))
+        } finally {
+            room.close()
+        }
+    }
+
+    /**
+     * One v8 database holding every shape the repair must tell apart.
+     * Timestamps are epoch millis; each walk owns a separate stretch.
+     */
+    private fun seedV8World(db: SupportSQLiteDatabase) {
+        // iOS import before v9: sittings only as MEDITATING rows, cached
+        // 900 s by the old interval-based cache. Also an iOS "unknown"
+        // (WALKING) row and a zero-length MEDITATING row.
+        db.insertWalk(
+            IOS_MEDITATION_WALK, "ios-meditation", start = 0L, end = 3_600_000L,
+            distance = iosRouteDistance(), meditationSeconds = 900L, intention = "calm",
+        )
+        db.insertInterval(IOS_MEDITATION_WALK, 0L, 600_000L, "WALKING")
+        db.insertInterval(IOS_MEDITATION_WALK, 600_000L, 1_200_000L, "MEDITATING")
+        db.insertInterval(IOS_MEDITATION_WALK, 2_000_000L, 2_300_000L, "MEDITATING")
+        db.insertInterval(IOS_MEDITATION_WALK, 3_000_000L, 3_000_000L, "MEDITATING")
+        iosRouteSamples().forEach { db.insertRouteSample(it) }
+        db.insertRow(
+            "waypoints",
+            "uuid" to "wp-1", "walk_id" to IOS_MEDITATION_WALK, "timestamp" to 3_500_000L,
+            "latitude" to 42.88, "longitude" to -8.54,
+            "label" to "Walked their way: Camino", "icon" to "signpost.right.fill",
+        )
+        db.insertRow(
+            "voice_recordings",
+            "uuid" to "vr-1", "walk_id" to IOS_MEDITATION_WALK, "start_timestamp" to 100_000L,
+            "end_timestamp" to 110_000L, "duration_millis" to 10_000L, "file_relative_path" to "",
+            "transcription" to "hello", "is_enhanced" to 0,
+        )
+        db.insertRow(
+            "walk_photos",
+            "uuid" to "ph-1", "walk_id" to IOS_MEDITATION_WALK, "photo_uri" to "content://photo/1",
+            "pinned_at" to 3_000_000L,
+        )
+
+        // Native walk: the sitting lives only in events; the cache summed
+        // the empty interval table and stored 0.
+        db.insertWalk(NATIVE_MEDITATION_WALK, "native", start = 10_000_000L, end = 13_600_000L, distance = 0.0, meditationSeconds = 0L)
+        db.insertEvent(NATIVE_MEDITATION_WALK, 10_600_000L, "MEDITATION_START")
+        db.insertEvent(NATIVE_MEDITATION_WALK, 11_200_000L, "MEDITATION_END")
+
+        // iOS import with only "unknown" activities (stored WALKING).
+        db.insertWalk(IOS_WALKING_WALK, "ios-walking", start = 30_000_000L, end = 33_600_000L, distance = 0.0, meditationSeconds = 0L)
+        db.insertInterval(IOS_WALKING_WALK, 30_000_000L, 30_600_000L, "WALKING")
+        db.insertInterval(IOS_WALKING_WALK, 31_000_000L, 31_200_000L, "WALKING")
+
+        // A sitting held twice: a MEDITATING row and its events.
+        db.insertWalk(BOTH_SOURCES_WALK, "both", start = 40_000_000L, end = 43_600_000L, distance = 0.0, meditationSeconds = 300L)
+        db.insertInterval(BOTH_SOURCES_WALK, 40_600_000L, 40_900_000L, "MEDITATING")
+        db.insertEvent(BOTH_SOURCES_WALK, 40_600_000L, "MEDITATION_START")
+        db.insertEvent(BOTH_SOURCES_WALK, 40_900_000L, "MEDITATION_END")
+
+        // Still in progress (no end), intervals only. Uncached, as
+        // production never caches an unfinished walk.
+        db.insertWalk(UNFINISHED_WALK, "unfinished", start = 20_000_000L, end = null, distance = null, meditationSeconds = null)
+        db.insertInterval(UNFINISHED_WALK, 21_000_000L, 21_100_000L, "MEDITATING")
+
+        // Archive-stripped: surface stats survive, children are gone.
+        db.insertWalk(ARCHIVED_WALK, "archived", start = 50_000_000L, end = 53_600_000L, distance = 1_234.0, meditationSeconds = 420L)
+
+        // Native walk with a pause and no sitting.
+        db.insertWalk(PLAIN_NATIVE_WALK, "plain", start = 60_000_000L, end = 63_600_000L, distance = 0.0, meditationSeconds = 0L)
+        db.insertEvent(PLAIN_NATIVE_WALK, 61_000_000L, "PAUSED")
+        db.insertEvent(PLAIN_NATIVE_WALK, 61_100_000L, "RESUMED")
+    }
+
+    private fun iosRouteSamples(): List<RouteDataSample> = listOf(
+        RouteDataSample(uuid = "rs-1", walkId = IOS_MEDITATION_WALK, timestamp = 1_000L, latitude = 42.88, longitude = -8.54),
+        RouteDataSample(uuid = "rs-2", walkId = IOS_MEDITATION_WALK, timestamp = 60_000L, latitude = 42.881, longitude = -8.54),
+    )
+
+    private fun iosRouteDistance(): Double = WalkDistanceCalculator.computeDistanceMeters(iosRouteSamples())
+
+    /**
+     * Drains stale walks exactly as [org.walktalkmeditate.pilgrim.data.walk.WalkMetricsBackfillCoordinator]
+     * does — same predicate, same [WalkMetricsCache] — without its
+     * Flow plumbing.
+     */
+    private suspend fun runMetricsBackfill(room: PilgrimDatabase) {
+        val cache = WalkMetricsCache(repositoryFor(room), room.walkDao(), room.walkEventDao())
+        repeat(room.walkDao().getAll().size) {
+            val stale = room.walkDao().getAll().firstOrNull { walk ->
+                walk.endTimestamp != null && (walk.distanceMeters == null || walk.meditationSeconds == null)
+            } ?: return
+            cache.computeAndPersist(stale.id)
+        }
+    }
+
+    private suspend fun export(room: PilgrimDatabase, walkId: Long): PilgrimWalk {
+        val repository = repositoryFor(room)
+        val bundle = WalkExportBundle(
+            walk = room.walkDao().getById(walkId)!!,
+            routeSamples = repository.locationSamplesFor(walkId),
+            altitudeSamples = repository.altitudeSamplesFor(walkId),
+            walkEvents = repository.eventsFor(walkId),
+            activityIntervals = repository.activityIntervalsFor(walkId),
+            waypoints = repository.waypointsFor(walkId),
+            voiceRecordings = repository.voiceRecordingsFor(walkId),
+            walkPhotos = room.walkPhotoDao().getForWalk(walkId),
+        )
+        return PilgrimPackageConverter.convert(bundle, includePhotos = false).walk
+    }
+
+    private fun repositoryFor(room: PilgrimDatabase) = WalkRepository(
+        database = room,
+        walkDao = room.walkDao(),
+        routeDao = room.routeDataSampleDao(),
+        altitudeDao = room.altitudeSampleDao(),
+        walkEventDao = room.walkEventDao(),
+        activityIntervalDao = room.activityIntervalDao(),
+        waypointDao = room.waypointDao(),
+        voiceRecordingDao = room.voiceRecordingDao(),
+        walkPhotoDao = room.walkPhotoDao(),
+    )
+
+    private fun SupportSQLiteDatabase.insertWalk(
+        id: Long,
+        uuid: String,
+        start: Long,
+        end: Long?,
+        distance: Double?,
+        meditationSeconds: Long?,
+        intention: String? = null,
+    ) = insertRow(
+        "walks",
+        "id" to id, "uuid" to uuid, "start_timestamp" to start, "end_timestamp" to end,
+        "distance_meters" to distance, "meditation_seconds" to meditationSeconds, "intention" to intention,
+    )
+
+    private fun SupportSQLiteDatabase.insertEvent(walkId: Long, timestamp: Long, type: String) = insertRow(
+        "walk_events",
+        "uuid" to "event-$walkId-$timestamp-$type", "walk_id" to walkId, "timestamp" to timestamp, "event_type" to type,
+    )
+
+    private fun SupportSQLiteDatabase.insertInterval(
+        walkId: Long,
+        start: Long,
+        end: Long,
+        type: String,
+        uuid: String = "interval-$walkId-$start-$end",
+    ) = insertRow(
+        "activity_intervals",
+        "uuid" to uuid, "walk_id" to walkId,
+        "start_timestamp" to start, "end_timestamp" to end, "activity_type" to type,
+    )
+
+    private fun SupportSQLiteDatabase.insertRouteSample(sample: RouteDataSample) = insertRow(
+        "route_data_samples",
+        "uuid" to sample.uuid, "walk_id" to sample.walkId, "timestamp" to sample.timestamp,
+        "latitude" to sample.latitude, "longitude" to sample.longitude,
+    )
+
+    private fun SupportSQLiteDatabase.insertRow(table: String, vararg columns: Pair<String, Any?>) {
+        val values = ContentValues()
+        for ((column, value) in columns) {
+            when (value) {
+                null -> values.putNull(column)
+                is Long -> values.put(column, value)
+                is Int -> values.put(column, value)
+                is Double -> values.put(column, value)
+                is String -> values.put(column, value)
+                else -> error("unsupported value for $table.$column: $value")
+            }
+        }
+        insert(table, SQLiteDatabase.CONFLICT_ABORT, values)
+    }
+
+    private fun SupportSQLiteDatabase.longQuery(sql: String): Long =
+        query(sql).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getLong(0)
+        }
+
+    private fun SupportSQLiteDatabase.stringQuery(sql: String): String =
+        query(sql).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getString(0)
+        }
+
     private companion object {
         private const val V2_VERSION = 2
+
+        const val IOS_MEDITATION_WALK = 1L
+        const val NATIVE_MEDITATION_WALK = 2L
+        const val IOS_WALKING_WALK = 3L
+        const val BOTH_SOURCES_WALK = 4L
+        const val UNFINISHED_WALK = 5L
+        const val ARCHIVED_WALK = 6L
+        const val PLAIN_NATIVE_WALK = 7L
+        const val WORLD_WALK_COUNT = 7L
+        const val WORLD_INTERVAL_COUNT = 8L
+        const val WORLD_EVENT_COUNT = 6L
+
+        /** The one walk of a test that seeds its own database, not [seedV8World]. */
+        const val SINGLE_WALK = 1L
+
+        val CANONICAL_UUID = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
     }
 }

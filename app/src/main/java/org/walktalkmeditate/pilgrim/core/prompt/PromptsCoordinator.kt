@@ -25,7 +25,6 @@ import org.walktalkmeditate.pilgrim.core.prompt.voices.CustomPromptStyleVoice
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsAnalysisEnvironment
 import org.walktalkmeditate.pilgrim.core.threads.ThreadsDossierBuilder
 import org.walktalkmeditate.pilgrim.data.WalkRepository
-import org.walktalkmeditate.pilgrim.data.entity.ActivityInterval
 import org.walktalkmeditate.pilgrim.data.entity.AltitudeSample
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -39,8 +38,8 @@ import org.walktalkmeditate.pilgrim.data.units.UnitSystem
 import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.walk.AltitudeCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsMath
+import org.walktalkmeditate.pilgrim.data.walk.deriveActivityIntervals
 import org.walktalkmeditate.pilgrim.data.weather.WeatherCondition
-import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.haversineMeters
 
@@ -176,7 +175,7 @@ open class PromptsCoordinator internal constructor(
 
     /**
      * Build the full [ActivityContext] for [walkId] — orchestrates every
-     * sub-fetch (location samples, recordings, intervals, waypoints,
+     * sub-fetch (location samples, recordings, events, waypoints,
      * photos, photo analysis, geocoding, recent-walk snippets, celestial
      * snapshot, lunar phase) and pre-formats the weather string.
      *
@@ -196,7 +195,6 @@ open class PromptsCoordinator internal constructor(
         val fetches = coroutineScope {
             val samplesAsync = async { repository.locationSamplesFor(walkId) }
             val recordingsAsync = async { repository.voiceRecordingsFor(walkId) }
-            val intervalsAsync = async { repository.activityIntervalsFor(walkId) }
             val waypointsAsync = async { repository.waypointsFor(walkId) }
             val photosAsync = async { repository.photosFor(walkId) }
             val eventsAsync = async { repository.walkEventsFor(walkId) }
@@ -207,7 +205,6 @@ open class PromptsCoordinator internal constructor(
             SubFetches(
                 locationSamples = samplesAsync.await(),
                 recordings = recordingsAsync.await(),
-                intervals = intervalsAsync.await(),
                 waypoints = waypointsAsync.await(),
                 photos = photosAsync.await(),
                 events = eventsAsync.await(),
@@ -217,7 +214,6 @@ open class PromptsCoordinator internal constructor(
         }
         val locationSamples = fetches.locationSamples
         val recordings = fetches.recordings
-        val intervals = fetches.intervals
         val waypoints = fetches.waypoints
         val photos = fetches.photos
         val recentWalksRaw = fetches.recentWalks
@@ -225,8 +221,13 @@ open class PromptsCoordinator internal constructor(
         val routeSamples = locationSamples.toRouteSamples()
         val placeNames = geocodePlaceNames(locationSamples)
         val photoContexts = analyzePhotos(photos, routeSamples)
-        val meditationContexts = intervals
-            .filter { it.activityType == ActivityType.MEDITATING }
+        // Sittings come from the walk's events (#223), in start order like
+        // iOS's `sorted { $0.startDate < $1.startDate }`.
+        val meditationContexts = deriveActivityIntervals(
+            events = fetches.events,
+            walkId = walkId,
+            closeAt = walk.endTimestamp,
+        )
             .map { interval ->
                 MeditationContext(
                     startDate = interval.startTimestamp,
@@ -540,7 +541,6 @@ open class PromptsCoordinator internal constructor(
 private data class SubFetches(
     val locationSamples: List<RouteDataSample>,
     val recordings: List<VoiceRecording>,
-    val intervals: List<ActivityInterval>,
     val waypoints: List<Waypoint>,
     val photos: List<WalkPhoto>,
     val events: List<WalkEvent>,

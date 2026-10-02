@@ -40,6 +40,7 @@ import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestService
 import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
+import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.share.CachedShareStore
 import org.walktalkmeditate.pilgrim.data.share.DeviceTokenStore
@@ -321,6 +322,97 @@ class WalkShareViewModelTest {
         // The same dead-table read also nulled stats.meditate_duration on every
         // share ever sent — pin the derived stat so it can't regress separately.
         assertEquals(30.0, loaded.inputs.meditateDurationSeconds, 0.001)
+    }
+
+    @Test
+    fun `payload meditation total is clamped to active time like iOS's meditateDuration`() = runTest(dispatcher) {
+        // 60 s walk, 30 s paused → 30 s active; the open sitting from 5 s
+        // would read 55 s unclamped.
+        val walkId = seedWalkWithRoute(
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 5_000L, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 0L, timestamp = 10_000L, eventType = WalkEventType.PAUSED),
+                WalkEvent(walkId = 0L, timestamp = 40_000L, eventType = WalkEventType.RESUMED),
+            ),
+        )
+        val vm = vm(walkId)
+        val loaded = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(5_000L) {
+                vm.uiState.first { it is WalkShareUiState.Loaded } as WalkShareUiState.Loaded
+            }
+        }
+
+        assertEquals(30.0, loaded.inputs.meditateDurationSeconds, 0.0)
+        // Active time keeps the sitting, as iOS's `activeDuration` does.
+        assertEquals(30.0, loaded.inputs.activeDurationSeconds, 0.0)
+    }
+
+    @Test
+    fun `active duration keeps the sitting, so meditate plus talk fits inside it`() = runTest(dispatcher) {
+        // A 60 s walk with a 30 s sitting and a 20 s recording. Subtracting
+        // the sitting from active time (30 s) would make meditate + talk
+        // (50 s) exceed it, and the worker rejects that share with a 400.
+        val walkId = seedWalkWithRoute(
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 10_000L, eventType = WalkEventType.MEDITATION_START),
+                WalkEvent(walkId = 0L, timestamp = 40_000L, eventType = WalkEventType.MEDITATION_END),
+            ),
+        )
+        val walkStart = repository.getWalk(walkId)!!.startTimestamp
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = walkId,
+                startTimestamp = walkStart + 40_000L,
+                endTimestamp = walkStart + 60_000L,
+                durationMillis = 20_000L,
+                fileRelativePath = "recordings/talk.wav",
+            ),
+        )
+        val vm = vm(walkId)
+        val loaded = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(5_000L) {
+                vm.uiState.first { it is WalkShareUiState.Loaded } as WalkShareUiState.Loaded
+            }
+        }
+
+        assertEquals(60.0, loaded.inputs.activeDurationSeconds, 0.0)
+        assertEquals(30.0, loaded.inputs.meditateDurationSeconds, 0.0)
+        assertEquals(20.0, loaded.inputs.talkDurationSeconds, 0.001)
+        assertTrue(
+            loaded.inputs.meditateDurationSeconds + loaded.inputs.talkDurationSeconds <=
+                loaded.inputs.activeDurationSeconds,
+        )
+    }
+
+    @Test
+    fun `talk total is clamped to active time like iOS's NewWalk`() = runTest(dispatcher) {
+        // 60 s walk, 30 s paused → 30 s active; a recording that ran
+        // through the pause reads 60 s raw.
+        val walkId = seedWalkWithRoute(
+            events = listOf(
+                WalkEvent(walkId = 0L, timestamp = 10_000L, eventType = WalkEventType.PAUSED),
+                WalkEvent(walkId = 0L, timestamp = 40_000L, eventType = WalkEventType.RESUMED),
+            ),
+        )
+        val walkStart = repository.getWalk(walkId)!!.startTimestamp
+        repository.recordVoice(
+            VoiceRecording(
+                walkId = walkId,
+                startTimestamp = walkStart,
+                endTimestamp = walkStart + 60_000L,
+                durationMillis = 60_000L,
+                fileRelativePath = "recordings/long.wav",
+            ),
+        )
+        val vm = vm(walkId)
+        val loaded = withContext(org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher.instance) {
+            withTimeout(5_000L) {
+                vm.uiState.first { it is WalkShareUiState.Loaded } as WalkShareUiState.Loaded
+            }
+        }
+
+        assertEquals(30.0, loaded.inputs.activeDurationSeconds, 0.0)
+        assertEquals(30.0, loaded.inputs.talkDurationSeconds, 0.0)
     }
 
     @Test

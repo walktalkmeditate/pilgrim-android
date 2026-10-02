@@ -547,6 +547,49 @@ class WalkSummaryViewModelTest {
         }
     }
 
+    @Test
+    fun `meditation total is the clamped value the cache and export carry`() = runTest(dispatcher) {
+        // 60 s walk with 30 s paused → 30 s active. A corrupt stream opens
+        // a sitting at 5 s and never closes it, so the raw replay reads
+        // 55 s. iOS's summary shows the clamped meditateDuration; so do we.
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 5_000L, eventType = WalkEventType.MEDITATION_START))
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 10_000L, eventType = WalkEventType.PAUSED))
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 40_000L, eventType = WalkEventType.RESUMED))
+
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.state.test(timeout = 10.seconds) {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            val s = (item as WalkSummaryUiState.Loaded).summary
+            assertEquals(30_000L, s.totalMeditatedMillis)
+            assertEquals(30_000L, s.totalPausedMillis)
+            assertEquals(0L, s.activeWalkingMillis)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `meditation total counts whole seconds like the cache`() = runTest(dispatcher) {
+        val walk = repository.startWalk(startTimestamp = 0L)
+        repository.finishWalk(walk, endTimestamp = 60_000L)
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 10_000L, eventType = WalkEventType.MEDITATION_START))
+        repository.recordEvent(WalkEvent(walkId = walk.id, timestamp = 15_750L, eventType = WalkEventType.MEDITATION_END))
+
+        val vm = newViewModel(walkId = walk.id)
+
+        vm.state.test(timeout = 10.seconds) {
+            var item = awaitItem()
+            while (item is WalkSummaryUiState.Loading) item = awaitItem()
+            val s = (item as WalkSummaryUiState.Loaded).summary
+            assertEquals(5_000L, s.totalMeditatedMillis)
+            assertEquals(55_000L, s.activeWalkingMillis)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Note: Room Flow observation tests + sweep delegation tests are
     // intentionally omitted from the VM layer. observeVoiceRecordings
     // is exhaustively covered by VoiceRecordingDataLayerTest, and the
