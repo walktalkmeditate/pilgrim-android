@@ -12,10 +12,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.walktalkmeditate.pilgrim.data.audio.AudioConfig
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestScope
 import org.walktalkmeditate.pilgrim.data.audio.AudioManifestUrl
+import org.walktalkmeditate.pilgrim.data.honor.pilgrimage.PilgrimageCatalogService
 import org.walktalkmeditate.pilgrim.data.soundscape.SoundscapeBaseUrl
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideConfig
 import org.walktalkmeditate.pilgrim.data.voiceguide.VoiceGuideManifestScope
@@ -159,6 +161,19 @@ object NetworkModule {
             .retryOnConnectionFailure(true)
             .build()
 
+    /**
+     * Phase 21 U32: the pilgrimage catalog's own client, never the shared
+     * one: iOS's ephemeral catalog session (15 s idle, 30 s in all, no
+     * retry), with no HTTP cache (P1 A1) and redirects kept on the CDN
+     * (P1 A2, owner decision 6). Built only when the catalog is first asked
+     * for, which only the Honor screens do.
+     */
+    @Provides
+    @Singleton
+    @PilgrimageCatalogHttpClient
+    fun providePilgrimageCatalogHttpClient(): OkHttpClient =
+        PilgrimageCatalogService.httpClient(PilgrimageCatalogService.CDN_ORIGIN.toHttpUrl())
+
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 30L
     private const val CALL_TIMEOUT_SEC = 45L
@@ -199,3 +214,13 @@ annotation class WeatherHttpClient
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class ModelDownloadHttpClient
+
+/**
+ * Phase 21 U32 qualifier for the pilgrimage catalog's OkHttpClient,
+ * file-level for the same reason as [WeatherHttpClient]: shared between
+ * [NetworkModule.providePilgrimageCatalogHttpClient] and
+ * [PilgrimageCatalogService] in `data/honor/pilgrimage/`.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class PilgrimageCatalogHttpClient
