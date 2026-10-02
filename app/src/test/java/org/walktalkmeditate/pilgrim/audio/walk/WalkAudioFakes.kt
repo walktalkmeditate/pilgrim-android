@@ -186,13 +186,20 @@ internal class RecordingVoiceListener : WayVoiceListener {
 
     var finished = 0
     var failed = 0
+    var failedAtHandOff = 0
+    var pausedForRoute = 0
     val ends get() = finished + failed
 
     override fun onFinished() {
         finished += 1
     }
 
-    override fun onFailed() {
+    override fun onFailed(atHandOff: Boolean) {
         failed += 1
+        if (atHandOff) failedAtHandOff += 1
+    }
+
+    override fun onPausedForRoute() {
+        pausedForRoute += 1
     }
 }

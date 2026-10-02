@@ -121,8 +121,9 @@ class WalkActionPublisherHonorIntentTest {
         val publisher = WalkActionPublisher(context)
         val commands = listOf(
             HonorCommand.TogglePlayback("voice-1"),
+            HonorCommand.PauseResume("voice-1"),
             HonorCommand.Scrub("voice-2", fraction = 0.4),
-            HonorCommand.Skip,
+            HonorCommand.Skip("voice-2"),
             HonorCommand.CycleRate,
             HonorCommand.PlayReply("voice-3"),
         )
@@ -139,13 +140,13 @@ class WalkActionPublisherHonorIntentTest {
     @Test
     fun `sequence numbers rise with every command, and past a UI restart`() {
         val first = WalkActionPublisher(context)
-        first.sendHonorCommand(HonorCommand.Skip)
+        first.sendHonorCommand(HonorCommand.Skip("voice-1"))
         val a = seqOf(nextStartedService())
         first.sendHonorCommand(HonorCommand.CycleRate)
         val b = seqOf(nextStartedService())
 
         // A new publisher is what a UI process restart builds.
-        WalkActionPublisher(context).sendHonorCommand(HonorCommand.Skip)
+        WalkActionPublisher(context).sendHonorCommand(HonorCommand.Skip("voice-1"))
         val c = seqOf(nextStartedService())
 
         assertTrue("got $a, $b, $c", a > 0 && b > a && c > b)

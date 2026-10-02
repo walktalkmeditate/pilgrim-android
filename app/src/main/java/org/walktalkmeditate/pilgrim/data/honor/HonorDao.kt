@@ -139,8 +139,9 @@ interface HonorDao {
     fun observeMomentStates(walkId: Long): Flow<List<HonorMomentStateEntity>>
 
     /**
-     * A card's flags only ever turn on, so each setter writes its own column:
-     * a whole-row write from a stale copy could clear the other flag.
+     * A card's touch only turns on and its dismissal time only moves on, so
+     * each setter writes its own column: a whole-row write from a stale copy
+     * could undo the other.
      *
      * @return false, writing nothing, once the walk is finished or gone: a
      *   late tap must neither fail on the vanished walk's foreign key nor
@@ -154,11 +155,12 @@ interface HonorDao {
         return true
     }
 
+    /** A dismissal at [atMillis]; one written late never moves the card's back. */
     @Transaction
-    suspend fun markCardDismissed(walkId: Long, momentId: String): Boolean {
+    suspend fun markCardDismissed(walkId: Long, momentId: String, atMillis: Long): Boolean {
         if (countLiveSessionOnUnfinishedWalk(walkId) == 0) return false
         insertCardStateIfAbsent(HonorCardStateEntity(walkId = walkId, momentId = momentId))
-        setCardDismissed(walkId, momentId)
+        setCardDismissed(walkId, momentId, atMillis)
         return true
     }
 
@@ -168,8 +170,11 @@ interface HonorDao {
     @Query("UPDATE honor_card_states SET touched = 1 WHERE walk_id = :walkId AND moment_id = :momentId")
     suspend fun setCardTouched(walkId: Long, momentId: String)
 
-    @Query("UPDATE honor_card_states SET dismissed = 1 WHERE walk_id = :walkId AND moment_id = :momentId")
-    suspend fun setCardDismissed(walkId: Long, momentId: String)
+    @Query(
+        "UPDATE honor_card_states SET dismissed = MAX(dismissed, :atMillis) " +
+            "WHERE walk_id = :walkId AND moment_id = :momentId",
+    )
+    suspend fun setCardDismissed(walkId: Long, momentId: String, atMillis: Long)
 
     @Query("SELECT * FROM honor_card_states WHERE walk_id = :walkId ORDER BY moment_id")
     suspend fun getCardStates(walkId: Long): List<HonorCardStateEntity>

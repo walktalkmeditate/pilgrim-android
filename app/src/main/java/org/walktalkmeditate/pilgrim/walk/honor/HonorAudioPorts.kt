@@ -11,7 +11,11 @@ import kotlinx.coroutines.flow.StateFlow
  * event; an implementation hops to its player's thread itself.
  */
 
-/** How one play handed to [WayVoicePort] ended. Called at most once per play, from any thread. */
+/**
+ * How one play handed to [WayVoicePort] ended, and the pause the platform
+ * made in it. [onFinished] and [onFailed] come at most once per play
+ * between them. Called from any thread.
+ */
 interface WayVoiceListener {
 
     /** The file played to its end: iOS's `onFinished` after a natural end. */
@@ -20,8 +24,17 @@ interface WayVoiceListener {
     /**
      * The file would not open, decode, or start, before or during playback:
      * iOS's `finish(notify: true)` (`WayVoicePlayer.swift:166-178@7c200bf`).
+     * [atHandOff] when the player refused it the moment it was handed over,
+     * before any sound and with no prompt to wait behind: iOS's failure
+     * inside `start()`, which returns before `startVoice` raises the card.
      */
-    fun onFailed()
+    fun onFailed(atHandOff: Boolean)
+
+    /**
+     * The headphones went and the player paused the play (owner decision
+     * 2): the walker's pause from here on, which only a resume undoes.
+     */
+    fun onPausedForRoute()
 }
 
 /**
@@ -92,10 +105,17 @@ interface HonorHapticsPort {
  * The two engine gates that live outside the walk's own state (parity
  * spec D §3.4): a recording in the UI process, and a community whisper
  * actually playing. Pause and sitting come from the walk state itself.
+ *
+ * [wayVoiceHeld] is no gate: the voice handed over is silent but not
+ * paused, parked behind a guide prompt or held by one or by a call. Its
+ * clock stops where the voice stands while the chip still reads
+ * "listening", as iOS's player clock stops in `pause()` and a parked voice
+ * reads 0:00 (`WayVoicePlayer.swift:58-73@7c200bf`).
  */
 data class HonorExternalGates(
     val recording: Boolean = false,
     val externalAudio: Boolean = false,
+    val wayVoiceHeld: Boolean = false,
 )
 
 /**

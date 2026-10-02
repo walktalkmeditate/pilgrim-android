@@ -160,13 +160,25 @@ class HonorDaoTest {
     }
 
     @Test
-    fun `a card's flags only turn on, whichever is set first`() = runTest {
+    fun `a card's touch only turns on and its dismissal only moves on, whichever is set first`() = runTest {
         dao.insertSession(session())
-        dao.markCardDismissed(walkId, "voice-1")
+        dao.markCardDismissed(walkId, "voice-1", atMillis = 5_000L)
         dao.markCardTouched(walkId, "voice-1")
-        dao.markCardDismissed(walkId, "voice-1")
+        dao.markCardDismissed(walkId, "voice-1", atMillis = 3_000L)
 
-        assertEquals(HonorCardStateEntity(walkId, "voice-1", dismissed = true, touched = true), dao.getCardStates(walkId).single())
+        assertEquals(
+            HonorCardStateEntity(walkId, "voice-1", dismissedAtMillis = 5_000L, touched = true),
+            dao.getCardStates(walkId).single(),
+        )
+    }
+
+    @Test
+    fun `a later dismissal replaces the earlier one`() = runTest {
+        dao.insertSession(session())
+        dao.markCardDismissed(walkId, "voice-1", atMillis = 5_000L)
+        dao.markCardDismissed(walkId, "voice-1", atMillis = 9_000L)
+
+        assertEquals(9_000L, dao.getCardStates(walkId).single().dismissedAt)
     }
 
     @Test
@@ -178,7 +190,7 @@ class HonorDaoTest {
         assertTrue(dao.getCardStates(walkId).isEmpty())
 
         db.walkDao().deleteById(walkId)
-        assertEquals(false, dao.markCardDismissed(walkId, "voice-1"))
+        assertEquals(false, dao.markCardDismissed(walkId, "voice-1", atMillis = 3_000L))
     }
 
     @Test
@@ -202,13 +214,16 @@ class HonorDaoTest {
             HonorMomentStateEntity(walkId, "voice-1", reachedAt = 5_000L, voiceStartedAt = 6_000L, heard = true),
         )
         dao.markCardTouched(walkId, "voice-1")
-        dao.markCardDismissed(walkId, "voice-1")
+        dao.markCardDismissed(walkId, "voice-1", atMillis = 7_000L)
 
         val moment = dao.getMomentStates(walkId).single()
         assertTrue(moment.heard)
         assertNull(moment.queuePosition)
         assertEquals(6_000L, moment.voiceStartedAt)
-        assertEquals(HonorCardStateEntity(walkId, "voice-1", dismissed = true, touched = true), dao.getCardStates(walkId).single())
+        assertEquals(
+            HonorCardStateEntity(walkId, "voice-1", dismissedAtMillis = 7_000L, touched = true),
+            dao.getCardStates(walkId).single(),
+        )
     }
 
     @Test

@@ -43,6 +43,17 @@ import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.domain.honor.VoiceKind
+import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.honor.WayMedia
+import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
+import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
+import org.walktalkmeditate.pilgrim.domain.honor.WaySource
+import org.walktalkmeditate.pilgrim.honor.HonorReplies
+import org.walktalkmeditate.pilgrim.honor.TheirSitting
+import java.time.Instant
 
 /**
  * Tests the voice auto-stop side-effect that Stage 9.5-C factored out of
@@ -70,6 +81,10 @@ class WalkLifecycleObserverTest {
     private lateinit var observedFlow: CountingStateFlow<WalkState>
     private lateinit var observerScope: CoroutineScope
     private val seekSessionStore = org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore()
+    private val waysDirectory by lazy { java.io.File(context.filesDir, "lifecycle-observer-ways") }
+    private val store by lazy { WayStore({ waysDirectory }) }
+    private val replies by lazy { HonorReplies(store) }
+    private val theirSitting = TheirSitting()
     private val testClock = object : Clock {
         @Volatile var current: Long = 0L
         override fun now(): Long = current
@@ -127,6 +142,8 @@ class WalkLifecycleObserverTest {
             repository = repository,
             orphanSweeper = sweeper,
             seekSessionStore = seekSessionStore,
+            honorReplies = replies,
+            theirSitting = theirSitting,
         )
         // The observer's `init { scope.launch { walkState.collect } }`
         // subscribes asynchronously on its scope dispatcher and swallows
@@ -151,6 +168,7 @@ class WalkLifecycleObserverTest {
     fun tearDown() {
         observerScope.coroutineContext[Job]?.cancel()
         db.close()
+        waysDirectory.deleteRecursively()
     }
 
     @Test
@@ -379,6 +397,56 @@ class WalkLifecycleObserverTest {
         )
     }
 
+    // ─── A reply still recording at walk end (parity spec D §7.2–§7.3) ──────
+
+    @Test
+    fun `a share's reply still recording at walk end is filed`() = runBlocking {
+        store.save(honorWay(SHARE_WAY_ID))
+        val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+        startLiveRecordingFor(walkId)
+        replies.arm(walkId = walkId, wayId = SHARE_WAY_ID, momentId = "voice-2")
+
+        transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
+        transitionTo(WalkState.Finished(WalkAccumulator(walkId = walkId, startedAt = 0L), endedAt = 100_000L))
+        awaitReplyTaken()
+
+        assertEquals(
+            mapOf(2 to repository.voiceRecordingsFor(walkId).single().fileRelativePath),
+            store.replies(SHARE_WAY_ID),
+        )
+    }
+
+    @Test
+    fun `a first honoring's reply still recording at walk end is lost, though its Way is listed by then`() =
+        runBlocking {
+            val walkId = repository.startWalk(startTimestamp = 0L, intention = null).id
+            startLiveRecordingFor(walkId)
+            replies.arm(walkId = walkId, wayId = OWN_WAY_ID, momentId = "voice-2")
+            // The tracker's finalize step lists the Way before the UI's take lands.
+            store.save(honorWay(OWN_WAY_ID))
+
+            transitionTo(WalkState.Active(WalkAccumulator(walkId = walkId, startedAt = 0L)))
+            transitionTo(WalkState.Finished(WalkAccumulator(walkId = walkId, startedAt = 0L), endedAt = 100_000L))
+            awaitReplyTaken()
+
+            assertEquals(1 to emptyMap<Int, String>(), repository.voiceRecordingsFor(walkId).size to store.replies(OWN_WAY_ID))
+        }
+
+    // ─── A card's "Sit?" offer (parity spec E §12) ───────────────────────────
+
+    @Test
+    fun `a sitting ended from the notification withdraws the card's offer, as every end does on iOS`() = runBlocking {
+        val walk = WalkAccumulator(walkId = 7L, startedAt = 0L)
+        transitionTo(WalkState.Active(walk))
+        theirSitting.offer(walkId = 7L, minutes = 5, nowMillis = 1_000L)
+
+        transitionTo(WalkState.Meditating(walk, meditationStartedAt = 2_000L))
+        val duringTheSitting = theirSitting.offer.value
+        transitionTo(WalkState.Active(walk))
+
+        assertEquals(5 to null, duringTheSitting?.minutes to theirSitting.offer.value)
+    }
+
     @Test
     fun `terminal transitions retire a pending seek session`() = runBlocking {
         seekSessionStore.set(
@@ -417,6 +485,38 @@ class WalkLifecycleObserverTest {
             seekSessionStore.pending.value,
         )
     }
+
+    /** The walk-end take is saved, then its reply origin taken, in that order. */
+    private fun awaitReplyTaken() {
+        val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
+        while (replies.pending.value != null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20L)
+        }
+        assertNull("the walk-end take never took its reply origin", replies.pending.value)
+    }
+
+    private fun honorWay(id: String) = Way(
+        id = id,
+        source = if (id == SHARE_WAY_ID) {
+            WaySource.Share(id = "AbCdEf1234", pageUrl = "https://walk.pilgrimapp.org/AbCdEf1234")
+        } else {
+            WaySource.OwnWalk("0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50")
+        },
+        title = "the long way",
+        departedAt = Instant.ofEpochSecond(1_700_000_000),
+        tzIdentifier = "UTC",
+        expires = null,
+        route = (0..3).map { WayPoint(lat = 0.0, lon = it * 0.001, alt = null, t = it * 60.0) },
+        totalDistanceMeters = 333.0,
+        theirActiveSeconds = 180.0,
+        moments = listOf(
+            WayMoment(
+                id = "voice-2", frac = 0.5, at = null,
+                kind = WayMomentKind.Voice(0.6, 20.0, VoiceKind.SPOKEN, WayMedia.Recording("recordings/v2.wav")),
+            ),
+        ),
+        weather = null,
+    )
 
     private fun awaitDeleted(path: Path) {
         val deadline = System.currentTimeMillis() + WAIT_FOR_OBSERVER_MS
@@ -494,6 +594,9 @@ class WalkLifecycleObserverTest {
     }
 
     private companion object {
+        const val OWN_WAY_ID = "walk:0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50"
+        const val SHARE_WAY_ID = "share:AbCdEf1234"
+
         // Failsafe upper bound for the deterministic firstEmission
         // handshake (observedFlow.processed >= 1); it returns the
         // instant the collector consumes the initial Idle, so this only

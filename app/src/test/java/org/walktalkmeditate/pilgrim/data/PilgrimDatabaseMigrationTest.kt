@@ -902,11 +902,16 @@ class PilgrimDatabaseMigrationTest {
                 )
                 dao.upsertMomentState(HonorMomentStateEntity(UNFINISHED_WALK, "voice-1", reachedAt = 1L))
                 dao.markCardTouched(UNFINISHED_WALK, "voice-1")
+                dao.markCardDismissed(UNFINISHED_WALK, "voice-1", atMillis = 3L)
                 dao.insertMarker(HonorWalkMarkerEntity("unfinished", finishedAt = 2L, finishKind = HonorFinishKind.CLEAN))
 
                 assertEquals(HonorPhase.WALKING, dao.getSession(UNFINISHED_WALK)!!.phase)
                 assertEquals(1, dao.getMomentStates(UNFINISHED_WALK).size)
-                assertEquals(1, dao.getCardStates(UNFINISHED_WALK).size)
+                assertEquals(
+                    "the card row keeps its dismissal's time",
+                    HonorCardStateEntity(UNFINISHED_WALK, "voice-1", dismissedAtMillis = 3L, touched = true),
+                    dao.getCardStates(UNFINISHED_WALK).single(),
+                )
 
                 room.walkDao().deleteById(UNFINISHED_WALK)
 

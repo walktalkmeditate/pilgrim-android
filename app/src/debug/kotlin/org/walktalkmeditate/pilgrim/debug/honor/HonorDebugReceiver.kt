@@ -20,6 +20,7 @@ import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.HonorCardStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
+import org.walktalkmeditate.pilgrim.data.honor.dismissedAt
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSourceKind
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
@@ -124,7 +125,7 @@ class HonorDebugReceiver : BroadcastReceiver() {
     private suspend fun command(intent: Intent) {
         val command = when (val name = intent.getStringExtra(EXTRA_COMMAND)) {
             "toggle" -> HonorCommand.TogglePlayback(heldOrNamedVoice(intent) ?: return)
-            "skip" -> HonorCommand.Skip
+            "skip" -> HonorCommand.Skip(heldOrNamedVoice(intent) ?: return)
             "rate" -> HonorCommand.CycleRate
             "reply" -> HonorCommand.PlayReply(heldOrNamedVoice(intent) ?: return)
             else -> {
@@ -248,7 +249,7 @@ class HonorDebugReceiver : BroadcastReceiver() {
             }
             if (state?.heard == true) parts += "heard"
             cardById[id]?.let { card ->
-                if (card.dismissed) parts += "dismissed"
+                if (card.dismissedAt != null) parts += "dismissed"
                 if (card.touched) parts += "touched"
             }
             parts.joinToString(" ")

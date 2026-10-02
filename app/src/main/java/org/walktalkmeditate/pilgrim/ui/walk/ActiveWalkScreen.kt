@@ -42,6 +42,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,8 +52,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -61,6 +65,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -68,6 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.walktalkmeditate.pilgrim.R
 import org.walktalkmeditate.pilgrim.permissions.AppSettings
+import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.core.celestial.SeasonalMarker
 import org.walktalkmeditate.pilgrim.core.celestial.kanji
 import org.walktalkmeditate.pilgrim.core.celestial.turningMarkerForToday
@@ -83,10 +90,13 @@ import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
 import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
 import org.walktalkmeditate.pilgrim.ui.honor.HonorAlert
+import org.walktalkmeditate.pilgrim.ui.honor.HonorCardLayer
+import org.walktalkmeditate.pilgrim.ui.honor.WayPlaceCardActions
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
+import org.walktalkmeditate.pilgrim.ui.walk.map.rememberWayMapPins
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
@@ -263,6 +273,7 @@ fun ActiveWalkScreen(
     viewModel: WalkViewModel = hiltViewModel(),
     seekSetupViewModel: SeekSetupViewModel = hiltViewModel(),
     seekWalkViewModel: SeekWalkViewModel = hiltViewModel(),
+    honorWalkViewModel: HonorWalkViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     // Navigation observer reads the passthrough flow, NOT uiState's
@@ -282,6 +293,20 @@ fun ActiveWalkScreen(
     val seekPendingSession by seekWalkViewModel.pendingSession.collectAsStateWithLifecycle()
     val seekSonarEnabled by seekWalkViewModel.sonarEnabled.collectAsStateWithLifecycle()
     val seekSonarVolume by seekWalkViewModel.sonarVolume.collectAsStateWithLifecycle()
+    // The Way (parity spec E §1–§6): drawn from the pre-walk screen on, as
+    // iOS draws it from the moment the walk screen appears; the companion
+    // and the fly-to only once the walk runs. Null on every other walk.
+    val honor by honorWalkViewModel.state.collectAsStateWithLifecycle()
+    val honorCompanion by honorWalkViewModel.companion.collectAsStateWithLifecycle()
+    val honorFocus by honorWalkViewModel.focus.collectAsStateWithLifecycle()
+    LaunchedEffect(honorWalkViewModel, mode, honorSourceWalkId) {
+        if (mode == WalkMode.Honor && honorSourceWalkId != null) honorWalkViewModel.showWay(honorSourceWalkId)
+    }
+    val honorMapPins = rememberWayMapPins(honor?.pins.orEmpty())
+    // The cards, the chip, and the Remaining stat (parity spec E §7–§11).
+    val honorCards by honorWalkViewModel.cards.collectAsStateWithLifecycle()
+    val honorSheet by honorWalkViewModel.sheet.collectAsStateWithLifecycle()
+    val honorReplyingTo by honorWalkViewModel.replyingToMomentId.collectAsStateWithLifecycle()
     val recentIntentions by viewModel.recentIntentions.collectAsStateWithLifecycle()
     val recordingsCount by viewModel.recordingsCount.collectAsStateWithLifecycle()
     val talkMillis by viewModel.talkMillis.collectAsStateWithLifecycle()
@@ -342,6 +367,33 @@ fun ActiveWalkScreen(
         SHEET_HEIGHT_EXPANDED_DP
     } else {
         SHEET_HEIGHT_MINIMIZED_DP
+    }
+    // The sheet's measured height in either detent (iOS `mapBottomInset`):
+    // an honor card sits 8 dp clear of it, chip and all, and the map's
+    // camera clears it too. Read only on a begun honor walk, so no other
+    // walk recomposes when the sheet changes size.
+    var measuredSheetHeightPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    // "reply here" asks for the microphone first, as the Talk button does.
+    var replyAwaitingMic by remember { mutableStateOf<ReplyRequest?>(null) }
+    val replyMicContract = remember { ActivityResultContracts.RequestPermission() }
+    val replyMicLauncher = rememberLauncherForActivityResult(replyMicContract) { granted ->
+        val awaiting = replyAwaitingMic
+        replyAwaitingMic = null
+        if (awaiting == null) return@rememberLauncherForActivityResult
+        if (granted) {
+            viewModel.replyHere(walkId = awaiting.walkId, wayId = awaiting.wayId, momentId = awaiting.momentId)
+        } else {
+            viewModel.emitPermissionDenied()
+        }
+    }
+    val replyHere: (ReplyRequest) -> Unit = { request ->
+        if (PermissionChecks.isMicrophoneGranted(context)) {
+            viewModel.replyHere(walkId = request.walkId, wayId = request.wayId, momentId = request.momentId)
+        } else {
+            replyAwaitingMic = request
+            replyMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
     var showLeaveConfirm by rememberSaveable { mutableStateOf(false) }
     var showEndConfirm by rememberSaveable { mutableStateOf(false) }
@@ -800,8 +852,14 @@ fun ActiveWalkScreen(
             chronologicalSegmentOrder = true,
             initialCamera = initialCameraSeed,
             // Match map bottom-inset to the visible sheet height so the
-            // user puck stays just above the sheet in BOTH detents.
-            bottomInsetDp = sheetInsetDp,
+            // user puck stays just above the sheet in BOTH detents; on an
+            // honor walk the measured one, so the listening chip moves the
+            // camera as it does on iOS (`PilgrimMapView.swift:242-243@7c200bf`).
+            bottomInsetDp = if (honor?.session != null) {
+                honorSheetInset(measuredSheetHeightPx, sheetInsetDp, density)
+            } else {
+                sheetInsetDp
+            },
             waypoints = waypoints,
             modifier = Modifier.fillMaxSize(),
             // Seek fog + pulse ring + crescent (U9 feeds the U6/U7
@@ -821,6 +879,11 @@ fun ActiveWalkScreen(
                     }
                 }
             },
+            honorWay = honor?.line,
+            wayPins = honorMapPins,
+            onWayPinTap = honorWalkViewModel::onWayPinTap,
+            companion = honorCompanion,
+            honorFocus = honorFocus,
         )
         tappedCairn?.let { cairn ->
             CairnDetailSheet(
@@ -1142,6 +1205,9 @@ fun ActiveWalkScreen(
         // branch — there it shows the Start button, here it shows zero
         // stats above it).
         val isPreWalk = navWalkState is WalkState.Idle || navWalkState is WalkState.Finished
+        val cards = honorCards
+        val walkInProgress = navWalkState is WalkState.Active || navWalkState is WalkState.Paused
+        val showsHonorCard = honor?.session != null && walkInProgress && cards != null && cards.isShowingCard
         WalkStatsSheet(
             state = sheetState,
             onStateChange = { sheetState = it },
@@ -1189,7 +1255,17 @@ fun ActiveWalkScreen(
             // button can't accidentally close out a session.
             onFinish = { showEndConfirm = true },
             peekHintTrigger = peekHintTrigger.value,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            honor = honorSheet,
+            onHonorPauseResume = honorWalkViewModel::toggleListening,
+            onHonorSkip = honorWalkViewModel::skipVoice,
+            // iOS stacks the card under the sheet and over the ambient row
+            // (`ActiveWalkView.swift:160-167@7c200bf`); the sparkline paints
+            // over the sheet here (manual-QA B1), so while a card shows the
+            // sheet rises over both, and covers the card as it moves.
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(if (showsHonorCard) SHEET_OVER_HONOR_CARD_Z else 0f)
+                .onSizeChanged { measuredSheetHeightPx = it.height },
         )
         // iOS parity `ActiveWalkView.swift:120-146` — the ambient
         // overlay (sparkline) is positioned ABOVE the minimized sheet.
@@ -1201,6 +1277,37 @@ fun ActiveWalkScreen(
             sheetState = sheetState,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+        // The Way's card (parity spec E §1, §7): directly above the sheet,
+        // over the ambient row and the sparkline, only on an honor walk that
+        // has begun, and only while it carries a card, so every other touch
+        // is the map's. Declared after the sparkline so it draws over it.
+        if (showsHonorCard && cards != null) {
+            HonorCardLayer(
+                cards = cards,
+                units = distanceUnits,
+                replyingToMomentId = honorReplyingTo,
+                isRecording = recorderState is VoiceRecorderUiState.Recording,
+                actionsFor = { moment ->
+                    WayPlaceCardActions(
+                        onFly = { honorWalkViewModel.flyTo(moment) },
+                        onTouch = { honorWalkViewModel.touch(moment.id) },
+                        onDismiss = honorWalkViewModel::dismissTopCard,
+                        onPlayPause = { honorWalkViewModel.togglePlayback(moment) },
+                        onSeek = { fraction -> honorWalkViewModel.scrub(moment, fraction) },
+                        onCycleRate = honorWalkViewModel::cycleRate,
+                        onPlayReply = { honorWalkViewModel.playReply(moment) },
+                        onReply = { replyHere(ReplyRequest(cards.walkId, cards.wayId, moment.id)) },
+                        onStopReply = viewModel::toggleRecording,
+                        onSit = viewModel::startSitting,
+                    )
+                },
+                onContinue = honorWalkViewModel::dismissArrival,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = honorSheetInset(measuredSheetHeightPx, sheetInsetDp, density) + PilgrimSpacing.small)
+                    .padding(horizontal = PilgrimSpacing.normal),
+            )
+        }
         // iOS parity `ProximityNotificationView.swift@db4196e` — placement
         // result banner. iOS uses a custom floating banner; Android MVP
         // uses Material 3 Snackbar (auto-dismissal, accessible) at the
@@ -1289,6 +1396,16 @@ fun ActiveWalkScreen(
         }
     }
 }
+
+/** A card's "reply here", held while the microphone permission is asked. */
+private data class ReplyRequest(val walkId: Long, val wayId: String, val momentId: String)
+
+/** The sheet's measured height, or its detent's before the first measure. */
+private fun honorSheetInset(measuredSheetHeightPx: Int, sheetInsetDp: Dp, density: Density): Dp =
+    if (measuredSheetHeightPx > 0) with(density) { measuredSheetHeightPx.toDp() } else sheetInsetDp
+
+/** Above the honor card layer, which is declared after the sheet. */
+private const val SHEET_OVER_HONOR_CARD_Z = 1f
 
 /**
  * iOS `SeekSetupFlowModifier.swift:53-62@c1745e8` — the two seek-setup

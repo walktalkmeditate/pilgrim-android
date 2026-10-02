@@ -249,7 +249,15 @@ internal class FakePorts {
 
     fun finishLatest() = listeners.last().onFinished()
 
-    fun failLatest() = listeners.last().onFailed()
+    fun failLatest(atHandOff: Boolean = false) = listeners.last().onFailed(atHandOff)
+
+    /** The headphones going, as the arbiter passes on the player's pause. */
+    fun pauseLatestForRoute() = listeners.last().onPausedForRoute()
+
+    /** What the arbiter says of the voice handed over: [held] silent behind a prompt or a call. */
+    fun holdVoice(held: Boolean) {
+        gateFlow.value = gateFlow.value.copy(wayVoiceHeld = held)
+    }
 
     fun clear() = calls.clear()
 }

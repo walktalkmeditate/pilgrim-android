@@ -467,8 +467,18 @@ fun MeditationScreen(
         }
     }
 
+    // iOS `suggestedMeditationMinutes`: set only by a place card's "Sit?".
+    // Done withdraws it at once, while the closing ceremony still fades the
+    // labels out, so the caption keeps its last value until the screen goes.
+    val liveTheirSitting by viewModel.theirSittingMinutes.collectAsStateWithLifecycle()
+    var theirSitting by rememberSaveable { mutableStateOf<Int?>(null) }
+    LaunchedEffect(liveTheirSitting, didEnd) {
+        if (!didEnd) theirSitting = liveTheirSitting
+    }
+
     MeditationScreenContent(
         elapsedSeconds = elapsedSeconds,
+        theirSittingMinutes = theirSitting,
         mossColor = moss,
         enabled = !didEnd,
         onDone = endSession,
@@ -554,6 +564,8 @@ private const val CEREMONY_TOTAL_MS = 6_500L
 internal fun MeditationScreenContent(
     elapsedSeconds: Int,
     mossColor: Color,
+    // "they sat here N minutes", for a sitting a place card's "Sit?" began.
+    theirSittingMinutes: Int? = null,
     enabled: Boolean,
     onDone: () -> Unit,
     breathRhythm: BreathRhythm = BreathRhythm.byId(BreathRhythm.DEFAULT_ID),
@@ -746,6 +758,10 @@ internal fun MeditationScreenContent(
                         style = pilgrimType.statValue,
                         color = pilgrimColors.fog,
                     )
+                    if (theirSittingMinutes != null) {
+                        Spacer(Modifier.height(6.dp))
+                        TheirSittingCaption(minutes = theirSittingMinutes)
+                    }
                     Spacer(Modifier.height(8.dp))
                     val labelText = when {
                         soundscapeName != null && soundscapeMuted ->
@@ -819,6 +835,25 @@ internal fun MeditationScreenContent(
             }
         }
     }
+}
+
+/**
+ * iOS `theirSittingCaption(minutes:)` (`MeditationView.swift:400-406@7c200bf`,
+ * parity spec E §12): how long the honored walker sat here, never a
+ * countdown. It has no "about", even for a shared Way's estimate (shared
+ * spec S4 §10, pilgrim-ios #109, matched), and TalkBack reads it as shown.
+ * "minute" only for exactly one, as iOS writes it in any locale.
+ */
+@Composable
+private fun TheirSittingCaption(minutes: Int) {
+    Text(
+        text = stringResource(
+            if (minutes == 1) R.string.honor_meditation_they_sat_one else R.string.honor_meditation_they_sat,
+            String.format(Locale.US, "%d", minutes),
+        ),
+        style = pilgrimType.caption,
+        color = pilgrimColors.fog.copy(alpha = 0.4f),
+    )
 }
 
 private fun formatTimer(elapsedSeconds: Int): String {

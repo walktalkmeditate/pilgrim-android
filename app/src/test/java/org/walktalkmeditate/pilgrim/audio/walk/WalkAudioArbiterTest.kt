@@ -438,12 +438,40 @@ class WalkAudioArbiterTest {
             val session = RecordingVoiceListener()
             arbiter.play(voiceA, 1f, session)
 
-            player.plays.single().listener.onFailed()
+            player.plays.single().listener.onFailed(beforeSound = true)
             assertEquals(1, session.failed)
             arbiter.restoreAfterWayVoice()
             settleRun()
 
             assertFalse(soundscape.held)
+        }
+
+    @Test
+    fun `a voice that won't start as it is handed over fails at hand-off, as iOS's start does`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            val session = RecordingVoiceListener()
+            arbiter.play(voiceA, 1f, session)
+
+            player.plays.single().listener.onFailed(beforeSound = true)
+
+            assertEquals(1, session.failedAtHandOff)
+        }
+
+    @Test
+    fun `a voice that breaks off mid-voice, or fails after waiting behind a prompt, fails as a mid-voice error does`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            val midway = RecordingVoiceListener()
+            arbiter.play(voiceA, 1f, midway)
+            player.plays.last().listener.onFailed(beforeSound = false)
+            val waited = RecordingVoiceListener()
+            ui.value = UiAudioGates(prompt = true)
+            arbiter.play(voiceB, 1f, waited)
+            ui.value = UiAudioGates()
+            player.plays.last().listener.onFailed(beforeSound = true)
+
+            assertEquals(listOf(1 to 0, 1 to 0), listOf(midway, waited).map { it.failed to it.failedAtHandOff })
         }
 
     @Test
@@ -471,6 +499,90 @@ class WalkAudioArbiterTest {
             arbiter.setRate(1.5f)
 
             assertEquals(listOf("rate 1.5"), log)
+        }
+
+    // The voice held still, for the session's clock (spec C §3.6–§3.7)
+
+    @Test
+    fun `a prompt holding a sounding voice reports it held, and its end reports it sounding again`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            arbiter.play(voiceA, 1f, RecordingVoiceListener())
+            val beforePrompt = arbiter.gates.value.wayVoiceHeld
+
+            ui.value = UiAudioGates(prompt = true)
+            val duringPrompt = arbiter.gates.value.wayVoiceHeld
+            ui.value = UiAudioGates()
+
+            assertEquals(listOf(false, true, false), listOf(beforePrompt, duringPrompt, arbiter.gates.value.wayVoiceHeld))
+        }
+
+    @Test
+    fun `a voice parked behind a prompt is held until it starts`() = runTest(UnconfinedTestDispatcher()) {
+        val arbiter = arbiter()
+        ui.value = UiAudioGates(prompt = true)
+        arbiter.play(voiceA, 1f, RecordingVoiceListener())
+        val parked = arbiter.gates.value.wayVoiceHeld
+
+        ui.value = UiAudioGates()
+
+        assertEquals(true to false, parked to arbiter.gates.value.wayVoiceHeld)
+    }
+
+    @Test
+    fun `a voice the walker resumes over the prompt, or pauses during it, is no longer held`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            arbiter.play(voiceA, 1f, RecordingVoiceListener())
+            ui.value = UiAudioGates(prompt = true)
+
+            arbiter.resume()
+            val resumed = arbiter.gates.value.wayVoiceHeld
+            arbiter.pause()
+
+            assertEquals(false to false, resumed to arbiter.gates.value.wayVoiceHeld)
+        }
+
+    @Test
+    fun `a call holds the voice until the player resumes it`() = runTest(UnconfinedTestDispatcher()) {
+        val arbiter = arbiter()
+        arbiter.play(voiceA, 1f, RecordingVoiceListener())
+        val play = player.plays.single().listener
+
+        player.isPlaying = false
+        play.onHeld(true)
+        val duringCall = arbiter.gates.value.wayVoiceHeld
+        player.isPlaying = true
+        play.onHeld(false)
+
+        assertEquals(true to false, duringCall to arbiter.gates.value.wayVoiceHeld)
+    }
+
+    @Test
+    fun `a hold reported by a play the player no longer holds changes nothing`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            arbiter.play(voiceA, 1f, RecordingVoiceListener())
+            arbiter.play(voiceB, 1f, RecordingVoiceListener())
+
+            player.plays.first().listener.onHeld(true)
+
+            assertFalse(arbiter.gates.value.wayVoiceHeld)
+        }
+
+    @Test
+    fun `the headphones going reach the session, and a prompt ending afterwards leaves the voice paused`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val arbiter = arbiter()
+            val session = RecordingVoiceListener()
+            arbiter.play(voiceA, 1f, session)
+            ui.value = UiAudioGates(prompt = true)
+
+            player.plays.single().listener.onPausedForRoute()
+            log.clear()
+            ui.value = UiAudioGates()
+
+            assertEquals(Triple(1, false, false), Triple(session.pausedForRoute, "resume" in log, arbiter.gates.value.wayVoiceHeld))
         }
 
     // The engine's outside gates

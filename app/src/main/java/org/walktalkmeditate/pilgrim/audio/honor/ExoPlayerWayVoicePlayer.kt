@@ -39,7 +39,7 @@ import javax.inject.Singleton
  *
  * iOS registers no interruption or route handling for the Way voice
  * (pilgrim-ios #102). Android's platform equivalents (owner decision 2,
- * recorded at the gate):
+ * recorded at the gate), each reported to the play's listener:
  * - a transient loss (a call) pauses a sounding voice, and the regain resumes it;
  * - a permanent loss stops it and reports it ended, so the engine takes its
  *   turn and the next voice asks for focus again;
@@ -76,8 +76,10 @@ class ExoPlayerWayVoicePlayer internal constructor(
         override fun onReceive(ctx: Context?, intent: Intent?) {
             if (intent?.action != AudioManager.ACTION_AUDIO_BECOMING_NOISY) return
             mainHandler.post {
-                resumeOnFocusGain = false
-                current?.let(::pausePlay)
+                val play = current ?: return@post
+                dropFocusResume()
+                pausePlay(play)
+                play.listener.onPausedForRoute()
             }
         }
     }
@@ -104,13 +106,13 @@ class ExoPlayerWayVoicePlayer internal constructor(
 
     override fun pause() {
         checkMainThread()
-        resumeOnFocusGain = false
+        dropFocusResume()
         current?.let(::pausePlay)
     }
 
     override fun resume() {
         checkMainThread()
-        resumeOnFocusGain = false
+        dropFocusResume()
         current?.let(::resumePlay)
     }
 
@@ -168,7 +170,14 @@ class ExoPlayerWayVoicePlayer internal constructor(
     /** Reported on a later turn, so a caller never sees its own play fail inside [play]. */
     private fun failSoon(play: Play) {
         play.sounding = false
-        mainHandler.post { end(play) { it.onFailed() } }
+        mainHandler.post { end(play) { it.onFailed(beforeSound = true) } }
+    }
+
+    /** A call's hold ends without the regain: the caller's own word, or the headphones going. */
+    private fun dropFocusResume() {
+        if (!resumeOnFocusGain) return
+        resumeOnFocusGain = false
+        current?.listener?.onHeld(false)
     }
 
     private fun releaseAudio() {
@@ -202,10 +211,14 @@ class ExoPlayerWayVoicePlayer internal constructor(
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> current?.takeIf { it.sounding }?.let { play ->
                 pausePlay(play)
                 resumeOnFocusGain = true
+                play.listener.onHeld(true)
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnFocusGain) {
                 resumeOnFocusGain = false
-                current?.let(::resumePlay)
+                current?.let { play ->
+                    resumePlay(play)
+                    play.listener.onHeld(false)
+                }
             }
             AudioManager.AUDIOFOCUS_LOSS -> current?.let { play -> end(play) { it.onEnded() } }
         }
@@ -244,7 +257,7 @@ class ExoPlayerWayVoicePlayer internal constructor(
 
         override fun onEnded() = end(this) { it.onEnded() }
 
-        override fun onFailed() = end(this) { it.onFailed() }
+        override fun onFailed(beforeSound: Boolean) = end(this) { it.onFailed(beforeSound) }
     }
 
     internal companion object {
@@ -280,7 +293,8 @@ internal interface WayVoiceTrack {
     interface Events {
         fun onEnded()
 
-        fun onFailed()
+        /** [beforeSound] while the file had not yet come ready to play. */
+        fun onFailed(beforeSound: Boolean)
     }
 
     fun interface Factory {
@@ -297,14 +311,20 @@ internal class ExoPlayerWayVoiceTrack private constructor(
 
     private var done = false
 
+    /** The file opened and decoded far enough to play: a failure from here on broke off mid-voice. */
+    private var wasReady = false
+
     /** A scrub before the duration is known lands once the file is ready. */
     private var pendingSeekFraction: Double? = null
 
     override fun onPlaybackStateChanged(playbackState: Int) {
         when (playbackState) {
-            Player.STATE_READY -> pendingSeekFraction?.let { fraction ->
-                pendingSeekFraction = null
-                seekTo(fraction)
+            Player.STATE_READY -> {
+                wasReady = true
+                pendingSeekFraction?.let { fraction ->
+                    pendingSeekFraction = null
+                    seekTo(fraction)
+                }
             }
             Player.STATE_ENDED -> report { events.onEnded() }
             else -> Unit
@@ -313,7 +333,7 @@ internal class ExoPlayerWayVoiceTrack private constructor(
 
     override fun onPlayerError(error: PlaybackException) {
         Log.w(TAG, "a Way voice failed: ${error.errorCodeName}")
-        report { events.onFailed() }
+        report { events.onFailed(beforeSound = !wasReady) }
     }
 
     override fun pause() = exo.pause()

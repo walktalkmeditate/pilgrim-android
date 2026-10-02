@@ -7,12 +7,16 @@ import androidx.room.ForeignKey
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 
 /**
- * How a voice stopped. Only [FINISHED] and [FAILED] are iOS's `onFinished`
- * paths, the two after which an untouched card retires on its own
- * (parity spec D §5.2); [DROPPED] is a waiting voice abandoned before it
- * ever played.
+ * How a voice stopped. Only [FINISHED], [FAILED], and [FAILED_AT_START]
+ * are iOS's `onFinished` paths, the three after which an untouched card
+ * retires on its own (parity spec D §5.2); [DROPPED] is a waiting voice
+ * abandoned before it ever played. [FAILED_AT_START] is an engine voice
+ * the player refused as it was handed over, iOS's failure inside
+ * `startVoice`, whose card then rises over the voice it handed its turn to
+ * (spec C §10.2); [FAILED] is every other failure, which leaves the card
+ * where it is (§10.3).
  */
-enum class HonorVoiceEnd { FINISHED, FAILED, SKIPPED, INTERRUPTED, REPLACED, DROPPED }
+enum class HonorVoiceEnd { FINISHED, FAILED, FAILED_AT_START, SKIPPED, INTERRUPTED, REPLACED, DROPPED }
 
 /**
  * One moment of the honored Way on one walk: the moment tracker's

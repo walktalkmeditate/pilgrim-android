@@ -45,6 +45,7 @@ class WalkAudioArbiterSessionTest {
     private val way = HonorHarness.way()
     private val log = audioLog()
     private val player = FakeWayVoicePlayer(log)
+    private val uiGates = FakeUiAudioGates()
 
     @Before
     fun setUp() {
@@ -52,7 +53,7 @@ class WalkAudioArbiterSessionTest {
         h.writeRecordings(way)
         whispers = AudibleWhisperPlayer(log)
         arbiterScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        arbiter = WalkAudioArbiter(player, FakeWayVoiceSoundscape(log), whispers, FakeUiAudioGates(), arbiterScope)
+        arbiter = WalkAudioArbiter(player, FakeWayVoiceSoundscape(log), whispers, uiGates, arbiterScope)
     }
 
     @After
@@ -115,6 +116,30 @@ class WalkAudioArbiterSessionTest {
         assertEquals(listOf("hold 0.15"), log.filter { it.startsWith("hold") })
         assertEquals(listOf("release 0.4"), log.filter { it.startsWith("release") })
     }
+
+    @Test
+    fun `a prompt mid-voice stills the session's clock with the voice still listening, and its end runs it on`() =
+        runBlocking {
+            val walk = h.startHonorWalk(way)
+            val session = session()
+            session.start(h.serviceScope, walk.id, h.controller.state, fix(0.0, h.clock.millis))
+            session.drain()
+            h.clock.millis += 5_000
+
+            uiGates.value.value = UiAudioGates(prompt = true)
+            session.drain()
+            val held = h.db.honorDao().getSession(walk.id)!!
+            h.clock.millis += 30_000
+            uiGates.value.value = UiAudioGates()
+            session.drain()
+            val released = h.db.honorDao().getSession(walk.id)!!
+
+            assertEquals(
+                listOf("voice-1", false, null, 5_000L),
+                listOf(held.playingMomentId, held.voicePaused, held.voiceStartedAt, held.voiceStartOffsetMillis),
+            )
+            assertEquals(h.clock.millis to 5_000L, released.voiceStartedAt to released.voiceStartOffsetMillis)
+        }
 
     private object NoHaptics : HonorHapticsPort {
         override fun momentReached() = Unit

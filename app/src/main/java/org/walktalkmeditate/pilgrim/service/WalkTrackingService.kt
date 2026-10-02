@@ -964,7 +964,7 @@ class WalkTrackingService : Service() {
         /** Extra: which [HonorCommand], by its wire name ([HONOR_COMMAND_SKIP] and the rest). */
         const val EXTRA_HONOR_COMMAND = "extra.honor_command"
 
-        /** Extra: the moment a toggle, scrub, or reply names. */
+        /** Extra: the moment a toggle, pause or resume, scrub, skip, or reply names. */
         const val EXTRA_HONOR_MOMENT_ID = "extra.honor_moment_id"
 
         /** Extra: a scrub's fraction of the voice. Double. */
@@ -987,6 +987,7 @@ class WalkTrackingService : Service() {
         const val UI_AUDIO_GATE_TOKEN_KEY = "token"
 
         const val HONOR_COMMAND_TOGGLE_PLAYBACK = "toggle_playback"
+        const val HONOR_COMMAND_PAUSE_RESUME = "pause_resume"
         const val HONOR_COMMAND_SCRUB = "scrub"
         const val HONOR_COMMAND_SKIP = "skip"
         const val HONOR_COMMAND_CYCLE_RATE = "cycle_rate"
@@ -1207,8 +1208,9 @@ class WalkTrackingService : Service() {
         internal fun honorCommandFromExtras(kind: String?, momentId: String?, fraction: Double): HonorCommand? =
             when (kind) {
                 HONOR_COMMAND_TOGGLE_PLAYBACK -> momentId?.let { HonorCommand.TogglePlayback(it) }
+                HONOR_COMMAND_PAUSE_RESUME -> momentId?.let { HonorCommand.PauseResume(it) }
                 HONOR_COMMAND_SCRUB -> momentId?.let { HonorCommand.Scrub(it, fraction) }
-                HONOR_COMMAND_SKIP -> HonorCommand.Skip
+                HONOR_COMMAND_SKIP -> momentId?.let { HonorCommand.Skip(it) }
                 HONOR_COMMAND_CYCLE_RATE -> HonorCommand.CycleRate
                 HONOR_COMMAND_PLAY_REPLY -> momentId?.let { HonorCommand.PlayReply(it) }
                 else -> null

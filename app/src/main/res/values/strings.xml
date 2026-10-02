@@ -1300,4 +1300,53 @@
     <string name="honor_moment_waypoint_rises">When you walk it, it rises as a card as you reach it.</string>
     <string name="honor_moment_rest_body">A pause in their walk. The companion will wait here with you.</string>
     <string name="honor_moment_sit_body">A sitting. When you walk it, the way will offer you the same sitting here.</string>
+
+    <!-- Phase 21 U22: on the walk (parity spec E §7–§14). English Swift literals on
+         iOS, with no Localizable.strings entry. Minutes read "minutes" even for one
+         and for zero, as iOS ships them (pilgrim-ios #109, matched). -->
+    <string name="honor_card_show_place">Show this place on the map</string>
+    <string name="honor_card_back_to_you">Back to where you are</string>
+    <string name="honor_card_more_waiting">%1$s more waiting</string>
+    <string name="honor_card_dismiss">Dismiss</string>
+    <string name="honor_card_here">here</string>
+    <string name="honor_card_away">%1$s away</string>
+    <string name="honor_card_rest_body">A pause in their walk. The companion waits here with you.</string>
+    <string name="honor_card_sit">Sit?</string>
+    <string name="honor_card_sit_a11y" tools:ignore="PluralsCandidate">Sit here for %1$s minutes</string>
+    <string name="honor_card_sit_caption">your soundscape holds while you sit</string>
+    <string name="honor_card_recording_reply">recording your reply here</string>
+    <string name="honor_card_stop_reply">Stop recording your reply</string>
+    <string name="honor_card_waveform_a11y">Their voice; drag to move through it</string>
+    <string name="honor_card_clock">%1$s / %2$s</string>
+    <string name="honor_card_reply_here">reply here</string>
+    <string name="honor_card_reply_here_a11y">Record a reply at this spot</string>
+    <string name="honor_card_record_again">record again</string>
+    <string name="honor_card_record_again_a11y">Record a new reply, replacing your earlier one</string>
+    <string name="honor_card_replace_title">Replace your earlier reply?</string>
+    <string name="honor_card_replace">Replace</string>
+    <string name="honor_card_keep">Keep it</string>
+    <string name="honor_card_your_reply">your reply</string>
+    <string name="honor_card_your_reply_a11y">Play your earlier reply</string>
+    <string name="honor_chip_listening">listening</string>
+    <string name="honor_chip_paused">paused</string>
+    <string name="honor_chip_resume">Resume their voice</string>
+    <string name="honor_chip_skip">Skip this voice</string>
+    <string name="honor_stat_remaining">Remaining</string>
+    <string name="honor_stat_remaining_unknown">--</string>
+    <string name="honor_stats_a11y_label">Walk stats</string>
+    <string name="honor_stats_a11y_remaining">%1$s remaining</string>
+    <string name="honor_stats_a11y_value">%1$s, %2$s, %3$s</string>
+    <string name="honor_stats_a11y_with_intention">%1$s. %2$s</string>
+    <string name="honor_stats_a11y_expand">show full stats and controls</string>
+    <string name="honor_soft_tap_caption">off the way · %1$s m</string>
+    <string name="honor_arrival_title">you walked their way</string>
+    <string name="honor_arrival_one_voice">one voice heard</string>
+    <string name="honor_arrival_voices">%1$s voices heard</string>
+    <string name="honor_arrival_one_place">one place passed</string>
+    <string name="honor_arrival_places">%1$s places passed</string>
+    <string name="honor_arrival_whole_way">the whole way, in their steps</string>
+    <string name="honor_arrival_continue">continue</string>
+    <!-- iOS picks the word by `minutes == 1`, whatever the phone's plural rules. -->
+    <string name="honor_meditation_they_sat_one">they sat here %1$s minute</string>
+    <string name="honor_meditation_they_sat" tools:ignore="PluralsCandidate">they sat here %1$s minutes</string>
 </resources>

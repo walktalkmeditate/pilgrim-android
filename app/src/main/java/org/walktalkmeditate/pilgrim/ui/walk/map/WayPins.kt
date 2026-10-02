@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import kotlin.math.roundToInt
 import org.walktalkmeditate.pilgrim.domain.honor.Way
+import org.walktalkmeditate.pilgrim.domain.wgs84MidLatitudeMeters
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
 import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
 import org.walktalkmeditate.pilgrim.domain.honor.WayMoment
@@ -40,7 +41,8 @@ import org.walktalkmeditate.pilgrim.ui.walk.iconKeyToVector
  * A Way's moment pins: iOS `wayPins(for:heardVoiceIDs:)` and its rasters
  * (`PilgrimMapView+HonorWay.swift:120-138,299-334@7c200bf`,
  * `MapGlyphImageBuilder.swift:85-153@7c200bf`; parity spec E §4). The
- * overview shows them before Begin, none heard; U22's walk map reuses them.
+ * overview shows them before Begin, none heard; the walk map shows them
+ * from the pre-walk screen on, a voice turning from fog to stone once heard.
  */
 
 /** The glyph a moment wears, on its pin and in its header. */
@@ -145,6 +147,33 @@ fun wayPins(way: Way, heardVoiceIds: Set<String>): List<WayPin> {
 
 /** iOS's Way pin size, 22 pt (`PilgrimMapView+HonorWay.swift:323@7c200bf`). */
 internal const val WAY_PIN_SIZE_DP = 22f
+
+/** iOS's map tap reaches a pin standing less than this far away, on the ground. */
+internal const val MAP_TAP_RADIUS_METERS = 25.0
+
+/** A pin a map tap can land on: a Way moment's, or (with no id) one of the map's other tappable pins. */
+internal data class MapTapTarget(val wayMomentId: String?, val at: WayCoordinate)
+
+/**
+ * iOS `handleMapTap` (`PilgrimMapView.swift:771-793@7c200bf`, parity spec
+ * E §4): the tap goes to the nearest tappable pin strictly within
+ * [MAP_TAP_RADIUS_METERS], measured as `CLLocation.distance` measures it,
+ * the earlier target winning a tie. List the targets in iOS's order: the
+ * whisper and cairn pins, then the Way's. Both Honor maps share it, the
+ * overview and the walk, rather than Mapbox's icon hit box.
+ */
+internal fun nearestTapTarget(tap: WayCoordinate, targets: List<MapTapTarget>): MapTapTarget? {
+    var nearest: MapTapTarget? = null
+    var nearestMeters = Double.POSITIVE_INFINITY
+    for (target in targets) {
+        val meters = wgs84MidLatitudeMeters(tap.lat, tap.lon, target.at.lat, target.at.lon)
+        if (meters < MAP_TAP_RADIUS_METERS && meters < nearestMeters) {
+            nearest = target
+            nearestMeters = meters
+        }
+    }
+    return nearest
+}
 
 /**
  * Rasters [pins] for the map: a light-parchment disc at 0.9, the glyph at

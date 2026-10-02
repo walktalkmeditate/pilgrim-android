@@ -49,7 +49,9 @@ import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.honor.HonorPreferencesRepository
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
+import org.walktalkmeditate.pilgrim.honor.HonorReplies
 import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
+import org.walktalkmeditate.pilgrim.honor.TheirSitting
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
@@ -142,6 +144,8 @@ class WalkViewModel @Inject constructor(
     // Hilt ignores defaults and always injects the queue in production.
     private val whisperQueue: org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue =
         org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue.unqueued(whisperPlayer),
+    private val honorReplies: HonorReplies = HonorReplies.inert(),
+    private val theirSitting: TheirSitting = TheirSitting(),
 ) : ViewModel() {
 
     /**
@@ -1162,6 +1166,7 @@ class WalkViewModel @Inject constructor(
             publishTalkBridge(recording)
             try {
                 repository.recordVoice(recording)
+                fileReplyIfPending(recording)
             } catch (cancel: CancellationException) {
                 // Not cleared here: a cancellation only reaches this catch
                 // via viewModelScope teardown (the VM being cleared), and
@@ -1186,6 +1191,15 @@ class WalkViewModel @Inject constructor(
         )
     }
 
+    /**
+     * "reply here"'s mapping, filed once the take's row has landed (parity
+     * spec D §7.2). Only an armed origin costs the hop to the store.
+     */
+    private suspend fun fileReplyIfPending(recording: VoiceRecording) {
+        if (honorReplies.pending.value == null) return
+        withContext(Dispatchers.IO) { honorReplies.fileIfPending(recording) }
+    }
+
     private suspend fun stopRecording() {
         val result = voiceRecorder.stop()
         result.fold(
@@ -1200,6 +1214,7 @@ class WalkViewModel @Inject constructor(
                 // failure to the user as a generic Other-kind banner.
                 try {
                     repository.recordVoice(recording)
+                    fileReplyIfPending(recording)
                     _voiceRecorderState.value = VoiceRecorderUiState.Idle
                 } catch (cancel: CancellationException) {
                     // Not cleared here: reachable only via viewModelScope
@@ -1646,7 +1661,46 @@ class WalkViewModel @Inject constructor(
      *   `clock.now()` for non-ceremony paths.
      */
     fun endMeditation(endMillis: Long = clock.now()) {
+        theirSitting.withdraw()
         viewModelScope.launch { controller.endMeditation(endMillis) }
+    }
+
+    /**
+     * A place card's "Sit?" (iOS `startMeditation(minutes:)`,
+     * `ActiveWalkViewModel+Honor.swift:379-382@7c200bf`): the sitting starts
+     * as the sheet's Meditate starts one, a recording stopped first, and the
+     * minutes go only to the meditation screen's caption. Nothing happens
+     * while the walk is paused, which the reducer would refuse anyway
+     * (owner decision 1); iOS has no reachable pause.
+     */
+    fun startSitting(minutes: Int) {
+        val walk = (controller.state.value as? WalkState.Active)?.walk ?: return
+        theirSitting.offer(walkId = walk.walkId, minutes = minutes, nowMillis = clock.now())
+        startMeditation()
+    }
+
+    /**
+     * "they sat here N minutes" under the meditation timer (parity spec E
+     * §12), for the sitting a card's "Sit?" began; null for any other.
+     */
+    val theirSittingMinutes: StateFlow<Int?> = combine(controller.state, theirSitting.offer) { state, offer ->
+        val sitting = state as? WalkState.Meditating ?: return@combine null
+        offer?.takeIf { it.walkId == sitting.walk.walkId && sitting.meditationStartedAt >= it.offeredAtMillis }?.minutes
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIBER_GRACE_MS), null)
+
+    /**
+     * A card's "reply here" (iOS `replyHere(to:)`, `ActiveWalkViewModel+Replies.swift:20-32@7c200bf`):
+     * arms the voice the walk's next completed recording answers, then
+     * starts a recording unless one is already running, which then becomes
+     * the reply (pilgrim-ios #99, matched). A recorder that doesn't start
+     * leaves nothing armed.
+     */
+    fun replyHere(walkId: Long, wayId: String, momentId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            honorReplies.arm(walkId = walkId, wayId = wayId, momentId = momentId)
+            if (_voiceRecorderState.value !is VoiceRecorderUiState.Recording) startRecording()
+            if (_voiceRecorderState.value !is VoiceRecorderUiState.Recording) honorReplies.disarm(walkId)
+        }
     }
 
     /**
@@ -1735,6 +1789,8 @@ class WalkViewModel @Inject constructor(
         // cancel, a fetch in flight under its delay() could resume
         // post-purge and try to UPDATE a deleted walk row.
         weatherJob?.cancel()
+        // A discarded walk files no reply (iOS `cancel()`); its take is dropped, not saved.
+        honorReplies.clear()
         viewModelScope.launch { controller.discardWalk() }
     }
 
