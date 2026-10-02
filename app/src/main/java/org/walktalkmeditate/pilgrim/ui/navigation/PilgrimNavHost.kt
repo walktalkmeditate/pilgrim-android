@@ -142,6 +142,7 @@ object Routes {
     const val SOUND_SETTINGS = "sound_settings"
     const val RECORDINGS_LIST = "recordings"
     const val DATA_SETTINGS = "data_settings"
+    const val WAYS_LIST = "ways_list"
     const val JOURNEY_VIEWER = "journey_viewer"
     const val JOURNEY_EDITOR = "journey_editor"
     const val ABOUT = "about"
@@ -345,6 +346,12 @@ fun PilgrimNavHost(
                 onAction = { action ->
                     handleSettingsAction(action, navController, dataSettingsContext)
                 },
+            )
+        }
+        composable(Routes.WAYS_LIST) {
+            // Popped by name: the screen also leaves on its own when a walk starts.
+            org.walktalkmeditate.pilgrim.ui.settings.data.WaysListScreen(
+                onBack = { navController.popBackStack(Routes.WAYS_LIST, inclusive = true) },
             )
         }
         composable(Routes.FEEDBACK) {
@@ -1001,5 +1008,7 @@ private fun handleSettingsAction(
             navController.navigate(Routes.JOURNEY_EDITOR) { launchSingleTop = true }
         SettingsAction.OpenAppearance ->
             navController.navigate(Routes.APPEARANCE) { launchSingleTop = true }
+        SettingsAction.OpenWays ->
+            navController.navigate(Routes.WAYS_LIST) { launchSingleTop = true }
     }
 }

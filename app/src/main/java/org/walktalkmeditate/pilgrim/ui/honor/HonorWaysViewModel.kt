@@ -23,6 +23,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorLink
+import org.walktalkmeditate.pilgrim.honor.WaySweeper
 
 /** One "Shared with you" row: the title over `<medium date> · <counts>` (S4 §6.4). */
 @Immutable
@@ -33,7 +34,12 @@ data class SharedWayRow(
     /** Declared, whether or not the files are on the phone: 1 of 12 here still reads "12 voices". */
     val voiceCount: Int,
     val photoCount: Int,
-    /** The detail reads "voices returned to the trail" instead of the counts, once media can be swept. */
+    /**
+     * The detail reads "voices returned to the trail" instead of the counts:
+     * a Way with a voice or a photo and nothing in its `media/` folder. Keyed
+     * on the folder, not the expiry, as iOS keys it, so a share never
+     * gathered reads so too (pilgrim-ios #109, matched as shipped).
+     */
     val voicesReturned: Boolean = false,
 )
 
@@ -48,7 +54,7 @@ sealed interface SharedWaysUiState {
 object HonorWaysModel {
 
     /** Shared Ways only, in the store's newest-acceptance-first order; dates in the phone's zone. */
-    fun rows(ways: List<Way>, zone: ZoneId, locale: Locale): List<SharedWayRow> {
+    fun rows(ways: List<Way>, hasMedia: (wayId: String) -> Boolean, zone: ZoneId, locale: Locale): List<SharedWayRow> {
         val date = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale).withZone(zone)
         return ways.filter { it.source is WaySource.Share }.map { way ->
             SharedWayRow(
@@ -57,6 +63,7 @@ object HonorWaysModel {
                 date = date.format(way.departedAt),
                 voiceCount = way.voiceCount,
                 photoCount = way.photoCount,
+                voicesReturned = way.voiceCount + way.photoCount > 0 && !hasMedia(way.id),
             )
         }
     }
@@ -65,22 +72,24 @@ object HonorWaysModel {
 /**
  * The Ways sheet's shared sections (S4 §6–§7, S2 §8). Opening the sheet
  * resets the import line, as iOS's `chooseWay` does, and leaves an import
- * in flight running (S1-D9, matched). The list is read once per opening
- * (iOS's `onAppear`); a row hands over its stored Way with no fetch.
- * "Open" imports through the app's one import, whose line shows inline.
+ * in flight running (S1-D9, matched). The expiry sweep runs first, then
+ * the list is read, once per opening (iOS's `onAppear`); a row hands over
+ * its stored Way with no fetch. "Open" imports through the app's one
+ * import, whose line shows inline.
  */
 @HiltViewModel
 class HonorWaysViewModel internal constructor(
     private val wayStore: WayStore,
     private val imports: HonorImportCoordinator,
+    private val sweeper: WaySweeper,
     private val zone: () -> ZoneId,
     private val locale: () -> Locale,
     private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
     @Inject
-    constructor(wayStore: WayStore, imports: HonorImportCoordinator) :
-        this(wayStore, imports, ZoneId::systemDefault, Locale::getDefault, Dispatchers.IO)
+    constructor(wayStore: WayStore, imports: HonorImportCoordinator, sweeper: WaySweeper) :
+        this(wayStore, imports, sweeper, ZoneId::systemDefault, Locale::getDefault, Dispatchers.IO)
 
     private val _shared = MutableStateFlow<SharedWaysUiState>(SharedWaysUiState.Loading)
     val shared: StateFlow<SharedWaysUiState> = _shared.asStateFlow()
@@ -93,7 +102,10 @@ class HonorWaysViewModel internal constructor(
     init {
         imports.chooseWay()
         viewModelScope.launch {
-            val rows = withContext(ioDispatcher) { HonorWaysModel.rows(wayStore.list(), zone(), locale()) }
+            sweeper.sweep()
+            val rows = withContext(ioDispatcher) {
+                HonorWaysModel.rows(wayStore.list(), wayStore::hasMedia, zone(), locale())
+            }
             _shared.value = SharedWaysUiState.Loaded(rows)
         }
     }

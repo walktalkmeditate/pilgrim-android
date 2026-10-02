@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.ui.honor
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -94,9 +95,12 @@ fun HonorOverviewScreen(
         HonorOverviewTopBar(onClose = onClose)
         val overview = (state as? HonorOverviewUiState.Ready)?.overview ?: return@Column
         var previewMomentId by rememberSaveable(overview.way.id) { mutableStateOf<String?>(null) }
+        val previewPlayable = previewMomentId?.let { it in overview.playableVoices } == true
         // Keyed on the id, not the tap, so a preview restored after the
-        // process was killed still loads its waveform and its 1x.
-        LaunchedEffect(previewMomentId) {
+        // process was killed still loads its waveform and its 1x; and on
+        // whether its voice is here, so one that lands while it is open
+        // reads its bars then.
+        LaunchedEffect(previewMomentId, previewPlayable) {
             previewMomentId?.let(viewModel::openPreview)
         }
         val context = LocalContext.current
@@ -131,24 +135,25 @@ fun HonorOverviewScreen(
                     onVoicesEnabledChange = viewModel::setVoicesEnabled,
                     onBegin = { onBegin(overview.choice) },
                     importState = importState,
+                    onRetryMedia = viewModel::retryMedia,
+                    onWalkWithoutMissing = viewModel::walkWithoutMissingVoices,
                 )
             },
         )
         val moment = previewMomentId?.let { id -> overview.way.moments.firstOrNull { it.id == id } }
         if (moment != null) {
-            val recording = overview.playableVoices[moment.id]
-            val voice = recording?.let {
+            val voice = overview.playableVoices[moment.id]?.let {
                 val current = when (val p = playback) {
-                    is PlaybackState.Playing -> p.recordingId == it.id
-                    is PlaybackState.Paused -> p.recordingId == it.id
+                    is PlaybackState.Playing -> p.recordingId == it.playbackId
+                    is PlaybackState.Paused -> p.recordingId == it.playbackId
                     else -> false
                 }
                 WayVoicePreview(
                     isPlaying = playback is PlaybackState.Playing && current,
                     positionSeconds = if (current) positionMillis / 1000.0 else 0.0,
-                    totalSeconds = it.durationMillis / 1000.0,
+                    totalSeconds = it.totalSeconds,
                     speed = speed,
-                    waveform = waveforms[it.id],
+                    waveform = waveforms[it.playbackId],
                 )
             }
             WayMomentPreviewSheet(
@@ -219,7 +224,8 @@ internal fun HonorOverviewFrame(
  * The import line sits under the counts, rust for trouble and fog while
  * something is on its way, and Begin is held only while a fetch or a
  * gather could still land (S4 §8.3); nothing announces the line, as on
- * iOS (pilgrim-ios #108, matched).
+ * iOS (pilgrim-ios #108, matched). Missing voices add "try again" and
+ * "walk without the missing voices" under it; a full disk adds nothing.
  */
 @Composable
 internal fun HonorOverviewCard(
@@ -230,6 +236,8 @@ internal fun HonorOverviewCard(
     onBegin: () -> Unit,
     modifier: Modifier = Modifier,
     importState: HonorImportState = HonorImportState.Idle,
+    onRetryMedia: () -> Unit = {},
+    onWalkWithoutMissing: () -> Unit = {},
 ) {
     val way = overview.way
     val resources = LocalResources.current
@@ -260,6 +268,9 @@ internal fun HonorOverviewCard(
                 style = pilgrimType.caption,
                 color = if (importState.isTrouble) pilgrimColors.rust else pilgrimColors.fog,
             )
+        }
+        if (importState is HonorImportState.MediaMissing) {
+            MissingVoicesChoice(onRetry = onRetryMedia, onWalkWithout = onWalkWithoutMissing)
         }
         HonorOverviewModel.weatherLine(resources, way.weather, overview.todayCondition, locale)?.let {
             Text(text = it, style = pilgrimType.caption, color = pilgrimColors.fog)
@@ -295,6 +306,30 @@ internal fun HonorOverviewCard(
                 color = pilgrimColors.parchment,
                 modifier = Modifier.clearAndSetSemantics {},
             )
+        }
+    }
+}
+
+/**
+ * iOS's two buttons under "some voices didn't arrive", stacked rather
+ * than paired so the long one never clips (`HonorOverviewView.swift:320-334@7c200bf`):
+ * caption type in stone, 4 apart, each a full touch target.
+ */
+@Composable
+private fun MissingVoicesChoice(onRetry: () -> Unit, onWalkWithout: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs)) {
+        listOf(
+            R.string.honor_overview_try_again to onRetry,
+            R.string.honor_overview_walk_without to onWalkWithout,
+        ).forEach { (label, onClick) ->
+            Box(
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .clickable(role = Role.Button, onClick = onClick),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(text = stringResource(label), style = pilgrimType.caption, color = pilgrimColors.stone)
+            }
         }
     }
 }

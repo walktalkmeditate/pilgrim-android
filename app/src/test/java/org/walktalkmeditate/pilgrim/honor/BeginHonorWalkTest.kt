@@ -100,6 +100,7 @@ class BeginHonorWalkTest {
         controller: WalkController,
         store: WayStore = h.store,
         honorEnabled: Boolean = true,
+        begins: HonorBeginsInFlight = HonorBeginsInFlight(),
     ) = BeginHonorWalk(
         repository = h.repository,
         wayStore = store,
@@ -110,6 +111,7 @@ class BeginHonorWalkTest {
         mintWalkUuid = { mintedUuid },
         zone = { ZoneId.of("UTC") },
         locale = { Locale.US },
+        begins = begins,
     )
 
     private fun storedRequest() =
@@ -180,6 +182,31 @@ class BeginHonorWalkTest {
         assertEquals(HonorFinishKind.CLEAN, h.db.honorDao().getMarker(mintedUuid)!!.finishKind)
         assertEquals("still listed, its acceptance kept", acceptedAt, h.store.acceptedAt(SHARED_ID))
     }
+
+    // Shared-walk spec correction 9: the expiry sweep leaves a Begin's Way whole until its session row exists.
+    @Test
+    fun `a shared Way is held from Start until its walk exists, and let go after`() = runBlocking {
+        h.store.save(sharedWay)
+        val begins = HonorBeginsInFlight()
+        val controller = RecordingController(onStart = { heldDuringStart = begins.wayIds() })
+
+        begin(controller, begins = begins)(storedRequest())
+
+        assertEquals(setOf(SHARED_ID), heldDuringStart)
+        assertTrue(begins.wayIds().isEmpty())
+    }
+
+    @Test
+    fun `a refused start lets its Way go too`() = runBlocking {
+        h.store.save(sharedWay)
+        val begins = HonorBeginsInFlight()
+
+        runCatching { begin(RecordingController(refuse = true), begins = begins)(storedRequest()) }
+
+        assertTrue(begins.wayIds().isEmpty())
+    }
+
+    private var heldDuringStart: Set<String>? = null
 
     @Test
     fun `a shared Way gone from the store refuses the start as gone`() = runBlocking {
@@ -268,7 +295,10 @@ class BeginHonorWalkTest {
     }
 
     /** The UI's side of the chain, stood in for: it records the request and answers as the tracker would. */
-    private class RecordingController(private val refuse: Boolean = false) : WalkController {
+    private class RecordingController(
+        private val refuse: Boolean = false,
+        private val onStart: () -> Unit = {},
+    ) : WalkController {
         val requests = mutableListOf<WalkStartRequest>()
         override val state: StateFlow<WalkState> = MutableStateFlow(WalkState.Idle)
         override val bellTriggers: SharedFlow<BellTrigger> = MutableSharedFlow<BellTrigger>().asSharedFlow()
@@ -276,6 +306,7 @@ class BeginHonorWalkTest {
 
         override suspend fun startWalk(request: WalkStartRequest): Walk {
             requests += request
+            onStart()
             check(!refuse) { "tracker did not start walk within 5000 ms" }
             return Walk(id = 77L, uuid = request.walkUuid!!, startTimestamp = 1L)
         }

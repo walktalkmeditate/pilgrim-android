@@ -24,8 +24,9 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 /**
  * The import half of iOS's `MainCoordinator` (`MainCoordinatorView.swift:20-22,193-303@7c200bf`,
  * shared-walk spec S1 §6.3), in the UI process: the one import state the
- * Ways sheet and the overview both show, and the Way a finished import
- * hands to whichever screen opens its overview.
+ * Ways sheet and the overview both show, the Way a finished import hands
+ * to whichever screen opens its overview, and the overview's watch on its
+ * media download ([WayMediaDownloader], S4 §8).
  *
  * A newer link cancels the older fetch, and a cancelled fetch writes no
  * state; its Way may still have been saved (pilgrim-ios #114, matched).
@@ -38,12 +39,14 @@ class HonorImportCoordinator internal constructor(
     private val importShare: suspend (shareId: String) -> Way,
     private val honorEnabled: Boolean,
     private val scope: CoroutineScope,
+    private val media: () -> WayMediaDownloader,
 ) {
     @Inject
-    constructor(importer: Provider<WayImporter>, releaseFlags: ReleaseFlags) : this(
+    constructor(importer: Provider<WayImporter>, releaseFlags: ReleaseFlags, downloader: Provider<WayMediaDownloader>) : this(
         importShare = { importer.get().importShare(it) },
         honorEnabled = releaseFlags.honor,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        media = downloader::get,
     )
 
     private val _state = MutableStateFlow<HonorImportState>(HonorImportState.Idle)
@@ -56,6 +59,9 @@ class HonorImportCoordinator internal constructor(
 
     private var importJob: Job? = null
     private var shownOverview: Any? = null
+
+    /** iOS's `gatheringCancellable`: the overview's watch on the media download. */
+    private var gathering: Job? = null
 
     /** iOS `chooseWay()`: the Ways sheet opens on no line. An import in flight keeps running (S1-D9, matched). */
     fun chooseWay() {
@@ -89,9 +95,14 @@ class HonorImportCoordinator internal constructor(
         }
     }
 
-    /** iOS `startWalk`: a walk starting drops the import in flight and leaves the state as it is. */
+    /**
+     * iOS `startWalk`: a walk starting drops the import in flight and the
+     * overview's watch on the media, and leaves the state as it is. The
+     * transfers keep running; a file landing mid-walk plays at its spot.
+     */
     fun cancelImport() {
         importJob?.cancel()
+        stopGathering()
     }
 
     fun consumeFetched(wayId: String) {
@@ -100,29 +111,60 @@ class HonorImportCoordinator internal constructor(
 
     /**
      * iOS `gather(_:)` for the overview now showing [way]: an own walk is
-     * ready at once; a share takes the reducer's state over the media
-     * download's sets, which stay empty until that download exists.
-     * Synchronous, so the overview's first frame already has it.
+     * ready at once; a share starts its media download and follows the
+     * reducer's state over the download's sets, any Way's change
+     * recomputing it, as iOS's `combineLatest` sink does (so a second
+     * link's fetching line can be overwritten mid-fetch: S4-D4,
+     * pilgrim-ios #113, matched). Returns once the first state is set,
+     * so the overview's first frame never shows an enabled Begin before
+     * it (S4 §8.1).
      */
-    fun gather(way: Way, overview: Any) {
+    suspend fun gather(way: Way, overview: Any) {
         shownOverview = overview
-        _state.value = if (way.source is WaySource.Share) {
-            HonorImportReducer.state(
-                wayId = way.id,
-                progress = emptyMap(),
-                active = emptySet(),
-                failures = emptyMap(),
-                diskFull = emptySet(),
-            )
-        } else {
-            HonorImportState.Ready
+        stopGathering()
+        if (way.source !is WaySource.Share) {
+            _state.value = HonorImportState.Ready
+            return
+        }
+        val downloader = media()
+        downloader.download(way)
+        // A close or a swap that landed during the download's hop installs no watch (iOS's guard).
+        if (shownOverview !== overview) return
+        _state.value = downloader.gathers.value.state(way.id)
+        gathering = scope.launch {
+            downloader.gathers.collect { _state.value = it.state(way.id) }
         }
     }
 
-    /** iOS `handleOverviewDismiss` on a real close: back to idle. An overview another has replaced changes nothing. */
+    /** iOS `retryMedia(for:)`: "try again" cancels the round and gathers what is still missing. */
+    fun retryMedia(way: Way) {
+        scope.launch { media().retry(way) }
+    }
+
+    /**
+     * iOS `walkWithoutMissingVoices()`: the watch goes first, so no later
+     * download change moves this overview back; the line and its two
+     * buttons go, and Begin was enabled all along (spec correction 6).
+     */
+    fun walkWithoutMissingVoices() {
+        stopGathering()
+        _state.value = HonorImportState.Ready
+    }
+
+    /**
+     * iOS `handleOverviewDismiss` on a real close: the watch goes and the
+     * state returns to idle; the transfers keep running. An overview
+     * another has replaced changes nothing.
+     */
     fun overviewClosed(overview: Any) {
         if (shownOverview !== overview) return
         shownOverview = null
+        stopGathering()
         _state.value = HonorImportState.Idle
+    }
+
+    private fun stopGathering() {
+        gathering?.cancel()
+        gathering = null
     }
 }

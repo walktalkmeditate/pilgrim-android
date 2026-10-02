@@ -363,6 +363,72 @@ class HonorOverviewSemanticsTest {
         composeRule.onAllNodesWithText("couldn't reach the walk").assertCountEquals(0)
     }
 
+    // S4 §8.3: the gathering line rounds half away from zero and holds Begin.
+    @Test
+    fun `a gather shows its percentage and holds Begin, with no buttons`() {
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.Gathering(0.456),
+            )
+        }
+
+        composeRule.onNodeWithText("gathering their voices · 46%").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsNotEnabled()
+        composeRule.onAllNodesWithText("try again").assertCountEquals(0)
+    }
+
+    // Spec correction 6: missing voices never hold Begin; the two buttons are the walker's choice.
+    @Test
+    fun `missing voices offer try again and walk without them, two buttons, with Begin enabled`() {
+        var retries = 0
+        var walkedWithout = 0
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.MediaMissing(listOf("audio/2.m4a")),
+                onRetryMedia = { retries++ },
+                onWalkWithoutMissing = { walkedWithout++ },
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsEnabled()
+        composeRule.onNodeWithText("try again").assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+            .performClick()
+        composeRule.onNodeWithText("walk without the missing voices").assertHasClickAction().performClick()
+
+        assertEquals(1, retries)
+        assertEquals(1, walkedWithout)
+        composeRule.onAllNodesWithText("audio/2.m4a", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun `a full disk names the problem, offers no button, and leaves Begin to the walker`() {
+        show {
+            HonorOverviewCard(
+                overview = overview(voices = 1),
+                units = UnitSystem.Metric,
+                voicesEnabled = true,
+                onVoicesEnabledChange = {},
+                onBegin = {},
+                importState = HonorImportState.Failed(WayError.DISK_FULL),
+            )
+        }
+
+        composeRule.onNodeWithText("not enough space on this phone to save these voices").assertIsDisplayed()
+        composeRule.onAllNodesWithText("try again").assertCountEquals(0)
+        composeRule.onAllNodesWithText("walk without the missing voices").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Begin honoring this way").assertIsEnabled()
+    }
+
     // Shared-walk spec S4 §9.
 
     @Test

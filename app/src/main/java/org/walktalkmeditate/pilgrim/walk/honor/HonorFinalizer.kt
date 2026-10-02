@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.walk.honor
 import android.util.Log
 import java.io.IOException
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -17,6 +18,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayArrival
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.domain.Clock
+import org.walktalkmeditate.pilgrim.honor.WaySweeper
 
 /** Where a walk's Honor step stands after [HonorFinalizer.finalize]. */
 enum class HonorFinalizeOutcome {
@@ -48,7 +50,10 @@ enum class HonorFinalizeOutcome {
  * holding a live row is a step still to run. Every sub-step writes the
  * same content when repeated, and both processes may run it for one walk
  * at once. A shared Way is re-saved at the end of every honoring on iOS
- * (`!way.source.isPackageOwned`); that branch arrives with shared walks.
+ * (`!way.source.isPackageOwned`), writing back the Way the walk read;
+ * here nothing can change or remove a listed Way while its walk is on
+ * (links are refused, Settings → Ways is hidden, and the sweep holds
+ * it), so that save would write the same bytes and is left out.
  *
  * **A failed link is retried, not swallowed.** iOS's `try?` leaves such a
  * walk unlinked for good, reading "a way that has been removed". Here an
@@ -63,10 +68,12 @@ class HonorFinalizer internal constructor(
     private val wayStore: WayStore,
     private val clock: Clock,
     private val ioDispatcher: CoroutineDispatcher,
+    /** The UI process's expiry sweep; never resolved in `:tracker`, which never runs [runAtLaunch]. */
+    private val expirySweep: suspend () -> Unit = {},
 ) {
     @Inject
-    constructor(database: PilgrimDatabase, wayStore: WayStore, clock: Clock) :
-        this(database, wayStore, clock, Dispatchers.IO)
+    constructor(database: PilgrimDatabase, wayStore: WayStore, clock: Clock, waySweeper: Provider<WaySweeper>) :
+        this(database, wayStore, clock, Dispatchers.IO, expirySweep = { waySweeper.get().sweep() })
 
     /** The Honor step for one walk; throws only what Room throws, and cancellation. */
     suspend fun finalize(walkId: Long): HonorFinalizeOutcome = withContext(ioDispatcher) {
@@ -93,14 +100,17 @@ class HonorFinalizer internal constructor(
 
     /**
      * At launch, after recovery has finished any walk its process lost:
-     * retries every Honor step still pending, then sweeps staging no walk
-     * needs any more and the temp files killed writes left. Never throws
-     * but for cancellation.
+     * retries every Honor step still pending, sweeps staging no walk needs
+     * any more and the temp files killed writes left, then runs the expiry
+     * sweep, which so sees every link recovery and the retry could write
+     * (shared-walk spec correction 10: iOS races its recovery, a dated R5
+     * divergence). Never throws but for cancellation.
      */
     suspend fun runAtLaunch() {
         try {
             finalizePending()
             sweepStaging()
+            expirySweep()
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (e: Exception) {

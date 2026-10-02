@@ -154,9 +154,10 @@ class WayImporter internal constructor(
     /**
      * Refuses a redirect to any other scheme, host, or port: no request
      * reaches it (an R6 addition: iOS follows any HTTPS redirect, S1 §3.2).
-     * A redirect on the walk host is followed, as iOS follows it.
+     * A redirect on the walk host is followed, as iOS follows it. The media
+     * download refuses the same way (S3 §2).
      */
-    private class StaysOnTheWalkHost(private val base: HttpUrl) : Interceptor {
+    internal class StaysOnTheWalkHost(private val base: HttpUrl) : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val url = chain.request().url
             if (url.scheme != base.scheme || url.host != base.host || url.port != base.port) {

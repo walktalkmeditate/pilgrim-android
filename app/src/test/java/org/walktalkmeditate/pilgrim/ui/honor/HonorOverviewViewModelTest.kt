@@ -23,6 +23,7 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -48,6 +49,9 @@ import org.walktalkmeditate.pilgrim.data.entity.RouteDataSample
 import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.FakeHonorPreferencesRepository
+import org.walktalkmeditate.pilgrim.data.honor.FakeWayMediaDownloadScheduler
+import org.walktalkmeditate.pilgrim.data.honor.WayMediaReport
+import org.walktalkmeditate.pilgrim.data.honor.WayMediaWork
 import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImportException
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
@@ -67,6 +71,7 @@ import org.walktalkmeditate.pilgrim.honor.HonorImportCoordinator
 import org.walktalkmeditate.pilgrim.honor.HonorImportState
 import org.walktalkmeditate.pilgrim.honor.HonorWayChoice
 import org.walktalkmeditate.pilgrim.honor.OwnWalkWays
+import org.walktalkmeditate.pilgrim.honor.WayMediaDownloader
 import org.walktalkmeditate.pilgrim.location.FakeLocationSource
 import org.walktalkmeditate.pilgrim.ui.recordings.WaveformCache
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitDecision
@@ -92,11 +97,15 @@ class HonorOverviewViewModelTest {
     private val store = WayStore({ storeDirectory }, syncDirectory = { true })
     private val importScope = CoroutineScope(SupervisorJob() + dispatcher)
     private var heldImport: Continuation<Way>? = null
+    private val scheduler = FakeWayMediaDownloadScheduler()
+    private val downloader by lazy { WayMediaDownloader(store, scheduler, importScope, dispatcher) }
     private val imports = HonorImportCoordinator(
         importShare = { suspendCoroutine { heldImport = it } },
         honorEnabled = true,
         scope = importScope,
+        media = { downloader },
     )
+    private val sharedWaveform = FloatArray(4) { 0.5f }
     private val viewModels = mutableListOf<HonorOverviewViewModel>()
     private var sourceId = 0L
     private var recordingId = 0L
@@ -190,6 +199,7 @@ class HonorOverviewViewModelTest {
         recordingFiles = VoiceRecordingFileSystem(context),
         waveformCache = WaveformCache(),
         ioDispatcher = dispatcher,
+        loadSharedWaveform = { sharedWaveform },
     ).also { viewModels += it }
 
     private fun TestScope.settled(vm: HonorOverviewViewModel): HonorOverviewUiState {
@@ -366,7 +376,7 @@ class HonorOverviewViewModelTest {
         assertEquals(HonorWayChoice.Stored(SHARED_ID), overview.choice)
         assertEquals("Rúa do Franco → Obradoiro", overview.way.title)
         assertEquals(overview.way.moments.map { it.id }, overview.pins.map { it.momentId })
-        assertTrue("a shared voice has no recording row to play yet", overview.playableVoices.isEmpty())
+        assertTrue("a shared voice still gathering has nothing to play yet", overview.playableVoices.isEmpty())
     }
 
     @Test
@@ -390,6 +400,109 @@ class HonorOverviewViewModelTest {
         assertEquals(mapOf("photo-1" to Uri.fromFile(file).toString()), ready(overview(savedStateHandle = stored())).photoUris)
     }
 
+    // S4 §8.1: the first frame never shows an enabled Begin before the first gathering state.
+    @Test
+    fun `a shared overview is already gathering when its card first shows`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        var importStateWhenShown: HonorImportState? = null
+        val watcher = backgroundScope.launch {
+            vm.state.collect { if (it is HonorOverviewUiState.Ready && importStateWhenShown == null) importStateWhenShown = vm.importState.value }
+        }
+
+        ready(vm)
+
+        assertEquals(HonorImportState.Gathering(0.0), importStateWhenShown)
+        assertEquals(listOf(SHARED_ID), scheduler.gathers.map { it.wayId })
+        watcher.cancel()
+    }
+
+    // S4 §8.3: disk full, then gathering, then missing, then ready.
+    @Test
+    fun `the overview's line follows the gather to missing voices, and its two buttons do what iOS's do`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = emptyList(), diskFull = false))
+        assertEquals(HonorImportState.Gathering(0.5), vm.importState.value)
+        scheduler.report(SHARED_ID, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, unfinished = 0, failures = listOf("photos/1.jpg"), diskFull = false))
+        assertEquals(HonorImportState.MediaMissing(listOf("photos/1.jpg")), vm.importState.value)
+
+        vm.retryMedia()
+        assertEquals("try again gathers once more", HonorImportState.Gathering(0.0), vm.importState.value)
+        assertEquals(listOf(false, true), scheduler.gathers.map { it.replace })
+        scheduler.report(SHARED_ID, WayMediaWork.State.SUCCEEDED, WayMediaReport(2, unfinished = 0, failures = listOf("photos/1.jpg"), diskFull = false))
+
+        vm.walkWithoutMissingVoices()
+        assertEquals(HonorImportState.Ready, vm.importState.value)
+    }
+
+    @Test
+    fun `disk full outranks the gather still going`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = listOf("audio/1.m4a"), diskFull = true))
+
+        assertEquals(HonorImportState.Failed(WayError.DISK_FULL), vm.importState.value)
+    }
+
+    @Test
+    fun `a closed overview stops watching, and its transfers go on`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        ready(vm)
+
+        androidx.lifecycle.ViewModelStore().apply { put("shared", vm) }.clear()
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = emptyList(), diskFull = false))
+
+        assertEquals(HonorImportState.Idle, imports.state.value)
+        assertTrue(scheduler.cancels.isEmpty())
+    }
+
+    // The preview plays a shared Way's `media/audio/<n>.m4a` through the same player, by file.
+    @Test
+    fun `a shared voice that has landed plays by file, scrubs, and shows its bars`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val file = store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        val playback = FakeVoicePlaybackController()
+        val vm = overview(savedStateHandle = stored(), playback = playback)
+        val voice = ready(vm).playableVoices.getValue("voice-1")
+
+        vm.openPreview("voice-1")
+        advanceUntilIdle()
+        vm.togglePreviewVoice("voice-1")
+        vm.seekPreviewVoice("voice-1", 0.25f)
+        advanceUntilIdle()
+
+        assertTrue("an id no recording row has", voice.playbackId < 0)
+        assertEquals(40.0, voice.totalSeconds, 0.0)
+        assertEquals(listOf(file), playback.playedFiles)
+        assertEquals(listOf(0.25f), playback.seekCalls)
+        assertEquals(sharedWaveform.toList(), vm.waveforms.value.getValue(voice.playbackId).toList())
+    }
+
+    // S4 §9.3: a preview opened before its voice arrived turns into the player once it has.
+    @Test
+    fun `a shared voice that lands while the overview is up becomes playable`() = runTest(dispatcher) {
+        store.save(sharedWay())
+        val vm = overview(savedStateHandle = stored())
+        assertTrue(ready(vm).playableVoices.isEmpty())
+
+        store.mediaFile(SHARED_ID, "audio/1.m4a")!!.apply {
+            parentFile!!.mkdirs()
+            writeBytes(ByteArray(8))
+        }
+        scheduler.report(SHARED_ID, WayMediaWork.State.RUNNING, WayMediaReport(2, unfinished = 1, failures = emptyList(), diskFull = false))
+
+        assertEquals(setOf("voice-1"), ready(vm).playableVoices.keys)
+    }
+
     // iOS `gather` and `handleOverviewDismiss` (S1 §6.3).
     @Test
     fun `the overview gathers its Way as it shows, and only its own real close hands the state back`() = runTest(dispatcher) {
@@ -401,7 +514,7 @@ class HonorOverviewViewModelTest {
         ready(shared)
 
         androidx.lifecycle.ViewModelStore().apply { put("own", own) }.clear()
-        assertEquals("the overview that replaced it holds the state", HonorImportState.Ready, imports.state.value)
+        assertEquals("the overview that replaced it holds the state", HonorImportState.Gathering(0.0), imports.state.value)
         androidx.lifecycle.ViewModelStore().apply { put("shared", shared) }.clear()
 
         assertEquals(HonorImportState.Idle, imports.state.value)

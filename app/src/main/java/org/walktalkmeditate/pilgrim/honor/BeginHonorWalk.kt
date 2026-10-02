@@ -48,6 +48,7 @@ class BeginHonorWalk internal constructor(
     private val mintWalkUuid: () -> String,
     zone: () -> ZoneId,
     locale: () -> Locale,
+    private val begins: HonorBeginsInFlight = HonorBeginsInFlight(),
 ) {
     private val ownWalkWays = OwnWalkWays(repository, recordingFiles, ioDispatcher, zone, locale)
 
@@ -58,6 +59,7 @@ class BeginHonorWalk internal constructor(
         walkController: WalkController,
         recordingFiles: VoiceRecordingFileSystem,
         releaseFlags: ReleaseFlags,
+        begins: HonorBeginsInFlight,
     ) : this(
         repository = repository,
         wayStore = wayStore,
@@ -68,6 +70,7 @@ class BeginHonorWalk internal constructor(
         mintWalkUuid = { UUID.randomUUID().toString() },
         zone = ZoneId::systemDefault,
         locale = Locale::getDefault,
+        begins = begins,
     )
 
     /** [settings] are the preferences read at Start: see [HonorSettings.atStart]. */
@@ -96,11 +99,20 @@ class BeginHonorWalk internal constructor(
     }
 
     /**
+     * A listed Way is held from Start until the walk exists, so the expiry
+     * sweep can't take it between the read and the live session row
+     * `:tracker` writes for it (shared-walk spec correction 9).
+     *
      * @throws IllegalStateException when the chain refuses or times out the
      *   start, as [WalkController.startWalk] does for every walk.
      */
     suspend operator fun invoke(request: Request): Result {
         if (!releaseFlags.honor) return Result.Refused(Refusal.DISABLED)
+        val choice = request.way
+        return if (choice is HonorWayChoice.Stored) begins.holding(choice.wayId) { begin(request) } else begin(request)
+    }
+
+    private suspend fun begin(request: Request): Result {
         val way = when (val choice = request.way) {
             is HonorWayChoice.OwnWalk -> when (val built = ownWalkWays.build(choice.sourceWalkId)) {
                 is OwnWalkWays.Built.Ready -> built.way

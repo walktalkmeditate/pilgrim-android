@@ -8,7 +8,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.UUID
@@ -62,6 +64,7 @@ data class StagingFolder(val walkUuid: String, val lastTouchedMillis: Long, val 
  * <base>/<way id>/accepted.json   {"acceptedAt": …}, written once
  * <base>/<way id>/replies.json    {"<n>": "<recording path>"}
  * <base>/<way id>/media/          shared walks only
+ * <base>/<way id>/.media-<path>.download.tmp   a media file still gathering (Android)
  * <base>/links/<walk uuid>.json   one WayLink per walk (Android)
  * <base>/staging/<walk uuid>/way.json   an own-walk Way while it is walked (Android)
  * ```
@@ -86,6 +89,7 @@ class WayStore(
     resolveBaseDirectory: () -> File,
     private val clock: Clock = Clock.System,
     private val syncDirectory: (File) -> Boolean = ::fsyncDirectoryBestEffort,
+    private val allocatedBytes: (File) -> Long = ::allocatedBytesOf,
 ) {
 
     val baseDirectory: File by lazy(resolveBaseDirectory)
@@ -161,20 +165,85 @@ class WayStore(
         return file.takeIf { it.canonicalPath.startsWith(root.canonicalPath + File.separator) }
     }
 
+    /**
+     * Any entry in `media/`, folders included, without recursing: iOS's
+     * test, which reads a share never gathered as returned to the trail
+     * (pilgrim-ios #109, matched as shipped).
+     */
     fun hasMedia(id: String): Boolean {
         if (!isValidId(id)) return false
         return !mediaDirectory(id).list().isNullOrEmpty()
     }
 
+    /** `media/`, and the files still gathering into it: what an expired, walked share loses. */
     fun deleteMedia(id: String) {
         if (!isValidId(id)) return
         mediaDirectory(id).deleteRecursively()
+        directory(id).listFiles().orEmpty()
+            .filter { it.isFile && it.name.startsWith(PARTIAL_PREFIX) && it.name.endsWith(PARTIAL_SUFFIX) }
+            .forEach { it.delete() }
     }
 
-    /** Bytes of every file in the Way's folder. An own walk's recordings live elsewhere and don't count. */
+    /**
+     * Where [relative] gathers before it lands: a temp in the Way's own
+     * folder, outside `media/` so [hasMedia] never counts it, named for its
+     * path so a later run resumes it, and swept like every other temp by
+     * [sweepTempFiles]. Null for a path [mediaFile] refuses.
+     */
+    fun mediaPartialFile(id: String, relative: String): File? {
+        mediaFile(id, relative) ?: return null
+        return File(directory(id), PARTIAL_PREFIX + relative.replace('/', '-') + PARTIAL_SUFFIX)
+    }
+
+    /**
+     * Lands a fully gathered [partial] at [relative] (iOS `deliver`'s guard
+     * and `move`, `WayMediaDownloader.swift:270-296@7c200bf`). The Way must
+     * still load just before the rename, and `media/` is made one folder at
+     * a time under the Way's folder, never with it: a Way deleted or swept
+     * whole meanwhile gets nothing back.
+     *
+     * @return false, the partial removed, when the Way is gone.
+     * @throws IOException when a folder or the rename fails, a full disk among them.
+     */
+    fun landMedia(id: String, relative: String, partial: File): Boolean {
+        val target = mediaFile(id, relative)
+        if (target == null || load(id) == null) {
+            partial.delete()
+            return false
+        }
+        val wayDir = directory(id)
+        val folders = generateSequence(target.parentFile) { it.parentFile }
+            .takeWhile { it != wayDir }
+            .toList()
+            .asReversed()
+        try {
+            folders.forEach { createFolder(it) }
+        } catch (e: NoSuchFileException) {
+            if (load(id) == null) {
+                partial.delete()
+                return false
+            }
+            throw e
+        }
+        try {
+            Files.move(partial.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (e: AtomicMoveNotSupportedException) {
+            Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+        syncDirectory(target.parentFile ?: return true)
+        return true
+    }
+
+    /**
+     * Allocated bytes of every file in the Way's folder, as iOS's
+     * `totalFileAllocatedSize` counts them (owner decision 4); a file still
+     * being written doesn't count. An own walk's recordings live elsewhere.
+     */
     fun diskUsage(id: String): Long {
         if (!isValidId(id)) return 0
-        return directory(id).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        return directory(id).walkTopDown()
+            .filter { it.isFile && !isTempName(it.name) }
+            .sumOf(allocatedBytes)
     }
 
     fun diskUsage(ways: List<Way>): Long = ways.sumOf { diskUsage(it.id) }
@@ -289,22 +358,54 @@ class WayStore(
         }
 
     /**
-     * Deletes the temp files a write killed between its create and its
-     * rename left in `links/` and in each Way's folder, once older than
-     * [olderThanMillis]: a younger one may be another process's write in
-     * flight. Staging folders go whole, through [discardStaged].
+     * Deletes the temp files a kill left behind once older than
+     * [olderThanMillis] (a younger one may be another process's write in
+     * flight): a write's between its create and its rename, in `links/`,
+     * each Way's folder, and each staging folder a walk still needs; and a
+     * media file still gathering in its Way's folder. Staging folders no
+     * walk needs go whole, through [discardStaged].
      *
      * @return how many were deleted.
      */
     fun sweepTempFiles(olderThanMillis: Long): Int {
         val folders = listOf(linksDirectory) +
-            baseDirectory.list().orEmpty().filter(::isValidId).map { File(baseDirectory, it) }
+            baseDirectory.list().orEmpty().filter(::isValidId).map { File(baseDirectory, it) } +
+            stagingRoot.list().orEmpty().filter(::isValidWalkUuid).map { File(stagingRoot, it) }
         return folders.sumOf { folder ->
             folder.listFiles().orEmpty().count { file ->
-                file.isFile && file.name.startsWith(".") && file.name.endsWith(TEMP_SUFFIX) &&
-                    file.lastModified() < olderThanMillis && file.delete()
+                file.isFile && isTempName(file.name) && file.lastModified() < olderThanMillis && file.delete()
             }
         }
+    }
+
+    /**
+     * iOS `sweepExpired(now:)` (`WayStore.swift:194-235@7c200bf`, shared-walk
+     * spec S3 §12): every Way whose `expires` is at or before [now] retires.
+     * One no walk ever linked goes whole; one a link names (a deleted walk's
+     * link still counts) keeps `way.json`, `accepted.json`, its replies and
+     * its links, and loses its media. Own-walk Ways carry no expiry, so they
+     * never go. A Way in [held] (a live Honor session's, or a Begin's in
+     * flight) is skipped entirely, media and all (spec correction 9): iOS
+     * can never sweep during a walk.
+     *
+     * @return the ids retired, an already-retired walked Way included, so
+     *   every sweep can cancel their gathers.
+     */
+    fun sweepExpired(now: Instant, held: Set<String>): List<String> {
+        val walked = linkFiles().mapNotNullTo(HashSet()) { readLink(it)?.wayId }
+        val touched = mutableListOf<String>()
+        for (way in list()) {
+            val expires = way.expires ?: continue
+            if (expires.isAfter(now) || way.id in held) continue
+            if (way.id in walked) {
+                deleteMedia(way.id)
+            } else {
+                directory(way.id).deleteRecursively()
+                deletionCount.update { it + 1 }
+            }
+            touched += way.id
+        }
+        return touched
     }
 
     private val linksDirectory: File get() = File(baseDirectory, LINKS_DIRECTORY)
@@ -362,6 +463,18 @@ class WayStore(
             throw IOException("could not create a Ways store folder")
         }
     }
+
+    /** One folder, never its parents: a missing parent throws [NoSuchFileException]. */
+    private fun createFolder(dir: File) {
+        if (dir.isDirectory) return
+        try {
+            Files.createDirectory(dir.toPath())
+        } catch (e: FileAlreadyExistsException) {
+            if (!dir.isDirectory) throw e
+        }
+    }
+
+    private fun isTempName(name: String): Boolean = name.startsWith(".") && name.endsWith(TEMP_SUFFIX)
 
     /**
      * A temp file unique to this write, fsynced, then renamed over [target].
@@ -423,6 +536,8 @@ class WayStore(
         private const val STAGING_DIRECTORY = "staging"
         private const val LINK_SUFFIX = ".json"
         private const val TEMP_SUFFIX = ".tmp"
+        private const val PARTIAL_PREFIX = ".media-"
+        private const val PARTIAL_SUFFIX = ".download$TEMP_SUFFIX"
         private const val INVALID_WAY_ID = "not a valid Way id"
         private const val INVALID_WALK_UUID = "not a valid walk uuid"
     }
@@ -450,3 +565,22 @@ internal fun fsyncDirectoryBestEffort(dir: File): Boolean = try {
 } catch (e: LinkageError) {
     false
 }
+
+/**
+ * A file's allocated size, `st_blocks × 512`, as iOS's
+ * `totalFileAllocatedSize` reports it (shared-walk spec S4 §2.3). A file
+ * the filesystem holds in no block of its own (inline data), or one a
+ * runtime with no working `Os` can't stat, counts its length instead.
+ */
+internal fun allocatedBytesOf(file: File): Long = try {
+    val blocks = Os.stat(file.path).st_blocks
+    if (blocks > 0) blocks * BLOCK_BYTES else file.length()
+} catch (e: ErrnoException) {
+    file.length()
+} catch (e: RuntimeException) {
+    file.length()
+} catch (e: LinkageError) {
+    file.length()
+}
+
+private const val BLOCK_BYTES = 512L
