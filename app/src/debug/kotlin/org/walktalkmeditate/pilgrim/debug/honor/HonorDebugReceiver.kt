@@ -30,6 +30,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.honor.BeginHonorWalk
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
+import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
+import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
 
 /**
  * adb commands for walking an Honor walk from a desk (plan U19; U20's device
@@ -72,6 +74,15 @@ import org.walktalkmeditate.pilgrim.walk.HonorSettings
  * adb shell am broadcast -p org.walktalkmeditate.pilgrim.debug -a org.walktalkmeditate.pilgrim.debug.HONOR_DUMP [--es walk <walk>]
  * ```
  *
+ * Send the honor walk in progress a chip or card command, as U22's chip
+ * will, through [WalkActionPublisher]: `toggle` (pause or resume the held
+ * voice), `skip`, `rate` (1x → 1.25x → 1.5x → 2x), or `reply` (play the
+ * earlier reply to a voice). `toggle` and `reply` act on the voice the
+ * session holds unless `--es moment <voice-n>` names one.
+ * ```
+ * adb shell am broadcast -p org.walktalkmeditate.pilgrim.debug -a org.walktalkmeditate.pilgrim.debug.HONOR_COMMAND --es cmd toggle|skip|rate|reply [--es moment <voice-n>]
+ * ```
+ *
  * Export a walk's Way as GPX for the emulator, then load the file in its
  * Extended controls → Location and play it:
  * ```
@@ -96,6 +107,8 @@ class HonorDebugReceiver : BroadcastReceiver() {
 
     @Inject lateinit var wayStore: WayStore
 
+    @Inject lateinit var actionPublisher: WalkActionPublisher
+
     override fun onReceive(context: Context, intent: Intent) {
         val appContext = context.applicationContext
         val reference = intent.getStringExtra(EXTRA_WALK)
@@ -104,7 +117,35 @@ class HonorDebugReceiver : BroadcastReceiver() {
             ACTION_BEGIN -> runCommand { begin(appContext, reference) }
             ACTION_EXPORT_GPX -> runCommand { exportGpx(appContext, reference) }
             ACTION_DUMP -> runCommand { dump(reference) }
+            ACTION_COMMAND -> runCommand { command(intent) }
         }
+    }
+
+    private suspend fun command(intent: Intent) {
+        val command = when (val name = intent.getStringExtra(EXTRA_COMMAND)) {
+            "toggle" -> HonorCommand.TogglePlayback(heldOrNamedVoice(intent) ?: return)
+            "skip" -> HonorCommand.Skip
+            "rate" -> HonorCommand.CycleRate
+            "reply" -> HonorCommand.PlayReply(heldOrNamedVoice(intent) ?: return)
+            else -> {
+                Log.w(TAG, "command: unknown '$name'; use toggle, skip, rate, or reply")
+                return
+            }
+        }
+        actionPublisher.sendHonorCommand(command)
+        Log.i(TAG, "command: sent ${command::class.simpleName}")
+    }
+
+    private suspend fun heldOrNamedVoice(intent: Intent): String? {
+        intent.getStringExtra(EXTRA_MOMENT)?.let { return it }
+        val walk = repository.getActiveWalk()
+        if (walk == null) {
+            Log.w(TAG, "command: no walk in progress")
+            return null
+        }
+        val held = honorDao.getSession(walk.id)?.playingMomentId
+        if (held == null) Log.w(TAG, "command: no voice is held; name one with --es $EXTRA_MOMENT <voice-n>")
+        return held
     }
 
     private suspend fun list() {
@@ -221,9 +262,12 @@ class HonorDebugReceiver : BroadcastReceiver() {
         const val ACTION_BEGIN = "org.walktalkmeditate.pilgrim.debug.HONOR_BEGIN"
         const val ACTION_EXPORT_GPX = "org.walktalkmeditate.pilgrim.debug.HONOR_EXPORT_GPX"
         const val ACTION_DUMP = "org.walktalkmeditate.pilgrim.debug.HONOR_DUMP"
+        const val ACTION_COMMAND = "org.walktalkmeditate.pilgrim.debug.HONOR_COMMAND"
         const val ACTION_REPLAY_START = "org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_START"
         const val ACTION_REPLAY_STOP = "org.walktalkmeditate.pilgrim.debug.HONOR_REPLAY_STOP"
         const val EXTRA_WALK = "walk"
+        const val EXTRA_COMMAND = "cmd"
+        const val EXTRA_MOMENT = "moment"
         internal const val TAG = "HonorDebug"
         private const val GPX_DIRECTORY = "honor-gpx"
         private const val LIST_LIMIT = 20

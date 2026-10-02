@@ -161,12 +161,12 @@ class WayReplayerTimelineTest {
     }
 
     @Test
-    fun `stopping with nothing replaying still turns mock mode off`() = runTest {
+    fun `stopping with nothing replaying takes mock mode, then lets it go`() = runTest {
         val client = FakeMockLocationClient { testScheduler.currentTime }
 
         replayer(client).stop()
 
-        assertEquals(listOf<Call>(Call.Mode(enabled = false)), client.calls)
+        assertEquals(listOf<Call>(Call.Mode(enabled = true), Call.Mode(enabled = false)), client.calls)
     }
 
     @Test
@@ -183,13 +183,25 @@ class WayReplayerTimelineTest {
     }
 
     @Test
-    fun `the next tracker start turns mock mode off when no replay runs`() = runTest {
+    fun `the next tracker start takes mock mode, then lets it go, when no replay runs`() = runTest {
+        // Play services keeps a killed process's mock mode on, and ignores
+        // an "off" from a client that never turned it on (OnePlus 13).
         val client = FakeMockLocationClient { testScheduler.currentTime }
 
         replayer(client).onTrackerStart()
         runCurrent()
 
-        assertEquals(listOf<Call>(Call.Mode(enabled = false)), client.calls)
+        assertEquals(listOf<Call>(Call.Mode(enabled = true), Call.Mode(enabled = false)), client.calls)
+    }
+
+    @Test
+    fun `a release still turns mock mode off when taking it is refused`() = runTest {
+        val client = FakeMockLocationClient(refuseMockMode = true) { testScheduler.currentTime }
+
+        replayer(client).onTrackerStart()
+        runCurrent()
+
+        assertEquals(listOf<Call>(Call.Mode(enabled = true), Call.Mode(enabled = false)), client.calls)
     }
 
     @Test

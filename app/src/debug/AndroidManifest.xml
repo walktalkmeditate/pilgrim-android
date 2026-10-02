@@ -45,6 +45,7 @@ replayer, and its two adb triggers, one in the UI process and one in
                 <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_BEGIN" />
                 <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_EXPORT_GPX" />
                 <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_DUMP" />
+                <action android:name="org.walktalkmeditate.pilgrim.debug.HONOR_COMMAND" />
             </intent-filter>
         </receiver>
 
