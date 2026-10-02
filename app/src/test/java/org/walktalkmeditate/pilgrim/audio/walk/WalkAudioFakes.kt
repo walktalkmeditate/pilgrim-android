@@ -179,6 +179,8 @@ internal class FakeUiAudioGates : UiAudioGateSource {
     val value = MutableStateFlow(UiAudioGates())
 
     override val gates: StateFlow<UiAudioGates> = value
+
+    override val unanswered: StateFlow<Boolean> = MutableStateFlow(false)
 }
 
 /** The session's side of one play. */

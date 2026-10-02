@@ -18,12 +18,14 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.PROMPT
 import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.RECORDING
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.WHISPER
 import org.walktalkmeditate.pilgrim.walk.honor.HonorExternalGates
 
 /**
- * `:tracker`'s record of the UI's gates (plan U18): Binder death links,
- * sequence ids, and the hold after a pipeline start, until the UI answers
- * or the fixed wait passes. The wait is virtual time.
+ * `:tracker`'s record of the UI's gates (plan U18, and the whisper gate of
+ * plan U25): Binder death links, sequence ids, and the hold after a
+ * pipeline start, until the UI answers or the fixed wait passes. The wait
+ * is virtual time.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -32,10 +34,11 @@ class UiAudioGateTest {
 
     private fun TestScope.gate() = UiAudioGate(backgroundScope, UiAudioGate.REFRESH_WAIT_MILLIS)
 
-    /** A model the UI has already answered: both gates open. */
+    /** A model the UI has already answered: every gate open. */
     private fun TestScope.answeredGate() = gate().apply {
         apply(ended(PROMPT, seq = 1))
         apply(ended(RECORDING, seq = 1))
+        apply(ended(WHISPER, seq = 1))
     }
 
     @Test
@@ -131,7 +134,56 @@ class UiAudioGateTest {
         assertTrue(gate.gates.value.prompt)
     }
 
+    @Test
+    fun `a whisper the UI plays holds only the whisper gate, until it ends or its process dies`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = answeredGate()
+            val token = FakeUiBinder()
+
+            gate.apply(started(WHISPER, seq = 2, token = token))
+            assertEquals(UiAudioGates(whisper = true), gate.gates.value)
+
+            token.die()
+            assertEquals(UiAudioGates(), gate.gates.value)
+
+            gate.apply(started(WHISPER, seq = 3, token = FakeUiBinder()))
+            gate.apply(ended(WHISPER, seq = 4))
+            assertEquals(UiAudioGates(), gate.gates.value)
+        }
+
     // The hold after a pipeline start, which the UI answers for the bumped generation
+
+    @Test
+    fun `a hold stays unanswered until the UI has answered every gate`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = answeredGate()
+        assertFalse(gate.unanswered.value)
+
+        gate.holdUntilRefreshed()
+        assertTrue(gate.unanswered.value)
+        assertFalse("an unknown whisper reads open: the sonar waits on the answer instead", gate.gates.value.whisper)
+
+        gate.apply(ended(PROMPT, seq = 2))
+        gate.apply(ended(RECORDING, seq = 2))
+        assertTrue("the whisper gate is still unknown", gate.unanswered.value)
+
+        gate.apply(started(WHISPER, seq = 2, token = FakeUiBinder()))
+        assertFalse(gate.unanswered.value)
+        assertTrue(gate.gates.value.whisper)
+    }
+
+    @Test
+    fun `with no UI to answer, the hold is answered once the fixed wait passes`() = runTest {
+        val gate = gate()
+        runCurrent()
+
+        advanceTimeBy(UiAudioGate.REFRESH_WAIT_MILLIS - 1)
+        runCurrent()
+        assertTrue(gate.unanswered.value)
+
+        advanceTimeBy(2)
+        runCurrent()
+        assertFalse(gate.unanswered.value)
+    }
 
     @Test
     fun `a fresh process holds both gates until the UI answers each`() = runTest(UnconfinedTestDispatcher()) {

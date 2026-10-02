@@ -425,7 +425,7 @@ class UiWalkController @Inject constructor(
             // IllegalStateException so callers can roll back UI state
             // identically to the same-process controller's start
             // rejection path.
-            throw IllegalStateException("tracker did not start walk within $startAwaitTimeoutMillis ms", t)
+            throw WalkStartTimeoutException("tracker did not start walk within $startAwaitTimeoutMillis ms", t)
         }
         // Belt-and-suspenders: AlarmManager watchdog periodically
         // verifies the FGS is still alive in :tracker. If REDELIVER_
@@ -523,3 +523,9 @@ class UiWalkController @Inject constructor(
         private const val START_AWAIT_TIMEOUT_MS = 5_000L
     }
 }
+
+/**
+ * The tracker didn't produce the walk's row in time. The start may still
+ * land: the walk then reaches the UI through Room, as any other does.
+ */
+class WalkStartTimeoutException(message: String, cause: Throwable) : IllegalStateException(message, cause)

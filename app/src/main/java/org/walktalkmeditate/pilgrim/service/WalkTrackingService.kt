@@ -49,6 +49,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekChainCodec
 import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
 import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.location.MockLocationReplay
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
@@ -596,8 +597,14 @@ class WalkTrackingService : Service() {
                     return
                 }
                 scope.launch {
-                    val result = session.attach(scope, start, controller.state)
-                    Log.i(TAG, "late seek session: ${result::class.simpleName}")
+                    try {
+                        val result = session.attach(scope, start, controller.state)
+                        Log.i(TAG, "late seek session: ${result::class.simpleName}")
+                    } catch (cancel: kotlinx.coroutines.CancellationException) {
+                        throw cancel
+                    } catch (e: Exception) {
+                        Log.e(TAG, "late seek session did not start (${e::class.simpleName}); the walk records on")
+                    }
                 }
             }
             else -> {
@@ -1103,6 +1110,16 @@ class WalkTrackingService : Service() {
         /** Extra: when the pre-departure engine's next pulse was due. Long; absent with none scheduled. */
         const val EXTRA_SEEK_PULSE_DUE_AT = "extra.seek_pulse_due_at"
 
+        /** Extra: the pre-departure engine's distance to its clearing, in metres. Double; absent before a fix. */
+        const val EXTRA_SEEK_DISTANCE_METERS = "extra.seek_distance_meters"
+
+        /** Extra: the active fog's bucket as the ready screen drew it. Int; absent before it drew one. */
+        const val EXTRA_SEEK_FOG_BUCKET = "extra.seek_fog_bucket"
+
+        /** Extras: the walker's last fix on the ready screen. Doubles; absent before a fix. */
+        const val EXTRA_SEEK_WALKER_LATITUDE = "extra.seek_walker_latitude"
+        const val EXTRA_SEEK_WALKER_LONGITUDE = "extra.seek_walker_longitude"
+
         /** Extra: the sonar switch. Boolean. */
         const val EXTRA_SEEK_SONAR_ENABLED = "extra.seek_sonar_enabled"
 
@@ -1356,10 +1373,23 @@ class WalkTrackingService : Service() {
                 seed = intent.getLongExtra(EXTRA_SEEK_SEED, 0L),
                 seededAtEpochMillis = intent.getLongExtra(EXTRA_SEEK_SEEDED_AT, 0L),
                 intention = intent.getStringExtra(EXTRA_SEEK_INTENTION),
+                distanceToActiveMeters = intent.takeIf { it.hasExtra(EXTRA_SEEK_DISTANCE_METERS) }
+                    ?.getDoubleExtra(EXTRA_SEEK_DISTANCE_METERS, 0.0)
+                    ?.takeIf { it.isFinite() && it >= 0.0 },
+                fogBucket = intent.takeIf { it.hasExtra(EXTRA_SEEK_FOG_BUCKET) }?.getIntExtra(EXTRA_SEEK_FOG_BUCKET, 0),
+                walker = seekWalkerFromExtras(intent),
                 nextPulseDueAtMillis = intent.takeIf { it.hasExtra(EXTRA_SEEK_PULSE_DUE_AT) }
                     ?.getLongExtra(EXTRA_SEEK_PULSE_DUE_AT, 0L),
                 sonar = seekSonarSettingsFromExtras(intent),
             )
+        }
+
+        private fun seekWalkerFromExtras(intent: Intent): SeekPoint? {
+            if (!intent.hasExtra(EXTRA_SEEK_WALKER_LATITUDE) || !intent.hasExtra(EXTRA_SEEK_WALKER_LONGITUDE)) return null
+            val latitude = intent.getDoubleExtra(EXTRA_SEEK_WALKER_LATITUDE, Double.NaN)
+            val longitude = intent.getDoubleExtra(EXTRA_SEEK_WALKER_LONGITUDE, Double.NaN)
+            if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
+            return SeekPoint(latitude, longitude)
         }
 
         /** Pure decode of the sonar settings; a volume outside 0 to 1 is clamped, and NaN reads as silent. */

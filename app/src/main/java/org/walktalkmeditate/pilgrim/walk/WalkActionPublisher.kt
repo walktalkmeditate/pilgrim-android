@@ -130,6 +130,12 @@ class WalkActionPublisher internal constructor(
         putExtra(WalkTrackingService.EXTRA_SEEK_SEED, start.seed)
         putExtra(WalkTrackingService.EXTRA_SEEK_SEEDED_AT, start.seededAtEpochMillis)
         start.intention?.let { putExtra(WalkTrackingService.EXTRA_SEEK_INTENTION, it) }
+        start.distanceToActiveMeters?.let { putExtra(WalkTrackingService.EXTRA_SEEK_DISTANCE_METERS, it) }
+        start.fogBucket?.let { putExtra(WalkTrackingService.EXTRA_SEEK_FOG_BUCKET, it) }
+        start.walker?.let {
+            putExtra(WalkTrackingService.EXTRA_SEEK_WALKER_LATITUDE, it.latitude)
+            putExtra(WalkTrackingService.EXTRA_SEEK_WALKER_LONGITUDE, it.longitude)
+        }
         start.nextPulseDueAtMillis?.let { putExtra(WalkTrackingService.EXTRA_SEEK_PULSE_DUE_AT, it) }
         putSeekSonar(start.sonar)
     }

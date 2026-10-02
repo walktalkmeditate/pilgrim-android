@@ -25,13 +25,15 @@ import org.walktalkmeditate.pilgrim.walk.honor.WayVoiceListener
 import org.walktalkmeditate.pilgrim.walk.honor.WayVoicePort
 
 /**
- * The UI process's two audio gates as `:tracker` last heard them: a guide
- * [prompt] sounding (iOS `VoiceGuidePlayer.isPlaying`), and a talk or
- * reply [recording].
+ * The UI process's audio gates as `:tracker` last heard them: a guide
+ * [prompt] sounding (iOS `VoiceGuidePlayer.isPlaying`), a talk or reply
+ * [recording], and a [whisper] the UI plays, which only Seek's sonar reads
+ * (iOS `AudioPriorityQueue.isPlayingWhisper`, plan U25).
  */
 data class UiAudioGates(
     val prompt: Boolean = false,
     val recording: Boolean = false,
+    val whisper: Boolean = false,
 )
 
 /**
@@ -46,11 +48,15 @@ data class UiAudioGates(
  * - One value that ends a prompt and starts a recording is applied prompt
  *   first, as iOS's recording stops the prompt before the recording gate
  *   closes (the correction to iOS C-D1, pilgrim-ios #101).
- * - Until the UI re-sends after a revival, report both held.
+ * - Until the UI re-sends after a revival, report the prompt and the
+ *   recording held, and [unanswered] true.
  */
 interface UiAudioGateSource {
 
     val gates: StateFlow<UiAudioGates>
+
+    /** True from a pipeline start until the UI has answered every gate, or the wait for it has passed. */
+    val unanswered: StateFlow<Boolean>
 }
 
 /**

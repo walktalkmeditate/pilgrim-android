@@ -74,6 +74,7 @@ import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
+import org.walktalkmeditate.pilgrim.walk.WalkStartTimeoutException
 import org.walktalkmeditate.pilgrim.walk.seek.SeekHandOff
 import org.walktalkmeditate.pilgrim.walk.seek.SeekPlacement
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -1461,7 +1462,9 @@ class WalkViewModel @Inject constructor(
      * A seek Start with Seek in `:tracker` (plan U25): the staged session
      * rides ACTION_START under a walk uuid minted here, the replay guard a
      * redelivered start is resolved by, as an honor Begin's is. A start that
-     * fails hands the session back to the ready screen.
+     * fails hands the session back to the ready screen; one that only timed
+     * out may still land and take it, so the ready screen stays quiet
+     * rather than sound beside `:tracker`.
      */
     private suspend fun startSeekInTracker(intention: String?): Walk {
         val seek = seekHandOff.begin()
@@ -1474,7 +1477,7 @@ class WalkViewModel @Inject constructor(
         return try {
             controller.startWalk(request)
         } catch (t: Throwable) {
-            if (seek != null) seekHandOff.cancel()
+            if (seek != null && t !is WalkStartTimeoutException) seekHandOff.cancel()
             throw t
         }
     }

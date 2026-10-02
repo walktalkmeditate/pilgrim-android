@@ -34,12 +34,14 @@ import org.walktalkmeditate.pilgrim.data.seek.SeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperManifestService
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer
+import org.walktalkmeditate.pilgrim.data.whisper.WhisperSoundsOverride
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPowerTier
 import org.walktalkmeditate.pilgrim.power.SeekPowerTierSource
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
+import org.walktalkmeditate.pilgrim.walk.honor.HonorGatePort
 import org.walktalkmeditate.pilgrim.walk.seek.RoomSeekTrackerLink
 import org.walktalkmeditate.pilgrim.walk.seek.SeekGlancePublisher
 import org.walktalkmeditate.pilgrim.walk.seek.SeekHandOff
@@ -219,11 +221,22 @@ object SeekModule {
     fun provideSeekSessionWriter(controller: WalkControllerImpl): SeekSessionWriter = controller
 
     /**
+     * The master Sounds switch `:tracker`'s whisper player follows while a
+     * seek session plays by the one the UI sent; the UI process never
+     * applies one, so its whispers read its own preferences as always.
+     */
+    @Provides
+    @Singleton
+    fun provideWhisperSoundsOverride(settings: TrackerSeekSoundSettings): WhisperSoundsOverride =
+        settings.whisperSounds
+
+    /**
      * The senses of `:tracker`'s seek session: its own sonar player, playing
      * by the settings the UI sent, whose ping gate reads the walk audio
-     * arbiter (a whisper playing here) and the UI's gates (a guide prompt, a
-     * recording) as the UI's gate reads the UI's players; the reveal whisper
-     * goes through the arbiter, as `:tracker`'s autoplay does.
+     * arbiter (a whisper playing here) and the UI's gates (a whisper playing
+     * there, a guide prompt, a recording) as the UI's gate reads the UI's
+     * players, a ping waiting while the UI hasn't answered them; the reveal
+     * whisper goes through the arbiter, as `:tracker`'s autoplay does.
      */
     @Provides
     @Singleton
@@ -244,11 +257,7 @@ object SeekModule {
             audioManager = audioManager,
             settings = settings,
             scope = scope,
-            gate = SeekPingGate(
-                isWhisperPlaying = { arbiter.gates.value.externalAudio },
-                isVoiceGuidePlaying = { uiGates.gates.value.prompt },
-                isTalkRecordingActive = { uiGates.gates.value.recording },
-            ),
+            gate = trackerSeekPingGate(trackerAudio = arbiter, uiGates = uiGates),
             haptics = haptics,
         ),
         arrivalHaptic = haptics::arrival,
@@ -259,5 +268,17 @@ object SeekModule {
                 .randomOrNull()
         },
         playWhisper = arbiter::requestWhisper,
+        pingGateUnanswered = uiGates.unanswered,
     )
 }
+
+/**
+ * `:tracker`'s sonar gate: a whisper playing in either process, the UI's
+ * guide prompt, or its recording skips the ping, as the UI process's gate
+ * reads its own players.
+ */
+internal fun trackerSeekPingGate(trackerAudio: HonorGatePort, uiGates: UiAudioGateSource) = SeekPingGate(
+    isWhisperPlaying = { trackerAudio.gates.value.externalAudio || uiGates.gates.value.whisper },
+    isVoiceGuidePlaying = { uiGates.gates.value.prompt },
+    isTalkRecordingActive = { uiGates.gates.value.recording },
+)

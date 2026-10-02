@@ -27,15 +27,19 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundSettings
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGate
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.seek.SeekDisplayState
 import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 import org.walktalkmeditate.pilgrim.data.seek.displayState
+import org.walktalkmeditate.pilgrim.data.whisper.WhisperSoundsOverride
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
@@ -105,7 +109,9 @@ sealed interface SeekSessionStart {
 /**
  * `:tracker`'s sonar settings: the session row's, then the UI's later
  * changes by intent, never the UI process's preferences, whose reads freeze
- * here. Silent until a session applies its row.
+ * here. Silent until a session applies its row. While a session plays by
+ * them, [whisperSounds] hands their master Sounds switch to `:tracker`'s
+ * whisper player, so the reveal whisper follows the switch the bowl does.
  */
 @Singleton
 class TrackerSeekSoundSettings @Inject constructor() : SeekSoundSettings {
@@ -114,14 +120,25 @@ class TrackerSeekSoundSettings @Inject constructor() : SeekSoundSettings {
     private val _sonarVolume = MutableStateFlow(0f)
     private val _soundsEnabled = MutableStateFlow(false)
 
+    @Volatile
+    private var inSession = false
+
     override val sonarEnabled: StateFlow<Boolean> = _sonarEnabled.asStateFlow()
     override val sonarVolume: StateFlow<Float> = _sonarVolume.asStateFlow()
     override val soundsEnabled: StateFlow<Boolean> = _soundsEnabled.asStateFlow()
+
+    val whisperSounds = WhisperSoundsOverride { _soundsEnabled.value.takeIf { inSession } }
 
     fun apply(settings: SeekSonarSettings) {
         _sonarVolume.value = settings.sonarVolume
         _sonarEnabled.value = settings.sonarEnabled
         _soundsEnabled.value = settings.soundsEnabled
+        inSession = true
+    }
+
+    /** The session ended: `:tracker`'s whispers go back to this process's preferences. */
+    fun release() {
+        inSession = false
     }
 }
 
@@ -139,8 +156,8 @@ class TrackerSeekSoundSettings @Inject constructor() : SeekSoundSettings {
  * - **Restarted from Room.** Begin's hand-off lands in the walk's seek
  *   session row, and every start (Begin's, a redelivered START's, the
  *   watchdog's) rebuilds the engine from that row alone: the chain as it
- *   stands, the clearing it was on, an arrival in progress, and when its
- *   next pulse was due. Nothing is re-seeded.
+ *   stands, the clearing it was on and its last distance to it, an arrival
+ *   in progress, and when its next pulse was due. Nothing is re-seeded.
  * - **Its own location feed.** The engine reads an ungated FLP
  *   subscription, as it did in the UI process (U9 port spec D2). iOS feeds
  *   Seek the same filtered stream as Honor (own-walk spec B §1.1): a dated
@@ -148,10 +165,15 @@ class TrackerSeekSoundSettings @Inject constructor() : SeekSoundSettings {
  * - **Persist before ritual.** Each pulse, arrival, reveal, and completion
  *   commits the row the UI draws from, checking the walk is unfinished,
  *   before any sound or haptic; arrival is a compare-and-set that records
- *   a clearing once. A refused commit ends the session.
+ *   a clearing once, and only its win sounds. A commit that finds the walk
+ *   finished ends the session; one SQLite refuses is retried with the next
+ *   input while the guidance plays on.
  * - **Display through Room.** The row carries fog, pulse, and phase; it is
- *   written at each pulse and each change the map shows, so the crescent
- *   and pulse the UI draws may lag the ping.
+ *   written at each pulse and each change the map shows, so a flare the UI
+ *   draws may lag its ping. The UI places the crescent from its own fixes.
+ * - **The UI's gates.** A pipeline start leaves the UI's audio gates
+ *   unknown until the UI answers; a ping due meanwhile waits for the
+ *   answer, no longer than the gates' own wait, instead of being skipped.
  */
 @Singleton
 class SeekTrackerSession internal constructor(
@@ -339,6 +361,8 @@ class SeekTrackerSession internal constructor(
         private var committedKey: DisplayKey? = null
         private var encodedChain: Pair<SeekChain, String> = prepared.chain to prepared.row.chain
         private var whisperGeneration = 0L
+        private var deferredPing: Job? = null
+        private var writeFailing = false
 
         private val engine = SeekEngine(
             chain = prepared.chain,
@@ -350,6 +374,7 @@ class SeekTrackerSession internal constructor(
             initialActiveIndex = prepared.row.activeIndex,
             initialPhase = prepared.row.phase,
             arrivedAtMillis = prepared.row.arrivedAt,
+            initialDistanceToActiveMeters = prepared.row.distanceToActiveMeters,
             firstPulseDueAtMillis = prepared.row.nextPulseDueAt,
         )
 
@@ -367,7 +392,9 @@ class SeekTrackerSession internal constructor(
             }
             scope.launch { walkState.collect { inputs.trySend(Input.Sync) } }
             scope.launch {
-                if (engine.phase.value != SeekEnginePhase.COMPLETE) senses.soundPlayer.prepare()
+                // A chain already complete has nothing left to seek: no sonar, and no fixes to read.
+                if (engine.phase.value == SeekEnginePhase.COMPLETE) return@launch
+                senses.soundPlayer.prepare()
                 engine.start()
             }
         }
@@ -375,8 +402,11 @@ class SeekTrackerSession internal constructor(
         /** iOS `teardownSeek` (`ActiveWalkViewModel+Seek.swift:121-126@c1745e8`). */
         fun teardown() {
             whisperGeneration += 1
+            deferredPing?.cancel()
+            deferredPing = null
             engine.stop()
             senses.soundPlayer.stop()
+            soundSettings.release()
         }
 
         /**
@@ -413,8 +443,8 @@ class SeekTrackerSession internal constructor(
 
         private suspend fun handle(input: Input) {
             when (input) {
-                Input.Sync -> Unit
-                Input.Display -> if (showFog() != committedKey) commit()
+                Input.Sync -> if (writeFailing) commit()
+                Input.Display -> if (writeFailing || showFog() != committedKey) commit()
                 is Input.Event -> onEvent(input.event)
                 is Input.SeekAnew -> seekAnew(input.seq)
                 is Input.Preferences -> applyPreferences(input.seq, input.settings)
@@ -447,13 +477,7 @@ class SeekTrackerSession internal constructor(
         /** iOS `handleSeekEvent` (`ActiveWalkViewModel+Seek.swift:132-157@c1745e8`), each ritual after its row. */
         private suspend fun onEvent(event: SeekEngineEvent) {
             when (event) {
-                is SeekEngineEvent.Pulse -> if (commit(pulse = event)) {
-                    // One call carries ear and skin: the tick or aligned haptic rides the player.
-                    senses.soundPlayer.playPing(
-                        aligned = event.aligned,
-                        closeness = SeekEngine.closeness(event.distanceMeters).toFloat(),
-                    )
-                }
+                is SeekEngineEvent.Pulse -> if (commit(pulse = event)) ping(event)
                 is SeekEngineEvent.Arrived -> {
                     if (!commit()) return
                     val won = writer.recordSeekArrival(walkId, event.clearingIndex, latestFix, arrivalLabel)
@@ -469,6 +493,34 @@ class SeekTrackerSession internal constructor(
                 }
                 SeekEngineEvent.SeekComplete -> if (commit()) senses.soundPlayer.playCompletionBowl()
             }
+        }
+
+        /**
+         * One call carries ear and skin: the tick or aligned haptic rides the
+         * player. Before the UI has answered the gates a start left unknown,
+         * the ping waits for that answer, up to the gates' own wait, rather
+         * than be skipped behind gates that only read held; a later pulse or
+         * the teardown supersedes it.
+         */
+        private fun ping(pulse: SeekEngineEvent.Pulse) {
+            deferredPing?.cancel()
+            deferredPing = null
+            val unanswered = senses.pingGateUnanswered
+            if (!unanswered.value) {
+                playPing(pulse)
+                return
+            }
+            deferredPing = scope.launch {
+                withTimeoutOrNull(UiAudioGate.REFRESH_WAIT_MILLIS) { unanswered.first { !it } }
+                playPing(pulse)
+            }
+        }
+
+        private fun playPing(pulse: SeekEngineEvent.Pulse) {
+            senses.soundPlayer.playPing(
+                aligned = pulse.aligned,
+                closeness = SeekEngine.closeness(pulse.distanceMeters).toFloat(),
+            )
         }
 
         /** iOS `seekAnewRequested` (`ActiveWalkViewModel+Seek.swift:196-210@c1745e8`): the same intention, a new moment. */
@@ -540,7 +592,9 @@ class SeekTrackerSession internal constructor(
          * The row as the engine stands, written with the walk unfinished; a
          * [pulse] advances its token. ARRIVED is never written here, only by
          * arrival's compare-and-set, so a display write landing first can't
-         * win the arrival from it.
+         * win the arrival from it. A write SQLite refuses is tried again with
+         * the next input, and the ritual it precedes goes ahead: one locked
+         * or failed write must not silence the rest of the walk.
          *
          * @return false once the walk has finished, which ends the session.
          */
@@ -571,8 +625,9 @@ class SeekTrackerSession internal constructor(
                         true
                     }
                 } catch (e: SQLiteException) {
-                    Log.w(TAG, "walk $walkId: seek row refused (${e::class.simpleName}); the session ends")
-                    false
+                    if (!writeFailing) Log.w(TAG, "walk $walkId: seek row refused (${e::class.simpleName}); retrying")
+                    writeFailing = true
+                    return true
                 }
                 if (!written) {
                     end()
@@ -581,6 +636,7 @@ class SeekTrackerSession internal constructor(
                 committed = display
                 phase?.let { committedPhase = it }
             }
+            writeFailing = false
             committedKey = key
             return true
         }

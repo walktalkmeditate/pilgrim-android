@@ -41,6 +41,7 @@ import org.walktalkmeditate.pilgrim.audio.OrphanRecordingSweeper
 import org.walktalkmeditate.pilgrim.audio.VoiceRecorder
 import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.PROMPT
 import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.RECORDING
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.WHISPER
 import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.TestRealTimeDispatcher
@@ -54,8 +55,9 @@ import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionStore
 
 /**
  * The UI's gate publisher (plan U18): one observer each for the guide's
- * prompt level and the recorder's flag, fresh Binders and rising numbers,
- * and the re-send whenever the walk's gate generation changes.
+ * prompt level, the recorder's flag, and the whisper player's (plan U25),
+ * fresh Binders and rising numbers, and the re-send whenever the walk's
+ * gate generation changes.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -73,6 +75,7 @@ class UiAudioGatePublisherTest {
     private fun TestScope.publisher(
         honorEnabled: Boolean = true,
         recording: StateFlow<Boolean> = MutableStateFlow(false),
+        whisper: StateFlow<Boolean> = MutableStateFlow(false),
         refreshes: Flow<UiAudioGateRefresh?> = flowOf(null),
         bootNanos: () -> Long = { 0L },
     ) = UiAudioGatePublisher(
@@ -82,6 +85,7 @@ class UiAudioGatePublisherTest {
         send = ::record,
         bootNanos = bootNanos,
         scope = backgroundScope,
+        whisper = whisper,
     )
 
     @Test
@@ -121,7 +125,21 @@ class UiAudioGatePublisherTest {
     }
 
     @Test
-    fun `both gates go out again, fresh Binders and the prompt first, when the walk or its gate generation changes`() =
+    fun `a whisper the UI plays goes out as the whisper gate, with its own Binder`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val whisper = MutableStateFlow(false)
+            publisher(whisper = whisper).also { it.start() }
+
+            whisper.value = true
+            whisper.value = false
+
+            assertEquals(listOf(WHISPER to true, WHISPER to false), sends.value.map { it.kind to it.held })
+            assertNotNull(sends.value[0].token)
+            assertNull(sends.value[1].token)
+        }
+
+    @Test
+    fun `every gate goes out again, fresh Binders and the prompt first, when the walk or its gate generation changes`() =
         runTest(UnconfinedTestDispatcher()) {
             val refreshes = MutableStateFlow<UiAudioGateRefresh?>(null)
             val publisher = publisher(refreshes = refreshes).also { it.start() }
@@ -136,7 +154,7 @@ class UiAudioGatePublisherTest {
 
             val resent = sends.value.drop(1)
             assertEquals(
-                listOf(PROMPT to true, RECORDING to false).let { it + it + it },
+                listOf(PROMPT to true, RECORDING to false, WHISPER to false).let { it + it + it },
                 resent.map { it.kind to it.held },
             )
             val promptTokens = resent.filter { it.kind == PROMPT }.map { it.token }

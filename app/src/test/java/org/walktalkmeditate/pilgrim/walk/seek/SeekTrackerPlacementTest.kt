@@ -26,6 +26,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowMediaPlayer
+import org.walktalkmeditate.pilgrim.audio.walk.FakeUiBinder
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGate
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind
+import org.walktalkmeditate.pilgrim.audio.walk.ended
+import org.walktalkmeditate.pilgrim.audio.walk.started
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 import org.walktalkmeditate.pilgrim.data.sounds.FakeSoundsPreferencesRepository
@@ -81,11 +87,14 @@ class SeekTrackerPlacementTest {
     fun setUp() {
         h = SeekTrackerHarness(dispatcher)
         uiSound = SpySeekSound("ui", h.clock, h.ops)
+        // The real sonar player's raw-resource players prepare under Robolectric.
+        ShadowMediaPlayer.setMediaInfoProvider { ShadowMediaPlayer.MediaInfo() }
     }
 
     @After
     fun tearDown() {
         h.db.close()
+        ShadowMediaPlayer.resetStaticState()
     }
 
     /** The UI side of the link, recording what it sends and reading the row as the UI does. */
@@ -150,11 +159,22 @@ class SeekTrackerPlacementTest {
     private fun intervalAt(target: SeekPoint) =
         SeekEngine.pulseIntervalMillis(SeekChainGenerator.distance(home, target), SeekPowerTier.NORMAL)
 
+    /** The ready screen's engine, booted on [chain] and pinging once from [home]; returns the ping's time. */
+    private suspend fun TestScope.readyScreen(chain: org.walktalkmeditate.pilgrim.domain.seek.SeekChain): Long {
+        sessionStore.set(pending(chain))
+        runCurrent()
+        emit(uiFixes, home)
+        advance(intervalAt(chain.clearings[0].center))
+        return uiSound.pingTimes.single()
+    }
+
     /**
-     * The ready screen's engine pings once, the walker taps Start a little
-     * later, `:tracker` starts the walk from the hand-off and its session,
-     * and the UI sees the walk. Returns the walk and the time of the ready
-     * screen's ping.
+     * The ready screen's engine pings once, the walker taps Start
+     * [beginAfterPingMillis] later, `:tracker` starts its pipeline
+     * ([pipelineStart], where the service holds the UI's gates), the walk
+     * from the hand-off, and its session, and the UI sees the walk. With
+     * [trackerFix], `:tracker` has its first fix before the UI does.
+     * Returns the walk and the time of the ready screen's ping.
      */
     private suspend fun TestScope.beginWithHandOff(
         orchestrator: SeekOrchestrator,
@@ -162,26 +182,29 @@ class SeekTrackerPlacementTest {
         trackerScope: CoroutineScope,
         chain: org.walktalkmeditate.pilgrim.domain.seek.SeekChain,
         controller: org.walktalkmeditate.pilgrim.walk.WalkControllerImpl,
+        beginAfterPingMillis: Long = BEGIN_AFTER_PING_MILLIS,
+        trackerFix: Boolean = true,
+        pipelineStart: () -> Unit = {},
     ): Pair<Walk, Long> {
-        sessionStore.set(pending(chain))
-        runCurrent()
-        emit(uiFixes, home)
-        advance(intervalAt(chain.clearings[0].center))
-        val readyPing = uiSound.pingTimes.single()
-        advance(BEGIN_AFTER_PING_MILLIS)
+        val readyPing = readyScreen(chain)
+        advance(beginAfterPingMillis)
 
         val start = checkNotNull(orchestrator.begin())
+        pipelineStart()
         val walk = h.startSeekWalk(controller, start)
         runCurrent()
         assertEquals(SeekSessionStart.Started(revived = false), session.start(trackerScope, walk.id, controller.state))
         runCurrent()
-        emit(trackerFixes, home)
-        uiWalkState.value = WalkState.Active(WalkAccumulator(walkId = walk.id, startedAt = walk.startTimestamp, mode = WalkMode.Seek))
+        if (trackerFix) emit(trackerFixes, home)
+        uiWalkState.value = activeSeekWalk(walk)
         runCurrent()
         return walk to readyPing
     }
 
-    // The Begin hand-off
+    private fun activeSeekWalk(walk: Walk) =
+        WalkState.Active(WalkAccumulator(walkId = walk.id, startedAt = walk.startTimestamp, mode = WalkMode.Seek))
+
+    // The Begin hand-off, through the real sonar player and ping gate
 
     @Test
     fun `the Begin hand-off plays the sonar once, at the ready screen's cadence, from one engine`() = runTest(dispatcher) {
@@ -189,30 +212,218 @@ class SeekTrackerPlacementTest {
         val interval = intervalAt(chain.clearings[0].center)
         val orchestrator = startUi(processScope())
         val controller = h.newController()
-        val trackerSound = SpySeekSound("tracker", h.clock, h.ops)
-        val session = h.newSession(controller, trackerSound, trackerFixes)
+        val tracker = RealTrackerSenses(h.clock, backgroundScope)
+        val session = h.newSession(controller, tracker, trackerFixes)
 
-        val (walk, readyPing) = beginWithHandOff(orchestrator, session, processScope(), chain, controller)
+        val (walk, readyPing) = beginWithHandOff(
+            orchestrator, session, processScope(), chain, controller,
+            pipelineStart = tracker.uiGate::holdUntilRefreshed,
+        )
+        tracker.uiAnswers(seq = 1)
         assertEquals("the hand-off carried the ready screen's next pulse", readyPing + interval, h.row(walk.id).nextPulseDueAt)
         assertEquals("the UI's engine stopped when the walk took its session", 1, uiSound.stopCount)
 
         advance(readyPing + interval - h.clock.now() - 1)
-        assertEquals("no double: nothing sounds before the ping is due", 0, trackerSound.pingTimes.size)
+        assertEquals("no double: nothing sounds before the ping is due", emptyList<Long>(), tracker.starts)
         advance(1)
 
         assertEquals("the ready screen's one ping, and nothing more from the UI", listOf(readyPing), uiSound.pingTimes)
         assertEquals(
             "no gap: :tracker's first ping lands where the ready screen's next was due",
             listOf(readyPing + interval),
-            trackerSound.pingTimes,
+            tracker.starts,
         )
         advance(interval)
-        assertEquals("the cadence carries on in :tracker", listOf(readyPing + interval, readyPing + 2 * interval), trackerSound.pingTimes)
+        assertEquals("the cadence carries on in :tracker", listOf(readyPing + interval, readyPing + 2 * interval), tracker.starts)
         assertTrue("the map flares from the row :tracker writes", orchestrator.pulse.value.token > 0)
         assertNotNull(orchestrator.fogState.value)
         assertEquals(SeekEnginePhase.GUIDING, orchestrator.enginePhase.value)
         assertTrue("Begin handed the session over, so nothing was handed late", link.lateHandOffs.isEmpty())
         session.stop()
+    }
+
+    @Test
+    fun `a ping due before the UI answers the tracker's gates waits for the answer, then plays once`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+        val interval = intervalAt(chain.clearings[0].center)
+        val orchestrator = startUi(processScope())
+        val controller = h.newController()
+        val tracker = RealTrackerSenses(h.clock, backgroundScope)
+        val session = h.newSession(controller, tracker, trackerFixes)
+
+        val (_, readyPing) = beginWithHandOff(
+            orchestrator, session, processScope(), chain, controller,
+            beginAfterPingMillis = interval - DUE_AFTER_BEGIN_MILLIS,
+            trackerFix = false,
+            pipelineStart = tracker.uiGate::holdUntilRefreshed,
+        )
+        val due = readyPing + interval
+        advance(due - h.clock.now())
+        assertEquals("held for the UI's answer, not skipped behind gates that only read held", emptyList<Long>(), tracker.starts)
+
+        advance(UI_ANSWER_MILLIS)
+        tracker.uiAnswers(seq = 1)
+        runCurrent()
+        assertEquals("the one ping plays as the UI answers", listOf(due + UI_ANSWER_MILLIS), tracker.starts)
+        assertEquals(listOf(readyPing), uiSound.pingTimes)
+
+        advance(interval - UI_ANSWER_MILLIS)
+        assertEquals("the cadence keeps the engine's clock", listOf(due + UI_ANSWER_MILLIS, due + interval), tracker.starts)
+        session.stop()
+    }
+
+    @Test
+    fun `a whisper the walker taps in the UI holds the tracker's sonar, as it always has`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+        val interval = intervalAt(chain.clearings[0].center)
+        val orchestrator = startUi(processScope())
+        val controller = h.newController()
+        val tracker = RealTrackerSenses(h.clock, backgroundScope)
+        val session = h.newSession(controller, tracker, trackerFixes)
+        val (_, readyPing) = beginWithHandOff(
+            orchestrator, session, processScope(), chain, controller,
+            pipelineStart = tracker.uiGate::holdUntilRefreshed,
+        )
+        tracker.uiAnswers(seq = 1)
+
+        tracker.uiGate.apply(started(UiAudioGateKind.WHISPER, seq = 2, token = FakeUiBinder()))
+        advance(readyPing + interval - h.clock.now())
+        assertEquals("no ping over the whisper", emptyList<Long>(), tracker.starts)
+
+        tracker.uiGate.apply(ended(UiAudioGateKind.WHISPER, seq = 3))
+        advance(interval)
+        assertEquals("the next pulse sounds once it has ended", listOf(readyPing + 2 * interval), tracker.starts)
+        session.stop()
+    }
+
+    @Test
+    fun `with no UI to answer, a revived session's first ping plays once the gates' wait passes`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+        val controller = h.newController()
+        val walk = h.startSeekWalk(controller, h.handOff(chain))
+        runCurrent()
+        val first = h.newSession(controller, SpySeekSound("tracker", h.clock, h.ops), trackerFixes)
+        val firstScope = processScope()
+        first.start(firstScope, walk.id, controller.state)
+        runCurrent()
+        emit(trackerFixes, home)
+        firstScope.coroutineContext[Job]!!.cancel()
+        runCurrent()
+        advance(2 * intervalAt(chain.clearings[0].center))
+
+        val revivedController = h.newController()
+        checkNotNull(revivedController.restoreActiveWalk())
+        val tracker = RealTrackerSenses(h.clock, backgroundScope)
+        val revived = h.newSession(revivedController, tracker, trackerFixes)
+        tracker.uiGate.holdUntilRefreshed()
+        val revivedAt = h.clock.now()
+        assertEquals(SeekSessionStart.Started(revived = true), revived.start(processScope(), walk.id, revivedController.state))
+        runCurrent()
+        assertEquals("the pulse overdue at the revival waits on the unanswered gates", emptyList<Long>(), tracker.starts)
+
+        advance(UiAudioGate.REFRESH_WAIT_MILLIS - 1)
+        assertEquals(emptyList<Long>(), tracker.starts)
+        advance(1)
+        assertEquals("then it plays, once", listOf(revivedAt + UiAudioGate.REFRESH_WAIT_MILLIS), tracker.starts)
+        revived.stop()
+    }
+
+    // The map at Begin
+
+    @Test
+    fun `the first row carries the ready screen's fog and walker, so Begin draws no thick fog and keeps the crescent`() =
+        runTest(dispatcher) {
+            val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+            val orchestrator = startUi(processScope())
+            val controller = h.newController()
+            val session = h.newSession(controller, SpySeekSound("tracker", h.clock, h.ops), trackerFixes)
+            readyScreen(chain)
+            val readyFog = checkNotNull(orchestrator.fogState.value)
+            assertNotNull("the ready screen draws its crescent", readyFog.crescent)
+
+            val start = checkNotNull(orchestrator.begin())
+            val walk = h.startSeekWalk(controller, start)
+            runCurrent()
+            session.start(processScope(), walk.id, controller.state)
+            runCurrent()
+            uiWalkState.value = activeSeekWalk(walk)
+            runCurrent()
+
+            assertEquals("before :tracker's first fix, the map is the ready screen's", readyFog, orchestrator.fogState.value)
+            assertEquals(SeekChainGenerator.distance(home, chain.clearings[0].center), h.row(walk.id).distanceToActiveMeters!!, 1e-6)
+            assertEquals(home.latitude, h.row(walk.id).walkerLatitude!!, 1e-9)
+            session.stop()
+        }
+
+    @Test
+    fun `the crescent rides the UI's own fixes between the rows the tracker writes`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+        val orchestrator = startUi(processScope())
+        val controller = h.newController()
+        val session = h.newSession(controller, SpySeekSound("tracker", h.clock, h.ops), trackerFixes)
+        val (walk, _) = beginWithHandOff(orchestrator, session, processScope(), chain, controller)
+        val ahead = SeekChainGenerator.destination(from = home, bearingDegrees = 0.0, distanceMeters = 40.0)
+
+        emit(uiFixes, ahead)
+
+        val crescent = checkNotNull(orchestrator.fogState.value?.crescent)
+        assertEquals(ahead.latitude, crescent.position.latitude, 1e-9)
+        assertEquals(ahead.longitude, crescent.position.longitude, 1e-9)
+        assertEquals("the row still has the walker where :tracker last wrote", home.latitude, h.row(walk.id).walkerLatitude!!, 1e-9)
+        session.stop()
+    }
+
+    // Seek anew around Begin
+
+    @Test
+    fun `a reroll tapped between Begin and the walk reaching the UI goes to the tracker once its session starts`() =
+        runTest(dispatcher) {
+            val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+            val orchestrator = startUi(processScope())
+            val controller = h.newController()
+            val session = h.newSession(controller, SpySeekSound("tracker", h.clock, h.ops), trackerFixes)
+            readyScreen(chain)
+            val start = checkNotNull(orchestrator.begin())
+            val clearingsAtBegin = orchestrator.fogState.value?.circles
+
+            orchestrator.seekAnewRequested()
+            runCurrent()
+            assertTrue("no session in :tracker yet to take it", link.seekAnews.isEmpty())
+            assertEquals("the quiet ready screen's engine keeps Begin's chain", clearingsAtBegin, orchestrator.fogState.value?.circles)
+
+            val walk = h.startSeekWalk(controller, start)
+            runCurrent()
+            uiWalkState.value = activeSeekWalk(walk)
+            runCurrent()
+            assertTrue("the walk's row is there, but its session hasn't started", link.seekAnews.isEmpty())
+
+            session.start(processScope(), walk.id, controller.state)
+            runCurrent()
+            assertEquals("sent once the session started", 1, link.seekAnews.size)
+
+            orchestrator.seekAnewRequested()
+            runCurrent()
+            assertEquals("and every reroll after goes straight there", 2, link.seekAnews.size)
+            session.stop()
+        }
+
+    @Test
+    fun `a reroll tapped while a start that then fails was in flight rerolls the ready screen`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+        val orchestrator = startUi(processScope())
+        readyScreen(chain)
+        assertNotNull(orchestrator.begin())
+        val clearingsAtBegin = orchestrator.fogState.value?.circles
+
+        orchestrator.seekAnewRequested()
+        runCurrent()
+        assertEquals("quiet while the start is in flight", 1, uiSound.pingTimes.size)
+
+        orchestrator.cancel()
+        runCurrent()
+        assertEquals("the reroll's own ping, from the ready screen's engine", 2, uiSound.pingTimes.size)
+        assertNotEquals("the ready screen's chain was rerolled", clearingsAtBegin, orchestrator.fogState.value?.circles)
+        assertTrue(link.seekAnews.isEmpty())
     }
 
     @Test
@@ -405,6 +616,96 @@ class SeekTrackerPlacementTest {
         session.stop()
     }
 
+    @Test
+    fun `a revival after the chain is complete reads no fixes and arms no sonar`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 1)
+        val controller = h.newController()
+        val sound = SpySeekSound("tracker", h.clock, h.ops)
+        val session = h.newSession(controller, sound, trackerFixes)
+        val trackerScope = processScope()
+        val walk = h.startSeekWalk(controller, h.handOff(chain))
+        runCurrent()
+        session.start(trackerScope, walk.id, controller.state)
+        runCurrent()
+        emit(trackerFixes, chain.clearings[0].center, times = SeekEngineTuning.ARRIVAL_FIX_COUNT)
+        advance(SeekEngineTuning.GRACE_MILLIS + SeekEngineTuning.STILLNESS_CHECK_INTERVAL_MILLIS)
+        assertEquals(1, sound.completionBowlCount)
+        assertEquals(SeekEnginePhase.COMPLETE, h.row(walk.id).phase)
+
+        trackerScope.coroutineContext[Job]!!.cancel()
+        runCurrent()
+        val revivedController = h.newController()
+        checkNotNull(revivedController.restoreActiveWalk())
+        val revivedSound = SpySeekSound("revived", h.clock, h.ops)
+        val revived = h.newSession(revivedController, revivedSound, trackerFixes)
+        assertEquals(SeekSessionStart.Started(revived = true), revived.start(processScope(), walk.id, revivedController.state))
+        runCurrent()
+
+        assertEquals("nothing left to seek, so no fix is read for the rest of the walk", 0, trackerFixes.subscriptionCount.value)
+        assertEquals(0, revivedSound.prepareCount)
+        assertEquals(true, revived.glance.value?.isComplete)
+        revived.stop()
+    }
+
+    @Test
+    fun `a write SQLite refuses is retried, and the sonar plays on meanwhile`() = runTest(dispatcher) {
+        val chain = chain(clearingCount = 2, spacingMeters = 1_000.0)
+        val interval = intervalAt(chain.clearings[0].center)
+        val controller = h.newController()
+        val sound = SpySeekSound("tracker", h.clock, h.ops)
+        val session = h.newSession(controller, sound, trackerFixes)
+        val walk = h.startSeekWalk(controller, h.handOff(chain))
+        runCurrent()
+        session.start(processScope(), walk.id, controller.state)
+        runCurrent()
+        emit(trackerFixes, home)
+        val tokenBefore = h.row(walk.id).pulseToken
+        h.db.openHelper.writableDatabase.execSQL(
+            "CREATE TRIGGER refuse_seek_writes BEFORE UPDATE ON seek_sessions BEGIN SELECT RAISE(ABORT, 'locked'); END",
+        )
+
+        advance(interval)
+        assertEquals("the pulse rang though its row was refused", 1, sound.pingTimes.size)
+        assertEquals(tokenBefore, h.row(walk.id).pulseToken)
+        assertEquals("the session is still the walk's", walk.id, session.walkId)
+
+        h.db.openHelper.writableDatabase.execSQL("DROP TRIGGER refuse_seek_writes")
+        val ahead = SeekChainGenerator.destination(from = home, bearingDegrees = 0.0, distanceMeters = 40.0)
+        emit(trackerFixes, ahead)
+        assertEquals(
+            "the next input wrote the row again",
+            SeekChainGenerator.distance(ahead, chain.clearings[0].center),
+            h.row(walk.id).distanceToActiveMeters!!,
+            1e-6,
+        )
+        advance(interval)
+        assertEquals("the session guides on", 2, sound.pingTimes.size)
+        assertEquals("and its pulses reach the row again", tokenBefore + 1, h.row(walk.id).pulseToken)
+        session.stop()
+    }
+
+    @Test
+    fun `the reveal whisper follows the Sounds switch the UI sends, not the tracker's own frozen read`() = runTest(dispatcher) {
+        val tracker = RealTrackerSenses(h.clock, backgroundScope)
+        val settings = tracker.settings
+        val controller = h.newController()
+        val sounds = SeekSonarSettings(sonarEnabled = true, sonarVolume = 0.5f, soundsEnabled = false)
+        val walk = h.startSeekWalk(controller, h.handOff(chain(2), sonar = sounds))
+        runCurrent()
+        assertNull("nothing sent yet: the whisper player reads its own preferences", settings.whisperSounds.soundsEnabled())
+        val session = h.newSession(controller, tracker, trackerFixes)
+        session.start(processScope(), walk.id, controller.state)
+        runCurrent()
+        assertEquals(false, settings.whisperSounds.soundsEnabled())
+
+        session.applyPreferences(seq = 1, sounds.copy(soundsEnabled = true))
+        runCurrent()
+        assertEquals("Sounds turned on in the UI reaches the whisper player", true, settings.whisperSounds.soundsEnabled())
+
+        session.stop()
+        assertNull("the session over, the whisper player reads its own preferences again", settings.whisperSounds.soundsEnabled())
+    }
+
     // Placement decisions, with both flag values
 
     @Test
@@ -474,5 +775,11 @@ class SeekTrackerPlacementTest {
 
     private companion object {
         const val BEGIN_AFTER_PING_MILLIS = 5_000L
+
+        /** Begin this long before the next pulse, inside the gates' wait. */
+        const val DUE_AFTER_BEGIN_MILLIS = 1_000L
+
+        /** The UI's re-send landing this long after the pulse fell due. */
+        const val UI_ANSWER_MILLIS = 400L
     }
 }

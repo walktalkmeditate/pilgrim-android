@@ -4,6 +4,7 @@ package org.walktalkmeditate.pilgrim.walk.seek
 import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 import org.walktalkmeditate.pilgrim.domain.seek.SeekChain
 import org.walktalkmeditate.pilgrim.domain.seek.SeekChainCodec
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPoint
 
 /**
  * Where a seek walk's engine, senses, glance, and arrival writes run once
@@ -43,10 +44,12 @@ data class SeekSonarSettings(
  * The pre-departure session as `:tracker` restarts it at Begin: the durable
  * facts (the chain as the ready screen left it, a pre-departure reroll
  * included, its duration, tint, seed, and intention), where the engine
- * stood, when its next pulse was due, so the sonar keeps its cadence
- * across the hand-off, and the sonar settings at Begin. It rides
- * ACTION_START, and `:tracker` writes it into the walk's seek session row
- * inside the start's mutex, the row a revival rebuilds from.
+ * stood (its clearing, its last distance and the fog's bucket, and the
+ * walker's last fix), so the fog and crescent hold across the hand-off,
+ * when its next pulse was due, so the sonar keeps its cadence, and the
+ * sonar settings at Begin. It rides ACTION_START, and `:tracker` writes it
+ * into the walk's seek session row inside the start's mutex, the row a
+ * revival rebuilds from.
  */
 data class SeekStart(
     val chain: SeekChain,
@@ -56,6 +59,9 @@ data class SeekStart(
     val seed: Long,
     val seededAtEpochMillis: Long,
     val intention: String?,
+    val distanceToActiveMeters: Double?,
+    val fogBucket: Int?,
+    val walker: SeekPoint?,
     val nextPulseDueAtMillis: Long?,
     val sonar: SeekSonarSettings,
 ) {
@@ -68,6 +74,10 @@ data class SeekStart(
         seededAt = seededAtEpochMillis,
         intention = intention,
         activeIndex = activeIndex.coerceIn(0, (chain.clearings.size - 1).coerceAtLeast(0)),
+        distanceToActiveMeters = distanceToActiveMeters,
+        fogBucket = fogBucket,
+        walkerLatitude = walker?.latitude,
+        walkerLongitude = walker?.longitude,
         nextPulseDueAt = nextPulseDueAtMillis,
         sonarEnabled = sonar.sonarEnabled,
         sonarVolume = sonar.sonarVolume,
@@ -86,7 +96,8 @@ interface SeekHandOff {
      * The staged session as `:tracker` needs it, or null with none staged.
      * From here the UI's sonar and haptics are quiet, so the pre-departure
      * engine and `:tracker`'s never both sound, until the walk takes the
-     * session or [cancel] gives it back.
+     * session or [cancel] gives it back. A start that only timed out may
+     * still land, so it stays quiet.
      */
     suspend fun begin(): SeekStart?
 

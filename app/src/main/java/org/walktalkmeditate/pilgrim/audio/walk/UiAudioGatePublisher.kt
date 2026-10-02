@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.walktalkmeditate.pilgrim.audio.TalkRecordingActive
@@ -22,6 +23,7 @@ import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePromptGate
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.seek.SeekDao
+import org.walktalkmeditate.pilgrim.data.whisper.WhisperPlayer
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 
 /** When the UI owes `:tracker` its gates again: a new walk in progress, or its session's bumped gate generation. */
@@ -46,16 +48,18 @@ internal fun uiAudioGateRefreshes(honorDao: HonorDao, seekDao: SeekDao): Flow<Ui
 /**
  * The UI process's side of the walk audio gates (plan U18). One observer
  * of the guide's prompt level, which the orchestrator reports before its
- * player starts a prompt, and one of the recorder's recording flag, which
- * falls on every stop (the walk-end auto-stop included); each change goes
- * to `:tracker`'s [UiAudioGate] as a gate intent.
+ * player starts a prompt, one of the recorder's recording flag, which
+ * falls on every stop (the walk-end auto-stop included), and one of the
+ * whisper player's either-channel flag, which Seek's sonar in `:tracker`
+ * reads (plan U25); each change goes to `:tracker`'s [UiAudioGate] as a
+ * gate intent.
  *
  * - A start carries a fresh Binder, which `:tracker` links to its death
  *   to hear this process die; it is kept here while the gate holds.
  * - Numbers rise across UI restarts: the boot clock both processes share
  *   is their floor, so a restarted UI never repeats a number the tracker
  *   has seen.
- * - Both gates are sent again, with fresh Binders, whenever the walk in
+ * - Every gate is sent again, with fresh Binders, whenever the walk in
  *   progress or its session's gate generation changes (read from Room,
  *   the tracker's only way to the UI), which `:tracker` bumps at every
  *   session start and revival, an honor walk's or a seek walk's.
@@ -70,6 +74,7 @@ class UiAudioGatePublisher internal constructor(
     private val send: (kind: UiAudioGateKind, held: Boolean, seq: Long, token: IBinder?) -> Unit,
     private val bootNanos: () -> Long,
     private val scope: CoroutineScope,
+    private val whisper: Flow<Boolean> = flowOf(false),
 ) : VoiceGuidePromptGate {
 
     @Inject
@@ -79,6 +84,7 @@ class UiAudioGatePublisher internal constructor(
         honorDao: HonorDao,
         seekDao: SeekDao,
         walkActionPublisher: WalkActionPublisher,
+        whisperPlayer: WhisperPlayer,
     ) : this(
         releaseFlags = releaseFlags,
         recording = recording,
@@ -86,12 +92,13 @@ class UiAudioGatePublisher internal constructor(
         send = walkActionPublisher::publishUiAudioGate,
         bootNanos = SystemClock::elapsedRealtimeNanos,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        whisper = whisperPlayer.isAnyChannelPlaying,
     )
 
     private val started = AtomicBoolean(false)
     private val lock = Any()
-    private val current = mutableMapOf(UiAudioGateKind.PROMPT to false, UiAudioGateKind.RECORDING to false)
-    private val sent = mutableMapOf(UiAudioGateKind.PROMPT to false, UiAudioGateKind.RECORDING to false)
+    private val current = UiAudioGateKind.entries.associateWith { false }.toMutableMap()
+    private val sent = UiAudioGateKind.entries.associateWith { false }.toMutableMap()
     private val tokens = mutableMapOf<UiAudioGateKind, IBinder>()
     private var lastSeq = 0L
 
@@ -99,6 +106,7 @@ class UiAudioGatePublisher internal constructor(
     fun start() {
         if (!releaseFlags.honor || !started.compareAndSet(false, true)) return
         scope.launch { recording.collect { held -> onChange(UiAudioGateKind.RECORDING, held) } }
+        scope.launch { whisper.collect { held -> onChange(UiAudioGateKind.WHISPER, held) } }
         scope.launch { refreshes.filterNotNull().distinctUntilChanged().collect { resend() } }
     }
 
@@ -114,11 +122,10 @@ class UiAudioGatePublisher internal constructor(
         }
     }
 
-    /** The prompt first, as `:tracker` would apply one value that carries both. */
+    /** The prompt first, as `:tracker` would apply one value that carries it and the recording. */
     private fun resend() {
         synchronized(lock) {
-            publish(UiAudioGateKind.PROMPT, current.getValue(UiAudioGateKind.PROMPT))
-            publish(UiAudioGateKind.RECORDING, current.getValue(UiAudioGateKind.RECORDING))
+            UiAudioGateKind.entries.forEach { kind -> publish(kind, current.getValue(kind)) }
         }
     }
 

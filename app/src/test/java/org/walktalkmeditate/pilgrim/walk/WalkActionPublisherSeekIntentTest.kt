@@ -49,6 +49,9 @@ class WalkActionPublisherSeekIntentTest {
         seed = Long.MIN_VALUE + 7,
         seededAtEpochMillis = 1_700_000_000_123L,
         intention = "find the river",
+        distanceToActiveMeters = 412.75,
+        fogBucket = 3,
+        walker = SeekPoint(42.879_876_543, -8.546_123_456),
         nextPulseDueAtMillis = 1_700_000_033_000L,
         sonar = SeekSonarSettings(sonarEnabled = true, sonarVolume = 0.35f, soundsEnabled = false),
     )
@@ -88,11 +91,31 @@ class WalkActionPublisherSeekIntentTest {
     }
 
     @Test
-    fun `a hand-off with no tint, intention, or pulse due reads back without them`() {
-        val bare = handOff.copy(tintHex = null, intention = null, nextPulseDueAtMillis = null)
+    fun `a hand-off with no tint, intention, fix, or pulse due reads back without them`() {
+        val bare = handOff.copy(
+            tintHex = null,
+            intention = null,
+            distanceToActiveMeters = null,
+            fogBucket = null,
+            walker = null,
+            nextPulseDueAtMillis = null,
+        )
         publisher().start(seekRequest.copy(seek = bare))
 
         assertEquals(bare, WalkTrackingService.startExtrasFrom(nextStartedService(), honorEnabled = true).request.seek)
+    }
+
+    @Test
+    fun `a walker fix off the globe or a distance that isn't one reads back as none`() {
+        publisher().start(seekRequest)
+        val started = nextStartedService().apply {
+            putExtra(WalkTrackingService.EXTRA_SEEK_WALKER_LATITUDE, 91.0)
+            putExtra(WalkTrackingService.EXTRA_SEEK_DISTANCE_METERS, Double.NaN)
+        }
+
+        val seek = checkNotNull(WalkTrackingService.startExtrasFrom(started, honorEnabled = true).request.seek)
+        assertNull(seek.walker)
+        assertNull(seek.distanceToActiveMeters)
     }
 
     @Test

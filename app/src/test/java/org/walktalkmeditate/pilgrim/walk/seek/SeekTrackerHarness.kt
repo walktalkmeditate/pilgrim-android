@@ -2,20 +2,31 @@
 package org.walktalkmeditate.pilgrim.walk.seek
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.os.Vibrator
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.util.Collections
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestDispatcher
+import org.walktalkmeditate.pilgrim.audio.seek.SeekHaptics
+import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlayer
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlaying
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGate
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateSignal
 import org.walktalkmeditate.pilgrim.core.flags.FixedReleaseFlags
 import org.walktalkmeditate.pilgrim.data.PilgrimDatabase
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
+import org.walktalkmeditate.pilgrim.di.trackerSeekPingGate
 import org.walktalkmeditate.pilgrim.domain.Clock
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkMode
@@ -29,6 +40,8 @@ import org.walktalkmeditate.pilgrim.location.LocationSource
 import org.walktalkmeditate.pilgrim.sensor.fakeStepCounter
 import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
+import org.walktalkmeditate.pilgrim.walk.honor.HonorExternalGates
+import org.walktalkmeditate.pilgrim.walk.honor.HonorGatePort
 
 /**
  * One seek walk's world for the `:tracker` tests (plan U25): an in-memory
@@ -72,13 +85,25 @@ internal class SeekTrackerHarness(val dispatcher: TestDispatcher) {
         sound: SpySeekSound,
         fixes: Flow<LocationPoint>,
         honorEnabled: Boolean = true,
+    ) = newSession(controller, senses(sound, label = sound.name), TrackerSeekSoundSettings(), fixes, honorEnabled)
+
+    /** A fresh `:tracker` process's seek session with [real] senses, as production builds them. */
+    fun newSession(controller: WalkControllerImpl, real: RealTrackerSenses, fixes: Flow<LocationPoint>) =
+        newSession(controller, real.senses, real.settings, fixes, honorEnabled = true)
+
+    private fun newSession(
+        controller: WalkControllerImpl,
+        senses: SeekSenses,
+        soundSettings: TrackerSeekSoundSettings,
+        fixes: Flow<LocationPoint>,
+        honorEnabled: Boolean,
     ) = SeekTrackerSession(
         database = db,
         locationSource = locationSource(fixes),
         powerTiers = MutableSharedFlow<SeekPowerTier>(),
         writer = controller,
-        senses = senses(sound, label = sound.name),
-        soundSettings = TrackerSeekSoundSettings(),
+        senses = senses,
+        soundSettings = soundSettings,
         releaseFlags = FixedReleaseFlags(honor = honorEnabled),
         clock = clock,
         arrivalLabel = { ordinal -> "Clearing $ordinal" },
@@ -114,6 +139,9 @@ internal class SeekTrackerHarness(val dispatcher: TestDispatcher) {
         seed = SEED,
         seededAtEpochMillis = BASE_MILLIS,
         intention = "find the river",
+        distanceToActiveMeters = null,
+        fogBucket = null,
+        walker = null,
         nextPulseDueAtMillis = nextPulseDueAtMillis,
         sonar = sonar,
     )
@@ -197,5 +225,66 @@ internal class SpySeekSound(val name: String, private val clock: Clock, private 
 
     override fun stop() {
         stopCount++
+    }
+}
+
+/**
+ * `:tracker`'s senses as production builds them: the real sonar player,
+ * playing by the settings the session applies, over the real ping gate,
+ * which reads a real UI gate model and the arbiter's whisper flag. Each
+ * MediaPlayer start is timed on [clock]; nothing but pings plays unless a
+ * test rings a bowl. Set `ShadowMediaPlayer`'s media info first, so the
+ * players arm.
+ */
+internal class RealTrackerSenses(private val clock: Clock, scope: CoroutineScope) {
+
+    val settings = TrackerSeekSoundSettings()
+
+    /** Unknown until a test answers, as a pipeline start leaves it; its wait runs on [scope]'s clock. */
+    val uiGate = UiAudioGate(scope, UiAudioGate.REFRESH_WAIT_MILLIS)
+
+    /** A whisper `:tracker` itself plays, as the arbiter reports it. */
+    val trackerAudio = MutableStateFlow(HonorExternalGates())
+
+    val starts: MutableList<Long> = Collections.synchronizedList(mutableListOf())
+
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+
+    val player = SeekSoundPlayer(
+        context = context,
+        audioManager = context.getSystemService(AudioManager::class.java),
+        settings = settings,
+        scope = scope,
+        gate = trackerSeekPingGate(
+            trackerAudio = object : HonorGatePort {
+                override val gates = trackerAudio
+            },
+            uiGates = uiGate,
+        ),
+        haptics = SeekHaptics(context.getSystemService(Vibrator::class.java)),
+        playerFactory = { TimedMediaPlayer { starts += clock.now() } },
+    )
+
+    val senses = SeekSenses(
+        soundPlayer = player,
+        arrivalHaptic = {},
+        breathInHaptic = {},
+        pickRevealWhisper = { null },
+        playWhisper = {},
+        pingGateUnanswered = uiGate.unanswered,
+    )
+
+    /** The UI's re-send of every gate, all quiet, numbered [seq]. */
+    fun uiAnswers(seq: Long) {
+        UiAudioGateKind.entries.forEach { kind ->
+            uiGate.apply(UiAudioGateSignal(kind = kind, held = false, seq = seq, token = null))
+        }
+    }
+
+    private class TimedMediaPlayer(private val onStart: () -> Unit) : MediaPlayer() {
+        override fun start() {
+            onStart()
+            super.start()
+        }
     }
 }

@@ -99,9 +99,11 @@ object SeekEngineTuning {
  * at Begin, or a revival after a kill): [initialActiveIndex] and
  * [initialPhase] restore its place in the chain, an ARRIVED engine resumes
  * its stillness watch with the grace counted from [arrivedAtMillis] and
- * never reports the arrival again, and [firstPulseDueAtMillis] keeps the
- * other engine's sonar cadence for the first pulse. Left at their
- * defaults, the engine starts at the chain's first clearing as it always has.
+ * never reports the arrival again, [initialDistanceToActiveMeters] is the
+ * other engine's last distance, so the fog holds and the pulse clock runs
+ * before this one's first fix, and [firstPulseDueAtMillis] keeps the other
+ * engine's sonar cadence for the first pulse. Left at their defaults, the
+ * engine starts at the chain's first clearing as it always has.
  */
 class SeekEngine(
     chain: SeekChain,
@@ -115,6 +117,7 @@ class SeekEngine(
     initialActiveIndex: Int = 0,
     initialPhase: SeekEnginePhase? = null,
     private val arrivedAtMillis: Long? = null,
+    initialDistanceToActiveMeters: Double? = null,
     firstPulseDueAtMillis: Long? = null,
 ) {
 
@@ -131,7 +134,7 @@ class SeekEngine(
     )
     val phase: StateFlow<SeekEnginePhase> = _phase.asStateFlow()
 
-    private val _distanceToActiveMeters = MutableStateFlow<Double?>(null)
+    private val _distanceToActiveMeters = MutableStateFlow(initialDistanceToActiveMeters)
     val distanceToActiveMeters: StateFlow<Double?> = _distanceToActiveMeters.asStateFlow()
 
     private val _events = MutableSharedFlow<SeekEngineEvent>(extraBufferCapacity = 64)
@@ -193,6 +196,7 @@ class SeekEngine(
         if (_phase.value == SeekEnginePhase.ARRIVED && stillnessDetector == null) {
             armStillness(graceDeadlineMillis = (arrivedAtMillis ?: clock.now()) + SeekEngineTuning.GRACE_MILLIS)
         }
+        if (_phase.value == SeekEnginePhase.GUIDING && _distanceToActiveMeters.value != null) ensurePulseScheduled()
         collectorJobs = listOf(
             collectQuietly(locations) { processLocation(it) },
             collectQuietly(walkStates) { handleWalkState(it) },
