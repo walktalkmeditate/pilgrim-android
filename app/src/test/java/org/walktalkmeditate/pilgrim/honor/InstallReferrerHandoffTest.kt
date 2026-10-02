@@ -2,10 +2,13 @@
 package org.walktalkmeditate.pilgrim.honor
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -68,7 +71,7 @@ class InstallReferrerHandoffTest {
         val navHost = Any()
         router.screenChanged(honorLinkScreen(listOf(Routes.WELCOME)), navHost)
 
-        handoff(FakeReferrerClient(InstallReferrerRead.Answered("honor=$ID")), route = router::route).handOff()
+        handoff(FakeReferrerClient(InstallReferrerRead.Answered("honor=$ID")), route = router::routeReferrer).handOff()
         assertTrue("held through setup", imports.isEmpty())
         assertEquals(InstallReferrerRecord(consumed = true, pendingShareId = ID), store.record)
         router.screenChanged(honorLinkScreen(listOf(Routes.PATH)), navHost)
@@ -76,6 +79,30 @@ class InstallReferrerHandoffTest {
         assertEquals(listOf(ID), imports)
         assertEquals(HonorLinkToast.Reaching, router.toast.value)
         assertNull("the routing took it, so it opens once", store.record.pendingShareId)
+    }
+
+    @Test
+    fun `a link the walker tapped on the first launch wins, and the referrer is marked read`() = runTest(dispatcher) {
+        val imports = mutableListOf<String>()
+        val coordinator = HonorImportCoordinator(
+            importShare = { id ->
+                imports += id
+                awaitCancellation()
+            },
+            honorEnabled = true,
+            scope = backgroundScope,
+            media = { error("unused") },
+        )
+        val router = HonorLinkRouter(true, coordinator, trackerWalking = { false }, scope = backgroundScope)
+        val navHost = Any()
+        router.screenChanged(honorLinkScreen(listOf(Routes.WELCOME)), navHost)
+        router.open(Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/$TAPPED")), restored = false)
+
+        handoff(FakeReferrerClient(InstallReferrerRead.Answered("honor=$ID")), route = router::routeReferrer).handOff()
+        router.screenChanged(honorLinkScreen(listOf(Routes.PATH)), navHost)
+
+        assertEquals(listOf(TAPPED), imports)
+        assertEquals(InstallReferrerRecord(consumed = true, pendingShareId = null), store.record)
     }
 
     @Test
@@ -181,13 +208,45 @@ class InstallReferrerHandoffTest {
         val client = FakeReferrerClient(*Array(4) { InstallReferrerRead.Retry })
         val started = currentTime
 
-        handoff(client).handOff()
+        assertFalse("still to read", handoff(client).handOff())
         assertEquals(4, client.reads)
         assertEquals(1_000L + 2_000L + 4_000L, currentTime - started)
         assertTrue(routed.isEmpty())
         assertFalse(store.record.consumed)
 
         handoff(FakeReferrerClient(InstallReferrerRead.Answered("honor=$ID"))).handOff()
+        assertEquals(listOf(ID), routed)
+    }
+
+    // AE5: a first read begun in setup is no updater's, however late its answer comes.
+    @Test
+    fun `a Play Store silent until setup is done still hands off once, on a later launch`() = runTest(dispatcher) {
+        handoff(FakeReferrerClient(*Array(4) { InstallReferrerRead.Retry })).handOff()
+        assertTrue(store.record.firstReadInSetup)
+        setUp = true
+
+        val later = FakeReferrerClient(InstallReferrerRead.Answered("honor=$ID"))
+        handoff(later).handOff()
+
+        assertEquals(1, later.reads)
+        assertEquals(listOf(ID), routed)
+        assertEquals(InstallReferrerRecord(consumed = true, pendingShareId = ID), store.record)
+        releases.last()()
+        handoff(FakeReferrerClient(InstallReferrerRead.Answered("honor=$ID"))).handOff()
+        assertEquals("only once", listOf(ID), routed)
+    }
+
+    @Test
+    fun `a later Activity in the same process reads again when the first start got no answer`() = runTest(dispatcher) {
+        val client = FakeReferrerClient(*Array(4) { InstallReferrerRead.Retry }, InstallReferrerRead.Answered("honor=$ID"))
+        val handoff = handoff(client)
+
+        handoff.start()
+        advanceTimeBy(1_000L + 2_000L + 4_000L + 1)
+        assertTrue(routed.isEmpty())
+        handoff.start()
+
+        assertEquals(5, client.reads)
         assertEquals(listOf(ID), routed)
     }
 
@@ -256,6 +315,10 @@ class InstallReferrerHandoffTest {
 
         override suspend fun read() = record
 
+        override suspend fun markFirstReadInSetup() {
+            record = record.copy(firstReadInSetup = true)
+        }
+
         override suspend fun consume(pendingShareId: String?) {
             record = InstallReferrerRecord(consumed = true, pendingShareId = pendingShareId)
         }
@@ -267,6 +330,7 @@ class InstallReferrerHandoffTest {
 
     private companion object {
         const val ID = "Qoi4YmPHLN"
+        const val TAPPED = "Tapped1234"
         val HANGS: InstallReferrerRead? = null
     }
 }

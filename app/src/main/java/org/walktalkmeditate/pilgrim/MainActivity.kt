@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.walktalkmeditate.pilgrim
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -34,6 +35,7 @@ import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.honor.HonorLinkRouter
 import org.walktalkmeditate.pilgrim.honor.InstallReferrerHandoff
 import org.walktalkmeditate.pilgrim.honor.carriesLinkData
+import org.walktalkmeditate.pilgrim.honor.honorLinkOf
 import org.walktalkmeditate.pilgrim.honor.linkConsumed
 import org.walktalkmeditate.pilgrim.ui.navigation.PilgrimNavHost
 import org.walktalkmeditate.pilgrim.ui.theme.PilgrimTheme
@@ -70,6 +72,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (movesToOwnTask(intent, isTaskRoot, releaseFlags.honor)) {
+            // Finished first: CLEAR_TOP passes over a finishing instance, so the link reaches the one beneath.
+            finish()
+            startActivity(ownTaskIntent(this, intent, restored = savedInstanceState != null))
+            return
+        }
         // Pin status + nav bar scrim to parchment (light) and dark
         // parchment (dark) so the system bars match the canvas — no
         // white band behind the floating bottom pill in light mode.
@@ -143,6 +151,8 @@ class MainActivity : ComponentActivity() {
                     val deepLink by pendingDeepLink
                     val welcomeCompleted by onboardingPreferences
                         .welcomeCompleted.collectAsStateWithLifecycle()
+                    val recoveredWalkId by walkRecoveryRepository
+                        .recoveredWalkId.collectAsStateWithLifecycle()
                     PilgrimNavHost(
                         pendingDeepLink = deepLink,
                         onDeepLinkConsumed = {
@@ -160,6 +170,10 @@ class MainActivity : ComponentActivity() {
                         },
                         welcomeCompleted = welcomeCompleted,
                         honorEnabled = releaseFlags.honor,
+                        walkRecovered = recoveredWalkId != null,
+                        onRecoveryBannerDone = {
+                            lifecycleScope.launch { walkRecoveryRepository.clearRecovered() }
+                        },
                     )
                 }
             }
@@ -193,17 +207,10 @@ class MainActivity : ComponentActivity() {
         receive(intent, restored = false)
     }
 
-    /**
-     * An Honor link routes once: its data is stripped from the attached
-     * intent (setIntent survives a configuration change), and the widget's
-     * extras are never read from it. Any other intent is the widget's.
-     */
     private fun receive(intent: Intent, restored: Boolean) {
-        if (carriesLinkData(intent)) {
-            honorLinks.open(intent, restored)
-            setIntent(linkConsumed(intent))
-        }
-        pendingDeepLink.value = DeepLinkTarget.parse(intent)
+        val received = receiveIntent(intent, restored, honorLinks)
+        setIntent(received.attached)
+        pendingDeepLink.value = received.deepLink
     }
 
     private fun recoverIfStaleActiveWalk() {
@@ -243,6 +250,50 @@ class MainActivity : ComponentActivity() {
         val modelDownloadEnsureRequested = AtomicBoolean(false)
     }
 }
+
+/** One delivered intent as MainActivity takes it: the intent left attached, and the widget's deep link. */
+internal data class ReceivedIntent(val attached: Intent, val deepLink: DeepLinkTarget?)
+
+/**
+ * An Honor link routes once: [links] takes it, and the intent left
+ * attached loses its link and its extras (setIntent survives a
+ * configuration change), so the widget's extras are never read from it.
+ * Any other intent is the widget's or the walk notification's.
+ */
+internal fun receiveIntent(intent: Intent, restored: Boolean, links: HonorLinkRouter): ReceivedIntent {
+    if (!carriesLinkData(intent)) return ReceivedIntent(intent, DeepLinkTarget.parse(intent))
+    links.open(intent, restored)
+    return ReceivedIntent(linkConsumed(intent), deepLink = null)
+}
+
+/** Set on [ownTaskIntent]'s intent, so an instance it starts never moves again. */
+internal const val EXTRA_MOVED_TO_OWN_TASK = "org.walktalkmeditate.pilgrim.EXTRA_MOVED_TO_OWN_TASK"
+
+/**
+ * A link an app opens without a new task starts this Activity in that
+ * app's task, and a link opened over another activity in Pilgrim's task
+ * starts a second MainActivity. Either instance moves the link to the one
+ * MainActivity in Pilgrim's own task and finishes before it draws. The
+ * widget, the notification and the launcher are left as they are.
+ */
+internal fun movesToOwnTask(intent: Intent, isTaskRoot: Boolean, honorEnabled: Boolean): Boolean =
+    honorEnabled && !isTaskRoot && carriesLinkData(intent) && !intent.getBooleanExtra(EXTRA_MOVED_TO_OWN_TASK, false)
+
+/**
+ * Pilgrim's own task, its MainActivity brought to the top: a running one
+ * takes the link through onNewIntent, and otherwise a new task starts with
+ * it. The link goes along only if it would route here ([honorLinkOf]).
+ */
+internal fun ownTaskIntent(context: Context, intent: Intent, restored: Boolean): Intent =
+    Intent(context, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        .putExtra(EXTRA_MOVED_TO_OWN_TASK, true)
+        .apply {
+            if (honorLinkOf(intent, restored) != null) {
+                action = Intent.ACTION_VIEW
+                data = intent.data
+            }
+        }
 
 /**
  * U9 trigger body, extracted for direct testing. The CAS keeps

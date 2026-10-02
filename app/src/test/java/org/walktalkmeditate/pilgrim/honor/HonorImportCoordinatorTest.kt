@@ -238,6 +238,42 @@ class HonorImportCoordinatorTest {
         assertEquals(HonorImportState.Idle, imports.state.value)
     }
 
+    // S2 §5 row 8: a link for the share already showing keeps its overview, which gathers again.
+    @Test
+    fun `a link for the share whose overview is up gathers it again in place`() = runTest(dispatcher) {
+        val imports = coordinator()
+        val way = withVoices(FIRST, 4)
+        imports.gather(way, Any())
+        report(way.id, WayMediaWork.State.RUNNING, unfinished = 2)
+
+        imports.openWay(FIRST)
+        held.getValue(FIRST).resume(way)
+        assertEquals("the landed import leaves no line of its own", HonorImportState.Idle, imports.state.value)
+
+        imports.gatherShownAgain(way.id)
+
+        assertEquals(HonorImportState.Gathering(0.5), imports.state.value)
+        assertEquals("the running download carries on", 1, scheduler.gathers.size)
+        report(way.id, WayMediaWork.State.SUCCEEDED, unfinished = 0)
+        assertEquals("the watch follows it again", HonorImportState.Ready, imports.state.value)
+    }
+
+    @Test
+    fun `another share's id, or no overview up, gathers nothing`() = runTest(dispatcher) {
+        val imports = coordinator()
+        val overview = Any()
+        imports.gather(way(FIRST), overview)
+        imports.openWay(SECOND)
+        land(SECOND)
+
+        imports.gatherShownAgain("share:$SECOND")
+        assertEquals(HonorImportState.Idle, imports.state.value)
+        imports.overviewClosed(overview)
+        imports.gatherShownAgain("share:$FIRST")
+
+        assertEquals(HonorImportState.Idle, imports.state.value)
+    }
+
     // Shared-walk spec S4 §8: the gathering states, the reducer's precedence, and the overview's two buttons.
 
     private fun withVoices(shareId: String, count: Int): Way = way(shareId).copy(

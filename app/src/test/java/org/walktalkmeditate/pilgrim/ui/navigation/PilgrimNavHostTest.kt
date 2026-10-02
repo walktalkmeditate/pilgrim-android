@@ -135,15 +135,16 @@ class PilgrimNavHostTest {
     }
 
     @Test
-    fun `the app-wide link toast shows on the walk screen but not over a sitting, and leaves Path and the overview their own`() {
-        assertTrue(linkToastOverlayShows(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
-        assertFalse(linkToastOverlayShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))
-        assertFalse(linkToastOverlayShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION, Routes.SOUNDSCAPE_PICKER)))
-        assertFalse("the Path screen draws it under its recovery banner", linkToastOverlayShows(listOf(Routes.PATH)))
-        assertFalse(linkToastOverlayShows(listOf(Routes.PATH, Routes.HONOR_OVERVIEW_PATTERN)))
-        assertTrue(linkToastOverlayShows(listOf(Routes.PATH, Routes.HOME)))
-        assertTrue("under the summary's own window", linkToastOverlayShows(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN)))
-        assertFalse(linkToastOverlayShows(emptyList()))
+    fun `the one link toast shows on every tab and the walk screen, but not over a sitting or an overview`() {
+        assertTrue(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK)))
+        assertFalse(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION)))
+        assertFalse(linkToastShows(listOf(Routes.PATH, Routes.ACTIVE_WALK, Routes.MEDITATION, Routes.SOUNDSCAPE_PICKER)))
+        assertTrue("under the recovery banner, in the same host", linkToastShows(listOf(Routes.PATH)))
+        assertTrue(linkToastShows(listOf(Routes.PATH, Routes.HOME)))
+        assertTrue(linkToastShows(listOf(Routes.PATH, Routes.SETTINGS)))
+        assertFalse(linkToastShows(listOf(Routes.PATH, Routes.HONOR_OVERVIEW_PATTERN)))
+        assertTrue("under the summary's own window", linkToastShows(listOf(Routes.PATH, Routes.WALK_SUMMARY_PATTERN)))
+        assertFalse(linkToastShows(emptyList()))
     }
 
     // Owner decision 5: a link from any other screen opens over the Path tab, so Close lands there.
@@ -186,6 +187,30 @@ class PilgrimNavHostTest {
 
         onMain { assertEquals(Routes.HONOR_OVERVIEW_PATTERN, nav.currentBackStackEntry?.destination?.route) }
         assertOnlyPathBeneath(nav)
+    }
+
+    // S2 §5 rows 8–9: a link for the share whose overview is up keeps that overview.
+    @Test
+    fun `only the shared Way's own overview, showing now, counts as already open`() {
+        val nav = honorBackStack(start = Routes.PATH)
+        onMain { nav.navigate(Routes.HONOR_WAYS) }
+        onMain { nav.openStoredWayOverview(SHARED_WAY) }
+
+        onMain {
+            assertTrue(nav.showsStoredOverview(SHARED_WAY))
+            assertFalse(nav.showsStoredOverview("share:Second1234"))
+        }
+        onMain { nav.closeHonorOverview() }
+        onMain { assertFalse("no overview showing", nav.showsStoredOverview(SHARED_WAY)) }
+    }
+
+    @Test
+    fun `an own walk's overview is never a shared Way's`() {
+        val nav = honorBackStack()
+        onMain { nav.navigate(Routes.walkSummary(7L, walkAgainDoor = true)) }
+        onMain { nav.openHonorOverviewFromSummary(7L) }
+
+        onMain { assertFalse(nav.showsStoredOverview(SHARED_WAY)) }
     }
 
     private fun assertOnlyPathBeneath(nav: NavHostController) {

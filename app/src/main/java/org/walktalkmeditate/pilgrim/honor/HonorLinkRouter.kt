@@ -2,6 +2,7 @@
 package org.walktalkmeditate.pilgrim.honor
 
 import android.content.Intent
+import android.os.Bundle
 import android.util.Log
 import javax.inject.Inject
 import javax.inject.Provider
@@ -54,10 +55,12 @@ sealed interface HonorLinkToast {
  * S2 §2–§7). The fetch itself is [HonorImportCoordinator]'s, and where a
  * fetched Way lands is the nav host's.
  *
- * - A link waits in memory, the last one winning, until the nav host
+ * - A link waits in memory, the last one winning, until a nav host
  *   first stands past setup (correction 4). This singleton outlives an
  *   Activity's recreation and dies with the process, as iOS's static
  *   does. Nothing shows while it waits.
+ * - The install referrer's id routes like a held tap, unless the walker
+ *   tapped a link in this process: the tap wins.
  * - With the walk screen up, or `:tracker` walking with no walk screen
  *   yet (a cold start), the link is answered "finish this walk first"
  *   and dropped (correction 3).
@@ -95,9 +98,14 @@ class HonorLinkRouter internal constructor(
     /** A switch to the Path tab the nav host owes, until it reports [pathSwitchTaken]. */
     val pathSwitch: StateFlow<Boolean> = _pathSwitch.asStateFlow()
 
-    private var screen: HonorLinkScreen? = null
-    private var screenOwner: Any? = null
+    /**
+     * Each live nav host's back stack, the last reported last: that one is
+     * the screen showing. Another Activity's host going leaves the others'.
+     */
+    private val screens = LinkedHashMap<Any, HonorLinkScreen>()
+    private val screen: HonorLinkScreen? get() = screens.values.lastOrNull()
     private var held: HeldLink? = null
+    private var linkTapped = false
     private var routing: Job? = null
     private var toastExpiry: Job? = null
 
@@ -107,7 +115,24 @@ class HonorLinkRouter internal constructor(
 
     /** A launch's intent, or a new one; [restored] for an Activity rebuilt from saved state. */
     fun open(intent: Intent?, restored: Boolean) {
-        honorLinkOf(intent, restored)?.let { route(it) }
+        val shareId = honorLinkOf(intent, restored) ?: return
+        if (!honorEnabled) return
+        linkTapped = true
+        route(shareId)
+    }
+
+    /**
+     * The install referrer's id, routed as a tap held through setup would
+     * be. A link the walker tapped in this process wins: the referrer is
+     * then [released] at once, unrouted (R19's "once" either way).
+     */
+    fun routeReferrer(shareId: String, released: () -> Unit) {
+        if (!honorEnabled) return
+        if (linkTapped) {
+            released()
+            return
+        }
+        route(shareId, released)
     }
 
     /**
@@ -126,9 +151,8 @@ class HonorLinkRouter internal constructor(
     /** The nav host's back stack, from [owner]: one nav host per Activity. */
     fun screenChanged(now: HonorLinkScreen, owner: Any) {
         if (!honorEnabled) return
-        val before = screen.takeIf { screenOwner === owner }
-        screen = now
-        screenOwner = owner
+        val before = screens.remove(owner)
+        screens[owner] = now
         // iOS `startWalk`: the observation goes, the transfers stay, the state is left as it was.
         if (now.walkScreenUp && before?.walkScreenUp != true) imports.cancelImport()
         // iOS `chooseWay`: the sheet opens on no toast; its own model resets the import line.
@@ -136,11 +160,14 @@ class HonorLinkRouter internal constructor(
         drainIfReady()
     }
 
-    /** [owner]'s nav host left with its Activity: links wait until the next one stands past setup. */
+    /**
+     * [owner]'s nav host left with its Activity. The host reported before
+     * it, if one still lives, is the screen again; with none, links wait
+     * until the next one stands past setup.
+     */
     fun screenGone(owner: Any) {
-        if (screenOwner !== owner) return
-        screen = null
-        screenOwner = null
+        if (screens.remove(owner) == null) return
+        drainIfReady()
     }
 
     fun pathSwitchTaken() {
@@ -223,20 +250,30 @@ class HonorLinkRouter internal constructor(
 
 /**
  * The share id a launch or a new intent carries: a VIEW intent's data,
- * parsed as iOS parses a link the OS hands it. An Activity rebuilt from
- * saved state carries none. Its intent is the task's original one,
- * replayed after a process death the app's own [Intent] edits didn't
- * survive, and R18 loses a waiting link with the process, as iOS does
- * (S2 open question 3). A configuration change rebuilds from saved state
- * too, but its intent was already consumed.
+ * parsed as iOS parses a link the OS hands it. A task the system rebuilds
+ * carries none, so R18 loses a waiting link with the process, as iOS does
+ * (S2 open question 3, resolved): an Activity rebuilt from saved state,
+ * whose intent is the task's original one, replayed after a process death
+ * the app's own [Intent] edits didn't survive; and a task Recents starts
+ * again from its first intent after a reboot or a force stop, with no
+ * saved state. A configuration change rebuilds from saved state too, but
+ * its intent was already consumed.
  */
 internal fun honorLinkOf(intent: Intent?, restored: Boolean): String? {
-    if (restored || intent?.action != Intent.ACTION_VIEW) return null
+    if (restored || intent == null || !carriesLinkData(intent)) return null
+    if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
     return intent.data?.let(HonorLink::parse)
 }
 
-/** Whether [intent] carries link data: it routes only as a link, never through the widget's extras. */
-internal fun carriesLinkData(intent: Intent?): Boolean = intent?.data != null
+/**
+ * Whether [intent] carries link data: a VIEW intent's, which routes only as
+ * a link, never through the widget's extras. The widget's own clicks carry
+ * data too, Glance's `glance-action:` id for each click, but no action.
+ */
+internal fun carriesLinkData(intent: Intent?): Boolean = intent?.action == Intent.ACTION_VIEW && intent.data != null
 
-/** [intent] with its link data gone, so a recreated Activity never routes it twice. */
-internal fun linkConsumed(intent: Intent): Intent = Intent(intent).apply { data = null }
+/** [intent] with its link data and every extra gone, so a recreated Activity routes neither. */
+internal fun linkConsumed(intent: Intent): Intent = Intent(intent).apply {
+    data = null
+    replaceExtras(Bundle())
+}

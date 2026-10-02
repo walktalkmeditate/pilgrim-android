@@ -2,8 +2,10 @@
 package org.walktalkmeditate.pilgrim.widget
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -74,4 +76,25 @@ class DeepLinkTargetTest {
             .putExtra(DeepLinkTarget.EXTRA_WALK_ID, 42L)
         assertNull(DeepLinkTarget.parse(intent))
     }
+
+    // Glance gives every click its own data, with no action: a widget tap is never a link.
+    @Test
+    fun `parse reads a Last Walk widget tap through the data Glance gives it`() {
+        val tap = widgetClickIntent(context, lastWalk(42L)).asGlanceClick()
+
+        assertEquals("glance-action", tap.data?.scheme)
+        assertEquals(DeepLinkTarget.WalkSummary(42L), DeepLinkTarget.parse(tap))
+    }
+
+    @Test
+    fun `parse reads an Empty widget tap through the data Glance gives it`() {
+        val tap = widgetClickIntent(context, WidgetState.Empty).asGlanceClick()
+
+        assertEquals(DeepLinkTarget.Home, DeepLinkTarget.parse(tap))
+    }
+
+    private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    private fun lastWalk(walkId: Long) =
+        WidgetState.LastWalk(walkId = walkId, endTimestampMs = 0L, distanceMeters = 1_000.0, activeDurationMs = 600_000L)
 }

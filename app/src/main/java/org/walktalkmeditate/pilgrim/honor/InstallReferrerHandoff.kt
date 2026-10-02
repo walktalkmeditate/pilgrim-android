@@ -23,14 +23,22 @@ import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.permissions.PermissionsRepository
 
 /**
- * What the install referrer left: whether it was read, and the share id
- * still waiting for setup, if any. Kept on disk, so the wait outlives a
- * process death during onboarding (R19).
+ * What the install referrer left: whether it was read, the share id still
+ * waiting for setup, if any, and whether a first read began during setup
+ * and is still unanswered. Kept on disk, so the wait outlives a process
+ * death during onboarding (R19).
  */
-data class InstallReferrerRecord(val consumed: Boolean, val pendingShareId: String?)
+data class InstallReferrerRecord(
+    val consumed: Boolean,
+    val pendingShareId: String?,
+    val firstReadInSetup: Boolean = false,
+)
 
 interface InstallReferrerStore {
     suspend fun read(): InstallReferrerRecord
+
+    /** A first read begins during setup: a later launch finishes it, set up or not. */
+    suspend fun markFirstReadInSetup()
 
     /** Marks the referrer read, with the share id it named waiting for setup, in one write. */
     suspend fun consume(pendingShareId: String?)
@@ -47,9 +55,9 @@ interface InstallReferrerStore {
  * finishes, the Path tab, "reaching for the walk…", then the overview or
  * the failure toast. Never an automatic Begin, and only once.
  *
- * - Read on a launch only while setup is incomplete, and never with the
- *   release flag off. An install already set up (an updater) marks it
- *   read and opens nothing.
+ * - First read on a launch while setup is incomplete, and never with the
+ *   release flag off. An install already set up at its first read (an
+ *   updater) marks it read and opens nothing.
  * - The referrer is decoded once, then its `honor` value must be a whole
  *   share id ([HonorLink.shareId]); anything else opens nothing.
  * - "Read" and the waiting id are saved before the id is routed, and the
@@ -57,7 +65,10 @@ interface InstallReferrerStore {
  *   system Settings during onboarding still opens it after setup.
  * - Disconnected and unavailable are retried with a fresh client and a
  *   bounded backoff. A launch that never gets an answer leaves it unread,
- *   for the next launch still in setup.
+ *   and the next launch reads again, even once setup is done: the first
+ *   read began during setup, so this is no updater (AE5).
+ * - A link the walker tapped in this process wins over the referrer,
+ *   which is then marked read and opens nothing.
  */
 @Singleton
 class InstallReferrerHandoff internal constructor(
@@ -80,33 +91,44 @@ class InstallReferrerHandoff internal constructor(
         client = client,
         store = store,
         setupComplete = { permissions.onboardingComplete.first() },
-        route = router::route,
+        route = router::routeReferrer,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
     )
 
     private val started = AtomicBoolean(false)
 
-    /** Once per process, from the first Activity: a widget's or a worker's process start never reads it. */
+    /**
+     * From an Activity: once per process, or again from a later Activity
+     * when the Play Store never answered. A widget's or a worker's process
+     * start never reads it.
+     */
     fun start() {
         if (!honorEnabled || !started.compareAndSet(false, true)) return
-        launchLogged("the install referrer handoff failed") { handOff() }
+        launchLogged("the install referrer handoff failed") {
+            if (!handOff()) started.set(false)
+        }
     }
 
-    internal suspend fun handOff() {
+    /** False when the Play Store never answered, so the referrer is still to read. */
+    internal suspend fun handOff(): Boolean {
         val record = store.read()
         record.pendingShareId?.let {
             hand(it)
-            return
+            return true
         }
-        if (record.consumed) return
-        if (setupComplete()) {
-            store.consume(pendingShareId = null)
-            return
+        if (record.consumed) return true
+        if (!record.firstReadInSetup) {
+            if (setupComplete()) {
+                store.consume(pendingShareId = null)
+                return true
+            }
+            store.markFirstReadInSetup()
         }
-        val answer = answered() ?: return
+        val answer = answered() ?: return false
         val shareId = answer.referrer?.let(::shareIdFromReferrer)
         store.consume(pendingShareId = shareId)
         shareId?.let(::hand)
+        return true
     }
 
     private fun hand(shareId: String) {
@@ -132,7 +154,7 @@ class InstallReferrerHandoff internal constructor(
             if (read is InstallReferrerRead.Answered) return read
             RETRY_BACKOFF_MILLIS.getOrNull(attempt)?.let { delay(it) }
         }
-        Log.i(TAG, "the Play Store never answered; the next launch in setup reads again")
+        Log.i(TAG, "the Play Store never answered; the next launch reads again")
         return null
     }
 
@@ -181,12 +203,18 @@ class DataStoreInstallReferrerStore @Inject constructor(
         return InstallReferrerRecord(
             consumed = prefs[KEY_CONSUMED] ?: false,
             pendingShareId = prefs[KEY_PENDING_SHARE_ID],
+            firstReadInSetup = prefs[KEY_FIRST_READ_IN_SETUP] ?: false,
         )
+    }
+
+    override suspend fun markFirstReadInSetup() {
+        dataStore.edit { it[KEY_FIRST_READ_IN_SETUP] = true }
     }
 
     override suspend fun consume(pendingShareId: String?) {
         dataStore.edit { prefs ->
             prefs[KEY_CONSUMED] = true
+            prefs.remove(KEY_FIRST_READ_IN_SETUP)
             if (pendingShareId == null) prefs.remove(KEY_PENDING_SHARE_ID) else prefs[KEY_PENDING_SHARE_ID] = pendingShareId
         }
     }
@@ -198,5 +226,6 @@ class DataStoreInstallReferrerStore @Inject constructor(
     private companion object {
         val KEY_CONSUMED = booleanPreferencesKey("honor_install_referrer_consumed")
         val KEY_PENDING_SHARE_ID = stringPreferencesKey("honor_install_referrer_pending_share_id")
+        val KEY_FIRST_READ_IN_SETUP = booleanPreferencesKey("honor_install_referrer_first_read_in_setup")
     }
 }

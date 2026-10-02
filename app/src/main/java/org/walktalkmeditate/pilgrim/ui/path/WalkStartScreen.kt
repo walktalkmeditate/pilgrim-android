@@ -115,8 +115,6 @@ fun WalkStartScreen(
     onChooseWay: () -> Unit,
     honorEnabled: Boolean,
     walkViewModel: WalkViewModel = hiltViewModel(),
-    /** The Honor link toast, drawn under the recovery banner as iOS stacks them (S2 §7.2). */
-    linkToast: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     // Stage 5G trap (memorized): WalkViewModel.uiState uses
@@ -129,7 +127,6 @@ fun WalkStartScreen(
     // exactly this purpose (mirrors ActiveWalkScreen line 53).
     val walkState by walkViewModel.walkState.collectAsStateWithLifecycle()
     val isInProgress = walkState.isInProgress
-    val recoveredWalkId by walkViewModel.recoveredWalkId.collectAsStateWithLifecycle()
 
     // Back from the Path tab (the effective root) should background
     // the app, not destroy it. Launcher re-tap then resumes here.
@@ -248,23 +245,6 @@ fun WalkStartScreen(
             honorEnabled = honorEnabled,
             modifier = Modifier.matchParentSize(),
         )
-        // iOS-parity recovery banner: shows when a walk was auto-finalized
-        // because the user swiped the app from recents mid-walk. Auto-
-        // dismisses after 4s via the banner's internal LaunchedEffect.
-        // Aligned to the top of the screen so it doesn't push the rest of
-        // the layout around — overlays via the outer Box. iOS's VStack:
-        // the link toast under the banner, 4 apart.
-        Column(
-            modifier = Modifier.align(Alignment.TopCenter),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
-        ) {
-            RecoveryBanner(
-                visible = recoveredWalkId != null,
-                onDismiss = { walkViewModel.dismissRecovery() },
-            )
-            linkToast()
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

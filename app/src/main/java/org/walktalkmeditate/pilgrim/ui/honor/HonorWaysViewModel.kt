@@ -144,6 +144,16 @@ class HonorImportHostViewModel @Inject constructor(
         imports.consumeFetched(wayId)
     }
 
+    /** iOS `walkAgain` with no Way built: the park is overwritten with nil, so a link's Way waiting there never opens. */
+    fun dropParkedWay() {
+        imports.fetched.value?.let(imports::consumeFetched)
+    }
+
+    /** iOS `openOverview` for the share whose overview is up: it stays, and gathers again (S2 §5 row 8). */
+    fun gatherShownAgain(wayId: String) {
+        imports.gatherShownAgain(wayId)
+    }
+
     fun screenChanged(screen: HonorLinkScreen) {
         links.screenChanged(screen, owner = this)
     }

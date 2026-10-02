@@ -81,6 +81,7 @@ class HonorImportCoordinator internal constructor(
 
     private var importJob: Job? = null
     private var shownOverview: Any? = null
+    private var shownWay: Way? = null
 
     /** iOS's `gatheringCancellable`: the overview's watch on the media download. */
     private var gathering: Job? = null
@@ -146,6 +147,7 @@ class HonorImportCoordinator internal constructor(
      */
     suspend fun gather(way: Way, overview: Any) {
         shownOverview = overview
+        shownWay = way
         stopGathering()
         if (way.source !is WaySource.Share) {
             _state.value = HonorImportState.Ready
@@ -159,6 +161,18 @@ class HonorImportCoordinator internal constructor(
         gathering = scope.launch {
             downloader.gathers.collect { _state.value = it.state(way.id) }
         }
+    }
+
+    /**
+     * iOS `openOverview` for the share whose overview is already up (S2 §5
+     * row 8): the overview stays and its Way gathers again, which a
+     * download already running for it carries on. Any other id, or an
+     * overview still loading (it gathers as it shows), changes nothing.
+     */
+    fun gatherShownAgain(wayId: String) {
+        val overview = shownOverview ?: return
+        val way = shownWay?.takeIf { it.id == wayId } ?: return
+        scope.launch { gather(way, overview) }
     }
 
     /** iOS `retryMedia(for:)`: "try again" cancels the round and gathers what is still missing. */
@@ -184,6 +198,7 @@ class HonorImportCoordinator internal constructor(
     fun overviewClosed(overview: Any) {
         if (shownOverview !== overview) return
         shownOverview = null
+        shownWay = null
         stopGathering()
         _state.value = HonorImportState.Idle
     }

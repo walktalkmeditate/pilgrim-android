@@ -9,9 +9,10 @@ import org.walktalkmeditate.pilgrim.honor.carriesLinkData
  * `parse(intent)` keeps Intent extra parsing in one place — testable in
  * isolation, no Activity lifecycle needed.
  *
- * Only an intent with no link data is read: the widget and the walk
- * notification never set one, and MainActivity is exported, so a link
- * can arrive carrying any extras at all (Phase 21 U27).
+ * Only an intent with no link data is read: MainActivity is exported, so
+ * a link can arrive carrying any extras at all (Phase 21 U27). Link data
+ * is a VIEW intent's: the walk notification sets no data, and the
+ * widget's clicks carry Glance's own `glance-action:` data with no action.
  */
 sealed interface DeepLinkTarget {
     data class WalkSummary(val walkId: Long) : DeepLinkTarget

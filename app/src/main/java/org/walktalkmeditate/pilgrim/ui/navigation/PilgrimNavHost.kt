@@ -8,7 +8,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -54,6 +56,7 @@ import org.walktalkmeditate.pilgrim.ui.honor.HonorOverviewViewModel
 import org.walktalkmeditate.pilgrim.ui.home.HomeScreen
 import org.walktalkmeditate.pilgrim.ui.meditation.MeditationScreen
 import org.walktalkmeditate.pilgrim.ui.onboarding.PermissionsScreen
+import org.walktalkmeditate.pilgrim.ui.path.RecoveryBanner
 import org.walktalkmeditate.pilgrim.ui.recordings.RecordingsListScreen
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsAction
 import org.walktalkmeditate.pilgrim.ui.settings.SettingsScreen
@@ -62,6 +65,7 @@ import org.walktalkmeditate.pilgrim.ui.settings.sounds.SoundSettingsScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailScreen
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePackDetailViewModel
 import org.walktalkmeditate.pilgrim.ui.settings.voiceguide.VoiceGuidePickerScreen
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimSpacing
 import org.walktalkmeditate.pilgrim.ui.walk.ActiveWalkScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryScreen
 import org.walktalkmeditate.pilgrim.ui.walk.WalkSummaryViewModel
@@ -199,6 +203,9 @@ fun PilgrimNavHost(
     welcomeCompleted: Boolean = true,
     /** The 2.0.0 release flag: off, no Honor route exists and no door leads to one (AE12). */
     honorEnabled: Boolean = false,
+    /** A walk the swipe from Recents finalized: the recovery banner shows over the Path tab until [onRecoveryBannerDone]. */
+    walkRecovered: Boolean = false,
+    onRecoveryBannerDone: () -> Unit = {},
 ) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
@@ -271,7 +278,6 @@ fun PilgrimNavHost(
                     }
                 },
                 honorEnabled = honorEnabled,
-                linkToast = { honorHost?.let { LinkToastHost(it) } },
             )
         }
         composable(Routes.HOME) {
@@ -582,6 +588,8 @@ fun PilgrimNavHost(
                     // iOS `walkAgain`: the summary closes, then the overview
                     // opens over whatever hosted it, never over the summary;
                     // a walk with no Way only closes it (F §6.2, F-1 matched).
+                    // Either way it overwrites a link's Way parked behind the
+                    // summary, nil included, so that Way never opens.
                     onWalkAgain = if (hostOffersWalkAgain) {
                         { result ->
                             if (result.built) {
@@ -589,6 +597,7 @@ fun PilgrimNavHost(
                                     navController.openHonorOverviewFromSummary(result.sourceWalkId)
                                 }
                             } else {
+                                honorHost?.dropParkedWay()
                                 dismissAndDone()
                             }
                         }
@@ -658,8 +667,20 @@ fun PilgrimNavHost(
         org.walktalkmeditate.pilgrim.ui.design
             .ConstellationDecoration(includesNebulae = nebulaeOn)
 
-        if (honorHost != null && linkToastOverlayShows(backStackRoutes)) {
-            LinkToastHost(honorHost, Modifier.align(Alignment.TopCenter))
+        // iOS's one top overlay on the tab view (`MainTabView.swift:146-159@7c200bf`,
+        // S2 §7.2): the recovery banner, then the link toast under it, 4 apart.
+        // One host for every screen, so a toast that rises over one tab rides
+        // the switch to another rather than starting again.
+        Column(
+            modifier = Modifier.align(Alignment.TopCenter),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PilgrimSpacing.xs),
+        ) {
+            RecoveryBanner(
+                visible = walkRecovered && currentRoute == Routes.PATH,
+                onDismiss = onRecoveryBannerDone,
+            )
+            if (honorHost != null) LinkToastHost(honorHost, shows = linkToastShows(backStackRoutes))
         }
 
         // Pill overlays the screen content at BottomCenter — content
@@ -902,26 +923,25 @@ internal fun fetchedWayLanding(backStack: List<String>, parkedBehindSummary: Boo
 }
 
 /**
- * Whether the app-wide toast draws over [backStack]'s screen. The Path
- * tab draws its own, under its recovery banner. During a walk only the
- * walk screen shows it: not meditation (owner decision 3, matching iOS's
- * toast hidden under the meditation cover), nor anything over it. An
- * overview hides it, as iOS's overview sheet covers its toast; the
- * summary's sheet, a window of its own, covers it by itself.
+ * Whether the app-wide toast shows over [backStack]'s screen. During a
+ * walk only the walk screen shows it: not meditation (owner decision 3,
+ * matching iOS's toast hidden under the meditation cover), nor anything
+ * over it. An overview hides it, as iOS's overview sheet covers its toast;
+ * the summary's sheet, a window of its own, covers it by itself.
  */
-internal fun linkToastOverlayShows(backStack: List<String>): Boolean {
+internal fun linkToastShows(backStack: List<String>): Boolean {
     val current = backStack.lastOrNull() ?: return false
     return when {
         Routes.ACTIVE_WALK in backStack -> current == Routes.ACTIVE_WALK
-        current == Routes.PATH || current == Routes.HONOR_OVERVIEW_PATTERN -> false
+        current == Routes.HONOR_OVERVIEW_PATTERN -> false
         else -> true
     }
 }
 
 @Composable
-private fun LinkToastHost(host: HonorImportHostViewModel, modifier: Modifier = Modifier) {
+private fun LinkToastHost(host: HonorImportHostViewModel, shows: Boolean) {
     val toast by host.linkToast.collectAsState()
-    org.walktalkmeditate.pilgrim.ui.honor.HonorLinkToastView(toast = toast, modifier = modifier)
+    org.walktalkmeditate.pilgrim.ui.honor.HonorLinkToastView(toast = toast.takeIf { shows })
 }
 
 /**
@@ -929,7 +949,8 @@ private fun LinkToastHost(host: HonorImportHostViewModel, modifier: Modifier = M
  * goes to the link routing, which holds a link through setup and cancels
  * an import as the walk screen opens; the Path switch it asks for is made
  * here; and a Way the import listed with no Ways sheet up to take it opens
- * its overview over the Path tab, or waits behind a summary.
+ * its overview over the Path tab, or waits behind a summary. Its own
+ * overview already showing stays, and gathers again.
  */
 @Composable
 private fun HonorLinksLanding(
@@ -962,10 +983,26 @@ private fun HonorLinksLanding(
             FetchedWayLanding.DROP -> host.consumeFetched(wayId)
             FetchedWayLanding.PRESENT -> {
                 host.consumeFetched(wayId)
-                navController.openFetchedWayOverview(wayId)
+                if (navController.showsStoredOverview(wayId)) {
+                    host.gatherShownAgain(wayId)
+                } else {
+                    navController.openFetchedWayOverview(wayId)
+                }
             }
         }
     }
+}
+
+/**
+ * The overview showing is [wayId]'s. A link for that share keeps it, as
+ * iOS's sheet keeps an item of the same id and only takes its new value
+ * (`Way.swift:222@7c200bf`, S2 §5 rows 8–9): its scroll and any open
+ * moment preview stay.
+ */
+internal fun NavController.showsStoredOverview(wayId: String): Boolean {
+    val entry = currentBackStackEntry ?: return false
+    return entry.destination.route == Routes.HONOR_OVERVIEW_PATTERN &&
+        entry.arguments?.getString(HonorOverviewViewModel.ARG_WAY_ID) == wayId
 }
 
 private fun NavController.hasBackStackEntry(route: String): Boolean = try {

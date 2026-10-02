@@ -136,10 +136,42 @@ class HonorLinkRouterTest {
 
         links.open(link(FIRST), restored = false)
         assertTrue(asked.isEmpty())
-        links.screenChanged(honorLinkScreen(listOf(Routes.PERMISSIONS)), owner = Any())
-        links.screenChanged(honorLinkScreen(listOf(Routes.PATH)), owner = Any())
+        val next = Any()
+        links.screenChanged(honorLinkScreen(listOf(Routes.PERMISSIONS)), owner = next)
+        links.screenChanged(honorLinkScreen(listOf(Routes.PATH)), owner = next)
 
         assertEquals(listOf(FIRST), asked)
+    }
+
+    // Each nav host keeps its own screen, so one going never strands a link the other could take.
+
+    @Test
+    fun `a second Activity's nav host going hands the screen back, and a link held for it opens there`() = runTest(dispatcher) {
+        val links = router()
+        val second = Any()
+        links.at(Routes.PATH, Routes.HOME)
+        links.screenChanged(honorLinkScreen(listOf(Routes.PERMISSIONS)), owner = second)
+        links.open(link(FIRST), restored = false)
+        assertTrue("held while the screen showing is in setup", asked.isEmpty())
+
+        links.screenGone(second)
+
+        assertEquals(listOf(FIRST), asked)
+        assertTrue("routed against the screen beneath, on the Journal", links.pathSwitch.value)
+    }
+
+    @Test
+    fun `the first nav host going leaves the second's screen in charge`() = runTest(dispatcher) {
+        val links = router()
+        val second = Any()
+        links.at(Routes.PATH)
+        links.screenChanged(honorLinkScreen(listOf(Routes.PATH, Routes.ACTIVE_WALK)), owner = second)
+
+        links.screenGone(navHost)
+        links.open(link(FIRST), restored = false)
+
+        assertEquals(HonorLinkToast.FinishWalkFirst, links.toast.value)
+        assertTrue(asked.isEmpty())
     }
 
     // iOS `testPendingShareIdIsDrainedOnce`.
@@ -437,11 +469,25 @@ class HonorLinkRouterTest {
         assertNull(links.toast.value)
     }
 
+    // S2 open question 3, resolved: a task Recents starts again from its first intent replays nothing.
     @Test
-    fun `a consumed intent carries no link to route again`() = runTest(dispatcher) {
+    fun `a task Recents starts again from its link never routes it`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH)
+
+        links.open(link(FIRST).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY), restored = false)
+
+        assertTrue(asked.isEmpty())
+        assertNull(links.toast.value)
+    }
+
+    @Test
+    fun `a consumed intent carries no link and no extra to route again`() = runTest(dispatcher) {
         val links = router()
         links.at(Routes.PATH)
         val intent = link(FIRST)
+            .putExtra(DeepLinkTarget.EXTRA_DEEP_LINK, DeepLinkTarget.DEEP_LINK_WALK_SUMMARY)
+            .putExtra(DeepLinkTarget.EXTRA_WALK_ID, 42L)
 
         val consumed = linkConsumed(intent)
         links.open(consumed, restored = false)
@@ -449,7 +495,16 @@ class HonorLinkRouterTest {
         assertTrue(carriesLinkData(intent))
         assertFalse(carriesLinkData(consumed))
         assertNull(consumed.data)
+        assertNull("a rebuild reads no widget link from it", DeepLinkTarget.parse(consumed))
         assertTrue(asked.isEmpty())
+    }
+
+    @Test
+    fun `only a VIEW intent's data is link data, so the widget's Glance data is not`() {
+        assertFalse(carriesLinkData(Intent().setData(Uri.parse("glance-action:CALLBACK?appWidgetId=7&viewId=3"))))
+        assertFalse(carriesLinkData(Intent(Intent.ACTION_VIEW)))
+        assertFalse(carriesLinkData(null))
+        assertTrue(carriesLinkData(link(FIRST)))
     }
 
     @Test
@@ -506,6 +561,7 @@ class HonorLinkRouterTest {
 
         links.open(link(FIRST), restored = false)
         links.route(SECOND)
+        links.routeReferrer(SECOND) {}
 
         assertTrue(asked.isEmpty())
         assertNull(links.toast.value)
@@ -525,6 +581,62 @@ class HonorLinkRouterTest {
         links.at(Routes.PATH)
 
         assertEquals(listOf(FIRST, SECOND), released)
+    }
+
+    // R19: the referrer lands like a held tap, but a tap of the walker's own wins.
+
+    @Test
+    fun `the install referrer waits through setup and opens like a held tap`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.WELCOME)
+        var released = false
+
+        links.routeReferrer(FIRST) { released = true }
+        links.at(Routes.PATH)
+
+        assertEquals(listOf(FIRST), asked)
+        assertEquals(HonorLinkToast.Reaching, links.toast.value)
+        assertTrue(released)
+    }
+
+    @Test
+    fun `a link the walker tapped wins over the install referrer that answers after it`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.WELCOME)
+        links.open(link(FIRST), restored = false)
+        var released = false
+
+        links.routeReferrer(SECOND) { released = true }
+        assertTrue("the referrer is let go at once, unrouted", released)
+        links.at(Routes.PATH)
+
+        assertEquals(listOf(FIRST), asked)
+    }
+
+    @Test
+    fun `a link tapped and already opened still wins over a referrer answering late`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.PATH)
+        links.open(link(FIRST), restored = false)
+
+        links.routeReferrer(SECOND) {}
+
+        assertEquals(listOf(FIRST), asked)
+        assertEquals(HonorImportState.Fetching, imports.state.value)
+    }
+
+    @Test
+    fun `a link tapped after the referrer replaces it, as a newer link does`() = runTest(dispatcher) {
+        val links = router()
+        links.at(Routes.WELCOME)
+        var released = false
+        links.routeReferrer(FIRST) { released = true }
+
+        links.open(link(SECOND), restored = false)
+        links.at(Routes.PATH)
+
+        assertTrue(released)
+        assertEquals(listOf(SECOND), asked)
     }
 
     private fun link(id: String) = Intent(Intent.ACTION_VIEW, Uri.parse("https://honor.pilgrimapp.org/$id"))
