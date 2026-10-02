@@ -2,7 +2,6 @@
 package org.walktalkmeditate.pilgrim.data.honor.pilgrimage
 
 import java.nio.charset.CharacterCodingException
-import java.text.Normalizer
 import kotlin.math.abs
 import kotlinx.serialization.DeserializationStrategy
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
@@ -21,6 +20,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WayStage
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.domain.honor.WayStagePlace
 import org.walktalkmeditate.pilgrim.domain.honor.prefixCharacters
+import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 import org.walktalkmeditate.pilgrim.domain.honor.trimmingWhitespacesAndNewlines
 
 /**
@@ -90,7 +90,8 @@ object PilgrimageWayImporter {
 
         val route = file.route.map { WayPoint(lat = it.lat, lon = it.lon, alt = it.alt, t = it.t) }
         val geometry = WayGeometry(route)
-        if (geometry.totalMeters < OwnWalkWayBuilder.MIN_LENGTH_METERS) throw notWalkable()
+        // iOS guards with `>=`, so a NaN length (two antipodal points) is refused too.
+        if (!(geometry.totalMeters >= OwnWalkWayBuilder.MIN_LENGTH_METERS)) throw notWalkable()
 
         return Way(
             id = expectedId,
@@ -297,13 +298,13 @@ object PilgrimageWayImporter {
      * [MAX_LOCAL_NAMES], then drop a key that isn't `[a-z]{2,3}` or a value
      * that trims to nothing (P1 §5.3, C4). The cut comes first, so invalid
      * keys that sort early push valid ones out (pilgrim-ios #123 item 9, matched).
-     * Keys sort on their NFC form, as Swift's `<` compares (A10): otherwise
-     * a decomposed key would sort among the ASCII ones and take a slot.
+     * Keys sort as Swift's `<` compares them (A10): otherwise a decomposed
+     * key would sort among the ASCII ones and take a slot.
      */
     private fun localNames(raw: Map<String, String>?): Map<String, String>? {
         if (raw.isNullOrEmpty()) return null
         val pairs = raw.entries
-            .sortedBy { Normalizer.normalize(it.key, Normalizer.Form.NFC) }
+            .sortedWith { a, b -> a.key.swiftCompareTo(b.key) }
             .take(MAX_LOCAL_NAMES)
             .mapNotNull { (key, value) ->
                 if (!LANGUAGE_CODE.matches(key)) return@mapNotNull null

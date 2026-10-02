@@ -37,9 +37,11 @@ import org.walktalkmeditate.pilgrim.data.honor.WayError
 import org.walktalkmeditate.pilgrim.data.honor.WayImporter
 import org.walktalkmeditate.pilgrim.domain.honor.Way
 import org.walktalkmeditate.pilgrim.domain.honor.WayCoordinate
+import org.walktalkmeditate.pilgrim.domain.honor.WayGeometry
 import org.walktalkmeditate.pilgrim.domain.honor.WayJson
 import org.walktalkmeditate.pilgrim.domain.honor.WayMarkKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayMomentKind
+import org.walktalkmeditate.pilgrim.domain.honor.WayPoint
 import org.walktalkmeditate.pilgrim.domain.honor.WaySource
 import org.walktalkmeditate.pilgrim.domain.honor.WayStageHours
 import org.walktalkmeditate.pilgrim.honor.HonorImportCopy
@@ -985,7 +987,10 @@ class PilgrimageWayImporterTest {
 
     @Test
     fun `A9 - kotlinx reads a quoted number, where iOS refuses one`() {
-        assertEquals(2, stage(fixtureText("stage-00.json").replace("\"count\": 2,", "\"count\": \"2\",")).stage?.count)
+        val json = fixtureText("stage-00.json").replace("\"count\": 2,", "\"count\": \"3\",")
+
+        assertNotEquals(fixtureText("stage-00.json"), json)
+        assertEquals(3, stage(json).stage?.count)
     }
 
     @Test
@@ -998,7 +1003,10 @@ class PilgrimageWayImporterTest {
 
     @Test
     fun `A9 - an integer written with an exponent reads as iOS reads it`() {
-        assertEquals(2, stage(fixtureText("stage-00.json").replace("\"count\": 2,", "\"count\": 2e0,")).stage?.count)
+        val json = fixtureText("stage-00.json").replace("\"count\": 2,", "\"count\": 3e0,")
+
+        assertNotEquals(fixtureText("stage-00.json"), json)
+        assertEquals(3, stage(json).stage?.count)
     }
 
     @Test
@@ -1022,6 +1030,27 @@ class PilgrimageWayImporterTest {
     @Test
     fun `A9 - a leading byte order mark fails the decode, where iOS accepts one`() {
         assertNotWalkable { stage("\uFEFF" + fixtureText("stage-00.json")) }
+    }
+
+    @Test
+    fun `a line whose length comes out NaN is refused, as iOS's greater-or-equal guard refuses it`() {
+        val antipodal = Json.parseToJsonElement("""[{"lat":2.5,"lon":0,"t":0},{"lat":-2.5,"lon":180,"t":60}]""")
+        val premise = WayGeometry(listOf(WayPoint(lat = 2.5, lon = 0.0, alt = null, t = 0.0), WayPoint(lat = -2.5, lon = 180.0, alt = null, t = 60.0)))
+
+        assertTrue("the pair must measure NaN for this test to mean anything", premise.totalMeters.isNaN())
+        assertNotWalkable { stage(stageWith("route", value = antipodal)) }
+    }
+
+    @Test
+    fun `moments tied on frac order their ids as Swift's less-than does`() {
+        val decomposed = "e\u0301b"
+        val composed = "\u00e9a"
+        val json = stageTree().edited(listOf("moments", 0, "id"), JsonPrimitive(decomposed))
+            .edited(listOf("moments", 1, "id"), JsonPrimitive(composed))
+            .edited(listOf("moments", 1, "frac"), stageTree().jsonObject["moments"]!!.jsonArray[0].jsonObject["frac"]!!)
+            .toString()
+
+        assertEquals(listOf(composed, decomposed), stage(json).moments.map { it.id }.filter { it == composed || it == decomposed })
     }
 
     // ---- Nothing logged (P1 §3.1) -----------------------------------------

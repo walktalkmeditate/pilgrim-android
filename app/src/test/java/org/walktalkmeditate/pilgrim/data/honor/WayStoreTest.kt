@@ -229,6 +229,12 @@ class WayStoreTest {
     // (`PilgrimageWayImporterTests.swift@7c200bf`); the importer needs both rules.
     @Test
     fun `a route id is the dataset's slug, and a stage's Way id names its route and index`() {
+        assertTrue(WayStore.isValidId("pilgrimage:camino-frances:0"))
+        assertTrue(WayStore.isValidId("pilgrimage:camino-frances:199"))
+        assertFalse(WayStore.isValidId("pilgrimage"))
+        assertFalse(WayStore.isValidId("pilgrimage:../etc:0"))
+        assertFalse("slugs are lowercase", WayStore.isValidId("pilgrimage:Camino:0"))
+        assertFalse(WayStore.isValidId("pilgrimage:camino-frances:1000"))
         assertTrue(WayStore.isValidRouteId("camino-frances"))
         assertFalse(WayStore.isValidRouteId("../etc/passwd"))
         assertEquals("pilgrimage:camino-frances:7", WayStore.stageWayId(routeId = "camino-frances", stageIndex = 7))

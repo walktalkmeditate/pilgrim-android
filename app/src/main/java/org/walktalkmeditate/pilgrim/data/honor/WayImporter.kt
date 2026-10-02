@@ -53,6 +53,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.WaySpan
 import org.walktalkmeditate.pilgrim.domain.honor.WaySpanKind
 import org.walktalkmeditate.pilgrim.domain.honor.WayWeather
 import org.walktalkmeditate.pilgrim.domain.honor.prefixCharacters
+import org.walktalkmeditate.pilgrim.domain.honor.swiftCompareTo
 import org.walktalkmeditate.pilgrim.domain.honor.trimmingWhitespacesAndNewlines
 
 /** iOS `WayError` (`WayImporter.swift:3@7c200bf`). The importer raises the first three; [DISK_FULL] is the media download's. */
@@ -335,7 +336,8 @@ class WayImporter internal constructor(
             val ts0 = manifest.route[0].ts
             val route = manifest.route.map { WayPoint(lat = it.lat, lon = it.lon, alt = it.alt, t = (it.ts - ts0).toDouble()) }
             val geometry = WayGeometry(route)
-            if (geometry.totalMeters < OwnWalkWayBuilder.MIN_LENGTH_METERS) throw WayImportException(WayError.UNAVAILABLE)
+            // iOS guards with `>=`, so a NaN length (two antipodal points) is refused too.
+            if (!(geometry.totalMeters >= OwnWalkWayBuilder.MIN_LENGTH_METERS)) throw WayImportException(WayError.UNAVAILABLE)
             val moments = (encounterMoments(manifest.encounters) + sittingMoments(manifest.meditation, geometry))
                 .sortedWith(BY_FRAC_THEN_ID)
             return Way(
@@ -540,12 +542,12 @@ class WayImporter internal constructor(
         }
 
         /**
-         * iOS's `(frac, id)` order, ids compared as plain strings (S1 §5.7):
+         * iOS's `(frac, id)` order, ids compared as Swift's `<` compares them (S1 §5.7):
          * the one both of iOS's importers sort by (`WayImporter.swift:180`,
          * `PilgrimageWayImporter.swift:225@7c200bf`).
          */
         internal val BY_FRAC_THEN_ID = Comparator<WayMoment> { a, b ->
-            a.frac.compareFracTo(b.frac).takeIf { it != 0 } ?: a.id.compareTo(b.id)
+            a.frac.compareFracTo(b.frac).takeIf { it != 0 } ?: a.id.swiftCompareTo(b.id)
         }
     }
 }
