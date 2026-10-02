@@ -27,7 +27,9 @@ import org.walktalkmeditate.pilgrim.audio.seek.SeekPingGate
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlayer
 import org.walktalkmeditate.pilgrim.audio.seek.SeekSoundPlaying
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePlayer
+import org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateSource
 import org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue
+import org.walktalkmeditate.pilgrim.audio.walk.WalkAudioArbiter
 import org.walktalkmeditate.pilgrim.data.seek.SeekPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperManifestService
@@ -37,12 +39,20 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekPowerTier
 import org.walktalkmeditate.pilgrim.power.SeekPowerTierSource
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 import org.walktalkmeditate.pilgrim.walk.WalkController
+import org.walktalkmeditate.pilgrim.walk.WalkControllerImpl
+import org.walktalkmeditate.pilgrim.walk.seek.RoomSeekTrackerLink
 import org.walktalkmeditate.pilgrim.walk.seek.SeekGlancePublisher
+import org.walktalkmeditate.pilgrim.walk.seek.SeekHandOff
 import org.walktalkmeditate.pilgrim.walk.seek.SeekObservedWalkState
+import org.walktalkmeditate.pilgrim.walk.seek.SeekOrchestrator
 import org.walktalkmeditate.pilgrim.walk.seek.SeekPowerTiers
 import org.walktalkmeditate.pilgrim.walk.seek.SeekProcessForeground
 import org.walktalkmeditate.pilgrim.walk.seek.SeekScope
 import org.walktalkmeditate.pilgrim.walk.seek.SeekSenses
+import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionWriter
+import org.walktalkmeditate.pilgrim.walk.seek.SeekTrackerLink
+import org.walktalkmeditate.pilgrim.walk.seek.TrackerSeekSenses
+import org.walktalkmeditate.pilgrim.walk.seek.TrackerSeekSoundSettings
 
 /**
  * Wiring for the seek session stack (U9): the sonar player with its
@@ -50,6 +60,12 @@ import org.walktalkmeditate.pilgrim.walk.seek.SeekSenses
  * single-threaded seek scope, the observed walk-state flow, and the
  * production [SeekSenses]. Port spec:
  * `docs/parity/2026-07-14-port-seek-orchestrator-u9.md`.
+ *
+ * Seek in `:tracker` (plan U25) adds the UI's link and Begin's hand-off,
+ * and the tracker session's own senses and writer. Resolve the tracker
+ * ones only in `:tracker`, through `Provider`s, and only with the release
+ * flag on: the writer binds to the tracker's controller, which the UI
+ * process must never build.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -188,5 +204,60 @@ object SeekModule {
         },
         // Queued behind a prompt or a Way voice like every in-walk whisper (spec C §5.1).
         playWhisper = whisperQueue::play,
+    )
+
+    @Provides
+    @Singleton
+    fun provideSeekTrackerLink(link: RoomSeekTrackerLink): SeekTrackerLink = link
+
+    @Provides
+    @Singleton
+    fun provideSeekHandOff(orchestrator: SeekOrchestrator): SeekHandOff = orchestrator
+
+    @Provides
+    @Singleton
+    fun provideSeekSessionWriter(controller: WalkControllerImpl): SeekSessionWriter = controller
+
+    /**
+     * The senses of `:tracker`'s seek session: its own sonar player, playing
+     * by the settings the UI sent, whose ping gate reads the walk audio
+     * arbiter (a whisper playing here) and the UI's gates (a guide prompt, a
+     * recording) as the UI's gate reads the UI's players; the reveal whisper
+     * goes through the arbiter, as `:tracker`'s autoplay does.
+     */
+    @Provides
+    @Singleton
+    @TrackerSeekSenses
+    fun provideTrackerSeekSenses(
+        @ApplicationContext context: Context,
+        audioManager: AudioManager,
+        settings: TrackerSeekSoundSettings,
+        @SeekScope scope: CoroutineScope,
+        arbiter: WalkAudioArbiter,
+        uiGates: UiAudioGateSource,
+        haptics: SeekHaptics,
+        whisperPlayer: WhisperPlayer,
+        whisperManifestService: WhisperManifestService,
+    ): SeekSenses = SeekSenses(
+        soundPlayer = SeekSoundPlayer(
+            context = context,
+            audioManager = audioManager,
+            settings = settings,
+            scope = scope,
+            gate = SeekPingGate(
+                isWhisperPlaying = { arbiter.gates.value.externalAudio },
+                isVoiceGuidePlaying = { uiGates.gates.value.prompt },
+                isTalkRecordingActive = { uiGates.gates.value.recording },
+            ),
+            haptics = haptics,
+        ),
+        arrivalHaptic = haptics::arrival,
+        breathInHaptic = haptics::breathIn,
+        pickRevealWhisper = {
+            whisperManifestService.manifest.value?.whispers.orEmpty()
+                .filter { it.isActive && whisperPlayer.isAvailable(it) }
+                .randomOrNull()
+        },
+        playWhisper = arbiter::requestWhisper,
     )
 }

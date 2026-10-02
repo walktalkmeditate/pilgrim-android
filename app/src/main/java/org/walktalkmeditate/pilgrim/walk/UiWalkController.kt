@@ -404,8 +404,8 @@ class UiWalkController @Inject constructor(
     internal var startAwaitTimeoutMillis: Long = START_AWAIT_TIMEOUT_MS
 
     override suspend fun startWalk(request: WalkStartRequest): Walk {
-        check(releaseFlags.honor || (request.walkUuid == null && request.honor == null)) {
-            "an Honor start with the release flag off"
+        check(releaseFlags.honor || (request.walkUuid == null && request.honor == null && request.seek == null)) {
+            "an Honor start or a seek hand-off with the release flag off"
         }
         actionPublisher.start(request, honorGlanceUnits = request.honor?.let { unitsPreferences.distanceUnits.value })
         // Wait for the tracker to insert the walk row. 5 s timeout

@@ -30,10 +30,12 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
 import org.walktalkmeditate.pilgrim.data.pilgrim.PilgrimWalk
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.PilgrimPackageConverter
 import org.walktalkmeditate.pilgrim.data.pilgrim.builder.WalkExportBundle
+import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 import org.walktalkmeditate.pilgrim.data.walk.WalkDistanceCalculator
 import org.walktalkmeditate.pilgrim.data.walk.WalkMetricsCache
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
+import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 
 /**
  * The 2→3 … 5→6 tests exercise each Migration's `migrate` directly
@@ -42,7 +44,7 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
  * can't find the exported schema JSON (the helper is designed for
  * on-device `androidTest` runs).
  *
- * The 8→9 and 9→10 tests, and the chains from 6 and 7, build the starting version
+ * The 8→9, 9→10, and 10→11 tests, and the chains from 6, 7, and 8, build the starting version
  * from its exported schema
  * with [MigrationTestDatabases] and open it through `Room.databaseBuilder`
  * with the production [PilgrimDatabase.MIGRATIONS], so Room's schema
@@ -833,7 +835,7 @@ class PilgrimDatabaseMigrationTest {
     }
 
     @Test
-    fun `a schema 10 replay opens through Room without any migration`() {
+    fun `a replay of the latest schema opens through Room without any migration`() {
         // Proves the helper replays a schema exactly as Room would create
         // it: Room's validation would reject a table that differs.
         MigrationTestDatabases.createAtVersion(context, dbName, version = LATEST_VERSION)
@@ -849,15 +851,15 @@ class PilgrimDatabaseMigrationTest {
     // ---- 9 → 10: the live Honor tables and the walk marker (U14) ----
 
     @Test
-    fun `a v9 database migrates to 10 through Room's identity check and keeps its data`() {
+    fun `a v9 database migrates through 10 and Room's identity check and keeps its data`() {
         MigrationTestDatabases.createAtVersion(context, dbName, version = 9) { db -> seedV8World(db) }
 
         val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
         try {
             val db = room.openHelper.writableDatabase
-            assertEquals(10L, db.longQuery("PRAGMA user_version"))
+            assertEquals(LATEST_VERSION.toLong(), db.longQuery("PRAGMA user_version"))
             assertEquals(
-                MigrationTestDatabases.identityHash(10),
+                MigrationTestDatabases.identityHash(LATEST_VERSION),
                 db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
             )
             assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
@@ -941,6 +943,155 @@ class PilgrimDatabaseMigrationTest {
                 db.endTransaction()
             }
             assertEquals(schemaBefore, db.stringQuery(HONOR_SCHEMA_SQL))
+        } finally {
+            room.close()
+        }
+    }
+
+    // ---- 10 → 11: the seek session table (U25) ----
+
+    @Test
+    fun `a v10 database migrates to 11 through Room's identity check and keeps its data`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 10) { db ->
+            seedV8World(db)
+            db.insertRow(
+                "honor_sessions",
+                "walk_id" to UNFINISHED_WALK, "way_id" to "walk:0e8d6f8a-5b1c-4f1e-9a53-2f1d8c7b6a50",
+                "source_kind" to "OWN_WALK", "voices_enabled" to 1, "soft_tap_enabled" to 0, "phase" to "WALKING",
+                "anchored_by_fallback" to 0, "anchor_active_seconds" to 0.0, "companion_t0_seconds" to 0.0,
+                "progress_frac" to 0.25, "progress_high_water" to 0.25, "walked_frac" to 0.25,
+                "off_way_active_seconds" to 0.0, "soft_tap_armed" to 1, "arrival_inside_fixes" to 0,
+                "voice_paused" to 0, "voice_rate" to 1.0, "last_command_seq" to 3L, "gate_generation" to 2L,
+            )
+            db.insertRow("honor_walk_markers", "walk_uuid" to "archived", "finished_at" to 53_600_000L, "finish_kind" to "CLEAN")
+        }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(11L, db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(11),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
+            assertEquals(WORLD_EVENT_COUNT, db.longQuery("SELECT COUNT(*) FROM walk_events"))
+            assertEquals(0L, db.longQuery("SELECT COUNT(*) FROM seek_sessions"))
+            runBlocking {
+                val session = room.honorDao().getSession(UNFINISHED_WALK)!!
+                assertEquals(0.25, session.progressFrac, 0.0)
+                assertEquals(3L, session.lastCommandSeq)
+                assertEquals(2L, session.gateGeneration)
+                assertNotNull(room.honorDao().getMarker("archived"))
+                assertEquals(900L, room.walkDao().getById(IOS_MEDITATION_WALK)!!.meditationSeconds)
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `the migrated seek table starts empty, takes its row, and cascades from the walk`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 10) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            runBlocking {
+                val dao = room.seekDao()
+                assertNull(dao.getSession(UNFINISHED_WALK))
+                dao.insertSession(
+                    SeekSessionEntity(
+                        walkId = UNFINISHED_WALK,
+                        chain = "{\"budget\":1000.0,\"clearings\":[{\"lat\":42.88,\"lon\":-8.54,\"radius\":90.0}]}",
+                        durationMinutes = 30,
+                        tintHex = null,
+                        seed = -7L,
+                        seededAt = 20_000_000L,
+                        intention = "find the river",
+                        sonarEnabled = true,
+                        sonarVolume = 0.5f,
+                        soundsEnabled = true,
+                    ),
+                )
+                val row = dao.getSession(UNFINISHED_WALK)!!
+                assertEquals(SeekEnginePhase.GUIDING, row.phase)
+                assertEquals(-7L, row.seed)
+                assertEquals(0L, row.gateGeneration)
+
+                room.walkDao().deleteById(UNFINISHED_WALK)
+
+                assertNull("the seek row cascades from the walk", dao.getSession(UNFINISHED_WALK))
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun `running migration 10 to 11 again changes nothing`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 10)
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            val schemaBefore = db.stringQuery(SEEK_SCHEMA_SQL)
+            db.beginTransaction()
+            try {
+                PilgrimDatabase.MIGRATION_10_11.migrate(db)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            assertEquals(schemaBefore, db.stringQuery(SEEK_SCHEMA_SQL))
+        } finally {
+            room.close()
+        }
+    }
+
+    // ---- 8 → 11: the path every 1.5.0 install takes to 2.0.0 ----
+
+    @Test
+    fun `a v8 database with walks, sittings, and cached stats reaches 11 through Room's identity check intact`() {
+        MigrationTestDatabases.createAtVersion(context, dbName, version = 8) { db -> seedV8World(db) }
+
+        val room = MigrationTestDatabases.openWithProductionMigrations(context, dbName)
+        try {
+            val db = room.openHelper.writableDatabase
+            assertEquals(11L, db.longQuery("PRAGMA user_version"))
+            assertEquals(
+                MigrationTestDatabases.identityHash(11),
+                db.stringQuery("SELECT identity_hash FROM room_master_table WHERE id = 42"),
+            )
+            assertEquals(WORLD_WALK_COUNT, db.longQuery("SELECT COUNT(*) FROM walks"))
+            assertEquals(WORLD_INTERVAL_COUNT, db.longQuery("SELECT COUNT(*) FROM activity_intervals"))
+            assertEquals(
+                "the walks' own events, plus the #223 repair's two pairs and one",
+                WORLD_EVENT_COUNT + 6,
+                db.longQuery("SELECT COUNT(*) FROM walk_events"),
+            )
+            (HONOR_TABLES + "seek_sessions").forEach { table ->
+                assertEquals("$table starts empty", 0L, db.longQuery("SELECT COUNT(*) FROM $table"))
+            }
+            runBlocking {
+                val dao = room.walkDao()
+                assertEquals(
+                    listOf(WalkEventType.PAUSED to 61_000_000L, WalkEventType.RESUMED to 61_100_000L),
+                    room.walkEventDao().getForWalk(PLAIN_NATIVE_WALK).map { it.eventType to it.timestamp },
+                )
+                assertEquals("calm", dao.getById(IOS_MEDITATION_WALK)!!.intention)
+                assertEquals(iosRouteDistance(), dao.getById(IOS_MEDITATION_WALK)!!.distanceMeters!!, 0.0)
+                assertEquals(1_234.0, dao.getById(ARCHIVED_WALK)!!.distanceMeters!!, 0.0)
+                assertEquals("cached stats of a walk with no sitting stay", 420L, dao.getById(ARCHIVED_WALK)!!.meditationSeconds)
+                assertEquals(0L, dao.getById(PLAIN_NATIVE_WALK)!!.meditationSeconds)
+                assertNull("a walk with a sitting recomputes", dao.getById(NATIVE_MEDITATION_WALK)!!.meditationSeconds)
+
+                runMetricsBackfill(room)
+
+                assertEquals(900L, dao.getById(IOS_MEDITATION_WALK)!!.meditationSeconds)
+                assertEquals(600L, dao.getById(NATIVE_MEDITATION_WALK)!!.meditationSeconds)
+                assertEquals(300L, dao.getById(BOTH_SOURCES_WALK)!!.meditationSeconds)
+                assertEquals(420L, dao.getById(ARCHIVED_WALK)!!.meditationSeconds)
+            }
         } finally {
             room.close()
         }
@@ -1144,12 +1295,16 @@ class PilgrimDatabaseMigrationTest {
 
         val CANONICAL_UUID = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
-        const val LATEST_VERSION = 10
+        const val LATEST_VERSION = 11
 
         val HONOR_TABLES = listOf("honor_sessions", "honor_moment_states", "honor_card_states", "honor_walk_markers")
 
         val HONOR_SCHEMA_SQL =
             "SELECT group_concat(sql, ';') FROM (SELECT sql FROM sqlite_master " +
                 "WHERE name LIKE 'honor_%' ORDER BY name)"
+
+        val SEEK_SCHEMA_SQL =
+            "SELECT group_concat(sql, ';') FROM (SELECT sql FROM sqlite_master " +
+                "WHERE name LIKE 'seek_%' ORDER BY name)"
     }
 }

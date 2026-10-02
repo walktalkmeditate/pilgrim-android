@@ -12,10 +12,12 @@ import org.walktalkmeditate.pilgrim.domain.WalkAccumulator
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService.Companion.decideFreshStart
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService.Companion.decideHonorSessionAction
+import org.walktalkmeditate.pilgrim.service.WalkTrackingService.Companion.decideSeekSessionAction
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService.Companion.decideStartAction
 import org.walktalkmeditate.pilgrim.walk.WalkController
 import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
 import org.walktalkmeditate.pilgrim.walk.honor.HonorSession
+import org.walktalkmeditate.pilgrim.walk.seek.SeekTrackerSession
 
 /** What one ACTION_START carries, read once. With the release flag off its Honor extras are never read. */
 internal data class TrackerStartExtras(
@@ -28,8 +30,8 @@ internal data class TrackerStartExtras(
 /**
  * The location job's opening, before the first fix: the restore,
  * [WalkTrackingService.decideStartAction], the walk-uuid replay guard, then
- * the Honor session. Kept out of the service so the redelivery scenarios
- * run against a real controller and Room without Hilt.
+ * the Honor and seek sessions. Kept out of the service so the redelivery
+ * scenarios run against a real controller and Room without Hilt.
  *
  * Room outranks a redelivered start: an unfinished walk already under the
  * start's uuid is adopted, and one that finished (or survives only in its
@@ -40,6 +42,8 @@ internal class WalkTrackingStarter(
     private val repository: WalkRepository,
     /** Null with the release flag off, so nothing Honor runs. */
     private val honorSession: HonorSession?,
+    /** Null with the release flag off, so Seek stays in the UI process. */
+    private val seekSession: SeekTrackerSession? = null,
     private val lastKnownFix: suspend () -> LocationPoint?,
 ) {
 
@@ -86,6 +90,28 @@ internal class WalkTrackingStarter(
             Log.e(TAG, "Honor session did not start (${e::class.simpleName}); the walk records on")
         }
         return session
+    }
+
+    /**
+     * After [resolve]: starts or revives the seek session of the seek walk
+     * now in progress from its row (plan U25), or ends the one a cached
+     * process still holds. A failure costs Seek's guidance, never the walk.
+     */
+    suspend fun startSeek(scope: CoroutineScope) {
+        val session = seekSession ?: return
+        try {
+            when (val action = decideSeekSessionAction(controller.state.value)) {
+                WalkTrackingService.SeekSessionAction.Stop -> session.stop()
+                is WalkTrackingService.SeekSessionAction.Start -> {
+                    val result = session.start(scope, action.walkId, controller.state)
+                    Log.i(TAG, "seek session for walk ${action.walkId}: ${result::class.simpleName}")
+                }
+            }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (e: Exception) {
+            Log.e(TAG, "seek session did not start (${e::class.simpleName}); the walk records on")
+        }
     }
 
     private suspend fun startFresh(request: WalkStartRequest): Boolean {

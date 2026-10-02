@@ -20,9 +20,11 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.data.WalkRepository
 import org.walktalkmeditate.pilgrim.data.entity.WalkEvent
 import org.walktalkmeditate.pilgrim.data.entity.Waypoint
+import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 import org.walktalkmeditate.pilgrim.data.sounds.SoundsPreferencesRepository
 import org.walktalkmeditate.pilgrim.data.whisper.WhisperDefinition
 import org.walktalkmeditate.pilgrim.domain.Clock
@@ -31,6 +33,7 @@ import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekChain
+import org.walktalkmeditate.pilgrim.domain.seek.SeekChainCodec
 import org.walktalkmeditate.pilgrim.domain.seek.SeekChainGenerator
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEngine
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEngineEvent
@@ -161,6 +164,14 @@ fun interface SeekGlancePublisher {
  * existing clear path becomes a teardown signal). The filter stays
  * structural: the store is in-memory, so a restored walk — new
  * process, empty store — can never satisfy the boot condition.
+ *
+ * With the release flag on ([SeekPlacement.TRACKER], plan U25) the boot
+ * stays here, since `:tracker` doesn't exist before ACTION_START, but the
+ * walk never adopts it. Begin's [begin] hands the session over and quiets
+ * the senses here; when the walk arrives the engine stops, and fog, pulse,
+ * and phase come from the seek session row `:tracker` writes, for a walk
+ * restored into a new UI process too. "Seek anew" goes to `:tracker` by
+ * intent, and a chain that locks after Start is handed over late.
  */
 @Singleton
 class SeekOrchestrator @Inject constructor(
@@ -176,7 +187,10 @@ class SeekOrchestrator @Inject constructor(
     private val clock: Clock,
     private val glancePublisher: SeekGlancePublisher,
     @ApplicationContext private val context: Context,
-) {
+    // A default keeps the named test constructions source-compatible;
+    // Hilt ignores it and injects the flag-picked link in production.
+    private val trackerLink: SeekTrackerLink = SeekTrackerLink.UiProcess,
+) : SeekHandOff {
 
     private val _fogState = MutableStateFlow<SeekFogState?>(null)
 
@@ -224,6 +238,14 @@ class SeekOrchestrator @Inject constructor(
     private var hasPublishedGlance = false
     private var lastGlancePublishAtMs = 0L
 
+    // Seek in `:tracker` (plan U25), confined to [scope] like the rest.
+    private var handingOff = false
+    private var handedOff: SeekPendingSession? = null
+    private var mirrorJob: Job? = null
+    private var mirroredWalkId: Long? = null
+    private var mirroredPulseToken: Int? = null
+    private var mirroredChain: Pair<String, SeekChain?>? = null
+
     /** Started explicitly from PilgrimApp (visible, cancellable); idempotent. */
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -270,9 +292,45 @@ class SeekOrchestrator @Inject constructor(
         }
     }
 
-    /** Audio/haptic mute for the backgrounded unadopted session. */
+    /** Audio/haptic mute for the backgrounded unadopted session, and for one Begin has handed to `:tracker`. */
     private fun senseMuted(): Boolean =
-        sessionWalkId == null && !processForeground.value
+        handingOff || (sessionWalkId == null && !processForeground.value)
+
+    /**
+     * Begin's hand-off with Seek in `:tracker` (plan U25): the staged
+     * session as the pre-departure engine left it (a reroll's chain, the
+     * clearing it stood on, when its next pulse was due), and from here the
+     * senses are quiet, so the two engines never both sound. Null with the
+     * flag off or nothing staged; then the walk starts as it always has.
+     */
+    override suspend fun begin(): SeekStart? = withContext(scope.coroutineContext.minusKey(Job)) {
+        if (trackerLink.placement != SeekPlacement.TRACKER) return@withContext null
+        val pending = sessionStore.pending.value ?: return@withContext null
+        val live = engine?.takeIf { sessionWalkId == null }
+        handingOff = true
+        handedOff = pending
+        Log.i(TAG, "seek session handed to :tracker at Begin")
+        startFrom(pending, live)
+    }
+
+    override fun cancel() {
+        scope.launch {
+            handingOff = false
+            handedOff = null
+        }
+    }
+
+    private fun startFrom(pending: SeekPendingSession, live: SeekEngine?) = SeekStart(
+        chain = live?.chain?.value ?: pending.chain,
+        activeIndex = live?.activeIndex?.value ?: 0,
+        durationMinutes = pending.durationMinutes,
+        tintHex = pending.tint?.fogHex,
+        seed = pending.seed,
+        seededAtEpochMillis = pending.seededAtEpochMillis,
+        intention = pending.intention,
+        nextPulseDueAtMillis = live?.nextPulseDueAtMillis,
+        sonar = trackerLink.sonarSettings(),
+    )
 
     /**
      * R17 "Seek anew": regenerates the remainder of the chain from the
@@ -291,6 +349,10 @@ class SeekOrchestrator @Inject constructor(
     fun seekAnewRequested() {
         scope.launch {
             try {
+                if (mirroredWalkId != null) {
+                    trackerLink.seekAnew()
+                    return@launch
+                }
                 val live = engine ?: return@launch
                 val fix = latestFix
                 val point = fix?.let { SeekPoint(it.latitude, it.longitude) }
@@ -346,6 +408,18 @@ class SeekOrchestrator @Inject constructor(
         // An adopted session's walk reached a terminal state.
         if (engine != null && sessionWalkId != null && inProgressWalk == null) {
             teardownSession()
+        }
+
+        // Seek in `:tracker` (plan U25): its seek walk never adopts the
+        // engine here; it takes the session and the UI draws from Room.
+        if (trackerLink.placement == SeekPlacement.TRACKER) {
+            val seekWalk = inProgressWalk?.takeIf { it.mode == WalkMode.Seek }
+            if (seekWalk != null) {
+                if ((engine != null && sessionWalkId == null) || pending != null) handOffToTracker(pending)
+                if (mirroredWalkId != seekWalk.walkId) mirror(seekWalk.walkId)
+                return
+            }
+            if (mirroredWalkId != null) mirror(null)
         }
 
         // Pre-departure staging abandoned: every existing pending-clear
@@ -487,8 +561,95 @@ class SeekOrchestrator @Inject constructor(
                 }
             }
 
+    /**
+     * The pre-departure engine meets its walk with Seek in `:tracker`: the
+     * engine stops, its fog stays until `:tracker`'s row replaces it, and a
+     * staged session Begin didn't hand over (a chain that locked after
+     * Start) goes now.
+     */
+    private fun handOffToTracker(pending: SeekPendingSession?) {
+        val late = pending?.takeIf { it !== handedOff }
+            ?.let { startFrom(it, engine?.takeIf { sessionWalkId == null }) }
+        if (engine != null) teardownSession(clearDisplay = false)
+        late?.let(trackerLink::handOffLate)
+        sessionStore.clear()
+        handingOff = false
+        handedOff = null
+        Log.i(TAG, "seek session with :tracker${if (late != null) " (handed over late)" else ""}")
+    }
+
+    /** Fog, pulse, and phase from [walkId]'s seek session row; null stops drawing it. */
+    private fun mirror(walkId: Long?) {
+        mirrorJob?.cancel()
+        mirrorJob = null
+        mirroredWalkId = walkId
+        mirroredPulseToken = null
+        if (walkId == null) {
+            if (engine == null) {
+                _fogState.value = null
+                _enginePhase.value = null
+            }
+            return
+        }
+        mirrorJob = scope.launch {
+            trackerLink.session(walkId).collect { row ->
+                try {
+                    showTrackerSession(row)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    Log.w(TAG, "seek display from :tracker failed", t)
+                }
+            }
+        }
+    }
+
+    /**
+     * The row's fog and phase, and a flare whenever its pulse token moves.
+     * The first row read only sets the reference, so a pulse that rang
+     * before this process drew it never flares late; the map's own token
+     * keeps rising across the hand-off.
+     */
+    private fun showTrackerSession(row: SeekSessionEntity?) {
+        val chain = row?.let { mirroredChainOf(it.chain) }
+        if (row == null || chain == null) {
+            _fogState.value = null
+            _enginePhase.value = null
+            return
+        }
+        val walker = row.walkerLatitude?.let { latitude ->
+            row.walkerLongitude?.let { longitude -> SeekPoint(latitude, longitude) }
+        }
+        val fog = SeekFogModel.fogState(
+            chain = chain,
+            activeIndex = row.activeIndex,
+            phase = row.phase,
+            distanceToActiveMeters = row.distanceToActiveMeters,
+            previousActiveBucket = row.fogBucket,
+            tintHex = row.tintHex,
+            walkerPosition = walker,
+        )
+        if (_fogState.value != fog) _fogState.value = fog
+        _enginePhase.value = row.phase
+        val seen = mirroredPulseToken
+        mirroredPulseToken = row.pulseToken
+        if (seen != null && row.pulseToken != seen) {
+            _pulse.value = SeekPulseVisual(
+                token = _pulse.value.token + 1,
+                aligned = row.pulseAligned,
+                closeness = row.pulseCloseness,
+            )
+        }
+    }
+
+    private fun mirroredChainOf(encoded: String): SeekChain? {
+        val cached = mirroredChain
+        if (cached != null && cached.first == encoded) return cached.second
+        return SeekChainCodec.decode(encoded).also { mirroredChain = encoded to it }
+    }
+
     /** iOS `teardownSeek` (`ActiveWalkViewModel+Seek.swift:121-126@c1745e8`). */
-    private fun teardownSession() {
+    private fun teardownSession(clearDisplay: Boolean = true) {
         whisperGeneration += 1
         eventsJob?.cancel()
         eventsJob = null
@@ -502,9 +663,13 @@ class SeekOrchestrator @Inject constructor(
         tintHex = null
         previousActiveBucket = null
         latestFix = null
-        _fogState.value = null
-        _pulse.value = SeekPulseVisual.NONE
-        _enginePhase.value = null
+        handingOff = false
+        handedOff = null
+        if (clearDisplay) {
+            _fogState.value = null
+            _pulse.value = SeekPulseVisual.NONE
+            _enginePhase.value = null
+        }
         // No teardown clear intent (U10 spec D4): walk end destroys the
         // per-walk service — and its stored glance — with the
         // notification; a post-stop intent would only resurrect the

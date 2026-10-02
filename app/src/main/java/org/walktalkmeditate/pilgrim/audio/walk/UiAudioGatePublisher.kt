@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -20,6 +21,7 @@ import org.walktalkmeditate.pilgrim.audio.TalkRecordingActive
 import org.walktalkmeditate.pilgrim.audio.voiceguide.VoiceGuidePromptGate
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.honor.HonorDao
+import org.walktalkmeditate.pilgrim.data.seek.SeekDao
 import org.walktalkmeditate.pilgrim.walk.WalkActionPublisher
 
 /** When the UI owes `:tracker` its gates again: a new walk in progress, or its session's bumped gate generation. */
@@ -27,6 +29,19 @@ data class UiAudioGateRefresh(val walkId: Long, val gateGeneration: Long?)
 
 internal fun HonorDao.uiAudioGateRefreshes(): Flow<UiAudioGateRefresh?> =
     observeWalkInProgressAudio().map { walk -> walk?.let { UiAudioGateRefresh(it.walkId, it.gateGeneration) } }
+
+/**
+ * [uiAudioGateRefreshes], with a seek walk's session generation where the
+ * walk has no Honor session: Seek in `:tracker` reads the same gates, and
+ * bumps its own generation at each session start and revival (plan U25).
+ */
+internal fun uiAudioGateRefreshes(honorDao: HonorDao, seekDao: SeekDao): Flow<UiAudioGateRefresh?> =
+    combine(honorDao.uiAudioGateRefreshes(), seekDao.observeLiveSessionKey()) { walk, seek ->
+        walk?.let {
+            val seekGeneration = seek?.takeIf { key -> key.walkId == it.walkId }?.gateGeneration
+            it.copy(gateGeneration = it.gateGeneration ?: seekGeneration)
+        }
+    }
 
 /**
  * The UI process's side of the walk audio gates (plan U18). One observer
@@ -43,7 +58,7 @@ internal fun HonorDao.uiAudioGateRefreshes(): Flow<UiAudioGateRefresh?> =
  * - Both gates are sent again, with fresh Binders, whenever the walk in
  *   progress or its session's gate generation changes (read from Room,
  *   the tracker's only way to the UI), which `:tracker` bumps at every
- *   session start and revival.
+ *   session start and revival, an honor walk's or a seek walk's.
  *
  * With the release flag off nothing is ever sent.
  */
@@ -62,11 +77,12 @@ class UiAudioGatePublisher internal constructor(
         releaseFlags: ReleaseFlags,
         @TalkRecordingActive recording: StateFlow<@JvmSuppressWildcards Boolean>,
         honorDao: HonorDao,
+        seekDao: SeekDao,
         walkActionPublisher: WalkActionPublisher,
     ) : this(
         releaseFlags = releaseFlags,
         recording = recording,
-        refreshes = honorDao.uiAudioGateRefreshes(),
+        refreshes = uiAudioGateRefreshes(honorDao, seekDao),
         send = walkActionPublisher::publishUiAudioGate,
         bootNanos = SystemClock::elapsedRealtimeNanos,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),

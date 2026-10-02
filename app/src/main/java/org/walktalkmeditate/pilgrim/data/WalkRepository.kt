@@ -29,8 +29,10 @@ import org.walktalkmeditate.pilgrim.data.entity.Waypoint
 import org.walktalkmeditate.pilgrim.data.honor.HonorFinishKind
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
+import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 import org.walktalkmeditate.pilgrim.data.weather.WeatherSnapshot
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
+import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizeOutcome
 import org.walktalkmeditate.pilgrim.walk.honor.HonorFinalizer
 
@@ -257,6 +259,67 @@ open class WalkRepository @Inject constructor(
         true
     }
 
+    /** The SEEK_MODE marker and the seek session row land together or not at all (plan U25). */
+    suspend fun recordSeekStart(marker: WalkEvent, session: SeekSessionEntity) {
+        database.withTransaction {
+            walkEventDao.insert(marker)
+            database.seekDao().insertSession(session)
+        }
+    }
+
+    /**
+     * A seek session for a walk that started before its chain locked: the
+     * walk keeps its SEEK_MODE marker and gains the row now. Only for a walk
+     * still unfinished and without a row, so a replay changes nothing.
+     *
+     * @return true when this call wrote the row.
+     */
+    suspend fun attachSeekSession(session: SeekSessionEntity): Boolean = database.withTransaction {
+        val walk = walkDao.getById(session.walkId)
+        if (walk == null || walk.endTimestamp != null) return@withTransaction false
+        if (database.seekDao().getSession(session.walkId) != null) return@withTransaction false
+        database.seekDao().insertSession(session)
+        true
+    }
+
+    /**
+     * Arrival's compare-and-set for a seek walk in `:tracker` (plan U25): on
+     * a walk still unfinished, flips the clearing at [activeIndex] to
+     * arrived once, and only then writes SEEK_ARRIVAL and, given a [place],
+     * the reserved waypoint labelled by [label] with its ordinal (iOS
+     * `recordSeekArrival`, `ActiveWalkViewModel+Seek.swift:179-190@c1745e8`:
+     * event, then waypoint). The ordinal counts arrivals already persisted,
+     * as the UI process's orchestrator counts them.
+     *
+     * @return true only when this call flipped the phase.
+     */
+    suspend fun recordSeekArrival(
+        walkId: Long,
+        activeIndex: Int,
+        eventAt: Long,
+        place: Pair<Double, Double>?,
+        label: (ordinal: Int) -> String,
+    ): Boolean = database.withTransaction {
+        val walk = walkDao.getById(walkId)
+        if (walk == null || walk.endTimestamp != null) return@withTransaction false
+        if (database.seekDao().recordArrival(walkId, activeIndex, eventAt) != 1) return@withTransaction false
+        walkEventDao.insert(WalkEvent(walkId = walkId, timestamp = eventAt, eventType = WalkEventType.SEEK_ARRIVAL))
+        if (place != null) {
+            val ordinal = SeekPersistence.arrivalOrdinal(waypointDao.getForWalk(walkId).map { it.icon })
+            waypointDao.insert(
+                Waypoint(
+                    walkId = walkId,
+                    timestamp = eventAt,
+                    latitude = place.first,
+                    longitude = place.second,
+                    label = label(ordinal),
+                    icon = SeekPersistence.ARRIVAL_WAYPOINT_ICON,
+                ),
+            )
+        }
+        true
+    }
+
     suspend fun updateWalk(walk: Walk) {
         walkDao.update(walk)
     }
@@ -305,7 +368,7 @@ open class WalkRepository @Inject constructor(
      *
      * Deletes the walk row by id. All child rows in route_data_samples,
      * altitude_samples, walk_events, activity_intervals, waypoints,
-     * voice_recordings, walk_photos, and the live Honor tables are removed
+     * voice_recordings, walk_photos, seek_sessions, and the live Honor tables are removed
      * via SQLite `ON DELETE CASCADE`; any staged own-walk Way goes after
      * the commit. The walk's Ways-store link file and its Honor marker are
      * kept: both are keyed by the walk's uuid, and iOS drops a link only
@@ -334,8 +397,8 @@ open class WalkRepository @Inject constructor(
     }
 
     /**
-     * The `.pilgrim` archive strip of one walk: its heavy children and its
-     * live Honor rows go, while the row with its surface stats, its link
+     * The `.pilgrim` archive strip of one walk: its heavy children, its seek
+     * session, and its live Honor rows go, while the row with its surface stats, its link
      * file, and its Honor marker stay. The children are iOS's
      * (`PilgrimPackageImporter.swift:457-464@7c200bf`). Joins the caller's
      * transaction; once that commits, the caller runs [discardHonorStaging]
@@ -355,6 +418,7 @@ open class WalkRepository @Inject constructor(
         activityIntervalDao.deleteByWalkId(walkId)
         voiceRecordingDao.deleteByWalkId(walkId)
         walkPhotoDao.deleteByWalkId(walkId)
+        database.seekDao().deleteSession(walkId)
         if (!keepLiveHonorRows) database.honorDao().deleteLiveRows(walkId)
     }
 

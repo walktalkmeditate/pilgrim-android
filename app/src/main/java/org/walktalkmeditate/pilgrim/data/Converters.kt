@@ -8,6 +8,7 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorVoiceEnd
 import org.walktalkmeditate.pilgrim.domain.ActivityType
 import org.walktalkmeditate.pilgrim.domain.WalkEventType
 import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
+import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 
 /**
  * Room type converters for domain enums. Fallback semantics on read:
@@ -20,7 +21,8 @@ import org.walktalkmeditate.pilgrim.domain.honor.HonorPhase
  * unsupported). Activity types keep the conservative WALKING default.
  * The Honor enums fall back to the reading that claims least: a walk
  * still walking, an own-walk source, a recovered finish (no delta), and
- * a voice that failed.
+ * a voice that failed. A seek phase falls back to guiding, which a
+ * revival can still arrive from.
  */
 class Converters {
     @TypeConverter
@@ -64,4 +66,11 @@ class Converters {
     @TypeConverter
     fun stringToHonorVoiceEnd(name: String): HonorVoiceEnd =
         HonorVoiceEnd.entries.firstOrNull { it.name == name } ?: HonorVoiceEnd.FAILED
+
+    @TypeConverter
+    fun seekEnginePhaseToString(phase: SeekEnginePhase): String = phase.name
+
+    @TypeConverter
+    fun stringToSeekEnginePhase(name: String): SeekEnginePhase =
+        SeekEnginePhase.entries.firstOrNull { it.name == name } ?: SeekEnginePhase.GUIDING
 }

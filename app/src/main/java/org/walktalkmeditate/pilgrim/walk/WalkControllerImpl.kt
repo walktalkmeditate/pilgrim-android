@@ -37,6 +37,8 @@ import org.walktalkmeditate.pilgrim.domain.walkDistanceMeters
 import org.walktalkmeditate.pilgrim.domain.walkModeFromEvents
 import org.walktalkmeditate.pilgrim.walk.honor.HonorArrivalRecorder
 import org.walktalkmeditate.pilgrim.walk.honor.honorSourceKind
+import org.walktalkmeditate.pilgrim.walk.seek.SeekSessionWriter
+import org.walktalkmeditate.pilgrim.walk.seek.SeekStart
 
 /**
  * Full implementation of [WalkController]: owns the in-memory state
@@ -54,7 +56,7 @@ class WalkControllerImpl @Inject constructor(
     private val clock: Clock,
     private val stepCounter: org.walktalkmeditate.pilgrim.sensor.StepCounter,
     private val releaseFlags: ReleaseFlags,
-) : WalkController, HonorArrivalRecorder {
+) : WalkController, HonorArrivalRecorder, SeekSessionWriter {
     private val _state = MutableStateFlow<WalkState>(WalkState.Idle)
     override val state: StateFlow<WalkState> = _state.asStateFlow()
 
@@ -97,6 +99,10 @@ class WalkControllerImpl @Inject constructor(
      * marker without a Way (`guard mode == .honor, way != nil`). A Way that
      * doesn't validate or load, or a uuid already in Room (a redelivered
      * start), refuses the start before any row is written.
+     *
+     * A seek start with the release flag on carries Begin's hand-off, and
+     * its session row lands with the SEEK_MODE marker (plan U25); without
+     * one, the seek walk starts as it always has.
      */
     override suspend fun startWalk(request: WalkStartRequest): Walk =
         dispatchMutex.withLock {
@@ -105,6 +111,7 @@ class WalkControllerImpl @Inject constructor(
                 "startWalk requires Idle or Finished state but controller is currently $current"
             }
             val honor = request.honor?.takeIf { releaseFlags.honor && request.mode == WalkMode.Honor }
+            val seek = request.seek?.takeIf { releaseFlags.honor && request.mode == WalkMode.Seek }
             val mode = if (request.mode == WalkMode.Honor && honor == null) WalkMode.Wander else request.mode
             val walkUuid = request.walkUuid
             if (honor != null) {
@@ -146,6 +153,11 @@ class WalkControllerImpl @Inject constructor(
                         marker = WalkEvent(walkId = walk.id, timestamp = effect.timestamp, eventType = effect.eventType),
                         session = honorSessionRow(walk.id, honor),
                     )
+                } else if (seek != null && effect is WalkEffect.PersistEvent) {
+                    repository.recordSeekStart(
+                        marker = WalkEvent(walkId = walk.id, timestamp = effect.timestamp, eventType = effect.eventType),
+                        session = seek.sessionRow(walk.id),
+                    )
                 } else {
                     applyEffect(effect)
                 }
@@ -157,9 +169,9 @@ class WalkControllerImpl @Inject constructor(
                     "startWalk effect ${effect::class.simpleName} dropped for walk ${walk.id} " +
                         "(mode=$mode): ${t.message}",
                 )
-                // With neither marker nor session row nothing Honor can run,
-                // so the walk is the wander a restore would derive.
-                if (honor != null && reduced is WalkState.Active) {
+                // With neither marker nor session row nothing Honor or Seek
+                // can run, so the walk is the wander a restore would derive.
+                if ((honor != null || seek != null) && reduced is WalkState.Active) {
                     next = WalkState.Active(reduced.walk.copy(mode = WalkMode.Wander))
                 }
             }
@@ -352,6 +364,54 @@ class WalkControllerImpl @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "recordHonorArrival failed for walk $walkId", t)
             false
+        }
+    }
+
+    /**
+     * Under the dispatch mutex, as Honor's arrival is: a walk this
+     * controller no longer holds in progress refuses it. The waypoint goes
+     * at the current fix, else the walk's last, else is skipped while the
+     * event still lands, as the UI process's orchestrator places it.
+     */
+    override suspend fun recordSeekArrival(
+        walkId: Long,
+        clearingIndex: Int,
+        at: LocationPoint?,
+        label: (ordinal: Int) -> String,
+    ): Boolean = dispatchMutex.withLock {
+        val accumulator = activeAccumulatorOrNull(_state.value)
+            ?.takeIf { it.walkId == walkId } ?: return@withLock false
+        try {
+            val place = (at ?: accumulator.lastLocation)?.let { it.latitude to it.longitude }
+            val won = repository.recordSeekArrival(
+                walkId = walkId,
+                activeIndex = clearingIndex,
+                eventAt = clock.now(),
+                place = place,
+                label = label,
+            )
+            Log.i(TAG, "recordSeekArrival walk=$walkId clearing=$clearingIndex won=$won")
+            won
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "recordSeekArrival failed for walk $walkId", t)
+            false
+        }
+    }
+
+    /** Under the dispatch mutex, so the row can't land on a walk a concurrent finish just closed. */
+    override suspend fun attachSeekSession(start: SeekStart): Long? = dispatchMutex.withLock {
+        if (!releaseFlags.honor) return@withLock null
+        val walk = activeAccumulatorOrNull(_state.value)
+            ?.takeIf { it.mode == WalkMode.Seek } ?: return@withLock null
+        try {
+            walk.walkId.takeIf { repository.attachSeekSession(start.sessionRow(it)) }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (t: Throwable) {
+            Log.w(TAG, "attachSeekSession failed for walk ${walk.walkId}", t)
+            null
         }
     }
 

@@ -46,6 +46,7 @@ import org.walktalkmeditate.pilgrim.data.units.UnitsPreferencesRepository
 import org.walktalkmeditate.pilgrim.domain.LocationPoint
 import org.walktalkmeditate.pilgrim.domain.WalkMode
 import org.walktalkmeditate.pilgrim.domain.WalkState
+import org.walktalkmeditate.pilgrim.domain.seek.SeekChainCodec
 import org.walktalkmeditate.pilgrim.domain.seek.SeekDirectionHint
 import org.walktalkmeditate.pilgrim.domain.seek.SeekGlanceState
 import org.walktalkmeditate.pilgrim.location.LocationSource
@@ -57,6 +58,10 @@ import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
 import org.walktalkmeditate.pilgrim.walk.honor.HonorCommand
 import org.walktalkmeditate.pilgrim.walk.honor.HonorGlanceState
 import org.walktalkmeditate.pilgrim.walk.honor.HonorSession
+import org.walktalkmeditate.pilgrim.walk.seek.SeekPlacement
+import org.walktalkmeditate.pilgrim.walk.seek.SeekSonarSettings
+import org.walktalkmeditate.pilgrim.walk.seek.SeekStart
+import org.walktalkmeditate.pilgrim.walk.seek.SeekTrackerSession
 import org.walktalkmeditate.pilgrim.widget.DeepLinkTarget
 
 /**
@@ -97,6 +102,12 @@ class WalkTrackingService : Service() {
 
     /** The debug Way replayer's cleanup hook; a no-op in release. */
     @Inject lateinit var mockLocationReplay: Provider<MockLocationReplay>
+
+    /** Seek in this process (plan U25); resolved only with the release flag on. */
+    @Inject lateinit var seekSessionProvider: Provider<SeekTrackerSession>
+
+    /** Resolved only with the release flag on: with it off, Seek runs in the UI process as it always has. */
+    private var seekSession: SeekTrackerSession? = null
 
     /** Resolved only with the release flag on: with it off, nothing Honor is built here. */
     private var honorSession: HonorSession? = null
@@ -154,6 +165,9 @@ class WalkTrackingService : Service() {
             ACTION_UPDATE_SEEK_GLANCE -> handleSeekGlanceAction(intent)
             ACTION_HONOR_COMMAND -> handleHonorCommand(intent, redelivered = flags and START_FLAG_REDELIVERY != 0)
             ACTION_UI_AUDIO_GATE -> handleUiAudioGate(intent, redelivered = flags and START_FLAG_REDELIVERY != 0)
+            ACTION_SEEK_ANEW,
+            ACTION_SEEK_PREFERENCES,
+            ACTION_SEEK_SESSION -> handleSeekIntent(action, intent, redelivered = flags and START_FLAG_REDELIVERY != 0)
             null -> {
                 // START_REDELIVER_INTENT redelivers the LAST delivered
                 // intent (the original ACTION_START), so a null intent
@@ -206,6 +220,15 @@ class WalkTrackingService : Service() {
                 }
             }
         }
+        seekSession?.let { session ->
+            kotlinx.coroutines.runBlocking {
+                try {
+                    session.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "seek session teardown failed: ${e::class.simpleName}")
+                }
+            }
+        }
         scope.cancel()
         // Explicit teardown so the FGS notification is gone the moment
         // the service stops, not whenever the OS gets around to clearing
@@ -241,6 +264,9 @@ class WalkTrackingService : Service() {
         if (honorEnabled) {
             uiAudioGateProvider.get().holdUntilRefreshed()
             honorSession = honorSessionProvider.get()
+        }
+        if (SeekPlacement.of(honorEnabled) == SeekPlacement.TRACKER) {
+            seekSession = seekSessionProvider.get()
         }
         honorGlanceUnits = extras.honorGlanceUnits
 
@@ -297,7 +323,7 @@ class WalkTrackingService : Service() {
             // is Idle — Finished walks are already closed in Room. A
             // start carrying a Begin-minted uuid is resolved against
             // Room before anything is inserted (WalkTrackingStarter).
-            val starter = WalkTrackingStarter(controller, repository, honorSession, ::lastKnownFix)
+            val starter = WalkTrackingStarter(controller, repository, honorSession, seekSession, ::lastKnownFix)
             if (!starter.resolve(extras)) {
                 stopSelf()
                 return@launch
@@ -306,6 +332,7 @@ class WalkTrackingService : Service() {
             // auto-player is wired: the session replaces any session a
             // cached process still holds.
             val honorTap = starter.startHonor(scope)
+            starter.startSeek(scope)
             try {
                 collectWalkFixes(locationSource.locationFlow(), honorTap) { point ->
                     controller.recordLocation(point)
@@ -334,7 +361,13 @@ class WalkTrackingService : Service() {
             // re-renders at once, and the fingerprint decides whether the
             // words changed (spec D §10.3).
             val honorGlance = honorSession?.glance ?: flowOf(null)
-            combine(controller.state, unitsPreferences.distanceUnits, honorGlance) { state, _, _ -> state }
+            val trackerSeekGlance = seekSession?.glance ?: flowOf(null)
+            combine(
+                controller.state,
+                unitsPreferences.distanceUnits,
+                honorGlance,
+                trackerSeekGlance,
+            ) { state, _, _, _ -> state }
                 .collect { state ->
                     val (nextLatch, action) = decideStateAction(state, hasBeenActive)
                     hasBeenActive = nextLatch
@@ -532,6 +565,60 @@ class WalkTrackingService : Service() {
     }
 
     /**
+     * "Seek anew", the walker's sonar settings, or a seek session handed
+     * over after its walk started, for the seek session here (plan U25). A
+     * redelivered one is dropped: it already acted before the kill, and the
+     * row it wrote is what a revival reads.
+     */
+    private fun handleSeekIntent(action: String, intent: Intent?, redelivered: Boolean) {
+        val decision = decideSeekIntentAction(
+            placement = SeekPlacement.of(releaseFlags.get().honor),
+            redelivered = redelivered,
+            pipelineActive = locationJob?.isActive == true,
+        )
+        when (decision) {
+            SeekIntentAction.StopNoPipeline -> {
+                Log.w(TAG, "ignoring a seek intent — no active walk pipeline")
+                stopSelf()
+            }
+            SeekIntentAction.Ignore -> Log.i(TAG, "seek intent ignored (redelivered=$redelivered)")
+            SeekIntentAction.Apply -> applySeekIntent(action, intent)
+        }
+    }
+
+    private fun applySeekIntent(action: String, intent: Intent?) {
+        val session = seekSession ?: return
+        when (action) {
+            ACTION_SEEK_SESSION -> {
+                val start = seekStartFromExtras(intent)
+                if (start == null) {
+                    Log.w(TAG, "malformed seek session dropped")
+                    return
+                }
+                scope.launch {
+                    val result = session.attach(scope, start, controller.state)
+                    Log.i(TAG, "late seek session: ${result::class.simpleName}")
+                }
+            }
+            else -> {
+                val seq = intent?.getLongExtra(EXTRA_SEEK_SEQ, 0L) ?: 0L
+                if (seq <= 0L) {
+                    Log.w(TAG, "unnumbered seek intent dropped")
+                    return
+                }
+                if (action == ACTION_SEEK_ANEW) {
+                    session.seekAnew(seq)
+                } else {
+                    session.applyPreferences(seq, seekSonarSettingsFromExtras(intent))
+                }
+            }
+        }
+    }
+
+    /** With Seek here, its glance is this process's own; otherwise the UI's last published one (U10). */
+    private fun currentSeekGlance(): SeekGlanceState? = seekSession?.glance?.value ?: latestSeekGlance
+
+    /**
      * The system's last fix, for a fresh Honor session's Begin input: the
      * nearest thing `:tracker` has to iOS's replayed pre-Start fix. Bounded
      * so a slow provider only delays the first recorded sample briefly.
@@ -694,7 +781,7 @@ class WalkTrackingService : Service() {
                     this,
                     state,
                     unitsPreferences.distanceUnits.value,
-                    latestSeekGlance,
+                    currentSeekGlance(),
                     honorSession?.glance?.value,
                     honorUnits(),
                 ),
@@ -750,7 +837,7 @@ class WalkTrackingService : Service() {
         val honorGlance = honorSession?.glance?.value
         val fingerprint = notificationFingerprint(
             state = state,
-            seekGlance = latestSeekGlance,
+            seekGlance = currentSeekGlance(),
             unitsOrdinal = unitsPreferences.distanceUnits.value.ordinal.toLong(),
             honorGlance = honorGlance,
             honorUnits = honorUnits(),
@@ -835,6 +922,17 @@ class WalkTrackingService : Service() {
     }
 
     internal enum class HonorCommandAction { StopNoPipeline, Ignore, Apply }
+
+    /** What the location job does with the seek session once the start has resolved (plan U25). */
+    internal sealed interface SeekSessionAction {
+        /** No seek walk in progress: end any session a cached process holds. */
+        data object Stop : SeekSessionAction
+
+        /** Start or revive the session of [walkId]; the session decides which from Room. */
+        data class Start(val walkId: Long) : SeekSessionAction
+    }
+
+    internal enum class SeekIntentAction { StopNoPipeline, Ignore, Apply }
 
     internal enum class UiAudioGateAction { StopNoPipeline, Ignore, Apply }
 
@@ -972,6 +1070,47 @@ class WalkTrackingService : Service() {
 
         const val ACTION_UI_AUDIO_GATE =
             "org.walktalkmeditate.pilgrim.service.WalkTrackingService.UI_AUDIO_GATE"
+
+        const val ACTION_SEEK_ANEW = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SEEK_ANEW"
+        const val ACTION_SEEK_PREFERENCES =
+            "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SEEK_PREFERENCES"
+        const val ACTION_SEEK_SESSION = "org.walktalkmeditate.pilgrim.service.WalkTrackingService.SEEK_SESSION"
+
+        /** Extra: a seek intent's sequence number, rising across UI restarts. Long. */
+        const val EXTRA_SEEK_SEQ = "extra.seek_seq"
+
+        /** Extra: the hand-off's chain, as [SeekChainCodec] writes it. Its presence makes a start a seek hand-off. */
+        const val EXTRA_SEEK_CHAIN = "extra.seek_chain"
+
+        /** Extra: the clearing the pre-departure engine stood on. Int. */
+        const val EXTRA_SEEK_ACTIVE_INDEX = "extra.seek_active_index"
+
+        /** Extra: the duration chosen at setup. Int. */
+        const val EXTRA_SEEK_DURATION_MINUTES = "extra.seek_duration_minutes"
+
+        /** Extra: the celestial fog tint, absent under an ordinary sky. */
+        const val EXTRA_SEEK_TINT_HEX = "extra.seek_tint_hex"
+
+        /** Extra: the setup's seed, as its 64 bits. Long. */
+        const val EXTRA_SEEK_SEED = "extra.seek_seed"
+
+        /** Extra: when the seed was drawn. Long. */
+        const val EXTRA_SEEK_SEEDED_AT = "extra.seek_seeded_at"
+
+        /** Extra: the intention voiced at setup, which a reroll re-asks with. */
+        const val EXTRA_SEEK_INTENTION = "extra.seek_intention"
+
+        /** Extra: when the pre-departure engine's next pulse was due. Long; absent with none scheduled. */
+        const val EXTRA_SEEK_PULSE_DUE_AT = "extra.seek_pulse_due_at"
+
+        /** Extra: the sonar switch. Boolean. */
+        const val EXTRA_SEEK_SONAR_ENABLED = "extra.seek_sonar_enabled"
+
+        /** Extra: the sonar volume, 0 to 1. Float. */
+        const val EXTRA_SEEK_SONAR_VOLUME = "extra.seek_sonar_volume"
+
+        /** Extra: the master Sounds switch. Boolean. */
+        const val EXTRA_SEEK_SOUNDS_ENABLED = "extra.seek_sounds_enabled"
 
         /** Extra: which UI gate, by [org.walktalkmeditate.pilgrim.audio.walk.UiAudioGateKind.wireName]. */
         const val EXTRA_UI_AUDIO_GATE = "extra.ui_audio_gate"
@@ -1180,6 +1319,59 @@ class WalkTrackingService : Service() {
             else -> HonorCommandAction.Apply
         }
 
+        /** A seek walk in progress gets its session; anything else ends the one a cached process holds. */
+        internal fun decideSeekSessionAction(state: WalkState): SeekSessionAction {
+            val walk = state.inProgressWalk()?.takeIf { it.mode == WalkMode.Seek }
+                ?: return SeekSessionAction.Stop
+            return SeekSessionAction.Start(walk.walkId)
+        }
+
+        /**
+         * [decideHonorCommandAction]'s rule for the seek intents: with Seek in
+         * the UI process ([SeekPlacement.UI_PROCESS], the flag off) nothing
+         * here takes them, and a redelivered one already acted before the kill.
+         */
+        internal fun decideSeekIntentAction(
+            placement: SeekPlacement,
+            redelivered: Boolean,
+            pipelineActive: Boolean,
+        ): SeekIntentAction = when {
+            !pipelineActive -> SeekIntentAction.StopNoPipeline
+            placement != SeekPlacement.TRACKER || redelivered -> SeekIntentAction.Ignore
+            else -> SeekIntentAction.Apply
+        }
+
+        /**
+         * Pure decode of a seek hand-off's extras, on ACTION_START or
+         * [ACTION_SEEK_SESSION]: null without a chain, or with one that
+         * doesn't decode, which leaves the walk a seek walk with no guidance.
+         */
+        internal fun seekStartFromExtras(intent: Intent?): SeekStart? {
+            val chain = intent?.getStringExtra(EXTRA_SEEK_CHAIN)?.let(SeekChainCodec::decode) ?: return null
+            return SeekStart(
+                chain = chain,
+                activeIndex = intent.getIntExtra(EXTRA_SEEK_ACTIVE_INDEX, 0),
+                durationMinutes = intent.getIntExtra(EXTRA_SEEK_DURATION_MINUTES, 0),
+                tintHex = intent.getStringExtra(EXTRA_SEEK_TINT_HEX),
+                seed = intent.getLongExtra(EXTRA_SEEK_SEED, 0L),
+                seededAtEpochMillis = intent.getLongExtra(EXTRA_SEEK_SEEDED_AT, 0L),
+                intention = intent.getStringExtra(EXTRA_SEEK_INTENTION),
+                nextPulseDueAtMillis = intent.takeIf { it.hasExtra(EXTRA_SEEK_PULSE_DUE_AT) }
+                    ?.getLongExtra(EXTRA_SEEK_PULSE_DUE_AT, 0L),
+                sonar = seekSonarSettingsFromExtras(intent),
+            )
+        }
+
+        /** Pure decode of the sonar settings; a volume outside 0 to 1 is clamped, and NaN reads as silent. */
+        internal fun seekSonarSettingsFromExtras(intent: Intent?): SeekSonarSettings {
+            val volume = intent?.getFloatExtra(EXTRA_SEEK_SONAR_VOLUME, 0f) ?: 0f
+            return SeekSonarSettings(
+                sonarEnabled = intent?.getBooleanExtra(EXTRA_SEEK_SONAR_ENABLED, false) == true,
+                sonarVolume = if (volume.isNaN()) 0f else volume.coerceIn(0f, 1f),
+                soundsEnabled = intent?.getBooleanExtra(EXTRA_SEEK_SOUNDS_ENABLED, false) == true,
+            )
+        }
+
         /** [decideHonorCommandAction]'s rule: a redelivered gate already acted before the kill. */
         internal fun decideUiAudioGateAction(
             honorEnabled: Boolean,
@@ -1218,8 +1410,9 @@ class WalkTrackingService : Service() {
 
         /**
          * Reads [ACTION_START]'s extras once. With [honorEnabled] off the
-         * uuid and the Way are never read, so a stray Honor start is an
-         * ordinary one and the controller starts it as a wander.
+         * uuid, the Way, and a seek hand-off are never read, so a stray Honor
+         * start is an ordinary one and the controller starts it as a wander,
+         * and a seek start is the UI-process seek it has always been.
          */
         internal fun startExtrasFrom(intent: Intent?, honorEnabled: Boolean): TrackerStartExtras {
             val wayId = intent?.getStringExtra(EXTRA_HONOR_WAY_ID)?.takeIf { honorEnabled }
@@ -1239,6 +1432,8 @@ class WalkTrackingService : Service() {
                     mode = WalkMode.fromWire(intent?.getStringExtra(EXTRA_WALK_MODE)),
                     walkUuid = intent?.getStringExtra(EXTRA_WALK_UUID)?.takeIf { honorEnabled },
                     honor = honor,
+                    seek = seekStartFromExtras(intent)
+                        ?.takeIf { SeekPlacement.of(honorEnabled) == SeekPlacement.TRACKER },
                 ),
                 honorGlanceUnits = intent?.getStringExtra(EXTRA_HONOR_GLANCE_UNITS)
                     ?.takeIf { honor != null }

@@ -73,6 +73,9 @@ import org.walktalkmeditate.pilgrim.domain.WalkStats
 import org.walktalkmeditate.pilgrim.permissions.PermissionChecks
 import org.walktalkmeditate.pilgrim.service.WalkTrackingService
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
+import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
+import org.walktalkmeditate.pilgrim.walk.seek.SeekHandOff
+import org.walktalkmeditate.pilgrim.walk.seek.SeekPlacement
 import org.walktalkmeditate.pilgrim.walk.WalkController
 
 /**
@@ -146,6 +149,8 @@ class WalkViewModel @Inject constructor(
         org.walktalkmeditate.pilgrim.audio.walk.UiWhisperQueue.unqueued(whisperPlayer),
     private val honorReplies: HonorReplies = HonorReplies.inert(),
     private val theirSitting: TheirSitting = TheirSitting(),
+    /** Begin's seek hand-off to `:tracker` (plan U25); called only with the release flag on. */
+    private val seekHandOff: SeekHandOff = SeekHandOff.None,
 ) : ViewModel() {
 
     /**
@@ -1445,7 +1450,33 @@ class WalkViewModel @Inject constructor(
         intention: String? = null,
         mode: WalkMode = WalkMode.Wander,
     ) {
+        if (mode == WalkMode.Seek && SeekPlacement.of(releaseFlags.honor) == SeekPlacement.TRACKER) {
+            launchWalkStart(intention) { startSeekInTracker(intention) }
+            return
+        }
         launchWalkStart(intention) { controller.startWalk(intention, mode) }
+    }
+
+    /**
+     * A seek Start with Seek in `:tracker` (plan U25): the staged session
+     * rides ACTION_START under a walk uuid minted here, the replay guard a
+     * redelivered start is resolved by, as an honor Begin's is. A start that
+     * fails hands the session back to the ready screen.
+     */
+    private suspend fun startSeekInTracker(intention: String?): Walk {
+        val seek = seekHandOff.begin()
+        val request = WalkStartRequest(
+            intention = intention,
+            mode = WalkMode.Seek,
+            walkUuid = seek?.let { java.util.UUID.randomUUID().toString() },
+            seek = seek,
+        )
+        return try {
+            controller.startWalk(request)
+        } catch (t: Throwable) {
+            if (seek != null) seekHandOff.cancel()
+            throw t
+        }
     }
 
     /**

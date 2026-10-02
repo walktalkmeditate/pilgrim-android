@@ -29,6 +29,8 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorDao
 import org.walktalkmeditate.pilgrim.data.honor.HonorMomentStateEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorSessionEntity
 import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
+import org.walktalkmeditate.pilgrim.data.seek.SeekDao
+import org.walktalkmeditate.pilgrim.data.seek.SeekSessionEntity
 
 @Database(
     entities = [
@@ -44,8 +46,9 @@ import org.walktalkmeditate.pilgrim.data.honor.HonorWalkMarkerEntity
         HonorMomentStateEntity::class,
         HonorCardStateEntity::class,
         HonorWalkMarkerEntity::class,
+        SeekSessionEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -62,6 +65,7 @@ abstract class PilgrimDatabase : RoomDatabase() {
     abstract fun voiceRecordingDao(): VoiceRecordingDao
     abstract fun walkPhotoDao(): WalkPhotoDao
     abstract fun honorDao(): HonorDao
+    abstract fun seekDao(): SeekDao
 
     companion object {
         const val DATABASE_NAME = "pilgrim.db"
@@ -335,6 +339,38 @@ abstract class PilgrimDatabase : RoomDatabase() {
         }
 
         /**
+         * Phase 21 (U25): the seek session table, for Seek in `:tracker` with
+         * the release flag on. Purely additive: one new table, nothing
+         * existing is touched, and it starts empty. The DDL is Room's own for
+         * v11, copied from `app/schemas/.../11.json`, with `IF NOT EXISTS` so
+         * a re-run is harmless.
+         *
+         * - `seek_sessions`: one row per seek walk, keyed by walk id, written
+         *   only by `:tracker`, cascading from `walks` as every walk child does.
+         */
+        val MIGRATION_10_11: Migration = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `seek_sessions` (" +
+                        "`walk_id` INTEGER NOT NULL, `chain` TEXT NOT NULL, " +
+                        "`duration_minutes` INTEGER NOT NULL, `tint_hex` TEXT, " +
+                        "`seed` INTEGER NOT NULL, `seeded_at` INTEGER NOT NULL, `intention` TEXT, " +
+                        "`active_index` INTEGER NOT NULL, `phase` TEXT NOT NULL, `arrived_at` INTEGER, " +
+                        "`distance_to_active_meters` REAL, `fog_bucket` INTEGER, " +
+                        "`walker_latitude` REAL, `walker_longitude` REAL, " +
+                        "`pulse_token` INTEGER NOT NULL, `pulse_aligned` INTEGER NOT NULL, " +
+                        "`pulse_closeness` REAL NOT NULL, `next_pulse_due_at` INTEGER, " +
+                        "`sonar_enabled` INTEGER NOT NULL, `sonar_volume` REAL NOT NULL, " +
+                        "`sounds_enabled` INTEGER NOT NULL, `last_command_seq` INTEGER NOT NULL, " +
+                        "`last_preference_seq` INTEGER NOT NULL, `gate_generation` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`walk_id`), " +
+                        "FOREIGN KEY(`walk_id`) REFERENCES `walks`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+            }
+        }
+
+        /**
          * Every manual migration, in order — the one list the production
          * builder ([org.walktalkmeditate.pilgrim.di.DatabaseModule]) and the
          * migration tests register. 1→2 is the AutoMigration declared on
@@ -351,6 +387,7 @@ abstract class PilgrimDatabase : RoomDatabase() {
                 MIGRATION_7_8,
                 MIGRATION_8_9,
                 MIGRATION_9_10,
+                MIGRATION_10_11,
             )
     }
 }

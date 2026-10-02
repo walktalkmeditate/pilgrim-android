@@ -36,6 +36,12 @@ data class SeekPendingSession(
      * (U9 port spec D7).
      */
     val intention: String? = null,
+    /**
+     * The [org.walktalkmeditate.pilgrim.domain.seek.SeekSeed] the chain grew
+     * from, as its 64 bits: provenance `:tracker` keeps in the seek session
+     * row with the release flag on (plan U25). Never drawn from again.
+     */
+    val seed: Long = 0L,
 )
 
 /**
