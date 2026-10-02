@@ -81,6 +81,8 @@ import org.walktalkmeditate.pilgrim.domain.walkModeOrNull
 import org.walktalkmeditate.pilgrim.domain.seek.SeekEnginePhase
 import org.walktalkmeditate.pilgrim.ui.seek.SeekDurationSheet
 import org.walktalkmeditate.pilgrim.ui.seek.SeekGatewayOverlay
+import org.walktalkmeditate.pilgrim.honor.HonorStartRefusal
+import org.walktalkmeditate.pilgrim.ui.honor.HonorAlert
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupCancelReason
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupStage
 import org.walktalkmeditate.pilgrim.ui.seek.SeekSetupViewModel
@@ -252,6 +254,12 @@ fun ActiveWalkScreen(
      * even when this argument defaults to Wander.
      */
     mode: WalkMode = WalkMode.Wander,
+    /**
+     * The walk an Honor walk follows, from the overview's Begin. Start then
+     * starts the honor walk through [WalkViewModel.startHonorWalk] (parity
+     * spec correction 1); null for every other mode.
+     */
+    honorSourceWalkId: Long? = null,
     viewModel: WalkViewModel = hiltViewModel(),
     seekSetupViewModel: SeekSetupViewModel = hiltViewModel(),
     seekWalkViewModel: SeekWalkViewModel = hiltViewModel(),
@@ -296,6 +304,15 @@ fun ActiveWalkScreen(
     val meditateMillis = WalkStats.totalMeditatedMillis(navWalkState, ui.nowMillis)
 
     val context = LocalContext.current
+    // One Start for every mode: an honor walk starts through its Begin use
+    // case, so the permission check, weather, and greeting run as for any.
+    val startWalk: (String?) -> Unit = { intention ->
+        if (mode == WalkMode.Honor && honorSourceWalkId != null) {
+            viewModel.startHonorWalk(sourceWalkId = honorSourceWalkId, intention = intention)
+        } else {
+            viewModel.startWalk(intention = intention, mode = mode)
+        }
+    }
     BackHandler(enabled = ui.walkState.isInProgress) {
         (context as? Activity)?.moveTaskToBack(true)
     }
@@ -342,6 +359,15 @@ fun ActiveWalkScreen(
     // case. If the surface is reached weeks later with stale draft text, the
     // user can still re-tap Set or just hit Start to commit it as-is.
     var preWalkIntention by rememberSaveable { mutableStateOf<String?>(null) }
+    var honorRefusal by rememberSaveable { mutableStateOf<HonorStartRefusal?>(null) }
+    // Start cleared the draft, but a refused honor Start started nothing:
+    // the draft comes back with the alert, so "Try again" starts with it.
+    LaunchedEffect(viewModel) {
+        viewModel.honorStartRefusals.collect { refused ->
+            preWalkIntention = refused.intention
+            honorRefusal = refused.refusal
+        }
+    }
     var showPreWalkIntention by rememberSaveable { mutableStateOf(false) }
     var showWaypointMarking by rememberSaveable { mutableStateOf(false) }
     // iOS parity `ActiveWalkView.swift:222, 285-313@db4196e` — whisper +
@@ -436,7 +462,7 @@ fun ActiveWalkScreen(
     val locationPermissionLauncher = rememberLauncherForActivityResult(locationPermissionContract) { granted ->
         locationRequestInFlight = false
         if (granted) {
-            viewModel.startWalk(intention = pendingStartIntention, mode = mode)
+            startWalk(pendingStartIntention)
         } else {
             permissionSnackbarScope.launch {
                 val result = snackbarHostState.showSnackbar(
@@ -1150,7 +1176,7 @@ fun ActiveWalkScreen(
             // pre-walk path doesn't write to Room until commit.
             intention = preWalkIntention ?: intention,
             onStartWalk = {
-                viewModel.startWalk(intention = preWalkIntention, mode = mode)
+                startWalk(preWalkIntention)
                 preWalkIntention = null
             },
             onStartMeditation = viewModel::startMeditation,
@@ -1227,6 +1253,23 @@ fun ActiveWalkScreen(
                 celestialLineRes = seekSetupViewModel.tint?.gatewayLineRes,
                 onBreathMoment = seekSetupViewModel::fireGatewayBreath,
                 onComplete = seekSetupViewModel::advanceTransitionComplete,
+            )
+        }
+        // Owner decision 5: the two Begin refusals iOS has no copy for. A
+        // walk that went away returns the walker home, as a seek cancel
+        // does; a staging failure stays, so Start can be tried again.
+        honorRefusal?.let { refusal ->
+            HonorAlert(
+                body = stringResource(
+                    when (refusal) {
+                        HonorStartRefusal.CouldNotPrepare -> R.string.honor_start_refused_prepare
+                        HonorStartRefusal.Gone -> R.string.honor_start_refused_gone
+                    },
+                ),
+                onDismiss = {
+                    honorRefusal = null
+                    if (refusal == HonorStartRefusal.Gone) onDiscarded()
+                },
             )
         }
         val seekCancelReason = (seekStage as? SeekSetupStage.Cancelled)?.reason

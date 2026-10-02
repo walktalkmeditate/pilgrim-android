@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.walktalkmeditate.pilgrim.R
@@ -242,6 +243,10 @@ fun SettingNavRow(
     // iOS renders some rows as bare action buttons (no trailing
     // glyph) — e.g. Export/Import in Data settings. false = no chevron.
     showTrailing: Boolean = true,
+    // A row iOS draws as a plain Button passes Role.Button and a null
+    // click label, so TalkBack reads it as iOS's VoiceOver does.
+    role: Role? = null,
+    onClickLabel: String? = label,
     onClick: () -> Unit,
 ) {
     Row(
@@ -253,7 +258,7 @@ fun SettingNavRow(
         // activates.
         modifier = modifier
             .heightIn(min = 48.dp)
-            .clickable(onClickLabel = label, onClick = onClick)
+            .clickable(onClickLabel = onClickLabel, role = role, onClick = onClick)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

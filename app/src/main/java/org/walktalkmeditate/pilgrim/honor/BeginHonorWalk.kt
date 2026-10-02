@@ -12,12 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 import org.walktalkmeditate.pilgrim.data.WalkRepository
-import org.walktalkmeditate.pilgrim.data.entity.VoiceRecording
 import org.walktalkmeditate.pilgrim.data.entity.Walk
 import org.walktalkmeditate.pilgrim.data.honor.WayStore
 import org.walktalkmeditate.pilgrim.data.voice.VoiceRecordingFileSystem
 import org.walktalkmeditate.pilgrim.domain.WalkMode
-import org.walktalkmeditate.pilgrim.domain.honor.OwnWalkWayBuilder
 import org.walktalkmeditate.pilgrim.walk.HonorSettings
 import org.walktalkmeditate.pilgrim.walk.HonorStart
 import org.walktalkmeditate.pilgrim.walk.WalkController
@@ -39,16 +37,18 @@ import org.walktalkmeditate.pilgrim.walk.WalkStartRequest
  * the launch sweep, since a slow tracker may still take the walk up.
  */
 class BeginHonorWalk internal constructor(
-    private val repository: WalkRepository,
+    repository: WalkRepository,
     private val wayStore: WayStore,
     private val walkController: WalkController,
-    private val recordingFiles: VoiceRecordingFileSystem,
+    recordingFiles: VoiceRecordingFileSystem,
     private val releaseFlags: ReleaseFlags,
     private val ioDispatcher: CoroutineDispatcher,
     private val mintWalkUuid: () -> String,
-    private val zone: () -> ZoneId,
-    private val locale: () -> Locale,
+    zone: () -> ZoneId,
+    locale: () -> Locale,
 ) {
+    private val ownWalkWays = OwnWalkWays(repository, recordingFiles, ioDispatcher, zone, locale)
+
     @Inject
     constructor(
         repository: WalkRepository,
@@ -99,18 +99,11 @@ class BeginHonorWalk internal constructor(
      */
     suspend operator fun invoke(request: Request): Result {
         if (!releaseFlags.honor) return Result.Refused(Refusal.DISABLED)
-        val source = repository.getWalk(request.sourceWalkId) ?: return Result.Refused(Refusal.SOURCE_MISSING)
-        val input = OwnWalkWayBuilder.Input.fromRows(
-            walk = source,
-            samples = repository.locationSamplesFor(source.id),
-            recordings = repository.voiceRecordingsFor(source.id),
-            photos = repository.photosFor(source.id),
-            waypoints = repository.waypointsFor(source.id),
-            events = repository.eventsFor(source.id),
-        )
-        val way = withContext(ioDispatcher) {
-            OwnWalkWayBuilder.make(input, ::recordingIsPresent, zone(), locale())
-        } ?: return Result.Refused(Refusal.NOT_WALKABLE)
+        val way = when (val built = ownWalkWays.build(request.sourceWalkId)) {
+            is OwnWalkWays.Built.Ready -> built.way
+            OwnWalkWays.Built.SourceMissing -> return Result.Refused(Refusal.SOURCE_MISSING)
+            OwnWalkWays.Built.NotWalkable -> return Result.Refused(Refusal.NOT_WALKABLE)
+        }
         val walkUuid = mintWalkUuid()
         val staged = withContext(ioDispatcher) {
             try {
@@ -132,10 +125,6 @@ class BeginHonorWalk internal constructor(
         )
         return Result.Started(walk)
     }
-
-    /** As iOS probes (`OwnWalkWayBuilder.swift:38-45@7c200bf`): the file is there and holds something. */
-    private fun recordingIsPresent(recording: VoiceRecording): Boolean =
-        recordingFiles.fileSizeBytes(recording.fileRelativePath) > 0
 
     private companion object {
         const val TAG = "BeginHonorWalk"

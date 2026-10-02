@@ -72,6 +72,7 @@ import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
+import com.mapbox.maps.plugin.logo.logo
 import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
 import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
@@ -94,6 +95,10 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
 import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
 import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitApplier
 import org.walktalkmeditate.pilgrim.ui.walk.map.DEFAULT_CAMERA_FIT_EASE_MS
+import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayLine
+import org.walktalkmeditate.pilgrim.ui.walk.map.HonorWayRenderer
+import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxHonorWayStyle
+import org.walktalkmeditate.pilgrim.ui.walk.map.WayMapPin
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapGlyphBitmaps
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxCameraFitSurface
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekCrescentStyle
@@ -182,6 +187,21 @@ internal fun PilgrimMap(
     // layer at fire time; nothing is passed in (U7 spec D3).
     seekFog: SeekFogState? = null,
     seekPulse: SeekPulseVisual = SeekPulseVisual.NONE,
+    // iOS `cameraBounds` for a map with no route of its own to fit: the
+    // Honor overview fits the Way (F §9). Null fits the route, as before.
+    cameraBounds: MapCameraBounds? = null,
+    // iOS `showsUserLocation` apart from `followsUserLocation`: the
+    // overview shows the walker's puck but never follows it.
+    showsUserLocation: Boolean = followLatest,
+    // Lifts the Mapbox logo and attribution clear of a card lying over the
+    // map's bottom edge (owner decision 9, 2026-09-30: iOS leaves them
+    // under the overview card, pilgrim-ios #111).
+    ornamentBottomInsetDp: Dp = 0.dp,
+    // The Way's ghost line (parity spec E §2) and its moment pins (E §4).
+    // A tapped pin reports its moment id.
+    honorWay: HonorWayLine? = null,
+    wayPins: List<WayMapPin> = emptyList(),
+    onWayPinTap: (momentId: String) -> Unit = {},
 ) {
     // Mapbox's `MapView(context, initOptions)` constructor throws
     // `MapboxConfigurationException` synchronously when no access
@@ -332,6 +352,12 @@ internal fun PilgrimMap(
         mutableStateOf<List<Any?>?>(null)
     }
     var proximityManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    // Created on the first pass that has Way pins, after every other
+    // manager, so the pins draw on top (manager creation order is z-order).
+    var wayPinManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    var renderedWayPins by remember { mutableStateOf<List<WayMapPin>?>(null) }
+    var wayPinIndex by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val onWayPinTapState = rememberUpdatedState(onWayPinTap)
     var renderedProximityKey by remember {
         mutableStateOf<List<Any?>?>(null)
     }
@@ -448,6 +474,18 @@ internal fun PilgrimMap(
             style.latestPuckPoint = null
         }
     }
+    val darkModeState = rememberUpdatedState(darkMode)
+    val honorWayRenderer = remember(mapView) {
+        mapView?.let { view ->
+            HonorWayRenderer(
+                style = MapboxHonorWayStyle(
+                    map = view.mapboxMap,
+                    belowLayerIds = listOf(ROUTE_CASING_LAYER_ID, ROUTE_LINE_LAYER_ID),
+                ),
+                dark = { darkModeState.value },
+            )
+        }
+    }
     val annotationBitmaps = remember(walkAnnotationColors, darkMode) {
         walkAnnotationColors?.let { colors ->
             mapOf(
@@ -526,8 +564,8 @@ internal fun PilgrimMap(
     DisposableEffect(cameraFit) {
         onDispose { cameraFit?.cancelPending() }
     }
-    val routeFitBounds = remember(points, followLatest) {
-        if (followLatest) null else boundsForRoute(points)
+    val routeFitBounds = remember(points, followLatest, cameraBounds) {
+        if (followLatest) null else cameraBounds ?: boundsForRoute(points)
     }
     val fitTarget = cameraFitTarget(followLatest, revealPhase, zoomTargetBounds, routeFitBounds)
     LaunchedEffect(cameraFit, fitTarget, bottomInsetDp, mapSizePx) {
@@ -578,6 +616,10 @@ internal fun PilgrimMap(
         proximityManager = null
         renderedProximityKey = null
         proximityPinIndex = emptyMap()
+        wayPinManager?.let { view.annotations.removeAnnotationManager(it) }
+        wayPinManager = null
+        renderedWayPins = null
+        wayPinIndex = emptyMap()
         view.mapboxMap.loadStyle(styleUri) {
             // Show the "you are here" puck on the Active Walk map only.
             // The summary map is a post-hoc review; a live puck there
@@ -609,7 +651,7 @@ internal fun PilgrimMap(
             // GNSS stream. Future cleanup: implement a LocationProvider
             // backed by FusedLocationSource (turning it into a SharedFlow)
             // so the map + service share one subscription.
-            if (followLatest) {
+            if (showsUserLocation) {
                 view.location.updateSettings {
                     enabled = true
                     pulsingEnabled = true
@@ -683,6 +725,9 @@ internal fun PilgrimMap(
             // polyline layer (iOS parity: reinstallSeekFog from
             // onStyleLoaded, PilgrimMapView.swift:163@c1745e8).
             seekFogRenderer?.onStyleReloaded(reduceMotion)
+            // The Way's ghost line, likewise after the managers, so it can
+            // anchor below the route casing (plan Map rule; parity spec E §5).
+            honorWayRenderer?.onStyleReloaded()
             // Style is textured; kick the fade-in animation.
             styleLoaded = true
         }
@@ -714,8 +759,8 @@ internal fun PilgrimMap(
     // `puckBitmap` (which is `remember(stoneArgb)`-keyed) and waits for
     // `styleLoaded` so `view.location.updateSettings` lands after the
     // location component is initialized by the loadStyle block above.
-    LaunchedEffect(mapView, puckBitmap, followLatest, styleLoaded) {
-        if (!followLatest || !styleLoaded) return@LaunchedEffect
+    LaunchedEffect(mapView, puckBitmap, showsUserLocation, styleLoaded) {
+        if (!showsUserLocation || !styleLoaded) return@LaunchedEffect
         val view = mapView ?: return@LaunchedEffect
         // Stone@0.3 — matches iOS `stoneColor.withAlphaComponent(0.3)`.
         val pulseArgb = (stoneArgb and 0x00FFFFFF) or (0x4D shl 24)
@@ -775,6 +820,15 @@ internal fun PilgrimMap(
         view.viewport.transitionTo(
             view.viewport.makeFollowPuckViewportState(buildFollowPuckOptions(bottomInsetPx)),
         )
+    }
+
+    val ornamentInsetPx = with(LocalDensity.current) { ornamentBottomInsetDp.toPx() }
+    val ornamentMarginPx = with(LocalDensity.current) { MAPBOX_ORNAMENT_MARGIN_DP.toPx() }
+    LaunchedEffect(mapView, ornamentInsetPx) {
+        val view = mapView ?: return@LaunchedEffect
+        if (ornamentInsetPx <= 0f) return@LaunchedEffect
+        view.logo.updateSettings { marginBottom = ornamentMarginPx + ornamentInsetPx }
+        view.attribution.updateSettings { marginBottom = ornamentMarginPx + ornamentInsetPx }
     }
 
     AndroidView(
@@ -1330,6 +1384,31 @@ internal fun PilgrimMap(
                 pulse = seekPulse,
                 reduceMotion = reduceMotion,
             )
+            honorWayRenderer?.apply(honorWay)
+            if (wayPins.isNotEmpty() && wayPinManager == null) {
+                wayPinManager = view.annotations.createPointAnnotationManager().apply {
+                    allowIconOverlap(this)
+                    addClickListener { annotation ->
+                        val momentId = wayPinIndex[annotation.id] ?: return@addClickListener false
+                        onWayPinTapState.value(momentId)
+                        true
+                    }
+                }
+            }
+            val wayMgr = wayPinManager
+            if (wayMgr != null && renderedWayPins != wayPins) {
+                wayMgr.deleteAll()
+                wayPinIndex = wayPins.associate { pin ->
+                    val created = wayMgr.create(
+                        PointAnnotationOptions()
+                            .withPoint(Point.fromLngLat(pin.longitude, pin.latitude))
+                            .withIconImage(pin.image)
+                            .withIconSize(1.0),
+                    )
+                    created.id to pin.momentId
+                }
+                renderedWayPins = wayPins
+            }
         },
         onRelease = { view ->
             // Mapbox v11's lifecycle plugin drives onStart/onStop via the
@@ -1370,6 +1449,9 @@ internal fun PilgrimMap(
                 proximityManager = null
                 renderedProximityKey = null
                 proximityPinIndex = emptyMap()
+                wayPinManager = null
+                renderedWayPins = null
+                wayPinIndex = emptyMap()
             }
         },
     )
@@ -1854,6 +1936,9 @@ private const val FOLLOW_ZOOM = MapCameraSeed.CURRENT_LOCATION_ZOOM
 private const val FOLLOW_PITCH = 45.0
 private const val REVEAL_ZOOM = 16.0
 private const val FADE_IN_MS = 400
+
+/** The Mapbox SDK's own 4 dp bottom margin for the logo and attribution. */
+private val MAPBOX_ORNAMENT_MARGIN_DP = 4.dp
 // Bitmap size in pixels for the waypoint marker. Mapbox icon images
 // scale by `iconSize` (default 1.0); 56px draws as a ~22dp marker on
 // 320dpi devices, comparable in visual weight to iOS waypoint pins.

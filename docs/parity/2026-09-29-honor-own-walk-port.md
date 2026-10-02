@@ -229,6 +229,13 @@ None of these has iOS behavior to match, or iOS's behavior can't carry over to A
 - **The overlap order of two Way pins.** iOS sets no sort key, so there's no rule to match (E open question 3).
 - **Two platform facts worth one iPhone check before the gate's audio rows are written** (C open questions). First, that the system pauses an `AVAudioPlayer` on a call even under `.mixWithOthers`. Second, that it doesn't pause on a route loss.
 
+## Gate rows recorded during implementation
+
+- **2026-10-01, U21. R6 platform equivalent: the Ways sheet and the picker wear the app's parchment** (F §4.3). iOS sets no background on their `List`, so it shows the system grouped-list colours.
+- **2026-10-01, U21. R6 platform equivalent: a denied location permission goes through the walk screen's existing permission flow at Start** (F §12.1, §13.4). That stands in for iOS's "Location Required" alert after Begin.
+- **2026-10-01, U21. Drift fixes that ship regardless of the flag** (F §3.6, iOS `cbd24fc`). The unselected mode label is at 0.55, and the start button reads "Begin your journey".
+- **2026-10-01, U21. One iPhone check for the final pass: whether the Ways sheet's section headers render in uppercase** (F §4). Android shows them as the source literals are written.
+
 ---
 
 ## A. Way model, geometry, own-walk builder, store, and persistence

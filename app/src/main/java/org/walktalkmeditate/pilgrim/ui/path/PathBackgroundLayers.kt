@@ -25,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import org.walktalkmeditate.pilgrim.domain.WalkMode
+import org.walktalkmeditate.pilgrim.ui.theme.PilgrimColors
 import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 
 /**
@@ -34,7 +35,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
  *   2. time-of-day tint at low alpha
  *   3. animated radial gradient at slightly higher alpha (skipped under
  *      reduce-motion)
- *   4. per-mode atmosphere overlay at 0.01 alpha
+ *   4. per-mode atmosphere overlay ([modeAtmosphere])
  *
  * The 15s easeInOut autoreverse animation drives the radial center
  * UnitPoint from (0.5, 0.5) → (0.65, 0.6); the iOS source uses
@@ -50,6 +51,7 @@ import org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors
 internal fun PathBackgroundLayers(
     selectedMode: WalkMode,
     reduceMotion: Boolean,
+    honorEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     // Refresh hour on every ON_RESUME so a backgrounded app returning
@@ -123,18 +125,23 @@ internal fun PathBackgroundLayers(
             }
         }
 
-        // Per-mode atmosphere overlay (very subtle).
-        val atmosphere = when (selectedMode) {
-            WalkMode.Wander -> Color.Transparent
-            WalkMode.Honor -> pilgrimColors.dawn.copy(alpha = 0.01f)
-            WalkMode.Seek -> pilgrimColors.fog.copy(alpha = 0.01f)
-        }
+        val atmosphere = modeAtmosphere(selectedMode, honorEnabled, pilgrimColors)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(atmosphere),
         )
     }
+}
+
+/**
+ * iOS `modeAtmosphere` (`WalkStartView.swift:121-133@7c200bf`): Honor is
+ * stone at 0.015; without [honorEnabled] its slot keeps 1.5.0's dawn at 0.01.
+ */
+internal fun modeAtmosphere(mode: WalkMode, honorEnabled: Boolean, colors: PilgrimColors): Color = when (mode) {
+    WalkMode.Wander -> Color.Transparent
+    WalkMode.Honor -> if (honorEnabled) colors.stone.copy(alpha = 0.015f) else colors.dawn.copy(alpha = 0.01f)
+    WalkMode.Seek -> colors.fog.copy(alpha = 0.01f)
 }
 
 private data class TimeOfDayTint(val tint: Color, val opacity: Float)

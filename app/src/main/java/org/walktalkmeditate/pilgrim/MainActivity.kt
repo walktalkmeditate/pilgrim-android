@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
     lateinit var hemisphereRepository:
         org.walktalkmeditate.pilgrim.ui.theme.seasonal.HemisphereRepository
     @Inject lateinit var modelDownloadScheduler: WhisperModelDownloadScheduler
+    @Inject lateinit var releaseFlags: org.walktalkmeditate.pilgrim.core.flags.ReleaseFlags
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -150,6 +151,7 @@ class MainActivity : ComponentActivity() {
                             setIntent(cleared)
                         },
                         welcomeCompleted = welcomeCompleted,
+                        honorEnabled = releaseFlags.honor,
                     )
                 }
             }
