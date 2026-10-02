@@ -26,10 +26,12 @@ import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -54,7 +56,6 @@ import com.mapbox.maps.MapInitOptions
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.LocationPuck2D
-import com.mapbox.maps.plugin.animation.MapAnimationOptions
 import com.mapbox.maps.plugin.animation.easeTo
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.PointAnnotation
@@ -71,6 +72,8 @@ import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
+import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
+import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.locationcomponent.OnIndicatorPositionChangedListener
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.scalebar.scalebar
@@ -89,7 +92,10 @@ import org.walktalkmeditate.pilgrim.domain.seek.SeekFogState
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPersistence
 import org.walktalkmeditate.pilgrim.domain.seek.SeekPulseVisual
 import org.walktalkmeditate.pilgrim.domain.seek.SeekSkyLight
+import org.walktalkmeditate.pilgrim.ui.walk.map.CameraFitApplier
+import org.walktalkmeditate.pilgrim.ui.walk.map.DEFAULT_CAMERA_FIT_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapGlyphBitmaps
+import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxCameraFitSurface
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekCrescentStyle
 import org.walktalkmeditate.pilgrim.ui.walk.map.MapboxSeekFogStyle
 import org.walktalkmeditate.pilgrim.ui.walk.map.SEEK_CLEARING_GLYPH_SIZE_DP
@@ -98,6 +104,7 @@ import org.walktalkmeditate.pilgrim.ui.walk.map.SeekCrescentRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.SeekFogRenderer
 import org.walktalkmeditate.pilgrim.ui.walk.map.WHISPER_GLYPH_SIZE_DP
 import org.walktalkmeditate.pilgrim.ui.walk.map.cairnGlyphSizeDp
+import org.walktalkmeditate.pilgrim.ui.walk.map.easeOutCameraAnimation
 import org.walktalkmeditate.pilgrim.ui.walk.map.hexToColorArgb
 import org.walktalkmeditate.pilgrim.ui.walk.map.seekClearingLightHexes
 import org.walktalkmeditate.pilgrim.ui.walk.summary.MapCameraBounds
@@ -105,8 +112,8 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_CAMERA_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.REVEAL_ZOOM_PLANT_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RevealPhase
 import org.walktalkmeditate.pilgrim.ui.walk.summary.RouteSegmentColors
-import org.walktalkmeditate.pilgrim.ui.walk.summary.SEGMENT_ZOOM_EASE_MS
 import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
+import org.walktalkmeditate.pilgrim.ui.walk.summary.boundsForRoute
 
 /**
  * Mapbox-backed map showing the walk's route polyline. Style follows
@@ -117,15 +124,16 @@ import org.walktalkmeditate.pilgrim.ui.walk.summary.WalkAnnotationColors
  * When [followLatest] is true (Active Walk), the camera is handed to
  * Mapbox's follow-puck viewport state, which tracks the puck and rotates
  * with the compass (iOS `PilgrimMapView.swift:210-221@2ee1185`). When
- * false (Summary), the camera fits the full route's bounds once on first
- * render and the viewport plugin is never touched.
+ * false (Summary), the camera fits the route's bounds by iOS's #81/#89
+ * rules (`map/CameraFitDecision.kt`) and the viewport plugin is never
+ * touched.
  */
 @Composable
 internal fun PilgrimMap(
     points: List<LocationPoint>,
     modifier: Modifier = Modifier,
     followLatest: Boolean = false,
-    initialCenter: LocationPoint? = null,
+    initialCamera: MapCameraSeed? = null,
     bottomInsetDp: Dp = 0.dp,
     waypoints: List<org.walktalkmeditate.pilgrim.data.entity.Waypoint> = emptyList(),
     routeSegments: List<RouteSegment> = emptyList(),
@@ -216,12 +224,12 @@ internal fun PilgrimMap(
     // above is frozen to the base palette and would not flip in
     // constellation mode).
     val stoneArgb = org.walktalkmeditate.pilgrim.ui.theme.pilgrimColors.stone.toArgb()
-    // EdgeInsets values are physical pixels; convert from a dp constant so
-    // the padding looks consistent across screen densities.
-    val paddingPx = with(LocalDensity.current) { FIT_PADDING_DP.dp.toPx().toDouble() }
     val bottomInsetPx = with(LocalDensity.current) { bottomInsetDp.toPx().toDouble() }
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
+    // The laid-out map size, in px. A bounds fit reads it for its room
+    // check and re-evaluates whenever it changes.
+    var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var polyline by remember { mutableStateOf<PolylineAnnotation?>(null) }
     var segmentPolylines by remember { mutableStateOf<List<PolylineAnnotation>>(emptyList()) }
@@ -465,11 +473,10 @@ internal fun PilgrimMap(
     // the AndroidView update lambda can render the placeholder bitmap
     // immediately and swap in the real thumbnail when ready.
     val photoPinBitmaps = rememberPhotoPinBitmaps(walkAnnotations, darkMode)
-    var didFitBounds by remember { mutableStateOf(false) }
-    // One-shot: set the camera to [initialCenter] exactly once, on
-    // whichever composition first has a non-null center AND points is
-    // still empty. Later GPS fixes then drive the follow-latest branch.
-    var didSetInitialCenter by remember { mutableStateOf(false) }
+    // One-shot: seed the camera exactly once, on whichever composition
+    // first has a seed AND fewer than two route points. The follow
+    // viewport drives the camera from there.
+    var didSeedCamera by remember { mutableStateOf(false) }
     // Fade the AndroidView in once the Mapbox style has loaded. First
     // style-load on a cold MapView is visually chunky (black flash
     // while tiles fetch); fading from 0 → 1 when `loadStyle` invokes
@@ -486,74 +493,59 @@ internal fun PilgrimMap(
     // a fresh opt-out on next entry.
     var telemetryOptedOut by remember { mutableStateOf(false) }
 
-    // Stage 13-B: reveal-driven camera control. Fires whenever the phase,
-    // map view instance, first GPS point, or reduce-motion flag changes.
-    // Gated on `revealPhase != null` so legacy callers (Active Walk, Walk
-    // Share) keep their existing fit-bounds-once behavior — they pass the
-    // default `null` revealPhase and never enter this branch.
-    //
-    //   Hidden  -> no-op
-    //   Zoomed  -> instant plant at first GPS point at zoom 16
-    //   Revealed -> 2.5s ease to fit-bounds (or setCamera under reduce-motion)
-    //
-    // The style-load LaunchedEffect below owns annotation-manager lifecycle;
-    // this one only touches camera state.
-    LaunchedEffect(mapView, revealPhase, points.firstOrNull(), reduceMotion, zoomTargetBounds) {
-        if (revealPhase == null) return@LaunchedEffect
+    // Stage 13-B reveal plant: Hidden → Zoomed pulls the camera in to the
+    // first GPS point at zoom 16. iOS eases its `cameraCenter` over
+    // `cameraDuration = 0.1` (`WalkSummaryView.swift:426-428@7c200bf`) and
+    // never reads Reduce Motion there, so neither does this (pilgrim-ios
+    // #96). A centre, not a bounds fit: the fit rules don't apply.
+    LaunchedEffect(mapView, revealPhase, points.firstOrNull()) {
+        if (revealPhase != RevealPhase.Zoomed) return@LaunchedEffect
         val view = mapView ?: return@LaunchedEffect
-        when (revealPhase) {
-            RevealPhase.Hidden -> { /* no camera change */ }
-            RevealPhase.Zoomed -> {
-                val first = points.firstOrNull() ?: return@LaunchedEffect
-                val target = CameraOptions.Builder()
-                    .center(Point.fromLngLat(first.longitude, first.latitude))
-                    .zoom(REVEAL_ZOOM)
-                    .build()
-                // iOS WalkSummaryView.swift:362 uses cameraDuration = 0.1
-                // for the Hidden → Zoomed plant — quick pull-in, not an
-                // instant snap. Reduce-motion path stays on setCamera
-                // (Mapbox SDK 11.11.0 last-write-wins; the Revealed
-                // branch below supersedes any in-flight 100ms ease).
-                if (reduceMotion) {
-                    view.mapboxMap.setCamera(target)
-                } else {
-                    view.mapboxMap.easeTo(
-                        target,
-                        MapAnimationOptions.Builder().duration(REVEAL_ZOOM_PLANT_MS).build(),
-                    )
-                }
-            }
-            RevealPhase.Revealed -> {
-                // Stage 13-D: when a timeline-bar segment is selected the
-                // screen feeds us `zoomTargetBounds` covering that
-                // segment's GPS samples; ease there at 350ms instead of
-                // the full 2.5s reveal. Deselect snaps `zoomTargetBounds`
-                // back to null and we re-key into the original fit-bounds
-                // path below.
-                val target = if (zoomTargetBounds != null) {
-                    cameraOptionsForBounds(view, zoomTargetBounds, paddingPx)
-                } else {
-                    if (points.size < 2) return@LaunchedEffect
-                    cameraOptionsForFitBounds(view, points, paddingPx)
-                }
-                val duration = if (zoomTargetBounds != null) {
-                    SEGMENT_ZOOM_EASE_MS
-                } else {
-                    REVEAL_CAMERA_EASE_MS
-                }
-                // Reduce-motion: snap straight to the target. iOS bypasses
-                // the camera ease entirely under accessibilityReduceMotion;
-                // mirror here via setCamera in place of easeTo.
-                if (reduceMotion) {
-                    view.mapboxMap.setCamera(target)
-                } else {
-                    view.mapboxMap.easeTo(
-                        target,
-                        MapAnimationOptions.Builder().duration(duration).build(),
-                    )
-                }
-            }
-        }
+        val first = points.firstOrNull() ?: return@LaunchedEffect
+        view.mapboxMap.easeTo(
+            CameraOptions.Builder()
+                .center(Point.fromLngLat(first.longitude, first.latitude))
+                .zoom(REVEAL_ZOOM)
+                .build(),
+            easeOutCameraAnimation(REVEAL_ZOOM_PLANT_MS),
+        )
+    }
+
+    // Bounds fits, iOS `PilgrimMapView.swift:256-295@7c200bf`: the
+    // summary's reveal and its segment taps and deselects (Stage 13-D),
+    // and the route of any other non-follow map. A fit is recorded only
+    // once its camera is computed and eased to, so a pass skipped for want
+    // of room, or answered with no camera, is retried by the next one: a
+    // new target, a new inset, or a new map size. (iOS retries on its next
+    // `updateUIView`; without the size key a fit that skipped on an
+    // unmeasured map would never run again.) Always an ease, Reduce Motion
+    // or not, as on iOS (pilgrim-ios #96).
+    val cameraFit = remember(mapView, displayDensity) {
+        mapView?.let { CameraFitApplier(MapboxCameraFitSurface(it.mapboxMap, displayDensity)) }
+    }
+    DisposableEffect(cameraFit) {
+        onDispose { cameraFit?.cancelPending() }
+    }
+    val routeFitBounds = remember(points, followLatest) {
+        if (followLatest) null else boundsForRoute(points)
+    }
+    val fitTarget = cameraFitTarget(followLatest, revealPhase, zoomTargetBounds, routeFitBounds)
+    LaunchedEffect(cameraFit, fitTarget, bottomInsetDp, mapSizePx) {
+        val fit = cameraFit ?: return@LaunchedEffect
+        val target = fitTarget ?: return@LaunchedEffect
+        fit.apply(
+            bounds = target,
+            bottomInsetDp = bottomInsetDp.value.toDouble(),
+            viewWidthDp = mapSizePx.width / displayDensity.toDouble(),
+            viewHeightDp = mapSizePx.height / displayDensity.toDouble(),
+            durationMs = cameraFitEaseMs(revealPhase),
+        )
+    }
+
+    val interactive = isMapInteractive(revealPhase)
+    LaunchedEffect(mapView, interactive) {
+        val view = mapView ?: return@LaunchedEffect
+        view.gestures.updateSettings { applyPilgrimGestures(interactive) }
     }
 
     LaunchedEffect(mapView, styleUri) {
@@ -786,7 +778,9 @@ internal fun PilgrimMap(
     }
 
     AndroidView(
-        modifier = modifier.alpha(mapAlpha),
+        modifier = modifier
+            .alpha(mapAlpha)
+            .onSizeChanged { mapSizePx = it },
         factory = { context ->
             // No MapInitOptions(styleUri): earlier attempts to pre-load the
             // style from the constructor raced against LaunchedEffect's
@@ -982,56 +976,30 @@ internal fun PilgrimMap(
                         casing.update(existingCasing)
                     }
                 }
-
-                if (!followLatest && !didFitBounds && revealPhase == null) {
-                    val camera = view.mapboxMap.cameraForCoordinates(
-                        mapboxPoints,
-                        CameraOptions.Builder().build(),
-                        EdgeInsets(paddingPx, paddingPx, paddingPx + bottomInsetPx, paddingPx),
-                        null,
-                        null,
-                    )
-                    // Clamp max zoom for fit-bounds — a walk contained to a
-                    // single city block otherwise resolves to street-level
-                    // zoom, which reads as "the map is broken". Fall back
-                    // to MAX_FIT_ZOOM if cameraForCoordinates returns a
-                    // null zoom (degenerate bounding box); leaving it null
-                    // means setCamera preserves the prior zoom, which on a
-                    // fresh map is 0 — the whole globe.
-                    val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
-                    val clamped = camera.toBuilder()
-                        .zoom(clampedZoom)
-                        .build()
-                    view.mapboxMap.setCamera(clamped)
-                    didFitBounds = true
-                }
-            } else if (followLatest && !didSetInitialCenter) {
+            } else if (followLatest && !didSeedCamera) {
                 // Fewer than two samples. The follow-puck viewport owns the
                 // camera from here on, but it emits nothing until Mapbox's
                 // own location component reports an indicator position
                 // (`FollowPuckViewportStateImpl.shouldNotifyLatestViewportData`
                 // gates on a non-null last location), so without a seed the
-                // first paint is Mapbox's zoom-0 world view. iOS needs no
-                // equivalent because its map starts at the device region
-                // rather than the globe. Prefer our own first sample, else
-                // the caller's cached last-known location. setCamera, never
-                // easeTo: the viewport plugin owns the camera while a
+                // first paint is Mapbox's zoom-0 world view. iOS seeds its
+                // map at construction instead (`MapInitOptions(cameraOptions:)`,
+                // `PilgrimMapView.swift:122-130@7c200bf`). Prefer our own
+                // first sample, a current fix, else the view model's
+                // [MapCameraSeed]. setCamera, never easeTo: the viewport
+                // plugin owns the camera while a
                 // follow state is active, and a competing animator from
                 // this seam would fight its writes frame-by-frame. (The
                 // plugin's own idle-on-animator listener is scoped to
                 // gesture-owned animators only — verified against
                 // ViewportPluginImpl bytecode in 11.11.0 — so the risk is
                 // camera contention, not a formal idle transition.)
-                val center = points.firstOrNull() ?: initialCenter
-                if (center != null) {
-                    view.mapboxMap.setCamera(
-                        CameraOptions.Builder()
-                            .center(Point.fromLngLat(center.longitude, center.latitude))
-                            .zoom(FOLLOW_ZOOM)
-                            .padding(EdgeInsets(0.0, 0.0, bottomInsetPx, 0.0))
-                            .build(),
-                    )
-                    didSetInitialCenter = true
+                val seed = points.firstOrNull()
+                    ?.let { MapCameraSeed(center = it, zoom = MapCameraSeed.CURRENT_LOCATION_ZOOM) }
+                    ?: initialCamera
+                if (seed != null) {
+                    view.mapboxMap.setCamera(buildSeedCamera(seed))
+                    didSeedCamera = true
                 }
             }
             // Sync waypoint annotations: delete existing pins and re-create
@@ -1675,52 +1643,72 @@ private fun createCircleBitmap(color: Color, darkMode: Boolean): Bitmap {
 }
 
 /**
- * Fit the camera to a [MapCameraBounds] rectangle with uniform
- * `paddingPx` insets on every edge, clamped to [MAX_FIT_ZOOM]. Used
- * by the segment-tap zoom path (Stage 13-D); kept zoom-clamp parity
- * with [cameraOptionsForFitBounds] so a tap on a tiny segment doesn't
- * dive past street level.
+ * What a map fits to: iOS's `cameraBounds`. A follow map never fits. The
+ * summary fits nothing while Hidden or Zoomed (the Zoomed plant eases to a
+ * centre instead), then a tapped segment's bounds or else the route's
+ * (`WalkSummaryView.swift:432-434,623-632@7c200bf`). A map with no reveal
+ * fits its route.
  */
-private fun cameraOptionsForBounds(
-    view: MapView,
-    bounds: MapCameraBounds,
-    paddingPx: Double,
-): CameraOptions {
-    val sw = Point.fromLngLat(bounds.swLng, bounds.swLat)
-    val ne = Point.fromLngLat(bounds.neLng, bounds.neLat)
-    val camera = view.mapboxMap.cameraForCoordinates(
-        listOf(sw, ne),
-        CameraOptions.Builder().build(),
-        EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
-        null,
-        null,
-    )
-    val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
-    return camera.toBuilder().zoom(clampedZoom).build()
+internal fun cameraFitTarget(
+    followLatest: Boolean,
+    revealPhase: RevealPhase?,
+    segmentBounds: MapCameraBounds?,
+    routeBounds: MapCameraBounds?,
+): MapCameraBounds? = when {
+    followLatest -> null
+    revealPhase == null -> routeBounds
+    revealPhase == RevealPhase.Revealed -> segmentBounds ?: routeBounds
+    else -> null
 }
 
 /**
- * Fit the camera to all [points] with uniform `paddingPx` insets on
- * every edge, clamped to [MAX_FIT_ZOOM]. Extracted from the inline
- * Revealed-branch fit-bounds so the segment-tap branch can read the
- * same code path.
+ * iOS `cameraDuration`: 0.4 s unless a caller sets it. The summary sets 2.5 s
+ * for the reveal and never resets it, so every summary fit eases over
+ * [REVEAL_CAMERA_EASE_MS] (pilgrim-ios #95).
  */
-private fun cameraOptionsForFitBounds(
-    view: MapView,
-    points: List<LocationPoint>,
-    paddingPx: Double,
-): CameraOptions {
-    val mapboxPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
-    val camera = view.mapboxMap.cameraForCoordinates(
-        mapboxPoints,
-        CameraOptions.Builder().build(),
-        EdgeInsets(paddingPx, paddingPx, paddingPx, paddingPx),
-        null,
-        null,
-    )
-    val clampedZoom = camera.zoom?.coerceAtMost(MAX_FIT_ZOOM) ?: MAX_FIT_ZOOM
-    return camera.toBuilder().zoom(clampedZoom).build()
+internal fun cameraFitEaseMs(revealPhase: RevealPhase?): Long =
+    if (revealPhase == null) DEFAULT_CAMERA_FIT_EASE_MS else REVEAL_CAMERA_EASE_MS
+
+/**
+ * iOS `isInteractive`: the summary passes `revealPhase == .revealed`
+ * (`WalkSummaryView+Map.swift:53@7c200bf`); the live walk leaves the
+ * default `true` (`ActiveWalkView+Map.swift:20-44@7c200bf`).
+ */
+internal fun isMapInteractive(revealPhase: RevealPhase?): Boolean =
+    revealPhase == null || revealPhase == RevealPhase.Revealed
+
+/**
+ * iOS parity `PilgrimMapView.swift:145-148,219-220@7c200bf`:
+ *
+ * ```swift
+ * mapView.gestures.options.panEnabled = isInteractive
+ * mapView.gestures.options.pinchEnabled = isInteractive
+ * mapView.gestures.options.rotateEnabled = false
+ * mapView.gestures.options.pitchEnabled = false
+ * ```
+ *
+ * iOS's one-finger pan is Android's scroll. iOS's pinch recognizer both
+ * zooms and pans, which Android splits into pinch-to-zoom and pinch-scroll.
+ * Double-tap zoom, two-finger-tap zoom-out and quick zoom keep their
+ * enabled defaults on both SDKs, since iOS never sets them.
+ */
+internal fun GesturesSettings.Builder.applyPilgrimGestures(interactive: Boolean) {
+    scrollEnabled = interactive
+    pinchToZoomEnabled = interactive
+    pinchScrollEnabled = interactive
+    rotateEnabled = false
+    pitchEnabled = false
 }
+
+/**
+ * iOS `CameraOptions(center: seed.center, zoom: seed.zoom)`
+ * (`PilgrimMapView.swift:122-124@7c200bf`): no padding on the seed.
+ */
+internal fun buildSeedCamera(seed: MapCameraSeed): CameraOptions =
+    CameraOptions.Builder()
+        .center(Point.fromLngLat(seed.center.longitude, seed.center.latitude))
+        .zoom(seed.zoom)
+        .build()
 
 /**
  * iOS parity `ActiveWalkView.swift:597@v1.6.0` —
@@ -1865,8 +1853,6 @@ private const val FOLLOW_ZOOM = 16.0
  */
 private const val FOLLOW_PITCH = 45.0
 private const val REVEAL_ZOOM = 16.0
-private const val MAX_FIT_ZOOM = 17.0
-private const val FIT_PADDING_DP = 32
 private const val FADE_IN_MS = 400
 // Bitmap size in pixels for the waypoint marker. Mapbox icon images
 // scale by `iconSize` (default 1.0); 56px draws as a ~22dp marker on

@@ -615,15 +615,14 @@ class WalkViewModel @Inject constructor(
     val audioLevel: StateFlow<Float> = voiceRecorder.audioLevel
 
     /**
-     * One-shot last-known GPS fix to seed the Active Walk map's initial
-     * camera so the first paint lands near the user rather than at
-     * Mapbox Android's global default (which historically renders over
-     * the US east coast). Populates asynchronously on VM init via
-     * [LocationSource.lastKnownLocation]. Null until either the call
-     * completes or the device has no cached fix.
+     * One-shot seed for the Active Walk map's initial camera so the first
+     * paint lands near the user rather than at Mapbox Android's global
+     * default (which historically renders over the US east coast).
+     * Populates asynchronously on VM init via [seedLocation]. Null until
+     * either the lookup completes or there is nothing to seed from.
      */
-    private val _initialCameraCenter = MutableStateFlow<LocationPoint?>(null)
-    val initialCameraCenter: StateFlow<LocationPoint?> = _initialCameraCenter.asStateFlow()
+    private val _initialCameraSeed = MutableStateFlow<MapCameraSeed?>(null)
+    val initialCameraSeed: StateFlow<MapCameraSeed?> = _initialCameraSeed.asStateFlow()
 
     /**
      * Optimistic walk-long soundscape on/off for the options-sheet row.
@@ -635,7 +634,7 @@ class WalkViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             try {
-                _initialCameraCenter.value = seedLocation()
+                _initialCameraSeed.value = seedLocation()
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {
@@ -703,13 +702,13 @@ class WalkViewModel @Inject constructor(
 
     /**
      * Cascading fallback for the Active Walk map's initial camera, in
-     * order of freshness:
+     * order of freshness (iOS `MapCameraSeed.forActiveWalk`,
+     * `MapCameraSeed.swift:29-37@7c200bf`):
      *
      *  1. [LocationSource.lastKnownLocation] — typically the most recent
-     *     system-cached GPS fix (FusedLocationProvider).
+     *     system-cached GPS fix (FusedLocationProvider), at zoom 16.
      *  2. Most recent finished walk's LAST route sample — where the user
-     *     was when they last finished a walk. Usually close to where
-     *     they are now if they're walking from the same starting point.
+     *     was when they last finished a walk — at the wider zoom 14.
      *  3. null — caller (PilgrimMap) leaves Mapbox's default camera.
      *
      * (A walk with zero route samples — service killed before any GPS
@@ -717,18 +716,21 @@ class WalkViewModel @Inject constructor(
      * fallback would behave identically because both queries are LIMIT 1
      * over the same row set.)
      */
-    private suspend fun seedLocation(): LocationPoint? {
-        locationSource.lastKnownLocation()?.let { return it }
+    private suspend fun seedLocation(): MapCameraSeed? {
+        locationSource.lastKnownLocation()?.let {
+            return MapCameraSeed(center = it, zoom = MapCameraSeed.CURRENT_LOCATION_ZOOM)
+        }
         // LIMIT 1 SELECTs so a long history (thousands of walks, tens
         // of thousands of samples) doesn't slurp the whole dataset on
         // every cold app start for a one-point seed.
         val mostRecent = repository.mostRecentFinishedWalk() ?: return null
         val sample = repository.lastLocationSampleFor(mostRecent.id) ?: return null
-        return LocationPoint(
+        val lastEnd = LocationPoint(
             timestamp = sample.timestamp,
             latitude = sample.latitude,
             longitude = sample.longitude,
         )
+        return MapCameraSeed(center = lastEnd, zoom = MapCameraSeed.LAST_WALK_END_ZOOM)
     }
 
     /**
@@ -2109,6 +2111,22 @@ sealed class PlacementEvent {
 }
 
 enum class PlacementKind { Whisper, Stone }
+
+/**
+ * iOS `MapCameraSeed.Seed` (`MapCameraSeed.swift:14-17@7c200bf`): where the
+ * Active Walk map's first frame lands, and at which zoom. The zoom carries
+ * the seed's source.
+ */
+@androidx.compose.runtime.Immutable
+data class MapCameraSeed(val center: LocationPoint, val zoom: Double) {
+    companion object {
+        /** A current fix: the follow-puck zoom, so nothing rescales when follow engages. */
+        const val CURRENT_LOCATION_ZOOM = 16.0
+
+        /** The last walk's end: wider, since the walker has likely moved since. */
+        const val LAST_WALK_END_ZOOM = 14.0
+    }
+}
 
 /**
  * Convenience for placement code paths: a [WalkAccumulator] exists

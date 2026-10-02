@@ -51,16 +51,15 @@ internal val SmoothStepEasing = Easing { fraction ->
 /** Time the camera holds at the zoomed-in plant before fanning out. */
 internal const val ZOOM_HOLD_MS = 800L
 
-/** Camera ease duration for Zoomed → Revealed transition. */
-internal const val REVEAL_CAMERA_EASE_MS = 2_500L
-
 /**
- * Camera ease duration when a timeline-bar segment tap zooms the
- * Walk Summary map into the segment's GPS bounds. Quick — the user
- * is interacting; a long ease feels unresponsive. iOS uses 350ms
- * (`WalkSummaryView.swift:954`).
+ * Camera ease duration for every Walk Summary bounds fit: the Zoomed →
+ * Revealed ease, and the timeline-bar segment taps and deselects after it.
+ * iOS writes `cameraDuration` only in the reveal sequence
+ * (`WalkSummaryView.swift:428,432@7c200bf`) and never resets it, so its
+ * segment fits ease over the same 2.5 s. Matched as shipped; asked
+ * upstream as pilgrim-ios #95.
  */
-internal const val SEGMENT_ZOOM_EASE_MS = 350L
+internal const val REVEAL_CAMERA_EASE_MS = 2_500L
 
 /** Below-map sections fade-in duration on Revealed. */
 internal const val REVEAL_FADE_MS = 600

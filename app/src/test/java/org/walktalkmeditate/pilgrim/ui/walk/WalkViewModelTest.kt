@@ -689,7 +689,7 @@ class WalkViewModelTest {
     }
 
     @Test
-    fun `initialCameraCenter seeds from lastKnownLocation when available`() = runTest(dispatcher) {
+    fun `initialCameraSeed seeds from lastKnownLocation at the follow zoom`() = runTest(dispatcher) {
         val cachedFix = org.walktalkmeditate.pilgrim.domain.LocationPoint(
             timestamp = 123L,
             latitude = 37.7749,
@@ -716,12 +716,13 @@ class WalkViewModelTest {
             soundscapeUiController = FakeWalkSoundscapeUiController(),
         )
 
-        val seen = vm.initialCameraCenter.first { it != null }
-        assertEquals(cachedFix, seen)
+        // iOS MapCameraSeed.forActiveWalk@7c200bf: a current fix → zoom 16.
+        val seen = vm.initialCameraSeed.first { it != null }
+        assertEquals(MapCameraSeed(center = cachedFix, zoom = 16.0), seen)
     }
 
     @Test
-    fun `initialCameraCenter falls back to prior walks last route sample when no cached fix`() = runTest(dispatcher) {
+    fun `initialCameraSeed falls back to prior walks last route sample when no cached fix`() = runTest(dispatcher) {
         val priorWalk = repository.startWalk(startTimestamp = 0L)
         repository.recordLocation(
             org.walktalkmeditate.pilgrim.data.entity.RouteDataSample(
@@ -758,12 +759,14 @@ class WalkViewModelTest {
             soundscapeUiController = FakeWalkSoundscapeUiController(),
         )
 
-        val seen = vm.initialCameraCenter.first { it != null }
+        val seen = vm.initialCameraSeed.first { it != null }
         // Cascade should pick the LAST sample chronologically — where
         // the user finished their prior walk, a better seed than where
         // they started it.
-        assertEquals(3.0, seen!!.latitude, 0.0001)
-        assertEquals(4.0, seen.longitude, 0.0001)
+        assertEquals(3.0, seen!!.center.latitude, 0.0001)
+        assertEquals(4.0, seen.center.longitude, 0.0001)
+        // iOS MapCameraSeed.forActiveWalk@7c200bf: the last walk's end → zoom 14.
+        assertEquals(14.0, seen.zoom, 0.0)
     }
 
     // --- Stage 3-E: finishWalk caches hemisphere -------------------
